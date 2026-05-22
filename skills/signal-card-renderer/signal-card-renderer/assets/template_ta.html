@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{TICKER_NAME}} 技术分析信号卡片</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: #F5F5F0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+    background: #F5F5F0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 32px 24px;
+    min-height: 100vh;
+    font-variant-ligatures: none;
+  }
+  .card { background: #FFFFFF; border: 0.5px solid rgba(0,0,0,0.12); border-radius: 14px; padding: 20px 22px; width: 520px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .header-top { display:flex; justify-content:space-between; align-items:center; gap: 14px; margin-bottom:14px; }
+  .brand { font-size:11px; color:#888; letter-spacing:.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .signal-badge { display:inline-flex; align-items:center; gap:6px; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:500; white-space: nowrap; }
+  .ticker-row { display:flex; align-items:baseline; gap:10px; margin-bottom:4px; }
+  .ticker-name { font-size:20px; font-weight:500; color:#1a1a1a; }
+  .ticker-code { font-size:13px; color:#888; }
+  .price-num { font-size:30px; font-weight:500; color:#1a1a1a; line-height:1.2; }
+  .price-unit { font-size:14px; font-weight:400; color:#888; }
+  .meta-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .meta-chip { background:#F5F5F0; border-radius:6px; padding:3px 9px; font-size:12px; color:#666; }
+  .meta-chip.positive { color:#3B6D11; background:#EAF3DE; }
+  .meta-chip.negative { color:#E24B4A; background:#FCEBEB; }
+  .divider { height:0.5px; background:rgba(0,0,0,0.08); margin:16px 0; }
+  .section-title { font-size:11px; font-weight:500; color:#999; letter-spacing:.07em; text-transform:uppercase; margin-bottom:10px; }
+  .section-sub { font-size:12px; color:#888; margin:0 0 13px; line-height:1.6; }
+  .trend-item { display:grid; grid-template-columns:7px 1fr; column-gap:9px; margin-bottom:12px; align-items:flex-start; }
+  .trend-dot { width:7px; height:7px; border-radius:50%; margin-top:8px; flex-shrink:0; background:var(--dot-color, {{SIGNAL_COLOR}}); }
+  .trend-head { display:flex; align-items:baseline; gap:7px; min-width:0; line-height:1.65; }
+  .trend-label { font-size:12px; font-weight:600; color:#1a1a1a; white-space:nowrap; flex-shrink:0; }
+  .trend-tag { font-size:11px; color:#aaa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .trend-text { grid-column:2; font-size:12px; color:#666; line-height:1.65; margin:0; }
+  .key-levels { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:4px; }
+  .level-card { background:#F5F5F0; border-radius:9px; padding:11px 13px; }
+  .level-type { font-size:11px; color:#aaa; margin-bottom:3px; }
+  .level-val { font-size:17px; font-weight:500; }
+  .level-val.resist { color:#3B6D11; }
+  .level-val.support { color:#E24B4A; }
+  .level-desc { font-size:11px; color:#aaa; margin-top:2px; min-height: 16px; }
+  .ops-box { border-radius:9px; padding:11px 14px; font-size:12px; line-height:1.65; margin-top:4px; }
+  .warn-bar { border-radius:9px; padding:9px 13px; font-size:11px; margin-bottom:12px; background:#FAEEDA; color:#633806; }
+  .footer-row { display:flex; gap:18px; flex-wrap:wrap; font-size:11px; color:#aaa; }
+  .footer-row span { display:flex; align-items:center; gap:5px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header-top">
+    <span class="brand">{{BRAND}}</span>
+    <div class="signal-badge" style="background:{{SIGNAL_BG}}; color:{{SIGNAL_COLOR}}">
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><polygon points="{{ARROW_POINTS}}" fill="{{SIGNAL_COLOR}}"/></svg>
+      {{SIGNAL}}
+    </div>
+  </div>
+  <div class="ticker-row">
+    <span class="ticker-name">{{TICKER_NAME}}</span>
+    <span class="ticker-code">{{TICKER_CODE}}</span>
+  </div>
+  <div class="price-num">{{PRICE}} <span class="price-unit">元</span></div>
+  <div class="meta-row">
+    <span class="meta-chip">行情日期：{{DATE}}</span>
+    <span class="meta-chip {{CHANGE_CLASS}}">{{CHANGE}}</span>
+  </div>
+  <div class="divider"></div>
+  <div class="section-title">趋势研判</div>
+  <p class="section-sub">{{TREND_SUMMARY}}</p>
+  {{TREND_ITEMS}}
+  <div class="divider"></div>
+  <div class="section-title">核心关键位</div>
+  <div class="key-levels">
+    <div class="level-card" style="border-left:2.5px solid #3B6D11">
+      <div class="level-type">强压力位</div>
+      <div class="level-val resist">{{RESIST_LEVEL}}</div>
+      <div class="level-desc">{{RESIST_DESC}}</div>
+    </div>
+    <div class="level-card" style="border-left:2.5px solid #E24B4A">
+      <div class="level-type">强支撑位</div>
+      <div class="level-val support">{{SUPPORT_LEVEL}}</div>
+      <div class="level-desc">{{SUPPORT_DESC}}</div>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <div class="section-title">实操指引</div>
+  <div class="ops-box" style="background:{{OPS_BG}}; color:{{OPS_COLOR}}">{{OPS_GUIDE}}</div>
+  <div class="divider"></div>
+  <div class="warn-bar">⚠️ 本内容仅供研究参考，不构成任何投资建议</div>
+  <div class="footer-row">
+    <span>⏱️ 授权剩余：{{AUTH}}</span>
+    <span>📚 数据来源：{{DATA_SOURCE}}</span>
+    <span>🤝 {{CONTACT}}</span>
+  </div>
+</div>
+</body>
+</html>
