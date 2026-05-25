@@ -1,0 +1,396 @@
+# encoding:utf-8
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Iterable
+from xml.etree import ElementTree
+from zipfile import ZipFile
+
+from sqlalchemy import insert, select, update
+
+from .constants import ErrorCode, ServiceType, normalize_service, user_message
+from .db import connect, row_to_dict
+from .schema import investment_users
+
+
+@dataclass
+class User:
+    id: int | None
+    openid: str
+    name: str = ""
+    institution: str = ""
+    mobile: str = ""
+    enabled: bool = True
+    allowed_services: list[ServiceType] | None = None
+    auth_start_at: datetime | None = None
+    auth_end_at: datetime | None = None
+    remark: str = ""
+
+
+@dataclass
+class PermissionResult:
+    allowed: bool
+    error_code: ErrorCode | None = None
+    user_prompt: str = ""
+    detail: str = ""
+
+
+@dataclass
+class ImportUserRow:
+    openid: str
+    name: str = ""
+    institution: str = ""
+    mobile: str = ""
+    enabled: bool = True
+    allowed_services: str = "全部"
+    auth_start_at: datetime | None = None
+    auth_end_at: datetime | None = None
+    remark: str = ""
+
+
+@dataclass
+class ImportResult:
+    created: int = 0
+    updated: int = 0
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _to_iso(value: datetime | str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    return str(value)
+
+
+def _from_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    return _to_naive_utc(parsed)
+
+
+def _to_naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _to_naive_utc(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return _to_naive_utc(datetime.fromisoformat(text))
+    except ValueError:
+        pass
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    try:
+        serial = float(text)
+    except ValueError:
+        return None
+    return datetime(1899, 12, 30) + timedelta(days=serial)
+
+
+def _parse_enabled(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return True
+    if text in {"1", "true", "yes", "y", "on", "enabled", "enable", "是", "启用"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled", "disable", "否", "停用"}:
+        return False
+    return bool(value)
+
+
+def _encode_services(values: Iterable[str | ServiceType] | str) -> str:
+    if isinstance(values, str):
+        raw = [item.strip() for item in values.replace("，", ",").split(",") if item.strip()]
+    else:
+        raw = list(values)
+    services = [normalize_service(value) for value in raw]
+    if not services:
+        services = [ServiceType.ALL]
+    return json.dumps([str(service) for service in services], ensure_ascii=False)
+
+
+def _decode_services(value: str) -> list[ServiceType]:
+    try:
+        return [normalize_service(item) for item in json.loads(value)]
+    except Exception:
+        return [normalize_service(item) for item in value.split(",")]
+
+
+def _read_excel_source(source: bytes | str | Path) -> bytes:
+    if isinstance(source, bytes):
+        return source
+    return Path(source).read_bytes()
+
+
+def _xml_text(element: ElementTree.Element | None) -> str:
+    if element is None:
+        return ""
+    return "".join(element.itertext())
+
+
+def _column_index(cell_ref: str) -> int:
+    letters = ""
+    for char in cell_ref:
+        if char.isalpha():
+            letters += char.upper()
+        else:
+            break
+    index = 0
+    for char in letters:
+        index = index * 26 + (ord(char) - 64)
+    return max(index - 1, 0)
+
+
+def _xlsx_rows(content: bytes) -> list[list[str]]:
+    ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with ZipFile(BytesIO(content)) as archive:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            shared_root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared_strings = [_xml_text(item) for item in shared_root.findall("x:si", ns)]
+
+        sheet_name = "xl/worksheets/sheet1.xml"
+        if sheet_name not in archive.namelist():
+            sheet_name = next(name for name in archive.namelist() if name.startswith("xl/worksheets/") and name.endswith(".xml"))
+        root = ElementTree.fromstring(archive.read(sheet_name))
+
+    rows: list[list[str]] = []
+    for row in root.findall(".//x:sheetData/x:row", ns):
+        cells: list[str] = []
+        for cell in row.findall("x:c", ns):
+            index = _column_index(cell.attrib.get("r", ""))
+            while len(cells) <= index:
+                cells.append("")
+            cell_type = cell.attrib.get("t", "")
+            if cell_type == "s":
+                raw_value = _xml_text(cell.find("x:v", ns))
+                value = shared_strings[int(raw_value)] if raw_value else ""
+            elif cell_type == "inlineStr":
+                value = _xml_text(cell.find("x:is", ns))
+            else:
+                value = _xml_text(cell.find("x:v", ns))
+                if cell_type == "b":
+                    value = "true" if value == "1" else "false"
+            cells[index] = value.strip()
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def _normalize_header(value: str) -> str:
+    return value.strip().lower()
+
+
+def _cell(row: list[str], indexes: dict[str, int], key: str) -> str:
+    index = indexes.get(key)
+    if index is None or index >= len(row):
+        return ""
+    return row[index].strip()
+
+
+
+def _row_to_user(row) -> User | None:
+    if row is None:
+        return None
+    item = row_to_dict(row)
+    return User(
+        id=item["id"],
+        openid=item["openid"],
+        name=item["name"] or "",
+        institution=item["institution"] or "",
+        mobile=item["mobile"] or "",
+        enabled=bool(item["enabled"]),
+        allowed_services=_decode_services(item["allowed_services"]),
+        auth_start_at=_from_iso(item["auth_start_at"]),
+        auth_end_at=_from_iso(item["auth_end_at"]),
+        remark=item["remark"] or "",
+    )
+
+
+def create_user(
+    openid: str,
+    *,
+    name: str = "",
+    institution: str = "",
+    mobile: str = "",
+    enabled: bool = True,
+    allowed_services: Iterable[str | ServiceType] | str = (ServiceType.ALL,),
+    auth_start_at: datetime | str | None = None,
+    auth_end_at: datetime | str | None = None,
+    remark: str = "",
+) -> int:
+    now = _now()
+    values = {
+        "openid": openid,
+        "name": name,
+        "institution": institution,
+        "mobile": mobile,
+        "enabled": 1 if enabled else 0,
+        "allowed_services": _encode_services(allowed_services),
+        "auth_start_at": _to_iso(auth_start_at),
+        "auth_end_at": _to_iso(auth_end_at),
+        "remark": remark,
+        "created_at": now,
+        "updated_at": now,
+    }
+    with connect() as conn:
+        result = conn.execute(insert(investment_users).values(**values))
+        if result.inserted_primary_key:
+            user_id = result.inserted_primary_key[0]
+            if user_id is not None:
+                return int(user_id)
+        row = conn.execute(
+            select(investment_users.c.id).where(investment_users.c.openid == openid),
+        )
+        return int(row.scalar_one())
+
+
+def get_user_by_openid(openid: str) -> User | None:
+    with connect() as conn:
+        row = conn.execute(select(investment_users).where(investment_users.c.openid == openid)).fetchone()
+    return _row_to_user(row)
+
+
+def update_user(openid: str, **fields) -> None:
+    allowed = {"name", "institution", "mobile", "enabled", "allowed_services", "auth_start_at", "auth_end_at", "remark"}
+    values = {}
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "allowed_services":
+            value = _encode_services(value)
+        elif key in ("auth_start_at", "auth_end_at"):
+            value = _to_iso(value)
+        elif key == "enabled":
+            value = 1 if value else 0
+        values[key] = value
+    if not values:
+        return
+    values["updated_at"] = _now()
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
+
+
+def disable_user(openid: str) -> None:
+    update_user(openid, enabled=False)
+
+
+def list_users(enabled: bool | None = None, openid: str | None = None) -> list[User]:
+    stmt = select(investment_users)
+    if enabled is not None:
+        stmt = stmt.where(investment_users.c.enabled == (1 if enabled else 0))
+    if openid:
+        stmt = stmt.where(investment_users.c.openid.like(f"%{openid}%"))
+    stmt = stmt.order_by(investment_users.c.id.desc())
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    return [user for row in rows if (user := _row_to_user(row))]
+
+
+def verify_permission(openid: str, service_type: ServiceType) -> PermissionResult:
+    user = get_user_by_openid(openid)
+    if user is None:
+        return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "user not found")
+    if not user.enabled:
+        return PermissionResult(False, ErrorCode.USER_DISABLED, user_message(ErrorCode.USER_DISABLED), "user disabled")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if user.auth_start_at and now < user.auth_start_at:
+        return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "auth not started")
+    if user.auth_end_at and now > user.auth_end_at:
+        return PermissionResult(False, ErrorCode.AUTH_EXPIRED, user_message(ErrorCode.AUTH_EXPIRED), "auth expired")
+    services = user.allowed_services or []
+    if ServiceType.ALL not in services and service_type not in services:
+        return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "service not allowed")
+    return PermissionResult(True)
+
+
+def import_users(rows: Iterable[ImportUserRow]) -> ImportResult:
+    result = ImportResult()
+    for row in rows:
+        existing = get_user_by_openid(row.openid)
+        if existing:
+            update_user(
+                row.openid,
+                name=row.name,
+                institution=row.institution,
+                mobile=row.mobile,
+                enabled=row.enabled,
+                allowed_services=row.allowed_services,
+                auth_start_at=row.auth_start_at,
+                auth_end_at=row.auth_end_at,
+                remark=row.remark,
+            )
+            result.updated += 1
+        else:
+            create_user(
+                row.openid,
+                name=row.name,
+                institution=row.institution,
+                mobile=row.mobile,
+                enabled=row.enabled,
+                allowed_services=row.allowed_services,
+                auth_start_at=row.auth_start_at,
+                auth_end_at=row.auth_end_at,
+                remark=row.remark,
+            )
+            result.created += 1
+    return result
+
+
+def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
+    rows = _xlsx_rows(_read_excel_source(source))
+    if not rows:
+        return []
+
+    headers = [_normalize_header(value) for value in rows[0]]
+    indexes = {header: index for index, header in enumerate(headers) if header}
+    if "openid" not in indexes:
+        raise ValueError("Excel missing required field: openid")
+
+    parsed_rows: list[ImportUserRow] = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        openid = _cell(row, indexes, "openid")
+        if not openid:
+            raise ValueError(f"Excel row {row_number} missing required field: openid")
+        parsed_rows.append(
+            ImportUserRow(
+                openid=openid,
+                name=_cell(row, indexes, "name"),
+                institution=_cell(row, indexes, "institution"),
+                mobile=_cell(row, indexes, "mobile"),
+                enabled=_parse_enabled(_cell(row, indexes, "enabled")),
+                allowed_services=_cell(row, indexes, "allowed_services") or "全部",
+                auth_start_at=_parse_datetime(_cell(row, indexes, "auth_start_at")),
+                auth_end_at=_parse_datetime(_cell(row, indexes, "auth_end_at")),
+                remark=_cell(row, indexes, "remark"),
+            )
+        )
+    return parsed_rows
+
+
+def import_users_from_excel(source: bytes | str | Path) -> ImportResult:
+    return import_users(parse_users_excel(source))

@@ -1,0 +1,80 @@
+# encoding:utf-8
+from enum import StrEnum
+
+
+class ServiceType(StrEnum):
+    TECHNICAL_ANALYSIS = "technical_analysis"
+    RATE = "rate"
+    CONVERTIBLE_BOND = "convertible_bond"
+    UNMATCHED = "unmatched"
+    ALL = "all"
+
+
+SERVICE_LABELS = {
+    ServiceType.TECHNICAL_ANALYSIS: "技术分析",
+    ServiceType.RATE: "利率",
+    ServiceType.CONVERTIBLE_BOND: "转债",
+    ServiceType.ALL: "全部",
+}
+
+SERVICE_ALIASES = {
+    "technical_analysis": ServiceType.TECHNICAL_ANALYSIS,
+    "技术分析": ServiceType.TECHNICAL_ANALYSIS,
+    "rate": ServiceType.RATE,
+    "利率": ServiceType.RATE,
+    "convertible_bond": ServiceType.CONVERTIBLE_BOND,
+    "转债": ServiceType.CONVERTIBLE_BOND,
+    "cb": ServiceType.CONVERTIBLE_BOND,
+    "all": ServiceType.ALL,
+    "全部": ServiceType.ALL,
+}
+
+
+class Status(StrEnum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    DRAFT = "draft"
+    GENERATING = "generating"
+    GENERATED = "generated"
+    GENERATE_FAILED = "generate_failed"
+    EFFECTIVE = "effective"
+    ARCHIVED = "archived"
+
+
+class ErrorCode(StrEnum):
+    UNAUTHORIZED = "unauthorized"
+    USER_DISABLED = "user_disabled"
+    AUTH_EXPIRED = "auth_expired"
+    INPUT_ERROR = "input_error"
+    STOCK_NOT_FOUND = "stock_not_found"
+    STOCK_AMBIGUOUS = "stock_ambiguous"
+    TECHNICAL_ANALYSIS_FAILED = "technical_analysis_failed"
+    IMAGE_GENERATION_FAILED = "image_generation_failed"
+    NO_CONTENT = "no_content"
+    SYSTEM_ERROR = "system_error"
+
+
+USER_MESSAGES = {
+    ErrorCode.UNAUTHORIZED: "您暂未开通该服务，如需开通请联系服务人员。",
+    ErrorCode.USER_DISABLED: "您的服务暂不可用，请联系服务人员。",
+    ErrorCode.AUTH_EXPIRED: "您的服务授权已到期，如需继续使用请联系服务人员。",
+    ErrorCode.INPUT_ERROR: "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。",
+    ErrorCode.STOCK_NOT_FOUND: "未找到对应标的，请检查股票代码或改用标准股票代码。",
+    ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",
+    ErrorCode.TECHNICAL_ANALYSIS_FAILED: "分析生成失败，请稍后重试或联系服务人员。",
+    ErrorCode.IMAGE_GENERATION_FAILED: "图片生成失败，请稍后重试或联系服务人员。",
+    ErrorCode.NO_CONTENT: "今日内容尚未更新，请稍后再试。",
+    ErrorCode.SYSTEM_ERROR: "系统暂时繁忙，请稍后重试。",
+}
+
+
+def normalize_service(value: str | ServiceType) -> ServiceType:
+    if isinstance(value, ServiceType):
+        return value
+    normalized = str(value or "").strip()
+    return SERVICE_ALIASES.get(normalized, SERVICE_ALIASES.get(normalized.lower(), ServiceType.UNMATCHED))
+
+
+def user_message(error_code: ErrorCode) -> str:
+    return USER_MESSAGES.get(error_code, USER_MESSAGES[ErrorCode.SYSTEM_ERROR])
+

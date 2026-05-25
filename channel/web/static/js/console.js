@@ -13,10 +13,12 @@ let APP_VERSION = '';
 const I18N = {
     zh: {
         console: '控制台',
-        nav_chat: '对话', nav_manage: '管理', nav_monitor: '监控',
+        nav_chat: '对话', nav_manage: '管理', nav_monitor: '监控', nav_investment: '投资业务',
         menu_chat: '对话', menu_config: '配置', menu_skills: '技能',
         menu_memory: '记忆', menu_knowledge: '知识', menu_channels: '通道', menu_tasks: '定时',
         menu_logs: '日志',
+        menu_invest_users: '用户管理', menu_invest_rate: '利率内容', menu_invest_cb: '转债内容',
+        menu_invest_records: '业务记录', menu_invest_config: '系统配置', menu_invest_health: '健康检查',
         knowledge_title: '知识库', knowledge_desc: '浏览和探索你的知识库',
         knowledge_tab_docs: '文档', knowledge_tab_graph: '图谱',
         knowledge_loading: '加载知识库中...', knowledge_loading_desc: '知识页面将显示在这里',
@@ -114,10 +116,12 @@ const I18N = {
     },
     en: {
         console: 'Console',
-        nav_chat: 'Chat', nav_manage: 'Management', nav_monitor: 'Monitor',
+        nav_chat: 'Chat', nav_manage: 'Management', nav_monitor: 'Monitor', nav_investment: 'Investment',
         menu_chat: 'Chat', menu_config: 'Config', menu_skills: 'Skills',
         menu_memory: 'Memory', menu_knowledge: 'Knowledge', menu_channels: 'Channels', menu_tasks: 'Tasks',
         menu_logs: 'Logs',
+        menu_invest_users: 'Users', menu_invest_rate: 'Rates', menu_invest_cb: 'Convertible Bonds',
+        menu_invest_records: 'Records', menu_invest_config: 'Investment Config', menu_invest_health: 'Health',
         knowledge_title: 'Knowledge', knowledge_desc: 'Browse and explore your knowledge base',
         knowledge_tab_docs: 'Documents', knowledge_tab_graph: 'Graph',
         knowledge_loading: 'Loading knowledge base...', knowledge_loading_desc: 'Knowledge pages will be displayed here',
@@ -331,6 +335,12 @@ const VIEW_META = {
     knowledge:{ group: 'nav_manage',  page: 'menu_knowledge' },
     channels: { group: 'nav_manage',  page: 'menu_channels' },
     tasks:    { group: 'nav_manage',  page: 'menu_tasks' },
+    'invest-users':   { group: 'nav_investment', page: 'menu_invest_users' },
+    'invest-rate':    { group: 'nav_investment', page: 'menu_invest_rate' },
+    'invest-cb':      { group: 'nav_investment', page: 'menu_invest_cb' },
+    'invest-records': { group: 'nav_investment', page: 'menu_invest_records' },
+    'invest-config':  { group: 'nav_investment', page: 'menu_invest_config' },
+    'invest-health':  { group: 'nav_investment', page: 'menu_invest_health' },
     logs:     { group: 'nav_monitor', page: 'menu_logs' },
 };
 
@@ -350,6 +360,7 @@ function navigateTo(viewId) {
     document.getElementById('breadcrumb-page').textContent = t(meta.page);
     document.getElementById('breadcrumb-page').dataset.i18n = meta.page;
     currentView = viewId;
+    loadInvestmentView(viewId);
     if (window.innerWidth < 1024) closeSidebar();
 }
 
@@ -369,6 +380,604 @@ function closeSidebar() {
     document.getElementById('sidebar').classList.add('-translate-x-full');
     document.getElementById('sidebar-overlay').classList.add('hidden');
 }
+
+async function loadInvestmentView(viewId) {
+    if (viewId === 'invest-users') return renderInvestmentUsers();
+    if (viewId === 'invest-rate') return renderInvestmentContent('rate');
+    if (viewId === 'invest-cb') return renderInvestmentContent('convertible_bond');
+    if (viewId === 'invest-records') return renderInvestmentRecords();
+    if (viewId === 'invest-config') return renderInvestmentConfig();
+    if (viewId === 'invest-health') return renderInvestmentHealth();
+}
+
+const INVEST_SERVICE_LABELS = {
+    technical_analysis: '技术分析',
+    rate: '利率',
+    convertible_bond: '转债',
+    all: '全部',
+    unmatched: '未命中',
+};
+
+const INVEST_STATUS_LABELS = {
+    success: '成功',
+    failed: '失败',
+    draft: '草稿',
+    generating: '生成中',
+    generated: '生成成功',
+    generate_failed: '生成失败',
+    effective: '已生效',
+    archived: '已归档',
+};
+
+const INVEST_CONFIG_GROUPS = [
+    {
+        title: '模型配置',
+        keys: [
+            ['model.provider', '模型厂商', 'text'],
+            ['model.name', '模型名', 'text'],
+            ['model.api_base', 'API Base', 'text'],
+            ['model.api_key', 'API Key', 'text'],
+            ['model.temperature', 'temperature', 'number'],
+        ],
+    },
+    {
+        title: '公众号配置',
+        keys: [
+            ['wechatmp.app_id', 'App ID', 'text'],
+            ['wechatmp.app_secret', 'App Secret', 'text'],
+            ['wechatmp.token', 'Token', 'text'],
+            ['wechatmp.aes_key', 'AES Key', 'text'],
+            ['wechatmp.port', '端口', 'number'],
+        ],
+    },
+    {
+        title: '股票字典',
+        keys: [
+            ['tushare.token', 'Tushare Token', 'text'],
+        ],
+    },
+    {
+        title: '技术分析与渲染',
+        keys: [
+            ['technical_analysis.skill_path', '技术分析 Skill 路径', 'text'],
+            ['technical_analysis.output_dir', '技术分析输出目录', 'text'],
+            ['technical_analysis.default_chart_days', '默认图表天数', 'number'],
+            ['render.renderer_path', 'renderer 路径', 'text'],
+            ['render.template_ta_path', '技术分析模板', 'text'],
+            ['render.template_rate_path', '利率模板', 'text'],
+            ['render.template_cb_path', '转债模板', 'text'],
+            ['render.output_dir', '渲染输出目录', 'text'],
+        ],
+    },
+    {
+        title: '存储与提示词',
+        keys: [
+            ['storage.upload_dir', '上传目录', 'text'],
+            ['storage.generated_dir', '生成结果目录', 'text'],
+            ['prompt.technical_analysis', '技术分析摘要 prompt', 'textarea'],
+            ['prompt.rate', '利率文本生成 prompt', 'textarea'],
+            ['prompt.convertible_bond', '转债文本生成 prompt', 'textarea'],
+            ['router.enable_agent_fallback', '未命中转交通用 Agent', 'checkbox'],
+        ],
+    },
+];
+
+function investmentContentEl(id) {
+    return document.getElementById(id);
+}
+
+function investmentLoading(element) {
+    if (element) {
+        element.innerHTML = '<div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载中...</span></div>';
+    }
+}
+
+function investmentError(element, error) {
+    if (element) {
+        element.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error))}</div>`;
+    }
+}
+
+function investmentServiceLabel(value) {
+    return INVEST_SERVICE_LABELS[value] || value || '-';
+}
+
+function investmentStatusLabel(value) {
+    return INVEST_STATUS_LABELS[value] || value || '-';
+}
+
+function investmentImageUrl(path) {
+    return `/api/file?path=${encodeURIComponent(path)}`;
+}
+
+async function investmentFetchJson(url, options) {
+    const response = await fetch(url, options);
+    const text = await response.text();
+    let data = {};
+    try {
+        data = text ? JSON.parse(text) : {};
+    } catch (error) {
+        throw new Error(text || `HTTP ${response.status}`);
+    }
+    if (!response.ok) {
+        throw new Error(data.message || data.user_prompt || data.detail || `HTTP ${response.status}`);
+    }
+    if (data.status && data.status !== 'success') {
+        throw new Error(data.message || data.user_prompt || data.detail || '操作失败');
+    }
+    return data;
+}
+
+function investmentButton(icon, label, onclick, variant = 'secondary') {
+    return `<button class="investment-btn ${variant}" onclick="${onclick}"><i class="fas ${icon}"></i><span>${label}</span></button>`;
+}
+
+function investmentField(label, id, value = '', type = 'text') {
+    if (type === 'textarea') {
+        return `<label class="investment-field"><span>${label}</span><textarea id="${id}" rows="4">${escapeHtml(value || '')}</textarea></label>`;
+    }
+    if (type === 'checkbox') {
+        const checked = value === true || value === 'true' || value === '1' ? 'checked' : '';
+        return `<label class="investment-check"><input id="${id}" type="checkbox" ${checked}><span>${label}</span></label>`;
+    }
+    return `<label class="investment-field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value || '')}"></label>`;
+}
+
+function investmentStockStats(stats = {}) {
+    return `
+        <div class="investment-stat-grid">
+            <div class="investment-stat"><span>字典数量</span><strong>${escapeHtml(stats.total ?? 0)}</strong></div>
+            <div class="investment-stat"><span>最近刷新时间</span><strong>${escapeHtml(stats.latest_updated_at || '-')}</strong></div>
+            <div class="investment-stat"><span>最近刷新来源</span><strong>${escapeHtml(stats.latest_source || '-')}</strong></div>
+            <div class="investment-stat"><span>来源数量</span><strong>${escapeHtml(stats.source_count ?? 0)}</strong></div>
+        </div>`;
+}
+
+function investmentStockTools(stats = {}) {
+    return `
+        <section class="investment-panel full">
+            <div class="investment-panel-title"><i class="fas fa-chart-line"></i><span>股票字典维护</span></div>
+            ${investmentStockStats(stats)}
+            <div class="investment-inline-form investment-stock-actions">
+                <label class="investment-field investment-source-field">
+                    <span>刷新来源</span>
+                    <select id="invest-stock-refresh-source">
+                        <option value="auto">auto</option>
+                        <option value="akshare">akshare</option>
+                        <option value="tushare">tushare</option>
+                    </select>
+                </label>
+                ${investmentButton('fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+            </div>
+            <div class="investment-inline-form investment-stock-actions">
+                <label class="investment-field investment-stock-query-field">
+                    <span>股票名查询测试</span>
+                    <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛">
+                </label>
+                ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+            </div>
+            <div id="invest-stock-action-result" class="investment-muted"></div>
+            <div id="invest-stock-query-result" class="investment-table-wrap"></div>
+        </section>`;
+}
+
+function renderInvestmentStockRows(stocks = []) {
+    if (!stocks.length) return '<div class="investment-empty">暂无匹配股票</div>';
+    const rows = stocks.map(stock => `
+        <tr>
+            <td class="investment-mono">${escapeHtml(stock.code || '')}</td>
+            <td>${escapeHtml(stock.name || '')}</td>
+            <td>${escapeHtml(stock.market || '')}</td>
+            <td class="investment-mono">${escapeHtml(stock.ts_code || '')}</td>
+            <td>${escapeHtml(stock.source || '')}</td>
+            <td>${escapeHtml(stock.updated_at || '')}</td>
+        </tr>`).join('');
+    return `<table class="investment-table">
+        <thead><tr><th>代码</th><th>名称</th><th>市场</th><th>TS Code</th><th>来源</th><th>更新时间</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function renderInvestmentUsers() {
+    const element = investmentContentEl('invest-users-content');
+    investmentLoading(element);
+    try {
+        const data = await investmentFetchJson('/api/investment/users');
+        const users = data.users || [];
+        element.innerHTML = `
+            <div class="investment-layout">
+                <section class="investment-panel">
+                    <div class="investment-panel-title"><i class="fas fa-user-plus"></i><span>用户维护</span></div>
+                    <div class="investment-grid cols-3">
+                        ${investmentField('OpenID', 'invest-user-openid')}
+                        ${investmentField('姓名', 'invest-user-name')}
+                        ${investmentField('机构', 'invest-user-institution')}
+                        ${investmentField('手机号', 'invest-user-mobile')}
+                        ${investmentField('授权开始', 'invest-user-auth-start', '', 'datetime-local')}
+                        ${investmentField('授权结束', 'invest-user-auth-end', '', 'datetime-local')}
+                    </div>
+                    <div class="investment-service-row">
+                        <label><input type="checkbox" class="invest-user-service" value="全部" checked> 全部</label>
+                        <label><input type="checkbox" class="invest-user-service" value="技术分析"> 技术分析</label>
+                        <label><input type="checkbox" class="invest-user-service" value="利率"> 利率</label>
+                        <label><input type="checkbox" class="invest-user-service" value="转债"> 转债</label>
+                        <label><input id="invest-user-enabled" type="checkbox" checked> 启用</label>
+                    </div>
+                    ${investmentField('备注', 'invest-user-remark', '', 'textarea')}
+                    <div class="investment-actions">
+                        ${investmentButton('fa-floppy-disk', '保存用户', 'saveInvestmentUser()', 'primary')}
+                        ${investmentButton('fa-rotate-left', '清空表单', 'resetInvestmentUserForm()')}
+                    </div>
+                </section>
+                <section class="investment-panel">
+                    <div class="investment-panel-title"><i class="fas fa-file-excel"></i><span>Excel 导入</span></div>
+                    <div class="investment-inline-form">
+                        <input id="invest-users-import-file" type="file" accept=".xlsx,.xls">
+                        ${investmentButton('fa-upload', '导入用户', 'importInvestmentUsers()', 'primary')}
+                    </div>
+                    <div id="invest-users-import-result" class="investment-muted"></div>
+                </section>
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-users"></i><span>用户列表</span></div>
+                    ${renderInvestmentUsersTable(users)}
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+function renderInvestmentUsersTable(users) {
+    if (!users.length) return '<div class="investment-empty">暂无用户</div>';
+    const rows = users.map(user => `
+        <tr>
+            <td>${escapeHtml(user.openid)}</td>
+            <td>${escapeHtml(user.name || '')}</td>
+            <td>${escapeHtml(user.institution || '')}</td>
+            <td>${escapeHtml((user.allowed_services || []).map(investmentServiceLabel).join(', '))}</td>
+            <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
+            <td>${escapeHtml(user.auth_end_at || '')}</td>
+            <td class="investment-row-actions">
+                ${investmentButton('fa-pen', '编辑', `editInvestmentUser('${encodeURIComponent(JSON.stringify(user))}')`)}
+                ${user.enabled ? investmentButton('fa-ban', '停用', `disableInvestmentUser('${encodeURIComponent(user.openid)}')`, 'danger') : ''}
+            </td>
+        </tr>`).join('');
+    return `<div class="investment-table-wrap"><table class="investment-table">
+        <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>服务</th><th>状态</th><th>授权结束</th><th>动作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function resetInvestmentUserForm() {
+    ['openid', 'name', 'institution', 'mobile', 'auth-start', 'auth-end', 'remark'].forEach(key => {
+        const el = document.getElementById(`invest-user-${key}`);
+        if (el) el.value = '';
+    });
+    document.getElementById('invest-user-enabled').checked = true;
+    document.querySelectorAll('.invest-user-service').forEach((item, index) => item.checked = index === 0);
+}
+
+function editInvestmentUser(encoded) {
+    const user = JSON.parse(decodeURIComponent(encoded));
+    document.getElementById('invest-user-openid').value = user.openid || '';
+    document.getElementById('invest-user-name').value = user.name || '';
+    document.getElementById('invest-user-institution').value = user.institution || '';
+    document.getElementById('invest-user-mobile').value = user.mobile || '';
+    document.getElementById('invest-user-auth-start').value = (user.auth_start_at || '').slice(0, 16);
+    document.getElementById('invest-user-auth-end').value = (user.auth_end_at || '').slice(0, 16);
+    document.getElementById('invest-user-remark').value = user.remark || '';
+    document.getElementById('invest-user-enabled').checked = !!user.enabled;
+    const services = new Set((user.allowed_services || []).map(investmentServiceLabel));
+    document.querySelectorAll('.invest-user-service').forEach(item => {
+        item.checked = services.has(item.value);
+    });
+}
+
+async function saveInvestmentUser() {
+    const services = Array.from(document.querySelectorAll('.invest-user-service:checked')).map(item => item.value);
+    const body = {
+        openid: document.getElementById('invest-user-openid').value.trim(),
+        name: document.getElementById('invest-user-name').value.trim(),
+        institution: document.getElementById('invest-user-institution').value.trim(),
+        mobile: document.getElementById('invest-user-mobile').value.trim(),
+        enabled: document.getElementById('invest-user-enabled').checked,
+        allowed_services: services.length ? services : ['全部'],
+        auth_start_at: document.getElementById('invest-user-auth-start').value || null,
+        auth_end_at: document.getElementById('invest-user-auth-end').value || null,
+        remark: document.getElementById('invest-user-remark').value.trim(),
+    };
+    await investmentFetchJson('/api/investment/users', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    });
+    await renderInvestmentUsers();
+}
+
+async function disableInvestmentUser(encodedOpenid) {
+    const openid = decodeURIComponent(encodedOpenid);
+    await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/disable`, {method: 'POST'});
+    await renderInvestmentUsers();
+}
+
+async function importInvestmentUsers() {
+    const input = document.getElementById('invest-users-import-file');
+    const result = document.getElementById('invest-users-import-result');
+    if (!input.files.length) {
+        result.textContent = '请选择 Excel 文件';
+        return;
+    }
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    const data = await investmentFetchJson('/api/investment/users/import', {method: 'POST', body: form});
+    result.textContent = `导入完成：新增 ${data.created || 0}，更新 ${data.updated || 0}`;
+    await renderInvestmentUsers();
+}
+
+async function renderInvestmentContent(serviceType) {
+    const elementId = serviceType === 'rate' ? 'invest-rate-content' : 'invest-cb-content';
+    const element = investmentContentEl(elementId);
+    investmentLoading(element);
+    try {
+        const data = await investmentFetchJson(`/api/investment/daily-content?service_type=${encodeURIComponent(serviceType)}`);
+        const records = data.contents || [];
+        const isCb = serviceType === 'convertible_bond';
+        element.innerHTML = `
+            <div class="investment-layout">
+                <section class="investment-panel">
+                    <div class="investment-panel-title"><i class="fas fa-upload"></i><span>${isCb ? '转债资料上传' : '利率资料上传'}</span></div>
+                    <input type="hidden" id="invest-content-service" value="${serviceType}">
+                    ${investmentField('资料文本', 'invest-content-source-text', '', 'textarea')}
+                    ${isCb ? investmentField('段子/补充文本', 'invest-content-joke-text', '', 'textarea') : ''}
+                    <label class="investment-field"><span>资料文件</span><input id="invest-content-files" type="file" multiple></label>
+                    <label class="investment-field"><span>操作人</span><input id="invest-content-operator" type="text" value="admin"></label>
+                    <div class="investment-actions">
+                        ${investmentButton('fa-file-circle-plus', '保存草稿', 'createInvestmentContent(false)', 'primary')}
+                        ${investmentButton('fa-wand-magic-sparkles', '保存并生成', 'createInvestmentContent(true)', 'primary')}
+                    </div>
+                    <div id="invest-content-action-result" class="investment-muted"></div>
+                </section>
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容记录' : '利率内容记录'}</span></div>
+                    ${renderInvestmentContentTable(records)}
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+function renderInvestmentContentTable(records) {
+    if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
+    const rows = records.map(record => {
+        const image = record.output_image ? `<a href="${investmentImageUrl(record.output_image)}" target="_blank" rel="noopener noreferrer"><img class="investment-preview" src="${investmentImageUrl(record.output_image)}" alt="preview"></a>` : '-';
+        return `<tr>
+            <td class="investment-mono">${escapeHtml((record.content_id || '').slice(0, 8))}</td>
+            <td>${investmentServiceLabel(record.service_type)}</td>
+            <td><span class="investment-badge ${record.status === 'effective' || record.status === 'generated' ? 'ok' : record.status === 'generate_failed' ? 'fail' : ''}">${investmentStatusLabel(record.status)}</span></td>
+            <td>${image}</td>
+            <td class="investment-wide">${escapeHtml(record.status_warning || record.error_message || '')}</td>
+            <td>${escapeHtml(record.created_at || '')}</td>
+            <td class="investment-row-actions">
+                ${investmentButton('fa-rotate', '生成', `generateInvestmentContent('${record.content_id}')`)}
+                ${record.output_image ? investmentButton('fa-circle-check', '设为生效', `effectiveInvestmentContent('${record.content_id}')`, 'primary') : ''}
+            </td>
+        </tr>`;
+    }).join('');
+    return `<div class="investment-table-wrap"><table class="investment-table">
+        <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>预览</th><th>失败原因</th><th>创建时间</th><th>动作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+async function createInvestmentContent(generateAfterCreate) {
+    const serviceType = document.getElementById('invest-content-service').value;
+    const result = document.getElementById('invest-content-action-result');
+    const form = new FormData();
+    form.append('service_type', serviceType);
+    form.append('source_text', document.getElementById('invest-content-source-text').value);
+    const joke = document.getElementById('invest-content-joke-text');
+    if (joke) form.append('joke_text', joke.value);
+    form.append('operator', document.getElementById('invest-content-operator').value || 'admin');
+    Array.from(document.getElementById('invest-content-files').files || []).forEach(file => form.append('files', file));
+    const created = await investmentFetchJson('/api/investment/daily-content', {method: 'POST', body: form});
+    if (generateAfterCreate) {
+        try {
+            await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(created.content_id)}/generate`, {method: 'POST'});
+            result.textContent = '已保存并生成';
+        } catch (error) {
+            result.textContent = `已保存，生成失败：${String(error.message || error)}`;
+        }
+    } else {
+        result.textContent = '草稿已保存';
+    }
+    await renderInvestmentContent(serviceType);
+}
+
+async function generateInvestmentContent(contentId) {
+    const serviceType = currentView === 'invest-cb' ? 'convertible_bond' : 'rate';
+    try {
+        await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/generate`, {method: 'POST'});
+    } finally {
+        await renderInvestmentContent(serviceType);
+    }
+}
+
+async function effectiveInvestmentContent(contentId) {
+    await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/effective`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({operator: 'admin'}),
+    });
+    await renderInvestmentContent(currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
+}
+
+async function renderInvestmentRecords() {
+    const element = investmentContentEl('invest-records-content');
+    investmentLoading(element);
+    try {
+        const [requests, contents] = await Promise.all([
+            investmentFetchJson('/api/investment/records/requests'),
+            investmentFetchJson('/api/investment/records/contents'),
+        ]);
+        element.innerHTML = `
+            <div class="investment-layout">
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-message"></i><span>公众号请求记录</span></div>
+                    ${renderInvestmentRequestRecordsTable(requests.records || [])}
+                </section>
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-gears"></i><span>后台生成记录</span></div>
+                    ${renderInvestmentContentTable(contents.records || [])}
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+function renderInvestmentRequestRecordsTable(records) {
+    if (!records.length) return '<div class="investment-empty">暂无公众号请求记录</div>';
+    const rows = records.map(record => `<tr>
+        <td class="investment-mono">${escapeHtml((record.request_id || '').slice(0, 8))}</td>
+        <td>${escapeHtml(record.openid || '')}</td>
+        <td>${escapeHtml(record.raw_input || '')}</td>
+        <td>${investmentServiceLabel(record.service_type)}</td>
+        <td><span class="investment-badge ${record.status === 'success' ? 'ok' : 'fail'}">${investmentStatusLabel(record.status)}</span></td>
+        <td>${escapeHtml(record.error_code || '')}</td>
+        <td class="investment-wide">${escapeHtml(record.status_warning || record.error_message || record.user_prompt || '')}</td>
+        <td>${escapeHtml((record.output_files || []).join(', '))}</td>
+        <td>${escapeHtml(record.created_at || '')}</td>
+    </tr>`).join('');
+    return `<div class="investment-table-wrap"><table class="investment-table">
+        <thead><tr><th>ID</th><th>OpenID</th><th>输入</th><th>服务</th><th>状态</th><th>错误码</th><th>失败原因</th><th>输出文件</th><th>时间</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+async function renderInvestmentConfig() {
+    const element = investmentContentEl('invest-config-content');
+    investmentLoading(element);
+    try {
+        const [data, stockData] = await Promise.all([
+            investmentFetchJson('/api/investment/config'),
+            investmentFetchJson('/api/investment/stocks?limit=5'),
+        ]);
+        const configs = data.configs || {};
+        const groups = INVEST_CONFIG_GROUPS.map(group => `
+            <section class="investment-panel">
+                <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>${group.title}</span></div>
+                <div class="investment-grid cols-2">
+                    ${group.keys.map(([key, label, type]) => investmentField(label, `invest-config-${key.replaceAll('.', '-')}`, configs[key], type)).join('')}
+                </div>
+            </section>`).join('');
+        element.innerHTML = `
+            <div class="investment-layout">
+                ${groups}
+                ${investmentStockTools(stockData.stats || {})}
+                <section class="investment-panel full">
+                    <div class="investment-actions">
+                        ${investmentButton('fa-floppy-disk', '保存配置', 'saveInvestmentConfig()', 'primary')}
+                    </div>
+                    <div id="invest-config-save-result" class="investment-muted"></div>
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+async function saveInvestmentConfig() {
+    const configs = {};
+    INVEST_CONFIG_GROUPS.forEach(group => {
+        group.keys.forEach(([key, , type]) => {
+            const el = document.getElementById(`invest-config-${key.replaceAll('.', '-')}`);
+            configs[key] = type === 'checkbox' ? el.checked : el.value;
+        });
+    });
+    await investmentFetchJson('/api/investment/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({configs, operator_role: 'admin', operator: 'web-console'}),
+    });
+    document.getElementById('invest-config-save-result').textContent = '配置已保存';
+    await renderInvestmentConfig();
+}
+
+async function refreshInvestmentStocks() {
+    const resultEl = document.getElementById('invest-stock-action-result');
+    const source = document.getElementById('invest-stock-refresh-source')?.value || 'auto';
+    if (resultEl) resultEl.textContent = '刷新中...';
+    try {
+        const data = await investmentFetchJson('/api/investment/stocks/refresh', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({source}),
+        });
+        const message = `刷新完成：${JSON.stringify(data.result || {})}`;
+        await renderInvestmentConfig();
+        const nextResultEl = document.getElementById('invest-stock-action-result');
+        if (nextResultEl) nextResultEl.textContent = message;
+    } catch (error) {
+        if (resultEl) resultEl.textContent = String(error.message || error);
+    }
+}
+
+async function queryInvestmentStocks() {
+    const resultEl = document.getElementById('invest-stock-query-result');
+    const name = document.getElementById('invest-stock-query-name')?.value || '';
+    if (resultEl) resultEl.innerHTML = '<div class="investment-muted">查询中...</div>';
+    try {
+        const data = await investmentFetchJson(`/api/investment/stocks?name=${encodeURIComponent(name)}&limit=20`);
+        if (resultEl) resultEl.innerHTML = renderInvestmentStockRows(data.stocks || []);
+    } catch (error) {
+        if (resultEl) resultEl.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error.message || error))}</div>`;
+    }
+}
+
+async function renderInvestmentHealth() {
+    const element = investmentContentEl('invest-health-content');
+    investmentLoading(element);
+    try {
+        const data = await investmentFetchJson('/api/investment/health');
+        const rows = (data.checks || []).map(check => `
+            <tr>
+                <td>${escapeHtml(check.name)}</td>
+                <td><span class="investment-badge ${check.ok ? 'ok' : 'fail'}">${check.ok ? '通过' : '失败'}</span></td>
+                <td class="investment-wide">${escapeHtml(check.detail || '')}</td>
+            </tr>`).join('');
+        element.innerHTML = `
+            <div class="investment-layout">
+                <section class="investment-panel full">
+                    <div class="investment-health-summary ${data.ok ? 'ok' : 'fail'}">
+                        <i class="fas ${data.ok ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
+                        <span>${data.ok ? '关键依赖检查通过' : '存在需要处理的依赖或配置问题'}</span>
+                    </div>
+                </section>
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-heart-pulse"></i><span>检查项详情</span></div>
+                    <div class="investment-table-wrap"><table class="investment-table">
+                        <thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table></div>
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+window.resetInvestmentUserForm = resetInvestmentUserForm;
+window.editInvestmentUser = editInvestmentUser;
+window.saveInvestmentUser = saveInvestmentUser;
+window.disableInvestmentUser = disableInvestmentUser;
+window.importInvestmentUsers = importInvestmentUsers;
+window.createInvestmentContent = createInvestmentContent;
+window.generateInvestmentContent = generateInvestmentContent;
+window.effectiveInvestmentContent = effectiveInvestmentContent;
+window.saveInvestmentConfig = saveInvestmentConfig;
+window.refreshInvestmentStocks = refreshInvestmentStocks;
+window.queryInvestmentStocks = queryInvestmentStocks;
 
 document.querySelectorAll('.menu-group > button').forEach(btn => {
     btn.addEventListener('click', () => {

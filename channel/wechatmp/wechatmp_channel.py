@@ -92,6 +92,45 @@ class WechatMPChannel(ChatChannel):
         asyncio.set_event_loop(loop)
         loop.run_forever()
 
+    def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
+        if context.type == ContextType.TEXT:
+            try:
+                from business.investment.router import handle_text_message
+
+                msg = context.get("msg")
+                openid = getattr(msg, "from_user_id", context.get("session_id", ""))
+                business_reply = handle_text_message(openid, context.content)
+                if business_reply.handled:
+                    return Reply(ReplyType.TEXT, business_reply.reply_text)
+            except Exception as exc:
+                logger.exception("[wechatmp] investment router failed: {}".format(exc))
+                from business.investment.constants import ErrorCode, user_message
+
+                return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
+        return super()._generate_reply(context, reply)
+
+    def _image_storage_from_path_or_url(self, value):
+        if isinstance(value, str) and value.startswith("file://"):
+            value = value[7:]
+        if isinstance(value, str) and os.path.exists(value):
+            image_storage = open(value, "rb")
+            image_type = imghdr.what(value) or os.path.splitext(value)[1].lstrip(".") or "png"
+            return image_storage, image_type
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            pic_res = requests.get(value, stream=True)
+            image_storage = io.BytesIO()
+            for block in pic_res.iter_content(1024):
+                image_storage.write(block)
+            image_storage.seek(0)
+            image_type = imghdr.what(image_storage) or "png"
+            return image_storage, image_type
+        if hasattr(value, "seek"):
+            value.seek(0)
+            image_type = imghdr.what(value) or "png"
+            value.seek(0)
+            return value, image_type
+        raise ValueError("unsupported image content")
+
     async def delete_media(self, media_id):
         logger.debug("[wechatmp] permanent media {} will be deleted in 10s".format(media_id))
         await asyncio.sleep(10)
@@ -132,14 +171,8 @@ class WechatMPChannel(ChatChannel):
                     logger.error("[wechatmp] please install pydub: pip install pydub")
                     return
 
-            elif reply.type == ReplyType.IMAGE_URL:  # 从网络下载图片
-                img_url = reply.content
-                pic_res = requests.get(img_url, stream=True)
-                image_storage = io.BytesIO()
-                for block in pic_res.iter_content(1024):
-                    image_storage.write(block)
-                image_storage.seek(0)
-                image_type = imghdr.what(image_storage)
+            elif reply.type == ReplyType.IMAGE_URL:  # 从网络或本地文件读取图片
+                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
                 filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                 content_type = "image/" + image_type
                 try:
@@ -152,9 +185,7 @@ class WechatMPChannel(ChatChannel):
                 logger.info("[wechatmp] image uploaded, receiver {}, media_id {}".format(receiver, media_id))
                 self.cache_dict[receiver].append(("image", media_id))
             elif reply.type == ReplyType.IMAGE:  # 从文件读取图片
-                image_storage = reply.content
-                image_storage.seek(0)
-                image_type = imghdr.what(image_storage)
+                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
                 filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                 content_type = "image/" + image_type
                 try:
@@ -256,14 +287,8 @@ class WechatMPChannel(ChatChannel):
                     self.client.message.send_voice(receiver, media_id)
                     time.sleep(1)
                 logger.info("[wechatmp] Do send voice to {}".format(receiver))
-            elif reply.type == ReplyType.IMAGE_URL:  # 从网络下载图片
-                img_url = reply.content
-                pic_res = requests.get(img_url, stream=True)
-                image_storage = io.BytesIO()
-                for block in pic_res.iter_content(1024):
-                    image_storage.write(block)
-                image_storage.seek(0)
-                image_type = imghdr.what(image_storage)
+            elif reply.type == ReplyType.IMAGE_URL:  # 从网络或本地文件读取图片
+                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
                 filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                 content_type = "image/" + image_type
                 try:
@@ -275,9 +300,7 @@ class WechatMPChannel(ChatChannel):
                 self.client.message.send_image(receiver, response["media_id"])
                 logger.info("[wechatmp] Do send image to {}".format(receiver))
             elif reply.type == ReplyType.IMAGE:  # 从文件读取图片
-                image_storage = reply.content
-                image_storage.seek(0)
-                image_type = imghdr.what(image_storage)
+                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
                 filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                 content_type = "image/" + image_type
                 try:

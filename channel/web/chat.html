@@ -165,6 +165,34 @@
                     </div>
                 </div>
 
+                <!-- Investment Group -->
+                <div class="menu-group open" data-group="investment">
+                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
+                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
+                        <span>投资业务</span>
+                    </button>
+                    <div class="menu-group-items pl-2">
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-users">
+                            <i class="fas fa-users item-icon text-xs w-5 text-center"></i><span>用户管理</span>
+                        </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-rate">
+                            <i class="fas fa-chart-line item-icon text-xs w-5 text-center"></i><span>利率内容</span>
+                        </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-cb">
+                            <i class="fas fa-scale-balanced item-icon text-xs w-5 text-center"></i><span>转债内容</span>
+                        </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-records">
+                            <i class="fas fa-table-list item-icon text-xs w-5 text-center"></i><span>业务记录</span>
+                        </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-config">
+                            <i class="fas fa-shield-halved item-icon text-xs w-5 text-center"></i><span>系统配置</span>
+                        </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-health">
+                            <i class="fas fa-heart-pulse item-icon text-xs w-5 text-center"></i><span>健康检查</span>
+                        </a>
+                    </div>
+                </div>
+
                 <!-- Monitor Group -->
                 <div class="menu-group open" data-group="monitor">
                     <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
@@ -893,6 +921,60 @@
                                 <p class="text-slate-500 dark:text-slate-400 font-medium">Loading...</p>
                             </div>
                             <div id="tasks-list" class="grid gap-4 hidden"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-users" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">用户管理</h2>
+                            <div id="invest-users-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-rate" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">利率内容</h2>
+                            <div id="invest-rate-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-cb" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">转债内容</h2>
+                            <div id="invest-cb-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-records" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">业务记录</h2>
+                            <div id="invest-records-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-config" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">系统配置</h2>
+                            <div id="invest-config-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-health" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">健康检查</h2>
+                            <div id="invest-health-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
                         </div>
                     </div>
                 </div>

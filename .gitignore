@@ -40,6 +40,12 @@ ref/
 .cursor/
 local/
 node_modules/
+/investment/
+
+# local requirement drafting intermediates
+/公众号智能辅助系统需求文档.docx
+/doc
+/scripts/extract_docx_to_md.py
 
 # cow cli
 dist/

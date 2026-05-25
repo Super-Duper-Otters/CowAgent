@@ -6,14 +6,14 @@ import logging
 import mimetypes
 import os
 import threading
-import time
 import uuid
 from queue import Queue, Empty
 from typing import Tuple
+from urllib.parse import quote
 
 import web
 
-from bridge.context import *
+from bridge.context import Context, ContextType
 from bridge.reply import Reply, ReplyType
 from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
@@ -204,8 +204,35 @@ class WebMessage(ChatMessage):
         self.other_user_id = other_user_id
 
 
+def _is_investment_web_command(prompt: str) -> bool:
+    text = (prompt or "").strip()
+    return text in ("利率", "转债") or text.endswith("技术分析")
+
+
+def _format_investment_web_reply(business_reply) -> str:
+    if not business_reply.success or not business_reply.output_files:
+        return business_reply.reply_text
+    links = []
+    for path in business_reply.output_files:
+        file_name = os.path.basename(path) or "investment-output.png"
+        links.append(f"![{file_name}](/api/file?path={quote(path)})")
+    return "已生成投资业务图片：\n\n" + "\n\n".join(links)
+
+
+def _build_investment_web_reply(session_id: str, prompt: str):
+    if not _is_investment_web_command(prompt):
+        return None
+    from business.investment.router import handle_text_message
+
+    business_reply = handle_text_message(session_id, prompt, skip_permission=True)
+    if not business_reply.handled:
+        return None
+    return Reply(ReplyType.TEXT, _format_investment_web_reply(business_reply))
+
+
 @singleton
 class WebChannel(ChatChannel):
+    channel_type = "web"
     NOT_SUPPORT_REPLYTYPE = [ReplyType.VOICE]
     _instance = None
 
@@ -230,6 +257,20 @@ class WebChannel(ChatChannel):
     def _generate_request_id(self):
         """生成唯一的请求ID"""
         return str(uuid.uuid4())
+
+    def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
+        if context.type == ContextType.TEXT:
+            try:
+                session_id = context.get("session_id") or getattr(context.get("msg"), "from_user_id", "") or "web"
+                investment_reply = _build_investment_web_reply(session_id, context.content)
+                if investment_reply is not None:
+                    return investment_reply
+            except Exception as exc:
+                logger.exception(f"[WebChannel] investment router failed: {exc}")
+                from business.investment.constants import ErrorCode, user_message
+
+                return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
+        return super()._generate_reply(context, reply)
 
     def send(self, reply: Reply, context: Context):
         try:
@@ -438,7 +479,6 @@ class WebChannel(ChatChannel):
             params = _raw_web_input()
             file_obj = params.get("file")
             file_objs = params.get("files")
-            session_id = params.get("session_id", "")
             relative_path = params.get("relative_path", "")
             relative_paths = params.get("relative_paths")
             upload_id = params.get("upload_id", "")
@@ -768,6 +808,18 @@ class WebChannel(ChatChannel):
             '/api/history', 'HistoryHandler',
             '/api/logs', 'LogsHandler',
             '/api/version', 'VersionHandler',
+            '/api/investment/users/import', 'InvestmentUsersImportHandler',
+            '/api/investment/users', 'InvestmentUsersHandler',
+            '/api/investment/users/(.*)/disable', 'InvestmentUserDisableHandler',
+            '/api/investment/daily-content', 'InvestmentDailyContentHandler',
+            '/api/investment/daily-content/(.*)/generate', 'InvestmentDailyContentGenerateHandler',
+            '/api/investment/daily-content/(.*)/effective', 'InvestmentDailyContentEffectiveHandler',
+            '/api/investment/records/requests', 'InvestmentRequestRecordsHandler',
+            '/api/investment/records/contents', 'InvestmentContentRecordsHandler',
+            '/api/investment/config', 'InvestmentConfigHandler',
+            '/api/investment/stocks/refresh', 'InvestmentStocksRefreshHandler',
+            '/api/investment/stocks', 'InvestmentStocksHandler',
+            '/api/investment/health', 'InvestmentHealthHandler',
             '/assets/(.*)', 'AssetsHandler',
         )
         app = web.application(urls, globals(), autoreload=False)
@@ -2311,3 +2363,382 @@ class VersionHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         from cli import __version__
         return json.dumps({"version": __version__})
+
+
+def _investment_json_body():
+    raw = web.data() or b"{}"
+    if not raw:
+        return {}
+    return json.loads(raw.decode("utf-8"))
+
+
+def _investment_is_multipart_request():
+    content_type = getattr(web.ctx, "env", {}).get("CONTENT_TYPE", "")
+    return str(content_type).lower().startswith("multipart/form-data")
+
+
+def _investment_json_response(payload):
+    web.header('Content-Type', 'application/json; charset=utf-8')
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _investment_stock_stats():
+    from sqlalchemy import select
+    from business.investment.db import connect, row_to_dict
+    from business.investment.schema import investment_stock_symbols
+    from business.investment.stock_resolver import stock_dictionary_stats
+
+    stats = stock_dictionary_stats()
+    table = investment_stock_symbols
+    latest_updated_at = select(table.c.updated_at).order_by(table.c.updated_at.desc()).limit(1).scalar_subquery()
+    stmt = select(table.c.source).where(table.c.updated_at == latest_updated_at).order_by(table.c.source).limit(1)
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    stats["latest_source"] = row_to_dict(row).get("source", "") if row else ""
+    return stats
+
+
+class InvestmentUsersHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.user_service import list_users
+
+            params = web.input(openid='', enabled='')
+            enabled = None
+            if params.enabled != "":
+                enabled = params.enabled in ("1", "true", "True", "yes")
+            users = list_users(enabled=enabled, openid=params.openid or None)
+            return _investment_json_response({
+                "status": "success",
+                "users": [
+                    {
+                        "id": user.id,
+                        "openid": user.openid,
+                        "name": user.name,
+                        "institution": user.institution,
+                        "mobile": user.mobile,
+                        "enabled": user.enabled,
+                        "allowed_services": [str(item) for item in (user.allowed_services or [])],
+                        "auth_start_at": user.auth_start_at.isoformat() if user.auth_start_at else "",
+                        "auth_end_at": user.auth_end_at.isoformat() if user.auth_end_at else "",
+                        "remark": user.remark,
+                    }
+                    for user in users
+                ],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] users GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        _require_auth()
+        try:
+            from business.investment.user_service import create_user, update_user, get_user_by_openid
+
+            body = _investment_json_body()
+            openid = body.get("openid", "").strip()
+            if not openid:
+                return _investment_json_response({"status": "error", "message": "openid required"})
+            values = {
+                "name": body.get("name", ""),
+                "institution": body.get("institution", ""),
+                "mobile": body.get("mobile", ""),
+                "enabled": bool(body.get("enabled", True)),
+                "allowed_services": body.get("allowed_services", ["全部"]),
+                "auth_start_at": body.get("auth_start_at") or None,
+                "auth_end_at": body.get("auth_end_at") or None,
+                "remark": body.get("remark", ""),
+            }
+            if get_user_by_openid(openid):
+                update_user(openid, **values)
+                action = "updated"
+            else:
+                create_user(openid, **values)
+                action = "created"
+            return _investment_json_response({"status": "success", "action": action})
+        except Exception as e:
+            logger.error(f"[Investment] users POST error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUserDisableHandler:
+    def POST(self, openid):
+        _require_auth()
+        try:
+            from business.investment.user_service import disable_user
+
+            disable_user(openid)
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] user disable error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUsersImportHandler:
+    def POST(self):
+        _require_auth()
+        try:
+            from business.investment.user_service import import_users_from_excel
+
+            params = _raw_web_input()
+            file_obj = params.get("file")
+            if file_obj is None:
+                return _investment_json_response({"status": "error", "message": "file required"})
+            result = import_users_from_excel(_read_uploaded_file_bytes(file_obj))
+            return _investment_json_response({
+                "status": "success",
+                "created": result.created,
+                "updated": result.updated,
+            })
+        except Exception as e:
+            logger.error(f"[Investment] users import error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentDailyContentHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.records import list_content_records
+            from business.investment.constants import normalize_service, ServiceType
+
+            params = web.input(limit='50', service_type='')
+            service_type = normalize_service(params.service_type) if params.service_type else None
+            if service_type == ServiceType.UNMATCHED:
+                service_type = None
+            contents = list_content_records(limit=int(params.limit), service_type=service_type)
+            return _investment_json_response({
+                "status": "success",
+                "contents": [content.__dict__ | {
+                    "service_type": str(content.service_type),
+                    "status": str(content.status),
+                } for content in contents],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] content GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        _require_auth()
+        try:
+            from business.investment.constants import normalize_service
+            from business.investment.daily_content import create_content_draft, save_source_file, update_generation_success
+
+            source_files = []
+            if _investment_is_multipart_request():
+                params = _raw_web_input()
+                body = {
+                    "service_type": params.get("service_type", ""),
+                    "source_text": params.get("source_text", ""),
+                    "joke_text": params.get("joke_text", ""),
+                    "operator": params.get("operator", ""),
+                    "generated_text": params.get("generated_text", ""),
+                    "output_image": params.get("output_image", ""),
+                }
+                file_items = []
+                primary_file = params.get("file")
+                if primary_file is not None:
+                    file_items.append(primary_file)
+                file_items.extend(_ensure_list(params.get("files")))
+                service_type = normalize_service(body.get("service_type", ""))
+                for file_obj in file_items:
+                    filename = getattr(file_obj, "filename", "") or getattr(file_obj, "name", "") or "source.bin"
+                    source_files.append(save_source_file(service_type, os.path.basename(filename), _read_uploaded_file_bytes(file_obj)))
+            else:
+                body = _investment_json_body()
+                source_files = body.get("source_files", [])
+            service_type = normalize_service(body.get("service_type", ""))
+            source_text = body.get("source_text", "")
+            joke_text = body.get("joke_text", "")
+            if joke_text:
+                source_text = f"{source_text}\n\n{joke_text}".strip()
+            content_id = create_content_draft(
+                service_type,
+                source_files=source_files,
+                source_text=source_text,
+                operator=body.get("operator", ""),
+            )
+            if body.get("generated_text") or body.get("output_image"):
+                update_generation_success(content_id, body.get("generated_text", ""), body.get("output_image", ""))
+            return _investment_json_response({"status": "success", "content_id": content_id})
+        except Exception as e:
+            logger.error(f"[Investment] content POST error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentDailyContentGenerateHandler:
+    def POST(self, content_id):
+        _require_auth()
+        try:
+            from business.investment.daily_content import generate_content
+
+            result = generate_content(content_id)
+            payload = {
+                "status": "success" if result.success else "error",
+                "content_id": result.content_id,
+                "generated_text": result.generated_text,
+                "output_image": result.output_image,
+                "output_files": result.output_files,
+                "error_code": str(result.error_code) if result.error_code else "",
+                "user_prompt": result.user_prompt,
+                "detail": result.detail,
+            }
+            return _investment_json_response(payload)
+        except Exception as e:
+            logger.error(f"[Investment] content generate error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentDailyContentEffectiveHandler:
+    def POST(self, content_id):
+        _require_auth()
+        try:
+            from business.investment.daily_content import set_content_effective
+
+            body = _investment_json_body()
+            set_content_effective(content_id, body.get("output_image") or None, operator=body.get("operator", ""))
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] set effective error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentRequestRecordsHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.records import list_request_records
+
+            records = list_request_records(limit=int(web.input(limit='50').limit))
+            return _investment_json_response({
+                "status": "success",
+                "records": [record.__dict__ | {
+                    "service_type": str(record.service_type) if record.service_type else "",
+                    "status": str(record.status),
+                    "error_code": str(record.error_code) if record.error_code else "",
+                } for record in records],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] request records error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentContentRecordsHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.constants import ServiceType, normalize_service
+            from business.investment.records import list_content_records
+
+            params = web.input(limit='50', service_type='')
+            service_type = normalize_service(params.service_type) if params.service_type else None
+            if service_type == ServiceType.UNMATCHED:
+                service_type = None
+            records = list_content_records(limit=int(params.limit), service_type=service_type)
+            return _investment_json_response({
+                "status": "success",
+                "records": [record.__dict__ | {
+                    "service_type": str(record.service_type),
+                    "status": str(record.status),
+                } for record in records],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] content records error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentConfigHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.config_service import CONFIG_FALLBACK_KEYS, get_configs
+
+            return _investment_json_response({
+                "status": "success",
+                "configs": get_configs(list(CONFIG_FALLBACK_KEYS.keys()), masked=True),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] config GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        _require_auth()
+        try:
+            from business.investment.config_service import save_configs
+
+            body = _investment_json_body()
+            save_configs(
+                body.get("configs", {}),
+                operator_role=body.get("operator_role", "admin"),
+                operator=body.get("operator", ""),
+            )
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] config POST error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentStocksHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.stock_resolver import list_stock_symbols
+
+            params = web.input(name='', limit='20')
+            stocks = list_stock_symbols(params.name, limit=int(params.limit or 20))
+            return _investment_json_response({
+                "status": "success",
+                "stocks": stocks,
+                "stats": _investment_stock_stats(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] stocks GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentStocksRefreshHandler:
+    def POST(self):
+        _require_auth()
+        try:
+            from business.investment import stock_resolver
+
+            body = _investment_json_body()
+            source = str(body.get("source") or "auto").strip().lower()
+            if source == "auto":
+                result = stock_resolver.refresh_from_auto()
+            elif source == "akshare":
+                result = {"akshare": {"count": stock_resolver.refresh_from_akshare()}}
+            elif source == "tushare":
+                result = {"tushare": {"count": stock_resolver.refresh_from_tushare()}}
+            else:
+                return _investment_json_response({"status": "error", "message": f"unsupported source: {source}"})
+            return _investment_json_response({
+                "status": "success",
+                "result": result,
+                "stats": _investment_stock_stats(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] stocks refresh error: {e}")
+            return _investment_json_response({
+                "status": "error",
+                "message": str(e),
+                "stats": _investment_stock_stats(),
+            })
+
+
+class InvestmentHealthHandler:
+    def GET(self):
+        _require_auth()
+        try:
+            from business.investment.health import run_health_checks
+
+            checks = run_health_checks()
+            return _investment_json_response({
+                "status": "success",
+                "ok": all(item.ok for item in checks),
+                "checks": [item.__dict__ for item in checks],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] health error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
