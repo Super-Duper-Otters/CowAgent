@@ -1,0 +1,22 @@
+{
+  "channel_type": "web,wechatmp",
+  "web_console": true,
+  "web_host": "127.0.0.1",
+  "web_port": 9899,
+  "web_password": "",
+  "bot_type": "custom",
+  "model": "gpt-5.4-mini",
+  "custom_api_base": "http://127.0.0.1:56555/v1",
+  "custom_api_key": "YOUR_CUSTOM_API_KEY",
+  "enable_thinking": false,
+  "wechatmp_port": 8080,
+  "wechatmp_app_id": "YOUR_WECHATMP_APP_ID",
+  "wechatmp_app_secret": "YOUR_WECHATMP_APP_SECRET",
+  "wechatmp_token": "YOUR_WECHATMP_TOKEN",
+  "wechatmp_aes_key": "YOUR_WECHATMP_ENCODING_AES_KEY",
+  "single_chat_prefix": [
+    ""
+  ],
+  "single_chat_reply_prefix": "",
+  "plugin_trigger_prefix": "&"
+}

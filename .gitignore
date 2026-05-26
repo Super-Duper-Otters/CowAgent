@@ -52,3 +52,6 @@ dist/
 build/
 *.egg-info/
 .cow.pid
+
+# local WeChat MP webhook verification scratch tests
+/tests/test_wechatmp_crypto.py
