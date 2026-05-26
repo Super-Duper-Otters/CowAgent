@@ -413,6 +413,42 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_en
     assert payload["result"] == {"akshare": {"error": "ak failed"}, "tushare": {"count": 4}}
 
 
+def test_web_daily_content_generate_marks_generating_before_background_task(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import create_rate_content_draft
+    from business.investment.records import get_content_record
+    from channel.web.web_channel import InvestmentDailyContentGenerateHandler
+
+    content_id = create_rate_content_draft(source_text="rate source")
+    calls = []
+
+    def fake_generate_content(task_content_id):
+        calls.append(task_content_id)
+        return SimpleNamespace(
+            success=True,
+            content_id=task_content_id,
+            generated_text="",
+            output_image="",
+            output_files=[],
+            error_code=None,
+            user_prompt="",
+            detail="",
+        )
+
+    monkeypatch.setattr("business.investment.daily_content.generate_content", fake_generate_content)
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        lambda: InvestmentDailyContentGenerateHandler().POST(content_id),
+    )
+
+    assert payload["status"] == "success"
+    assert payload["content_id"] == content_id
+    assert payload["generation_status"] == "started"
+    assert get_content_record(content_id).service_type == ServiceType.RATE
+    assert get_content_record(content_id).status == Status.GENERATING
+
+
 def test_user_service_permission_edges_and_upsert(investment_env):
     from business.investment.constants import ErrorCode, ServiceType
     from business.investment.user_service import (

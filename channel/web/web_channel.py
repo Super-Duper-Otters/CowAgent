@@ -2571,15 +2571,29 @@ class InvestmentDailyContentGenerateHandler:
     def POST(self, content_id):
         _require_auth()
         try:
-            from business.investment.daily_content import generate_content
+            from business.investment.daily_content import generate_content, mark_generation_started, update_generation_failure
 
-            result = generate_content(content_id)
+            result = mark_generation_started(content_id)
+            if result.success:
+                def run_generation_task():
+                    try:
+                        generate_content(content_id)
+                    except Exception as task_error:
+                        logger.error(f"[Investment] background content generate error: {task_error}", exc_info=True)
+                        update_generation_failure(content_id, str(task_error))
+
+                threading.Thread(
+                    target=run_generation_task,
+                    name=f"investment-generate-{content_id[:8]}",
+                    daemon=True,
+                ).start()
             payload = {
                 "status": "success" if result.success else "error",
                 "content_id": result.content_id,
                 "generated_text": result.generated_text,
                 "output_image": result.output_image,
                 "output_files": result.output_files,
+                "generation_status": "started" if result.success else "",
                 "error_code": str(result.error_code) if result.error_code else "",
                 "user_prompt": result.user_prompt,
                 "detail": result.detail,

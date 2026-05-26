@@ -1426,6 +1426,10 @@
     background: #fee2e2;
     color: #991b1b;
 }
+.investment-badge.pending {
+    background: #fef3c7;
+    color: #92400e;
+}
 .dark .investment-badge {
     background: rgba(255, 255, 255, 0.08);
     color: #cbd5e1;
@@ -1438,6 +1442,31 @@
     background: rgba(239, 68, 68, 0.18);
     color: #fca5a5;
 }
+.dark .investment-badge.pending {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fcd34d;
+}
+.investment-row-actions {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+.investment-image-flow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 220px;
+}
+.investment-file-stack {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.investment-flow-arrow {
+    flex: 0 0 auto;
+    color: #35A85B;
+    font-weight: 700;
+}
 .investment-preview {
     width: 84px;
     height: 84px;
@@ -1449,6 +1478,39 @@
 .dark .investment-preview {
     border-color: rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.04);
+}
+.investment-preview-placeholder,
+.investment-file-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 84px;
+    height: 84px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    text-align: center;
+}
+.investment-file-chip {
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    text-decoration: none;
+    overflow: hidden;
+}
+.investment-file-chip span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dark .investment-preview-placeholder,
+.dark .investment-file-chip {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: #94a3b8;
 }
 .investment-empty,
 .investment-alert,

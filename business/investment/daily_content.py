@@ -131,6 +131,19 @@ def _mark_generation_started(content_id: str) -> None:
         )
 
 
+def mark_generation_started(content_id: str) -> DailyContentResult:
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_daily_contents.c.service_type).where(investment_daily_contents.c.content_id == content_id)
+        ).fetchone()
+    if row is None:
+        return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.SYSTEM_ERROR, user_prompt=user_message(ErrorCode.SYSTEM_ERROR), detail="content not found")
+    service_type = ServiceType(row_to_dict(row)["service_type"])
+    _ensure_content_service_type(service_type)
+    _mark_generation_started(content_id)
+    return DailyContentResult(True, content_id=content_id)
+
+
 def update_generation_success(content_id: str, generated_text: str, output_image: str) -> None:
     service_type: ServiceType | None = None
     with connect() as conn:

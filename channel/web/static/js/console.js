@@ -348,6 +348,9 @@ let currentView = 'chat';
 
 function navigateTo(viewId) {
     if (!VIEW_META[viewId]) return;
+    if (viewId !== 'invest-rate' && viewId !== 'invest-cb') {
+        stopInvestmentContentPolling();
+    }
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const target = document.getElementById('view-' + viewId);
     if (target) target.classList.add('active');
@@ -408,6 +411,9 @@ const INVEST_STATUS_LABELS = {
     effective: '已生效',
     archived: '已归档',
 };
+
+const INVEST_CONTENT_POLL_INTERVAL_MS = 2000;
+let investmentContentPollTimer = null;
 
 const INVEST_CONFIG_GROUPS = [
     {
@@ -488,6 +494,43 @@ function investmentStatusLabel(value) {
 
 function investmentImageUrl(path) {
     return `/api/file?path=${encodeURIComponent(path)}`;
+}
+
+function investmentFileName(path) {
+    return String(path || '').split(/[\\/]/).pop() || '文件';
+}
+
+function investmentIsImage(path) {
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || ''));
+}
+
+function investmentStatusClass(status) {
+    if (status === 'success' || status === 'generated' || status === 'effective') return 'ok';
+    if (status === 'failed' || status === 'generate_failed') return 'fail';
+    if (status === 'generating') return 'pending';
+    return '';
+}
+
+function investmentContentHasActiveTask(records = []) {
+    return records.some(record => record.status === 'generating');
+}
+
+function stopInvestmentContentPolling() {
+    if (investmentContentPollTimer) {
+        clearTimeout(investmentContentPollTimer);
+        investmentContentPollTimer = null;
+    }
+}
+
+function scheduleInvestmentContentPolling(serviceType, records = []) {
+    stopInvestmentContentPolling();
+    if (!investmentContentHasActiveTask(records)) return;
+    investmentContentPollTimer = setTimeout(() => {
+        refreshInvestmentContentRecords(serviceType).catch(error => {
+            console.error('Investment content polling failed:', error);
+            scheduleInvestmentContentPolling(serviceType, records);
+        });
+    }, INVEST_CONTENT_POLL_INTERVAL_MS);
 }
 
 async function investmentFetchJson(url, options) {
@@ -714,7 +757,7 @@ async function importInvestmentUsers() {
     await renderInvestmentUsers();
 }
 
-async function renderInvestmentContent(serviceType) {
+async function renderInvestmentContent(serviceType, options = {}) {
     const elementId = serviceType === 'rate' ? 'invest-rate-content' : 'invest-cb-content';
     const element = investmentContentEl(elementId);
     investmentLoading(element);
@@ -739,33 +782,81 @@ async function renderInvestmentContent(serviceType) {
                 </section>
                 <section class="investment-table-panel full">
                     <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容记录' : '利率内容记录'}</span></div>
-                    ${renderInvestmentContentTable(records)}
+                    <div id="invest-content-records-table">${renderInvestmentContentTable(records)}</div>
                 </section>
             </div>`;
+        const result = document.getElementById('invest-content-action-result');
+        if (result && options.message) result.textContent = options.message;
+        scheduleInvestmentContentPolling(serviceType, records);
     } catch (error) {
         investmentError(element, error);
     }
 }
 
+async function refreshInvestmentContentRecords(serviceType) {
+    const data = await investmentFetchJson(`/api/investment/daily-content?service_type=${encodeURIComponent(serviceType)}`);
+    const records = data.contents || [];
+    const table = document.getElementById('invest-content-records-table');
+    if (table) table.innerHTML = renderInvestmentContentTable(records);
+    scheduleInvestmentContentPolling(serviceType, records);
+    return records;
+}
+
+async function refreshInvestmentContentAction(serviceType) {
+    if (currentView === 'invest-records') {
+        await renderInvestmentRecords();
+        return;
+    }
+    await refreshInvestmentContentRecords(serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate'));
+}
+
+function renderInvestmentFilePreview(path, label) {
+    if (!path) return '<div class="investment-preview-placeholder">待输出</div>';
+    const safePath = escapeHtml(path);
+    const name = escapeHtml(investmentFileName(path));
+    const url = investmentImageUrl(path);
+    if (investmentIsImage(path)) {
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer" title="${safePath}"><img class="investment-preview" src="${url}" alt="${escapeHtml(label)}"></a>`;
+    }
+    return `<a class="investment-file-chip" href="${url}" target="_blank" rel="noopener noreferrer" title="${safePath}"><i class="fas fa-file"></i><span>${name}</span></a>`;
+}
+
+function renderInvestmentSourcePreviews(sourceFiles = []) {
+    const files = Array.isArray(sourceFiles) ? sourceFiles.filter(Boolean) : [];
+    if (!files.length) return '<div class="investment-preview-placeholder">无输入图</div>';
+    return files.map(path => renderInvestmentFilePreview(path, '输入图片')).join('');
+}
+
+function renderInvestmentImageFlow(record) {
+    return `<div class="investment-image-flow">
+        <div class="investment-file-stack">${renderInvestmentSourcePreviews(record.source_files || [])}</div>
+        <span class="investment-flow-arrow">→</span>
+        <div class="investment-file-stack">${renderInvestmentFilePreview(record.output_image || '', '输出图片')}</div>
+    </div>`;
+}
+
 function renderInvestmentContentTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
     const rows = records.map(record => {
-        const image = record.output_image ? `<a href="${investmentImageUrl(record.output_image)}" target="_blank" rel="noopener noreferrer"><img class="investment-preview" src="${investmentImageUrl(record.output_image)}" alt="preview"></a>` : '-';
+        const serviceType = record.service_type || '';
+        const canGenerate = record.status !== 'generating';
+        const actionServiceType = escapeHtml(serviceType);
         return `<tr>
             <td class="investment-mono">${escapeHtml((record.content_id || '').slice(0, 8))}</td>
             <td>${investmentServiceLabel(record.service_type)}</td>
-            <td><span class="investment-badge ${record.status === 'effective' || record.status === 'generated' ? 'ok' : record.status === 'generate_failed' ? 'fail' : ''}">${investmentStatusLabel(record.status)}</span></td>
-            <td>${image}</td>
+            <td><span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span></td>
+            <td>${renderInvestmentImageFlow(record)}</td>
             <td class="investment-wide">${escapeHtml(record.status_warning || record.error_message || '')}</td>
             <td>${escapeHtml(record.created_at || '')}</td>
             <td class="investment-row-actions">
-                ${investmentButton('fa-rotate', '生成', `generateInvestmentContent('${record.content_id}')`)}
-                ${record.output_image ? investmentButton('fa-circle-check', '设为生效', `effectiveInvestmentContent('${record.content_id}')`, 'primary') : ''}
+                ${investmentButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentAction('${actionServiceType}')`)}
+                ${canGenerate ? investmentButton('fa-rotate', '生成', `generateInvestmentContent('${record.content_id}', '${actionServiceType}')`) : ''}
+                ${record.output_image ? investmentButton('fa-circle-check', '设为生效', `effectiveInvestmentContent('${record.content_id}', '${actionServiceType}')`, 'primary') : ''}
             </td>
         </tr>`;
     }).join('');
     return `<div class="investment-table-wrap"><table class="investment-table">
-        <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>预览</th><th>失败原因</th><th>创建时间</th><th>动作</th></tr></thead>
+        <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>图片</th><th>失败原因</th><th>创建时间</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -773,6 +864,7 @@ function renderInvestmentContentTable(records) {
 async function createInvestmentContent(generateAfterCreate) {
     const serviceType = document.getElementById('invest-content-service').value;
     const result = document.getElementById('invest-content-action-result');
+    if (result) result.textContent = generateAfterCreate ? '保存并启动生成中...' : '保存草稿中...';
     const form = new FormData();
     form.append('service_type', serviceType);
     form.append('source_text', document.getElementById('invest-content-source-text').value);
@@ -781,35 +873,43 @@ async function createInvestmentContent(generateAfterCreate) {
     form.append('operator', document.getElementById('invest-content-operator').value || 'admin');
     Array.from(document.getElementById('invest-content-files').files || []).forEach(file => form.append('files', file));
     const created = await investmentFetchJson('/api/investment/daily-content', {method: 'POST', body: form});
+    let message = '草稿已保存';
     if (generateAfterCreate) {
         try {
             await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(created.content_id)}/generate`, {method: 'POST'});
-            result.textContent = '已保存并生成';
+            message = '已保存，生成任务已启动';
         } catch (error) {
-            result.textContent = `已保存，生成失败：${String(error.message || error)}`;
+            message = `已保存，生成启动失败：${String(error.message || error)}`;
         }
-    } else {
-        result.textContent = '草稿已保存';
     }
-    await renderInvestmentContent(serviceType);
+    await renderInvestmentContent(serviceType, {message});
 }
 
-async function generateInvestmentContent(contentId) {
-    const serviceType = currentView === 'invest-cb' ? 'convertible_bond' : 'rate';
+async function generateInvestmentContent(contentId, serviceType = '') {
+    const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
     try {
         await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/generate`, {method: 'POST'});
     } finally {
-        await renderInvestmentContent(serviceType);
+        if (currentView === 'invest-records') {
+            await renderInvestmentRecords();
+        } else {
+            await refreshInvestmentContentRecords(targetServiceType);
+        }
     }
 }
 
-async function effectiveInvestmentContent(contentId) {
+async function effectiveInvestmentContent(contentId, serviceType = '') {
+    const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
     await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/effective`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({operator: 'admin'}),
     });
-    await renderInvestmentContent(currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
+    if (currentView === 'invest-records') {
+        await renderInvestmentRecords();
+    } else {
+        await refreshInvestmentContentRecords(targetServiceType);
+    }
 }
 
 async function renderInvestmentRecords() {
@@ -975,6 +1075,7 @@ window.importInvestmentUsers = importInvestmentUsers;
 window.createInvestmentContent = createInvestmentContent;
 window.generateInvestmentContent = generateInvestmentContent;
 window.effectiveInvestmentContent = effectiveInvestmentContent;
+window.refreshInvestmentContentAction = refreshInvestmentContentAction;
 window.saveInvestmentConfig = saveInvestmentConfig;
 window.refreshInvestmentStocks = refreshInvestmentStocks;
 window.queryInvestmentStocks = queryInvestmentStocks;
