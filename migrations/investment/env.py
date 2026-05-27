@@ -7,8 +7,15 @@ from sqlalchemy import engine_from_config, pool
 from business.investment.db import get_database_url
 from business.investment.schema import metadata
 
+
+def _alembic_option_value(value: str) -> str:
+    return value.replace("%", "%%")
+
+
 config = context.config
-config.set_main_option("sqlalchemy.url", get_database_url())
+configured_url = config.get_main_option("sqlalchemy.url")
+if not configured_url or configured_url == "sqlite://":
+    config.set_main_option("sqlalchemy.url", _alembic_option_value(get_database_url()))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

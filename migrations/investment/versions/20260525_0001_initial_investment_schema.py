@@ -121,8 +121,8 @@ def upgrade() -> None:
         sa.Column("ts_code", sa.Text(), nullable=True),
         sa.Column("source", sa.Text(), nullable=False),
         sa.Column("updated_at", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("code"),
     )
-    op.create_index("idx_investment_stock_symbols_code", "investment_stock_symbols", ["code"], unique=True)
     op.create_index("idx_investment_stock_symbols_name", "investment_stock_symbols", ["name"], unique=False)
     op.create_index("idx_investment_stock_symbols_updated", "investment_stock_symbols", ["updated_at"], unique=False)
 
@@ -130,7 +130,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("idx_investment_stock_symbols_updated", table_name="investment_stock_symbols")
     op.drop_index("idx_investment_stock_symbols_name", table_name="investment_stock_symbols")
-    op.drop_index("idx_investment_stock_symbols_code", table_name="investment_stock_symbols")
     op.drop_table("investment_stock_symbols")
 
     op.drop_table("investment_configs")

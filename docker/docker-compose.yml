@@ -1,5 +1,21 @@
-version: '2.0'
 services:
+  cowagent-investment-pg:
+    image: postgres:16-alpine
+    container_name: cowagent-investment-pg
+    environment:
+      POSTGRES_DB: cowagent_investment
+      POSTGRES_USER: cowagent
+      POSTGRES_PASSWORD: cowagent
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cowagent -d cowagent_investment"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - cowagent-investment-pg-data:/var/lib/postgresql/data
+
   chatgpt-on-wechat:
     image: zhayujie/chatgpt-on-wechat
     container_name: chatgpt-on-wechat
@@ -44,5 +60,12 @@ services:
       AGENT_MAX_CONTEXT_TOKENS: 50000
       AGENT_MAX_CONTEXT_TURNS: 20
       AGENT_MAX_STEPS: 20
+      COWAGENT_INVESTMENT_DATABASE_URL: 'postgresql+psycopg://cowagent:cowagent@cowagent-investment-pg:5432/cowagent_investment'
+    depends_on:
+      cowagent-investment-pg:
+        condition: service_healthy
     volumes:
       - ./cow:/home/agent/cow
+
+volumes:
+  cowagent-investment-pg-data:

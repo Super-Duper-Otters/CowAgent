@@ -38,12 +38,26 @@ CONTENT_STATUSES = (
     Status.ARCHIVED,
 )
 
-AIGenerator = Callable[[ServiceType, str], Any]
+AIGenerator = Callable[..., Any]
 Renderer = Callable[[ServiceType, str], Any]
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _load_source_files(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if not value:
+        return []
+    try:
+        data = json.loads(str(value))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data if str(item).strip()]
 
 
 def _ensure_content_service_type(service_type: ServiceType) -> ServiceType:
@@ -179,10 +193,10 @@ def update_generation_failure(content_id: str, detail: str) -> None:
         )
 
 
-def _default_ai_generator(service_type: ServiceType, source_text: str):
+def _default_ai_generator(service_type: ServiceType, source_text: str, source_files: list[str] | None = None):
     from .ai_generation import generate_standard_text
 
-    return generate_standard_text(service_type, source_text)
+    return generate_standard_text(service_type, source_text, source_files=source_files)
 
 
 def _default_renderer(service_type: ServiceType, generated_text: str):
@@ -206,7 +220,11 @@ def generate_content(
     service_type = ServiceType(item["service_type"])
     _ensure_content_service_type(service_type)
     _mark_generation_started(content_id)
-    ai_result = (ai_generator or _default_ai_generator)(service_type, item["source_text"] or "")
+    source_files = _load_source_files(item.get("source_files"))
+    if ai_generator is None:
+        ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
+    else:
+        ai_result = ai_generator(service_type, item["source_text"] or "")
     if not ai_result.success:
         detail = sanitize_sensitive_text(getattr(ai_result, "detail", "AI generation failed"))
         code = getattr(ai_result, "error_code", None) or ErrorCode.SYSTEM_ERROR

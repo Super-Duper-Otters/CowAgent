@@ -83,13 +83,12 @@ investment_configs = Table(
 investment_stock_symbols = Table(
     "investment_stock_symbols",
     metadata,
-    Column("code", Text, nullable=False),
+    Column("code", Text, primary_key=True),
     Column("name", Text, nullable=False),
     Column("market", Text, nullable=False),
     Column("ts_code", Text),
     Column("source", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    Index("idx_investment_stock_symbols_code", "code", unique=True),
     Index("idx_investment_stock_symbols_name", "name"),
     Index("idx_investment_stock_symbols_updated", "updated_at"),
 )

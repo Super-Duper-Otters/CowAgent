@@ -11,6 +11,8 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 
 pytestmark = pytest.mark.skipif(
@@ -22,17 +24,34 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture()
 def investment_postgres_env(tmp_path, monkeypatch):
     pg_url = os.environ["COWAGENT_TEST_POSTGRES_URL"]
-    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", pg_url)
+    schema_name = f"cowagent_it_{uuid4().hex}"
+    url = make_url(pg_url)
+    schema_url = url.set(
+        query={
+            **dict(url.query),
+            "options": f"-csearch_path={schema_name}",
+        },
+    ).render_as_string(hide_password=False)
+    admin_engine = create_engine(pg_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(text(f'create schema "{schema_name}"'))
+
+    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
 
     from business.investment import db, storage
 
     db.reset_engine_for_tests()
+    storage._MIGRATED_DATABASE_URL = None
     storage.initialize_storage()
     try:
         yield
     finally:
         db.reset_engine_for_tests()
+        storage._MIGRATED_DATABASE_URL = None
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
+        admin_engine.dispose()
 
 
 def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_path):
@@ -63,6 +82,21 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
     assert inspector.has_table("investment_daily_contents")
     assert inspector.has_table("investment_output_files")
     assert inspector.has_table("investment_stock_symbols")
+    assert inspector.has_table("alembic_version")
+    with get_engine().connect() as conn:
+        alembic_versions = [row[0] for row in conn.exec_driver_sql("select version_num from alembic_version").fetchall()]
+    assert "20260525_0001" in alembic_versions
+    stock_pk = inspector.get_pk_constraint("investment_stock_symbols").get("constrained_columns") or []
+    stock_unique_columns = {
+        tuple(item.get("column_names") or [])
+        for item in inspector.get_unique_constraints("investment_stock_symbols")
+    }
+    stock_unique_columns.update(
+        tuple(index.get("column_names") or [])
+        for index in inspector.get_indexes("investment_stock_symbols")
+        if index.get("unique")
+    )
+    assert stock_pk == ["code"] or ("code",) in stock_unique_columns
 
     secret_key = f"integration.secret.{suffix}"
     secret_value = f"sk-pg-{suffix}"

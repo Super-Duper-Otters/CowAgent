@@ -2502,14 +2502,26 @@ class InvestmentDailyContentHandler:
         try:
             from business.investment.records import list_content_records
             from business.investment.constants import normalize_service, ServiceType
+            from business.investment.daily_content import get_latest_effective_content
+            from business.investment.records import get_content_record
 
             params = web.input(limit='50', service_type='')
             service_type = normalize_service(params.service_type) if params.service_type else None
             if service_type == ServiceType.UNMATCHED:
                 service_type = None
             contents = list_content_records(limit=int(params.limit), service_type=service_type)
+            current_effective = None
+            if service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
+                latest = get_latest_effective_content(service_type)
+                if latest.success and latest.content_id:
+                    record = get_content_record(latest.content_id)
+                    current_effective = record.__dict__ | {
+                        "service_type": str(record.service_type),
+                        "status": str(record.status),
+                    }
             return _investment_json_response({
                 "status": "success",
+                "current_effective": current_effective,
                 "contents": [content.__dict__ | {
                     "service_type": str(content.service_type),
                     "status": str(content.status),

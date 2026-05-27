@@ -50,13 +50,19 @@ def _check_file(name: str, value: str | None) -> HealthItem:
 
 
 def _check_model_config() -> HealthItem:
-    required = (
-        "model.provider",
-        "model.name",
-        "model.api_base",
-        "model.api_key",
-    )
-    missing = [key for key in required if not get_config(key)]
+    from .ai_generation import _global_model_config
+
+    model_config = _global_model_config()
+    missing = [
+        key
+        for key, value in (
+            ("model.provider", model_config["provider"]),
+            ("model.name", model_config["model"]),
+            ("model.api_base", model_config["api_base"]),
+            ("model.api_key", model_config["api_key"]),
+        )
+        if not value
+    ]
     if missing:
         return HealthItem("model_config", False, "model config incomplete: " + ", ".join(f"{key} missing" for key in missing))
     return HealthItem("model_config", True, "model provider/name/api base/api key configured")
@@ -168,8 +174,6 @@ def run_health_checks() -> list[HealthItem]:
     items.extend(_stock_dictionary_health_items())
     items.append(_check_tushare_token())
     items.append(_check_model_config())
-    wechat_ok = bool(get_config("wechatmp.app_id")) and bool(get_config("wechatmp.token"))
-    items.append(HealthItem("wechatmp_config", wechat_ok, "wechatmp configured" if wechat_ok else "wechatmp app_id or token missing"))
     items.append(_check_playwright_package())
     items.append(_check_playwright_chromium())
     return items

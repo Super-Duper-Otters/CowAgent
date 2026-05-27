@@ -1,9 +1,10 @@
 # encoding:utf-8
 import os
-import sqlite3
 from pathlib import Path
 
 from config import get_appdata_dir
+
+_MIGRATED_DATABASE_URL: str | None = None
 
 
 def _storage_root() -> Path:
@@ -30,21 +31,22 @@ def get_db_path() -> Path:
     return _storage_root() / "investment.db"
 
 
-def get_connection() -> sqlite3.Connection:
+def get_connection():
     initialize_storage()
-    conn = sqlite3.connect(get_db_path())
-    conn.row_factory = sqlite3.Row
-    return conn
+    from .db import get_engine
+
+    return get_engine().raw_connection()
 
 
 def initialize_storage() -> None:
+    global _MIGRATED_DATABASE_URL
     dirs = get_storage_dirs()
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
-    if not os.environ.get("COWAGENT_INVESTMENT_DATABASE_URL", "").strip():
-        db_path = get_db_path()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-    from .db import get_engine
-    from .schema import metadata
+    from . import migrations
+    from .db import get_database_url
 
-    metadata.create_all(get_engine())
+    database_url = get_database_url()
+    if _MIGRATED_DATABASE_URL != database_url:
+        migrations.upgrade("head")
+        _MIGRATED_DATABASE_URL = database_url

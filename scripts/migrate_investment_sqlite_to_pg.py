@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from business.investment import db as investment_db  # noqa: E402
+from business.investment import migrations as investment_migrations  # noqa: E402
 from business.investment import schema  # noqa: E402
 
 TABLE_NAMES = (
@@ -45,6 +46,12 @@ SEQUENCE_TABLES = (
     ("investment_users", "id"),
     ("investment_output_files", "id"),
 )
+
+SKIPPED_CONFIG_PREFIXES = ("model.", "wechatmp.")
+
+
+def upgrade_investment_schema(pg_url: str) -> None:
+    investment_migrations.upgrade("head", database_url=pg_url)
 
 
 def read_sqlite_tables(sqlite_path: str | Path) -> OrderedDict[str, list[dict]]:
@@ -110,27 +117,36 @@ def copy_tables_to_postgres(
     if not investment_db.is_postgresql_url(pg_url):
         raise ValueError("target URL must be PostgreSQL")
 
+    upgrade_investment_schema(pg_url)
     engine = engine_factory(pg_url, future=True)
+    copied_counts = {table_name: 0 for table_name in TABLE_NAMES}
     with engine.begin() as conn:
-        schema.metadata.create_all(conn)
         for table_name in TABLE_NAMES:
             rows = tables.get(table_name, [])
             if table_name == "investment_configs":
+                copied = 0
                 for row in rows:
+                    key = row["config_key"]
+                    if key.startswith(SKIPPED_CONFIG_PREFIXES):
+                        continue
                     investment_db.upsert_config(
                         conn,
-                        row["config_key"],
+                        key,
                         row.get("config_value"),
                         row["updated_at"],
                         row.get("updated_by"),
                     )
+                    copied += 1
+                copied_counts[table_name] = copied
             elif table_name == "investment_stock_symbols":
                 if rows:
                     investment_db.upsert_stock_symbols(conn, rows)
+                copied_counts[table_name] = len(rows)
             else:
                 _upsert_rows(conn, table_name, rows)
+                copied_counts[table_name] = len(rows)
         _reset_postgres_sequences(conn)
-    return {table_name: len(tables.get(table_name, [])) for table_name in TABLE_NAMES}
+    return copied_counts
 
 
 def migrate_sqlite_to_postgres(sqlite_path: str | Path, pg_url: str) -> dict:

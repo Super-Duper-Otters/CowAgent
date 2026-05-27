@@ -1,16 +1,21 @@
 # encoding:utf-8
+import base64
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from collections import OrderedDict
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
 from types import SimpleNamespace
 import sys
+from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 
 def test_investment_schema_declares_all_tables():
@@ -105,26 +110,51 @@ def _xlsx_bytes(headers, rows):
 
 @pytest.fixture()
 def investment_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWAGENT_INVESTMENT_DB_PATH", str(tmp_path / "investment.db"))
+    from business.investment import db, storage
+
+    base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
+    schema_name = f"cowagent_test_{uuid4().hex}"
+    url = make_url(base_url)
+    schema_url = url.set(
+        query={
+            **dict(url.query),
+            "options": f"-csearch_path={schema_name}",
+        },
+    ).render_as_string(hide_password=False)
+
+    admin_engine = create_engine(base_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(text(f'create schema "{schema_name}"'))
+
+    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
-    from business.investment import storage
+    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
 
+    db.reset_engine_for_tests()
+    storage._MIGRATED_DATABASE_URL = None
     storage.initialize_storage()
-    return tmp_path
+    try:
+        yield tmp_path
+    finally:
+        db.reset_engine_for_tests()
+        storage._MIGRATED_DATABASE_URL = None
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
+        admin_engine.dispose()
 
 
-def test_investment_database_url_defaults_to_sqlite(investment_env, monkeypatch):
+def test_investment_database_url_defaults_to_docker_postgres(monkeypatch):
     from business.investment import db
 
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
 
     url = db.get_database_url()
 
-    assert url.startswith("sqlite:///")
-    assert str(investment_env / "investment.db").replace("\\", "/") in url.replace("\\", "/")
+    assert url == "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55432/cowagent_investment"
 
 
-def test_investment_database_url_prefers_env(investment_env, monkeypatch):
+def test_investment_database_url_prefers_postgres_env(investment_env, monkeypatch):
     from business.investment import db
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/cowagent")
@@ -132,64 +162,42 @@ def test_investment_database_url_prefers_env(investment_env, monkeypatch):
     assert db.get_database_url() == "postgresql+psycopg://u:p@localhost:5432/cowagent"
 
 
-def test_storage_initializes_tables_and_directories_idempotently(investment_env):
-    from business.investment import storage
+def test_investment_database_url_rejects_sqlite_env(monkeypatch):
+    from business.investment import db
 
-    storage.initialize_storage()
-    storage.initialize_storage()
+    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", "sqlite:///tmp/investment.db")
 
-    assert (investment_env / "investment.db").is_file()
-
-    with storage.get_connection() as conn:
-        tables = {row["name"] for row in conn.execute("select name from sqlite_master where type='table'")}
-        assert {
-            "investment_users",
-            "investment_request_records",
-            "investment_daily_contents",
-            "investment_output_files",
-            "investment_configs",
-            "investment_stock_symbols",
-        }.issubset(tables)
-        stock_columns = {
-            row["name"]: row["notnull"]
-            for row in conn.execute("pragma table_info(investment_stock_symbols)").fetchall()
-        }
-        assert stock_columns == {
-            "code": 1,
-            "name": 1,
-            "market": 1,
-            "ts_code": 0,
-            "source": 1,
-            "updated_at": 1,
-        }
-        indexes = {row["name"] for row in conn.execute("pragma index_list(investment_stock_symbols)").fetchall()}
-        assert {
-            "idx_investment_stock_symbols_code",
-            "idx_investment_stock_symbols_name",
-            "idx_investment_stock_symbols_updated",
-        }.issubset(indexes)
-
-    assert (investment_env / "storage" / "uploads").is_dir()
-    assert (investment_env / "storage" / "generated").is_dir()
-    assert (investment_env / "storage" / "technical-analysis").is_dir()
+    with pytest.raises(ValueError, match="PostgreSQL"):
+        db.get_database_url()
 
 
-def test_storage_initializes_schema_with_metadata_create_all(tmp_path, monkeypatch):
-    from business.investment import db, schema, storage
+def test_investment_database_url_rejects_sqlite_config(monkeypatch):
+    import config
 
-    monkeypatch.setenv("COWAGENT_INVESTMENT_DB_PATH", str(tmp_path / "investment.db"))
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    from business.investment import db
+
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
+    monkeypatch.setattr(config, "conf", lambda: {"investment_database_url": "sqlite:///tmp/investment.db"})
 
-    engine = object()
+    with pytest.raises(ValueError, match="PostgreSQL"):
+        db.get_database_url()
+
+
+def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
+    from business.investment import migrations, schema, storage
+
+    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
     calls = []
 
-    monkeypatch.setattr(db, "get_engine", lambda: engine)
-    monkeypatch.setattr(schema.metadata, "create_all", lambda bind: calls.append(bind))
+    monkeypatch.setattr(migrations, "upgrade", lambda revision="head": calls.append(revision))
+    monkeypatch.setattr(schema.metadata, "create_all", lambda bind: pytest.fail("initialize_storage must use Alembic"))
 
     storage.initialize_storage()
 
-    assert calls == [engine]
+    assert calls == ["head"]
+    assert (tmp_path / "storage" / "uploads").is_dir()
+    assert (tmp_path / "storage" / "generated").is_dir()
+    assert (tmp_path / "storage" / "technical-analysis").is_dir()
 
 
 def test_investment_migration_smoke_creates_schema(investment_env):
@@ -247,26 +255,17 @@ def test_health_uses_investment_db_connection_helpers():
     assert not hasattr(health, "get_connection")
 
 
-def test_config_service_direct_call_initializes_storage_schema(tmp_path, monkeypatch):
+def test_config_service_direct_call_initializes_storage_schema(investment_env):
     from business.investment import db
     from business.investment.config_service import get_config, save_config
+    from sqlalchemy import inspect
 
-    db_path = tmp_path / "direct" / "investment.db"
-    storage_root = tmp_path / "direct-storage"
-    monkeypatch.setenv("COWAGENT_INVESTMENT_DB_PATH", str(db_path))
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(storage_root))
-    monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
     db.reset_engine_for_tests()
 
-    save_config("model.name", "direct-model", operator_role="admin")
+    save_config("tushare.token", "direct-token", operator_role="admin")
 
-    assert get_config("model.name") == "direct-model"
-    assert db_path.is_file()
-    with sqlite3.connect(db_path) as conn:
-        table_count = conn.execute(
-            "select count(*) from sqlite_master where type='table' and name='investment_configs'"
-        ).fetchone()[0]
-    assert table_count == 1
+    assert get_config("tushare.token") == "direct-token"
+    assert inspect(db.get_engine()).has_table("investment_configs")
 
 
 def test_config_masks_sensitive_values_and_checks_permissions(investment_env, monkeypatch):
@@ -278,55 +277,62 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
         safe_log_value,
     )
 
-    monkeypatch.setattr("business.investment.config_service.conf", lambda: {"model": "fallback-model"})
+    monkeypatch.setattr("business.investment.config_service.conf", lambda: {"tushare_token": "fallback-token"})
 
-    assert get_config("model.name") == "fallback-model"
-    save_config("model.api_key", "sk-1234567890abcdef", operator_role="admin")
-    assert get_config("model.api_key") == "sk-1234567890abcdef"
-    assert mask_sensitive_value("sk-1234567890abcdef") == "sk-1**********cdef"
-    assert "sk-1234567890abcdef" not in safe_log_value("model.api_key", "sk-1234567890abcdef")
+    assert get_config("tushare.token") == "fallback-token"
+    save_config("tushare.token", "ts-1234567890abcdef", operator_role="admin")
+    assert get_config("tushare.token") == "ts-1234567890abcdef"
+    assert mask_sensitive_value("ts-1234567890abcdef") == "ts-1**********cdef"
+    assert "ts-1234567890abcdef" not in safe_log_value("tushare.token", "ts-1234567890abcdef")
     assert mask_sensitive_value("abc") == "***"
-    assert can_modify_config("model.api_key", "uploader") is False
-    assert can_modify_config("model.api_key", "admin") is True
+    assert can_modify_config("tushare.token", "uploader") is False
+    assert can_modify_config("tushare.token", "admin") is True
 
 
-def test_web_console_config_save_preserves_masked_sensitive_values(investment_env):
+def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(investment_env):
+    from sqlalchemy import select
+
+    from business.investment import db
+    from business.investment.config_service import get_config, save_config, save_configs
+    from business.investment.schema import investment_configs
+
+    forbidden = {
+        "model.name": "investment-model",
+        "model.api_key": "sk-investment-secret",
+        "wechatmp.app_id": "wx-investment",
+        "wechatmp.token": "wx-token",
+    }
+
+    for key, value in forbidden.items():
+        with pytest.raises(ValueError, match="Investment config"):
+            save_config(key, value, operator_role="admin")
+
+    with pytest.raises(ValueError, match="Investment config"):
+        save_configs(forbidden, operator_role="admin")
+
+    with db.connect() as conn:
+        rows = conn.execute(select(investment_configs.c.config_key)).fetchall()
+    assert {row[0] for row in rows}.isdisjoint(forbidden)
+    assert get_config("tushare.token", "") == ""
+
+
+def test_web_console_config_save_preserves_masked_investment_sensitive_values(investment_env):
     from business.investment.config_service import get_config, get_configs, save_configs
 
-    api_key = "sk-console-secret-1234567890"
+    token = "ts-console-secret-1234567890"
+    save_configs({"tushare.token": token, "router.enable_agent_fallback": False}, operator_role="admin")
+
+    masked = get_configs(["tushare.token", "router.enable_agent_fallback"], masked=True)
     save_configs(
         {
-            "model.api_key": api_key,
-            "model.name": "old-model",
+            "tushare.token": masked["tushare.token"],
+            "router.enable_agent_fallback": True,
         },
         operator_role="admin",
     )
 
-    masked = get_configs(["model.api_key", "model.name"], masked=True)
-    save_configs(
-        {
-            "model.api_key": masked["model.api_key"],
-            "model.name": "new-model",
-        },
-        operator_role="admin",
-    )
-
-    assert get_config("model.api_key") == api_key
-    assert get_config("model.name") == "new-model"
-
-
-def test_web_console_config_save_preserves_masked_fallback_sensitive_values(investment_env, monkeypatch):
-    from business.investment import config_service
-    from business.investment.config_service import get_config, get_configs, save_configs
-
-    api_key = "sk-fallback-secret-1234567890"
-    monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
-
-    masked = get_configs(["model.api_key"], masked=True)
-    save_configs({"model.api_key": masked["model.api_key"], "model.name": "configured-model"}, operator_role="admin")
-
-    assert get_config("model.api_key") == api_key
-    assert get_config("model.name") == "configured-model"
+    assert get_config("tushare.token") == token
+    assert get_config("router.enable_agent_fallback") is True
 
 
 def _call_investment_json_handler(monkeypatch, handler, *, params=None, body=None):
@@ -355,6 +361,42 @@ def test_web_investment_config_returns_masked_tushare_token(investment_env, monk
     assert payload["status"] == "success"
     assert payload["configs"]["tushare.token"] == "ts-w**********7890"
     assert "ts-web-secret-1234567890" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_keys(investment_env, monkeypatch):
+    from sqlalchemy import select
+
+    from business.investment import db
+    from business.investment.schema import investment_configs
+    from channel.web.web_channel import InvestmentConfigHandler
+
+    body = {
+        "configs": {
+            "model.name": "bad-investment-model",
+            "model.api_key": "sk-bad-investment",
+            "wechatmp.app_id": "wx-bad",
+            "tushare.token": "ts-web-secret-1234567890",
+        },
+        "operator_role": "admin",
+    }
+
+    post_payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().POST, body=body)
+
+    assert post_payload["status"] == "error"
+    assert "model.name" in post_payload["message"]
+    assert "wechatmp.app_id" in post_payload["message"]
+    with db.connect() as conn:
+        keys = {
+            row[0]
+            for row in conn.execute(select(investment_configs.c.config_key)).fetchall()
+        }
+    assert keys.isdisjoint({"model.name", "model.api_key", "wechatmp.app_id"})
+    assert "tushare.token" not in keys
+
+    get_payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().GET)
+    assert get_payload["status"] == "success"
+    assert "tushare.token" in get_payload["configs"]
+    assert not any(key.startswith(("model.", "wechatmp.")) for key in get_payload["configs"])
 
 
 def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_env, monkeypatch):
@@ -447,6 +489,34 @@ def test_web_daily_content_generate_marks_generating_before_background_task(inve
     assert payload["generation_status"] == "started"
     assert get_content_record(content_id).service_type == ServiceType.RATE
     assert get_content_record(content_id).status == Status.GENERATING
+
+
+def test_web_daily_content_get_returns_current_effective_content(investment_env, tmp_path, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from channel.web.web_channel import InvestmentDailyContentHandler
+
+    image = tmp_path / "rate-current.png"
+    image.write_bytes(b"png")
+    older_image = tmp_path / "rate-older.png"
+    older_image.write_bytes(b"png")
+    older_id = create_content_draft(ServiceType.RATE, source_text="older", operator="operator-old")
+    current_id = create_content_draft(ServiceType.RATE, source_text="current", operator="operator-current")
+    set_content_effective(older_id, str(older_image), operator="operator-old")
+    set_content_effective(current_id, str(image), operator="operator-current")
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "rate", "limit": "50"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["current_effective"]["content_id"] == current_id
+    assert payload["current_effective"]["service_type"] == ServiceType.RATE
+    assert payload["current_effective"]["status"] == "effective"
+    assert payload["current_effective"]["output_image"] == str(image)
+    assert payload["current_effective"]["operator"] == "operator-current"
 
 
 def test_user_service_permission_edges_and_upsert(investment_env):
@@ -618,17 +688,20 @@ def test_records_save_failure_success_and_order(investment_env):
 
 def test_old_generating_request_records_are_flagged_without_mutating_status(investment_env):
     from business.investment.constants import ServiceType, Status
+    from business.investment.db import connect
     from business.investment.records import create_request_record, get_request_record, list_request_records
-    from business.investment.storage import get_connection
 
     request_id = create_request_record("openid", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     old_created_at = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
-    with get_connection() as conn:
+    with connect() as conn:
         conn.execute(
-            "update investment_request_records set created_at = ?, updated_at = ? where request_id = ?",
-            (old_created_at, old_created_at, request_id),
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :updated_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": old_created_at, "updated_at": old_created_at, "request_id": request_id},
         )
-        conn.commit()
 
     record = list_request_records(limit=1)[0]
     persisted = get_request_record(request_id)
@@ -641,18 +714,21 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(inve
 
 def test_request_records_api_includes_generating_timeout_warning(investment_env, monkeypatch):
     from business.investment.constants import ServiceType
+    from business.investment.db import connect
     from business.investment.records import create_request_record
-    from business.investment.storage import get_connection
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     request_id = create_request_record("openid", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     old_created_at = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
-    with get_connection() as conn:
+    with connect() as conn:
         conn.execute(
-            "update investment_request_records set created_at = ?, updated_at = ? where request_id = ?",
-            (old_created_at, old_created_at, request_id),
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :updated_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": old_created_at, "updated_at": old_created_at, "request_id": request_id},
         )
-        conn.commit()
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -688,16 +764,19 @@ def test_batch_01_service_results_share_contract_fields(investment_env):
 
 def test_success_request_records_output_files_table(investment_env):
     from business.investment.constants import ServiceType
+    from business.investment.db import connect
     from business.investment.records import record_success_request
-    from business.investment.storage import get_connection
 
     request_id = record_success_request("openid", "利率", ServiceType.RATE, ["/tmp/rate.png"], elapsed_ms=3)
 
-    with get_connection() as conn:
+    with connect() as conn:
         rows = conn.execute(
-            "select owner_id, file_path, file_type, service_type from investment_output_files where owner_id = ?",
-            (request_id,),
-        ).fetchall()
+            text(
+                "select owner_id, file_path, file_type, service_type "
+                "from investment_output_files where owner_id = :request_id"
+            ),
+            {"request_id": request_id},
+        ).mappings().all()
 
     assert [dict(row) for row in rows] == [
         {
@@ -709,14 +788,15 @@ def test_success_request_records_output_files_table(investment_env):
     ]
 
 
-def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env):
-    from business.investment.config_service import save_config, safe_log_value
+def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
+    from business.investment import config_service
+    from business.investment.config_service import safe_log_value
     from business.investment.constants import ServiceType
     from business.investment.daily_content import create_content_draft, regenerate_content
     from business.investment.records import get_content_record
 
     api_key = "sk-live-secret-1234567890"
-    save_config("model.api_key", api_key, operator_role="admin")
+    monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
 
     ai_content_id = create_content_draft(ServiceType.RATE, source_text="rate")
     ai_result = regenerate_content(
@@ -742,24 +822,41 @@ def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env
     assert api_key not in safe_log_value("model.api_key", api_key)
 
 
-def test_ai_generation_uses_configured_model_params_prompts_and_result_contract(investment_env):
+def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_rows(investment_env, monkeypatch):
     from business.investment.ai_generation import (
         AIGenerationRequest,
         generate_convertible_bond_text,
         generate_rate_text,
         generate_technical_analysis_text,
     )
+    from business.investment import config_service, db
     from business.investment.config_service import save_configs
     from business.investment.constants import ServiceType, Status
 
-    api_key = "sk-ai-contract-1234567890"
+    api_key = "sk-global-contract-1234567890"
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "global-model",
+            "custom_api_base": "https://global.example/v1",
+            "custom_api_key": api_key,
+            "temperature": 0.25,
+        },
+    )
+    now = datetime.now(UTC).isoformat(timespec="microseconds")
+    with db.connect() as conn:
+        for key, value in {
+            "model.provider": "legacy-provider",
+            "model.name": "legacy-model",
+            "model.api_base": "https://legacy.example/v1",
+            "model.api_key": "sk-legacy-secret",
+            "model.temperature": 0.99,
+        }.items():
+            db.upsert_config(conn, key, json.dumps(value), now, "legacy")
     save_configs(
         {
-            "model.provider": "custom",
-            "model.name": "investment-model",
-            "model.api_base": "https://model.example/v1",
-            "model.api_key": api_key,
-            "model.temperature": 0.25,
             "prompt.technical_analysis": "TA prompt",
             "prompt.rate": "Rate prompt",
             "prompt.convertible_bond": "CB prompt",
@@ -785,8 +882,8 @@ def test_ai_generation_uses_configured_model_params_prompts_and_result_contract(
     ]
     assert [request.prompt for request in seen] == ["TA prompt", "Rate prompt", "CB prompt"]
     assert all(request.model_provider == "custom" for request in seen)
-    assert all(request.model_name == "investment-model" for request in seen)
-    assert all(request.api_base == "https://model.example/v1" for request in seen)
+    assert all(request.model_name == "global-model" for request in seen)
+    assert all(request.api_base == "https://global.example/v1" for request in seen)
     assert all(request.api_key == api_key for request in seen)
     assert all(request.temperature == 0.25 for request in seen)
 
@@ -800,23 +897,339 @@ def test_ai_generation_uses_configured_model_params_prompts_and_result_contract(
     assert api_key not in str(ta.model_params)
     assert ta.model_params == {
         "provider": "custom",
-        "model": "investment-model",
-        "api_base": "https://model.example/v1",
-        "api_key": "sk-a**********7890",
+        "model": "global-model",
+        "api_base": "https://global.example/v1",
+        "api_key": "sk-g**********7890",
         "temperature": 0.25,
     }
     assert rate.generated_text == "standard:rate:Rate prompt:rate source"
     assert cb.generated_text == "standard:convertible_bond:CB prompt:cb source"
 
 
-def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env):
+def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(investment_env, monkeypatch):
+    from business.investment import config_service
+    from business.investment.ai_generation import build_generation_request
+    from business.investment.constants import ServiceType
+
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "global-model",
+            "custom_api_base": "https://global.example/v1",
+            "custom_api_key": "sk-global-contract-1234567890",
+        },
+    )
+
+    request = build_generation_request(ServiceType.TECHNICAL_ANALYSIS, "ta report")
+
+    for required in (
+        "标的：",
+        "信号方向：",
+        "最新收盘：",
+        "行情日期：",
+        "趋势研判",
+        "核心关键位",
+        "强压力：",
+        "强支撑：",
+        "实操指引",
+        "授权剩余时间：",
+        "数据来源：",
+        "业务对接：",
+    ):
+        assert required in request.prompt
+    assert "禁止输出 Markdown 表格" in request.prompt
+    assert "只输出卡片正文" in request.prompt
+
+
+@pytest.mark.parametrize(
+    ("global_config", "expected"),
+    [
+        (
+            {
+                "bot_type": "zhipu",
+                "model": "glm-5.1",
+                "zhipu_ai_api_base": "https://zhipu.example/v4",
+                "zhipu_ai_api_key": "sk-zhipu",
+                "temperature": 0.41,
+            },
+            {
+                "provider": "zhipu",
+                "model": "glm-5.1",
+                "api_base": "https://zhipu.example/v4",
+                "api_key": "sk-zhipu",
+                "temperature": 0.41,
+            },
+        ),
+        (
+            {
+                "bot_type": "",
+                "model": "glm-5.1",
+                "zhipu_ai_api_base": "https://zhipu-inferred.example/v4",
+                "zhipu_ai_api_key": "sk-zhipu-inferred",
+            },
+            {
+                "provider": "zhipu",
+                "model": "glm-5.1",
+                "api_base": "https://zhipu-inferred.example/v4",
+                "api_key": "sk-zhipu-inferred",
+                "temperature": 0.7,
+            },
+        ),
+        (
+            {
+                "bot_type": "",
+                "model": "qwen3-max",
+                "dashscope_api_base": "https://dashscope.example/compatible-mode/v1",
+                "dashscope_api_key": "sk-dashscope",
+            },
+            {
+                "provider": "dashscope",
+                "model": "qwen3-max",
+                "api_base": "https://dashscope.example/compatible-mode/v1",
+                "api_key": "sk-dashscope",
+                "temperature": 0.7,
+            },
+        ),
+        (
+            {
+                "use_linkai": True,
+                "linkai_api_base": "https://link.example",
+                "linkai_api_key": "sk-linkai",
+                "model": "gpt-5.4-mini",
+            },
+            {
+                "provider": "linkai",
+                "model": "gpt-5.4-mini",
+                "api_base": "https://link.example/v1",
+                "api_key": "sk-linkai",
+                "temperature": 0.7,
+            },
+        ),
+        (
+            {
+                "bot_type": "deepseek",
+                "model": "deepseek-v4-flash",
+                "deepseek_api_base": "https://deepseek.example/v1",
+                "custom_api_key": "sk-custom-should-not-be-used",
+            },
+            {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "api_base": "https://deepseek.example/v1",
+                "api_key": "",
+                "temperature": 0.7,
+            },
+        ),
+    ],
+)
+def test_global_model_config_resolves_configured_and_inferred_providers(monkeypatch, global_config, expected):
+    from business.investment import config_service
+    from business.investment.ai_generation import _global_model_config
+
+    monkeypatch.setattr(config_service, "conf", lambda: global_config)
+
+    assert _global_model_config() == expected
+
+
+def test_ai_generation_sends_image_source_files_as_multimodal_content(investment_env, tmp_path, monkeypatch):
+    from business.investment import config_service
+    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+
+    image_bytes = b"\x89PNG\r\n\x1a\nimage"
+    image_path = tmp_path / "rate-source.png"
+    image_path.write_bytes(image_bytes)
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "vision-model",
+            "custom_api_base": "https://model.example/v1",
+            "custom_api_key": "sk-image-source-1234567890",
+        },
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def chat_completions(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"choices": [{"message": {"content": "standard rate text"}}]}
+
+    client = FakeClient()
+
+    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(client=client))
+
+    assert result.success is True
+    messages = client.calls[0]["messages"]
+    assert messages[1]["role"] == "user"
+    content = messages[1]["content"]
+    assert content[0]["type"] == "text"
+    assert str(image_path) in content[0]["text"]
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}",
+        },
+    }
+
+
+def test_ai_generation_retries_transient_model_connection_errors(investment_env, monkeypatch):
+    from business.investment import config_service
+    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+    from models.openai.openai_http_client import OpenAIHTTPError
+
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "mimo-v2.5",
+            "custom_api_base": "https://model.example/v1",
+            "custom_api_key": "sk-retry-source-1234567890",
+        },
+    )
+
+    class FlakyClient:
+        def __init__(self):
+            self.calls = 0
+
+        def chat_completions(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise OpenAIHTTPError(0, {}, "Connection error: SSL EOF")
+            return {"choices": [{"message": {"content": "standard rate text"}}]}
+
+    client = FlakyClient()
+
+    result = generate_rate_text("rate source", adapter=ExistingModelAdapter(client=client))
+
+    assert result.success is True
+    assert result.text == "standard rate text"
+    assert client.calls == 2
+
+
+def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_env, tmp_path, monkeypatch):
+    from business.investment import config_service
+    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+
+    image_path = tmp_path / "rate-source.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "vision-model",
+            "custom_api_base": "https://model.example/v1",
+            "custom_api_key": "sk-image-source-1234567890",
+        },
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def chat_completions(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return {"choices": [{"message": {"content": "OCR: 2026-05-25 108.970 入场（3/8）"}}]}
+            return {"choices": [{"message": {"content": "standard rate card text"}}]}
+
+    client = FakeClient()
+
+    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(client=client))
+
+    assert result.success is True
+    assert result.text == "standard rate card text"
+    assert len(client.calls) == 2
+    assert any(block.get("type") == "image_url" for block in client.calls[0]["messages"][1]["content"])
+    assert client.calls[1]["messages"][1]["content"] == (
+        "以下是上传图片的识别结果，请据此生成标准卡片文本。禁止要求用户再提供原文；"
+        "缺失字段按系统要求填“——”。\n\nOCR: 2026-05-25 108.970 入场（3/8）"
+    )
+
+
+def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_env):
     from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
     from business.investment.config_service import save_config
+
+    save_config("prompt.rate", "", operator_role="admin")
+    seen: list[AIGenerationRequest] = []
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            seen.append(request)
+            return "standard rate text"
+
+    result = generate_rate_text("rate source", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert seen[0].prompt
+    assert "必须只输出卡片正文" in seen[0].prompt
+    assert "当日核心信号" in seen[0].prompt
+
+
+def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(investment_env):
+    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return (
+                "标的：T主力合约；最新收盘：108.970元；行情日期：2026-05-25；分析模型：交易性择时日度信号跟踪；"
+                "当日核心信号：当前维持入场信号，复合策略信号稳定在3/8；复合策略信号：入场（3/8）；"
+                "多头：单均线、双均线、通道过滤；空头：阶距、隔夜共振；日度主线：空头子信号共振提示短期需保持谨慎；"
+                "周度全景复盘：近一周复合策略信号由6/8逐步降至3/8；近一周整体信号：偏谨慎入场；"
+                "周度主线：多头动能收敛；授权剩余时间：——；业务对接：联系人：辛仑豪/刘静烨，13681991121；数据来源：Wind"
+            )
+
+    result = generate_rate_text("rate source", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "📊 当日核心信号\n复合策略信号：入场（3/8）" in result.text
+    assert "多头：单均线、双均线、通道过滤；空头：阶距、隔夜共振" in result.text
+    assert "📊 周度全景复盘\n近一周整体信号：偏谨慎入场" in result.text
+    assert result.generated_text == result.text
+
+
+def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(investment_env):
+    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return """标的：T主力合约
+最新收盘：108.970元
+行情日期：2026-05-25
+分析模型：交易性择时日度信号跟踪
+当日核心信号：复合策略信号入场（3/8），模型整体偏多格局未变
+复合策略信号：入场（3/8）
+多头：单均线、双均线、通道过滤；空头：阶距、隔夜共振
+日度主线：继续跟随量化模型
+周度全景复盘：近一周复合策略信号回落至3/8
+近一周整体信号：入场为主
+周度主线：多头主线未变
+授权剩余时间：——
+业务对接：幸仁豪 / 刘静怡 / 13681991121"""
+
+    result = generate_rate_text("rate source", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "📊 当日核心信号\n复合策略信号：入场（3/8）" in result.text
+    assert "▪️复合策略信号入场（3/8），模型整体偏多格局未变" in result.text
+    assert "📊 周度全景复盘\n近一周整体信号：入场为主" in result.text
+
+
+def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env, monkeypatch):
+    from business.investment import config_service
+    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
     from business.investment.constants import ErrorCode, Status
     from business.investment.health import run_health_checks
 
     api_key = "sk-ai-failure-1234567890"
-    save_config("model.api_key", api_key, operator_role="admin")
+    monkeypatch.setattr(config_service, "conf", lambda: {"bot_type": "custom", "custom_api_key": api_key})
 
     class FailingAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
@@ -834,7 +1247,6 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(investmen
 
     model_health = next(item for item in run_health_checks() if item.name == "model_config")
     assert model_health.ok is False
-    assert "model.provider missing" in model_health.detail
     assert "model.name missing" in model_health.detail
     assert "model.api_base missing" in model_health.detail
     assert "model.api_key" not in model_health.detail or api_key not in model_health.detail
@@ -862,21 +1274,23 @@ def test_model_health_check_accepts_global_config_fallback(investment_env, monke
     assert api_key not in model_health.detail
 
 
-def test_ai_generation_configured_adapter_uses_existing_model_http_client(investment_env):
+def test_ai_generation_configured_adapter_uses_existing_model_http_client(investment_env, monkeypatch):
+    from business.investment import config_service
     from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
     from business.investment.config_service import save_configs
 
-    save_configs(
-        {
-            "model.provider": "custom",
-            "model.name": "configured-model",
-            "model.api_base": "https://configured.example/v1",
-            "model.api_key": "sk-http-client-1234567890",
-            "model.temperature": 0.33,
-            "prompt.rate": "Configured rate prompt",
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "configured-model",
+            "custom_api_base": "https://configured.example/v1",
+            "custom_api_key": "sk-http-client-1234567890",
+            "temperature": 0.33,
         },
-        operator_role="admin",
     )
+    save_configs({"prompt.rate": "Configured rate prompt"}, operator_role="admin")
 
     class FakeClient:
         def __init__(self):
@@ -907,8 +1321,8 @@ def test_ai_generation_configured_adapter_uses_existing_model_http_client(invest
     ]
 
 
-def test_technical_analysis_failure_records_sanitized_backend_detail(investment_env):
-    from business.investment.config_service import save_config
+def test_technical_analysis_failure_records_sanitized_backend_detail(investment_env, monkeypatch):
+    from business.investment import config_service
     from business.investment.constants import ErrorCode, ServiceType
     from business.investment.records import list_request_records
     from business.investment.router import handle_text_message
@@ -916,7 +1330,7 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(investment_
     from business.investment.user_service import create_user
 
     api_key = "sk-ta-secret-1234567890"
-    save_config("model.api_key", api_key, operator_role="admin")
+    monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
 
     reply = handle_text_message(
@@ -1384,6 +1798,24 @@ def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypat
             },
         )
         conn.execute(
+            schema.investment_configs.insert(),
+            {
+                "config_key": "wechatmp.token",
+                "config_value": "wx-test-token",
+                "updated_at": now,
+                "updated_by": "admin",
+            },
+        )
+        conn.execute(
+            schema.investment_configs.insert(),
+            {
+                "config_key": "tushare.token",
+                "config_value": "ts-test-token",
+                "updated_at": now,
+                "updated_by": "admin",
+            },
+        )
+        conn.execute(
             schema.investment_stock_symbols.insert(),
             {
                 "code": "300502.SZ",
@@ -1404,7 +1836,10 @@ def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypat
         "investment_configs",
         "investment_stock_symbols",
     ]
-    assert {name: len(rows) for name, rows in tables.items()} == {name: 1 for name in tables}
+    assert {name: len(rows) for name, rows in tables.items()} == {
+        **{name: 1 for name in tables},
+        "investment_configs": 3,
+    }
 
     calls = []
 
@@ -1425,7 +1860,13 @@ def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypat
         def begin(self):
             return FakeBegin()
 
-    monkeypatch.setattr(schema.metadata, "create_all", lambda conn: calls.append(("create_all", conn)))
+    monkeypatch.setattr(schema.metadata, "create_all", lambda conn: pytest.fail("migration target schema must be built by Alembic"))
+    monkeypatch.setattr(
+        migrate_investment_sqlite_to_pg,
+        "upgrade_investment_schema",
+        lambda pg_url: calls.append(("alembic_upgrade", pg_url)),
+        raising=False,
+    )
     monkeypatch.setattr(
         migrate_investment_sqlite_to_pg.investment_db,
         "upsert_config",
@@ -1443,10 +1884,18 @@ def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypat
         engine_factory=lambda url, future: calls.append(("engine", url, future)) or FakeEngine(),
     )
 
-    assert summary == {name: 1 for name in tables}
-    assert calls[0][0] == "engine"
-    assert calls[1][0] == "create_all"
-    assert any(call[:2] == ("config", "model.api_key") for call in calls)
+    assert summary == {
+        **{name: 1 for name in tables},
+        "investment_configs": 1,
+    }
+    assert ("engine", "postgresql+psycopg://user:secret@localhost:5432/cowagent", True) in calls
+    assert ("alembic_upgrade", "postgresql+psycopg://user:secret@localhost:5432/cowagent") in calls
+    assert calls.index(("alembic_upgrade", "postgresql+psycopg://user:secret@localhost:5432/cowagent")) < next(
+        index for index, call in enumerate(calls) if call[0] in {"execute", "config", "stocks"}
+    )
+    assert any(call[:3] == ("config", "tushare.token", "ts-test-token") for call in calls)
+    assert not any(call[:2] == ("config", "model.api_key") for call in calls)
+    assert not any(call[:2] == ("config", "wechatmp.token") for call in calls)
     assert any(call[0] == "stocks" and call[1][0]["code"] == "300502.SZ" for call in calls)
     assert len([call for call in calls if call[0] == "execute"]) == 6
 
@@ -1474,9 +1923,15 @@ def test_sqlite_to_pg_migration_resets_postgres_sequences_after_copy(monkeypatch
             return FakeBegin()
 
     monkeypatch.setattr(
+        migrate_investment_sqlite_to_pg,
+        "upgrade_investment_schema",
+        lambda pg_url: calls.append(("alembic_upgrade", pg_url)),
+        raising=False,
+    )
+    monkeypatch.setattr(
         migrate_investment_sqlite_to_pg.schema.metadata,
         "create_all",
-        lambda conn: calls.append(("create_all", conn)),
+        lambda conn: pytest.fail("migration target schema must be built by Alembic"),
     )
     monkeypatch.setattr(
         migrate_investment_sqlite_to_pg.investment_db,
@@ -1729,6 +2184,96 @@ def test_daily_content_create_upload_generate_and_failure_records(investment_env
     assert failed_record.service_type == ServiceType.CONVERTIBLE_BOND
     assert failed_record.status == Status.GENERATE_FAILED
     assert failed_record.error_message == "model rejected payload"
+
+
+def test_daily_content_default_generation_passes_uploaded_source_files(investment_env, tmp_path, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_rate_content_draft, generate_content
+
+    uploaded = tmp_path / "uploaded-rate.png"
+    uploaded.write_bytes(b"png")
+    content_id = create_rate_content_draft(source_files=[str(uploaded)], source_text="", operator="operator-a")
+    captured = {}
+
+    def fake_generate_standard_text(service_type, source_text, *, source_files=None):
+        captured["service_type"] = service_type
+        captured["source_text"] = source_text
+        captured["source_files"] = source_files
+        return SimpleNamespace(success=True, text="standard rate text")
+
+    monkeypatch.setattr(
+        "business.investment.ai_generation.generate_standard_text",
+        fake_generate_standard_text,
+    )
+
+    result = generate_content(
+        content_id,
+        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path="/generated/rate.png"),
+    )
+
+    assert result.success is True
+    assert captured == {
+        "service_type": ServiceType.RATE,
+        "source_text": "",
+        "source_files": [str(uploaded)],
+    }
+
+
+def test_daily_content_default_image_generation_renders_png_with_fake_model(investment_env, tmp_path, monkeypatch):
+    from business.investment import config_service
+    from business.investment.config_service import save_configs
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.investment.records import get_content_record
+
+    source_image = tmp_path / "uploaded-rate.png"
+    source_image.write_bytes(b"\x89PNG\r\n\x1a\nimage")
+    output_dir = tmp_path / "generated"
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "vision-model",
+            "custom_api_base": "https://model.example/v1",
+            "custom_api_key": "sk-e2e-image-1234567890",
+        },
+    )
+    save_configs(
+        {"render.output_dir": str(output_dir)},
+        operator_role="admin",
+    )
+    standard_text = Path("skills/signal-card-renderer/examples/bond_sample.txt").read_text(encoding="utf-8")
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def chat_completions(self, **kwargs):
+            self.calls.append(kwargs)
+            user_content = kwargs["messages"][1]["content"]
+            if len(self.calls) == 1:
+                assert any(block.get("type") == "image_url" for block in user_content)
+                return {"choices": [{"message": {"content": "OCR: 2026-05-25 108.970 入场（3/8）"}}]}
+            assert "必须只输出卡片正文" in kwargs["messages"][0]["content"]
+            assert "OCR: 2026-05-25 108.970 入场（3/8）" in user_content
+            return {"choices": [{"message": {"content": standard_text}}]}
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "models.openai.openai_http_client.get_default_client",
+        lambda: fake_client,
+    )
+
+    content_id = create_rate_content_draft(source_files=[str(source_image)], source_text="", operator="operator-a")
+    result = generate_content(content_id)
+
+    assert result.success is True
+    assert Path(result.output_image).is_file()
+    assert Path(result.output_image).stat().st_size > 0
+    assert result.output_image == str(output_dir / f"{ServiceType.RATE}_card.png")
+    assert get_content_record(content_id).output_image == result.output_image
+    assert fake_client.calls
 
 
 def test_daily_content_records_filter_by_service_type_for_console_pages(investment_env):
@@ -1995,6 +2540,7 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
 
 def test_health_check_reports_all_dependencies_available(investment_env, tmp_path, monkeypatch):
     from business.investment import health
+    from business.investment import config_service
     from business.investment.config_service import save_configs
     from business.investment.stock_resolver import refresh_stock_symbols
 
@@ -2011,18 +2557,22 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     generated_dir = tmp_path / "generated"
     upload_dir.mkdir()
     generated_dir.mkdir()
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "bot_type": "custom",
+            "model": "model",
+            "custom_api_base": "https://model.example/v1",
+            "custom_api_key": "sk-health-ok-1234567890",
+        },
+    )
     save_configs(
         {
             **{key: str(path) for key, path in files.items()},
             "storage.upload_dir": str(upload_dir),
             "storage.generated_dir": str(generated_dir),
-            "model.provider": "custom",
-            "model.name": "model",
-            "model.api_base": "https://model.example/v1",
-            "model.api_key": "sk-health-ok-1234567890",
             "tushare.token": "ts-health-ok-1234567890",
-            "wechatmp.app_id": "wx-app",
-            "wechatmp.token": "wx-token",
         },
         operator_role="admin",
     )

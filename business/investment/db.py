@@ -2,7 +2,6 @@
 import os
 from collections.abc import Mapping
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import create_engine
@@ -10,19 +9,22 @@ from sqlalchemy.engine import Connection, Engine
 
 from . import storage
 
+DEFAULT_DATABASE_URL = "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55432/cowagent_investment"
 _ENGINE: Engine | None = None
 _ENGINE_URL: str | None = None
 _STOCK_SYMBOL_UPSERT_BATCH_SIZE = 1000
 
 
-def _sqlite_url_for_path(path: Path) -> str:
-    return "sqlite:///" + path.resolve().as_posix()
+def _validate_postgresql_url(url: str) -> str:
+    if not is_postgresql_url(url):
+        raise ValueError("Investment database URL must be a PostgreSQL URL")
+    return url
 
 
 def get_database_url() -> str:
     env_url = os.environ.get("COWAGENT_INVESTMENT_DATABASE_URL", "").strip()
     if env_url:
-        return env_url
+        return _validate_postgresql_url(env_url)
     try:
         from config import conf
 
@@ -30,12 +32,12 @@ def get_database_url() -> str:
     except Exception:
         config_url = ""
     if config_url:
-        return config_url
-    return _sqlite_url_for_path(storage.get_db_path())
+        return _validate_postgresql_url(config_url)
+    return DEFAULT_DATABASE_URL
 
 
 def is_postgresql_url(url: str | None = None) -> bool:
-    value = (url or get_database_url()).lower()
+    value = (url or "").lower()
     return value.startswith("postgresql://") or value.startswith("postgresql+")
 
 
@@ -43,8 +45,7 @@ def get_engine() -> Engine:
     global _ENGINE, _ENGINE_URL
     url = get_database_url()
     if _ENGINE is None or _ENGINE_URL != url:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        _ENGINE = create_engine(url, future=True, connect_args=connect_args)
+        _ENGINE = create_engine(url, future=True)
         _ENGINE_URL = url
     return _ENGINE
 

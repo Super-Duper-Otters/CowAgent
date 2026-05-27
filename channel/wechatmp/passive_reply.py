@@ -178,7 +178,6 @@ class Query:
 
                 elif reply_type == "image":
                     media_id = reply_content
-                    asyncio.run_coroutine_threadsafe(channel.delete_media(media_id), channel.delete_media_loop)
                     logger.info(
                         "[wechatmp] Request {} do send to {} {}: {} image media_id {}".format(
                             request_cnt,

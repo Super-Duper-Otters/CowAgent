@@ -15,16 +15,6 @@ SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")
 API_CONFIG_PREFIXES = ("model.", "wechatmp.")
 
 CONFIG_FALLBACK_KEYS = {
-    "model.provider": "bot_type",
-    "model.name": "model",
-    "model.api_base": "custom_api_base",
-    "model.api_key": "custom_api_key",
-    "model.temperature": "temperature",
-    "wechatmp.app_id": "wechatmp_app_id",
-    "wechatmp.app_secret": "wechatmp_app_secret",
-    "wechatmp.token": "wechatmp_token",
-    "wechatmp.aes_key": "wechatmp_aes_key",
-    "wechatmp.port": "wechatmp_port",
     "tushare.token": "tushare_token",
     "router.enable_agent_fallback": "investment_enable_agent_fallback",
     "technical_analysis.skill_path": "investment_ta_skill_path",
@@ -91,6 +81,9 @@ def sanitize_sensitive_text(text: Any) -> str:
     for key, fallback_key in CONFIG_FALLBACK_KEYS.items():
         if is_sensitive_key(key):
             configured_values.append((key, app_config.get(fallback_key)))
+    for key, value in app_config.items():
+        if is_sensitive_key(str(key)):
+            configured_values.append((str(key), value))
     for key, value in configured_values:
         raw = "" if value is None else str(value)
         if raw:
@@ -98,10 +91,26 @@ def sanitize_sensitive_text(text: Any) -> str:
     return safe_text
 
 
+def _forbidden_config_keys(keys: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    return sorted(key for key in keys if key.startswith(API_CONFIG_PREFIXES))
+
+
+def _validate_investment_config_keys(keys: list[str] | tuple[str, ...] | set[str]) -> None:
+    forbidden = _forbidden_config_keys(keys)
+    if forbidden:
+        raise ValueError(
+            "Investment config does not accept global config keys: "
+            + ", ".join(forbidden)
+            + ". Use config.json/global config for model and wechatmp settings."
+        )
+
+
 def can_modify_config(key: str, operator_role: str) -> bool:
+    if key.startswith(API_CONFIG_PREFIXES):
+        return False
     if operator_role in ("admin", "technical_admin"):
         return True
-    if is_sensitive_key(key) or key.startswith(API_CONFIG_PREFIXES):
+    if is_sensitive_key(key):
         return False
     return operator_role in ("uploader", "operator")
 
@@ -120,7 +129,15 @@ def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
     return value if value is not None else default
 
 
-def save_config(key: str, value: Any, *, operator_role: str = "admin", operator: str = "") -> None:
+def save_config(
+    key: str,
+    value: Any,
+    *,
+    operator_role: str = "admin",
+    operator: str = "",
+    sync_project: bool = False,
+) -> None:
+    _validate_investment_config_keys((key,))
     if not can_modify_config(key, operator_role):
         raise PermissionError(f"role {operator_role} cannot modify {key}")
     if is_sensitive_key(key) and isinstance(value, str) and "*" in value:
@@ -145,6 +162,19 @@ def get_configs(keys: list[str], *, masked: bool = False) -> dict[str, Any]:
     return {key: get_config(key, masked=masked) for key in keys}
 
 
-def save_configs(values: dict[str, Any], *, operator_role: str = "admin", operator: str = "") -> None:
+def save_configs(
+    values: dict[str, Any],
+    *,
+    operator_role: str = "admin",
+    operator: str = "",
+    sync_project: bool = False,
+) -> None:
+    _validate_investment_config_keys(tuple(values.keys()))
     for key, value in values.items():
-        save_config(key, value, operator_role=operator_role, operator=operator)
+        save_config(
+            key,
+            value,
+            operator_role=operator_role,
+            operator=operator,
+            sync_project=sync_project,
+        )

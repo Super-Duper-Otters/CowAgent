@@ -101,6 +101,9 @@ class WechatMPChannel(ChatChannel):
                 openid = getattr(msg, "from_user_id", context.get("session_id", ""))
                 business_reply = handle_text_message(openid, context.content)
                 if business_reply.handled:
+                    output_files = [path for path in business_reply.output_files if path]
+                    if business_reply.success and output_files:
+                        return Reply(ReplyType.IMAGE_URL, output_files)
                     return Reply(ReplyType.TEXT, business_reply.reply_text)
             except Exception as exc:
                 logger.exception("[wechatmp] investment router failed: {}".format(exc))
@@ -108,6 +111,11 @@ class WechatMPChannel(ChatChannel):
 
                 return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
         return super()._generate_reply(context, reply)
+
+    def _reply_media_items(self, content):
+        if isinstance(content, list):
+            return [item for item in content if item]
+        return [content]
 
     def _image_storage_from_path_or_url(self, value):
         if isinstance(value, str) and value.startswith("file://"):
@@ -171,32 +179,20 @@ class WechatMPChannel(ChatChannel):
                     logger.error("[wechatmp] please install pydub: pip install pydub")
                     return
 
-            elif reply.type == ReplyType.IMAGE_URL:  # 从网络或本地文件读取图片
-                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
-                filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
-                content_type = "image/" + image_type
-                try:
-                    response = self.client.material.add("image", (filename, image_storage, content_type))
-                    logger.debug("[wechatmp] upload image response: {}".format(response))
-                except WeChatClientException as e:
-                    logger.error("[wechatmp] upload image failed: {}".format(e))
-                    return
-                media_id = response["media_id"]
-                logger.info("[wechatmp] image uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict[receiver].append(("image", media_id))
-            elif reply.type == ReplyType.IMAGE:  # 从文件读取图片
-                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
-                filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
-                content_type = "image/" + image_type
-                try:
-                    response = self.client.material.add("image", (filename, image_storage, content_type))
-                    logger.debug("[wechatmp] upload image response: {}".format(response))
-                except WeChatClientException as e:
-                    logger.error("[wechatmp] upload image failed: {}".format(e))
-                    return
-                media_id = response["media_id"]
-                logger.info("[wechatmp] image uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict[receiver].append(("image", media_id))
+            elif reply.type in (ReplyType.IMAGE_URL, ReplyType.IMAGE):  # 从网络或本地文件读取图片
+                for image_content in self._reply_media_items(reply.content):
+                    image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
+                    content_type = "image/" + image_type
+                    try:
+                        response = self.client.media.upload("image", (filename, image_storage, content_type))
+                        logger.debug("[wechatmp] upload image response: {}".format(response))
+                    except WeChatClientException as e:
+                        logger.error("[wechatmp] upload image failed: {}".format(e))
+                        return
+                    media_id = response["media_id"]
+                    logger.info("[wechatmp] image uploaded, receiver {}, media_id {}".format(receiver, media_id))
+                    self.cache_dict[receiver].append(("image", media_id))
             elif reply.type == ReplyType.VIDEO_URL:  # 从网络下载视频
                 video_url = reply.content
                 video_res = requests.get(video_url, stream=True)
@@ -287,30 +283,19 @@ class WechatMPChannel(ChatChannel):
                     self.client.message.send_voice(receiver, media_id)
                     time.sleep(1)
                 logger.info("[wechatmp] Do send voice to {}".format(receiver))
-            elif reply.type == ReplyType.IMAGE_URL:  # 从网络或本地文件读取图片
-                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
-                filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
-                content_type = "image/" + image_type
-                try:
-                    response = self.client.media.upload("image", (filename, image_storage, content_type))
-                    logger.debug("[wechatmp] upload image response: {}".format(response))
-                except WeChatClientException as e:
-                    logger.error("[wechatmp] upload image failed: {}".format(e))
-                    return
-                self.client.message.send_image(receiver, response["media_id"])
-                logger.info("[wechatmp] Do send image to {}".format(receiver))
-            elif reply.type == ReplyType.IMAGE:  # 从文件读取图片
-                image_storage, image_type = self._image_storage_from_path_or_url(reply.content)
-                filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
-                content_type = "image/" + image_type
-                try:
-                    response = self.client.media.upload("image", (filename, image_storage, content_type))
-                    logger.debug("[wechatmp] upload image response: {}".format(response))
-                except WeChatClientException as e:
-                    logger.error("[wechatmp] upload image failed: {}".format(e))
-                    return
-                self.client.message.send_image(receiver, response["media_id"])
-                logger.info("[wechatmp] Do send image to {}".format(receiver))
+            elif reply.type in (ReplyType.IMAGE_URL, ReplyType.IMAGE):  # 从网络或本地文件读取图片
+                for image_content in self._reply_media_items(reply.content):
+                    image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
+                    content_type = "image/" + image_type
+                    try:
+                        response = self.client.media.upload("image", (filename, image_storage, content_type))
+                        logger.debug("[wechatmp] upload image response: {}".format(response))
+                    except WeChatClientException as e:
+                        logger.error("[wechatmp] upload image failed: {}".format(e))
+                        return
+                    self.client.message.send_image(receiver, response["media_id"])
+                    logger.info("[wechatmp] Do send image to {}".format(receiver))
             elif reply.type == ReplyType.VIDEO_URL:  # 从网络下载视频
                 video_url = reply.content
                 video_res = requests.get(video_url, stream=True)
