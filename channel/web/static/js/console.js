@@ -6382,6 +6382,13 @@ function toggleLoginPassword() {
 }
 window.toggleLoginPassword = toggleLoginPassword;
 
+function redirectToLogin(nextPath = `${window.location.pathname}${window.location.search}`) {
+    if (!nextPath || nextPath === '/login' || nextPath.startsWith('/login?')) {
+        nextPath = '/chat';
+    }
+    window.location.href = `/login?next=${encodeURIComponent(nextPath)}`;
+}
+
 function showLoginScreen() {
     const overlay = document.getElementById('login-overlay');
     if (!overlay) return;
@@ -6444,7 +6451,7 @@ window.fetch = function(...args) {
         if (response.status === 401) {
             const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
             if (!url.startsWith('/auth/')) {
-                showLoginScreen();
+                redirectToLogin();
             }
         }
         return response;
@@ -6481,7 +6488,7 @@ applyI18n();
 
 fetch('/auth/check').then(r => r.json()).then(data => {
     if (data.auth_required && !data.authenticated) {
-        showLoginScreen();
+        redirectToLogin();
     } else {
         initApp();
     }

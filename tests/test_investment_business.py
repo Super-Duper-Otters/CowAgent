@@ -183,6 +183,48 @@ def test_admin_login_with_web_password_enabled_also_authenticates_console(invest
     web_channel._require_auth()
 
 
+def test_chat_page_redirects_to_login_when_console_session_missing(monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import ChatHandler
+
+    redirects = []
+
+    def fake_seeother(target):
+        redirects.append(target)
+        raise RuntimeError(target)
+
+    monkeypatch.setattr(web_channel, "_check_console_auth", lambda: False)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "seeother", fake_seeother)
+    monkeypatch.setattr(web_channel.web.ctx, "fullpath", "/chat?view=invest-records", raising=False)
+
+    with pytest.raises(RuntimeError):
+        ChatHandler().GET()
+
+    assert redirects == ["/login?next=%2Fchat%3Fview%3Dinvest-records"]
+
+
+def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import LoginPageHandler
+
+    redirects = []
+
+    def fake_seeother(target):
+        redirects.append(target)
+        raise RuntimeError(target)
+
+    monkeypatch.setattr(web_channel, "_check_console_auth", lambda: True)
+    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(next="/chat"))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "seeother", fake_seeother)
+
+    with pytest.raises(RuntimeError):
+        LoginPageHandler().GET()
+
+    assert redirects == ["/chat"]
+
+
 def test_real_admin_session_allows_records_and_denies_uploader_cache(investment_env, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel

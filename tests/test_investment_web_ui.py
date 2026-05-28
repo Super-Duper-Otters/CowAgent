@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_JS = ROOT / "channel" / "web" / "static" / "js" / "console.js"
 CONSOLE_CSS = ROOT / "channel" / "web" / "static" / "css" / "console.css"
+LOGIN_HTML = ROOT / "channel" / "web" / "login.html"
 
 
 def test_investment_tables_are_bounded_and_have_sticky_headers():
@@ -14,6 +15,18 @@ def test_investment_tables_are_bounded_and_have_sticky_headers():
     assert "max-height: min(560px, calc(100vh - 320px));" in css
     assert ".investment-table-scroll .investment-table th" in css
     assert "position: sticky;" in css
+
+
+def test_backend_login_page_matches_console_auth_flow():
+    html = LOGIN_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert 'id="login-page"' in html
+    assert 'src="assets/logo.jpg"' in html
+    assert "fetch('/auth/login'" in html
+    assert "URLSearchParams(window.location.search)" in html
+    assert "redirectToLogin(" in js
+    assert "next=${encodeURIComponent(nextPath)}" in js
 
 
 def test_investment_user_edit_and_record_details_use_modal_dialogs():

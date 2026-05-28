@@ -75,6 +75,44 @@ def _check_auth():
     return _verify_auth_token(web.cookies().get("cow_auth_token", ""))
 
 
+def _investment_admin_login_enabled():
+    try:
+        from business.investment.auth_service import count_admin_users
+
+        return count_admin_users() > 0
+    except Exception:
+        return False
+
+
+def _is_console_login_required():
+    return _is_password_enabled() or _investment_admin_login_enabled()
+
+
+def _check_console_auth():
+    if _investment_admin_login_enabled():
+        return _current_investment_admin() is not None
+    return _check_auth()
+
+
+def _safe_next_path(value: str | None, default: str = "/chat") -> str:
+    if not value:
+        return default
+    value = str(value)
+    if not value.startswith("/") or value.startswith("//") or "\r" in value or "\n" in value:
+        return default
+    if value.startswith("/login"):
+        return default
+    return value
+
+
+def _login_redirect_url(next_path: str | None = "/chat") -> str:
+    return f"/login?next={quote(_safe_next_path(next_path), safe='')}"
+
+
+def _current_request_path(default: str = "/chat") -> str:
+    return _safe_next_path(getattr(web.ctx, "fullpath", "") or getattr(web.ctx, "path", "") or default)
+
+
 def _require_auth():
     """Raise 401 if not authenticated. Call at the top of protected handlers."""
     if not _check_auth():
@@ -830,6 +868,7 @@ class WebChannel(ChatChannel):
 
         urls = (
             '/', 'RootHandler',
+            '/login', 'LoginPageHandler',
             '/auth/login', 'AuthLoginHandler',
             '/auth/check', 'AuthCheckHandler',
             '/auth/logout', 'AuthLogoutHandler',
@@ -930,7 +969,22 @@ class WebChannel(ChatChannel):
 
 class RootHandler:
     def GET(self):
+        if not _check_console_auth():
+            raise web.seeother(_login_redirect_url("/chat"))
         raise web.seeother('/chat')
+
+
+class LoginPageHandler:
+    def GET(self):
+        web.header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        web.header('Pragma', 'no-cache')
+        params = web.input(next="/chat")
+        next_path = _safe_next_path(getattr(params, "next", "/chat"))
+        if _check_console_auth():
+            raise web.seeother(next_path)
+        file_path = os.path.join(os.path.dirname(__file__), 'login.html')
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
 
 
 class AuthCheckHandler:
@@ -941,9 +995,11 @@ class AuthCheckHandler:
             investment_admin = _current_investment_admin()
         except Exception:
             investment_admin = None
-        if not _is_password_enabled():
-            return json.dumps({"status": "success", "auth_required": False, "investment_admin": _investment_admin_payload(investment_admin)}, ensure_ascii=False)
-        if _check_auth():
+        auth_required = _is_console_login_required()
+        authenticated = _check_console_auth() if auth_required else True
+        if not auth_required:
+            return json.dumps({"status": "success", "auth_required": False, "authenticated": True, "investment_admin": _investment_admin_payload(investment_admin)}, ensure_ascii=False)
+        if authenticated:
             return json.dumps({"status": "success", "auth_required": True, "authenticated": True, "investment_admin": _investment_admin_payload(investment_admin)}, ensure_ascii=False)
         return json.dumps({"status": "success", "auth_required": True, "authenticated": False, "investment_admin": None}, ensure_ascii=False)
 
@@ -1079,6 +1135,8 @@ class StreamHandler:
 
 class ChatHandler:
     def GET(self):
+        if not _check_console_auth():
+            raise web.seeother(_login_redirect_url(_current_request_path("/chat")))
         web.header('Cache-Control', 'no-cache, no-store, must-revalidate')
         web.header('Pragma', 'no-cache')
         file_path = os.path.join(os.path.dirname(__file__), 'chat.html')
@@ -2660,7 +2718,7 @@ class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.investment.records import list_content_records, list_output_files
+            from business.investment.records import list_content_records
             from business.investment.constants import normalize_service, ServiceType
             from business.investment.daily_content import get_latest_effective_content
             from business.investment.records import get_content_record
