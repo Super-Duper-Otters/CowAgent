@@ -21,6 +21,32 @@ investment_users = Table(
     Index("idx_investment_users_openid", "openid", unique=True),
 )
 
+investment_admin_users = Table(
+    "investment_admin_users",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("username", Text, nullable=False),
+    Column("password_hash", Text, nullable=False),
+    Column("role", Text, nullable=False),
+    Column("enabled", Integer, nullable=False, server_default="1"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Column("last_login_at", Text),
+    Index("idx_investment_admin_users_username", "username", unique=True),
+)
+
+investment_admin_sessions = Table(
+    "investment_admin_sessions",
+    metadata,
+    Column("session_id", Text, primary_key=True),
+    Column("user_id", Integer, nullable=False),
+    Column("token_hash", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    Index("idx_investment_admin_sessions_token", "token_hash", unique=True),
+    Index("idx_investment_admin_sessions_user", "user_id"),
+)
+
 investment_request_records = Table(
     "investment_request_records",
     metadata,
@@ -33,6 +59,18 @@ investment_request_records = Table(
     Column("user_prompt", Text),
     Column("error_message", Text),
     Column("output_files", Text),
+    Column("normalized_target", Text),
+    Column("stock_code", Text),
+    Column("stock_name", Text),
+    Column("customer_name", Text),
+    Column("institution", Text),
+    Column("market_date", Text),
+    Column("cache_key", Text),
+    Column("cache_hit", Integer),
+    Column("program_version", Text),
+    Column("ta_version", Text),
+    Column("renderer_version", Text),
+    Column("template_version", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("elapsed_ms", Integer),
@@ -55,8 +93,13 @@ investment_daily_contents = Table(
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("effective_at", Text),
+    Column("effective_date", Text),
+    Column("content_version", Integer, nullable=False, server_default="1"),
+    Column("direct_output_mode", Integer, nullable=False, server_default="0"),
+    Column("archived_at", Text),
     Index("idx_investment_daily_contents_service_status", "service_type", "status"),
     Index("idx_investment_daily_contents_effective", "service_type", "effective_at"),
+    Index("idx_investment_daily_contents_effective_date", "service_type", "effective_date", "status"),
 )
 
 investment_output_files = Table(
@@ -67,8 +110,30 @@ investment_output_files = Table(
     Column("file_path", Text, nullable=False),
     Column("file_type", Text),
     Column("service_type", Text),
+    Column("artifact_role", Text),
+    Column("file_size", Integer),
+    Column("file_hash", Text),
+    Column("version_tag", Text),
     Column("created_at", Text, nullable=False),
     Index("idx_investment_output_files_owner", "owner_id"),
+)
+
+investment_cache_entries = Table(
+    "investment_cache_entries",
+    metadata,
+    Column("cache_key", Text, primary_key=True),
+    Column("service_type", Text, nullable=False),
+    Column("normalized_target", Text, nullable=False),
+    Column("market_date", Text, nullable=False),
+    Column("version_fingerprint", Text, nullable=False),
+    Column("output_files", Text, nullable=False),
+    Column("artifact_owner_id", Text),
+    Column("status", Text, nullable=False),
+    Column("hit_count", Integer, nullable=False, server_default="0"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index("idx_investment_cache_lookup", "service_type", "normalized_target", "market_date", "version_fingerprint", "status"),
+    Index("idx_investment_cache_service_date", "service_type", "market_date", "status"),
 )
 
 investment_configs = Table(
@@ -78,6 +143,20 @@ investment_configs = Table(
     Column("config_value", Text),
     Column("updated_at", Text, nullable=False),
     Column("updated_by", Text),
+)
+
+investment_operation_audits = Table(
+    "investment_operation_audits",
+    metadata,
+    Column("audit_id", Text, primary_key=True),
+    Column("operator", Text),
+    Column("action", Text, nullable=False),
+    Column("target_type", Text, nullable=False),
+    Column("target_id", Text),
+    Column("detail", Text),
+    Column("created_at", Text, nullable=False),
+    Index("idx_investment_operation_audits_created", "created_at"),
+    Index("idx_investment_operation_audits_target", "target_type", "target_id"),
 )
 
 investment_stock_symbols = Table(

@@ -1,0 +1,113 @@
+# encoding:utf-8
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import bindparam, insert, select, text, update
+
+from .constants import ErrorCode, ServiceType, Status, user_message
+from .db import connect
+from .records import GENERATING_TIMEOUT_MINUTES, RequestRecord, _audit_values, _json_list, _now, _row_to_request
+from .schema import investment_request_records
+
+
+@dataclass
+class JobStartResult:
+    created: bool
+    record: RequestRecord
+
+
+def _stale_cutoff() -> str:
+    return (datetime.now(UTC) - timedelta(minutes=GENERATING_TIMEOUT_MINUTES)).isoformat(timespec="microseconds")
+
+
+def _advisory_lock_key(openid: str, raw_input: str, service_type: ServiceType | None) -> str:
+    return f"investment-job:{openid}:{raw_input}:{str(service_type) if service_type else ''}"
+
+
+def _cleanup_stale_jobs(conn, openid: str, raw_input: str, service_type: ServiceType | None = None) -> None:
+    conditions = [
+        investment_request_records.c.openid == openid,
+        investment_request_records.c.raw_input == raw_input,
+        investment_request_records.c.status == str(Status.GENERATING),
+        investment_request_records.c.created_at <= _stale_cutoff(),
+    ]
+    if service_type is not None:
+        conditions.append(investment_request_records.c.service_type == str(service_type))
+    conn.execute(
+        update(investment_request_records)
+        .where(*conditions)
+        .values(
+            status=str(Status.FAILED),
+            error_code=str(ErrorCode.SYSTEM_ERROR),
+            user_prompt=user_message(ErrorCode.SYSTEM_ERROR),
+            error_message="未完成/可能超时",
+            updated_at=_now(),
+        )
+    )
+
+
+def _running_select(service_type: ServiceType | None = None):
+    conditions = [
+        investment_request_records.c.openid == bindparam("openid"),
+        investment_request_records.c.raw_input == bindparam("raw_input"),
+        investment_request_records.c.status == str(Status.GENERATING),
+    ]
+    if service_type is not None:
+        conditions.append(investment_request_records.c.service_type == str(service_type))
+    return (
+        select(investment_request_records)
+        .where(*conditions)
+        .order_by(investment_request_records.c.created_at.desc())
+        .limit(1)
+    )
+
+
+def find_running_job(openid: str, raw_input: str, service_type: ServiceType | None = None) -> RequestRecord | None:
+    with connect() as conn:
+        _cleanup_stale_jobs(conn, openid, raw_input, service_type)
+        row = conn.execute(_running_select(service_type), {"openid": openid, "raw_input": raw_input}).fetchone()
+    if row is None:
+        return None
+    return _row_to_request(row)
+
+
+def start_job_if_absent(openid: str, raw_input: str, service_type: ServiceType) -> JobStartResult:
+    return start_job_if_absent_with_metadata(openid, raw_input, service_type)
+
+
+def start_job_if_absent_with_metadata(
+    openid: str,
+    raw_input: str,
+    service_type: ServiceType,
+    **metadata,
+) -> JobStartResult:
+    with connect() as conn:
+        conn.execute(
+            text("select pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": _advisory_lock_key(openid, raw_input, service_type)},
+        )
+        _cleanup_stale_jobs(conn, openid, raw_input, service_type)
+        running = conn.execute(_running_select(service_type), {"openid": openid, "raw_input": raw_input}).fetchone()
+        if running is not None:
+            return JobStartResult(False, _row_to_request(running))
+
+        request_id = str(uuid.uuid4())
+        now = _now()
+        conn.execute(
+            insert(investment_request_records).values(
+                request_id=request_id,
+                openid=openid,
+                raw_input=raw_input,
+                service_type=str(service_type),
+                status=str(Status.GENERATING),
+                output_files=_json_list([]),
+                **_audit_values(**metadata),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        row = conn.execute(
+            select(investment_request_records).where(investment_request_records.c.request_id == request_id)
+        ).fetchone()
+    return JobStartResult(True, _row_to_request(row))

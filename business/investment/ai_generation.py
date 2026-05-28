@@ -293,7 +293,7 @@ class ExistingModelAdapter:
         ]
         if request.source_text.strip():
             text_parts.append(f"用户补充文本：\n{request.source_text.strip()}")
-        messages = [
+        messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": (

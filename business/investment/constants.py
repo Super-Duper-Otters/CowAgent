@@ -56,8 +56,8 @@ class ErrorCode(StrEnum):
 
 USER_MESSAGES = {
     ErrorCode.UNAUTHORIZED: "您暂未开通该服务，如需开通请联系服务人员。",
-    ErrorCode.USER_DISABLED: "您的服务暂不可用，请联系服务人员。",
-    ErrorCode.AUTH_EXPIRED: "您的服务授权已到期，如需继续使用请联系服务人员。",
+    ErrorCode.USER_DISABLED: "您的服务已停用，如需恢复请联系服务人员。",
+    ErrorCode.AUTH_EXPIRED: "您的授权已过期，如需续期请联系服务人员。",
     ErrorCode.INPUT_ERROR: "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。",
     ErrorCode.STOCK_NOT_FOUND: "未找到对应标的，请检查股票代码或改用标准股票代码。",
     ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",
@@ -77,4 +77,3 @@ def normalize_service(value: str | ServiceType) -> ServiceType:
 
 def user_message(error_code: ErrorCode) -> str:
     return USER_MESSAGES.get(error_code, USER_MESSAGES[ErrorCode.SYSTEM_ERROR])
-

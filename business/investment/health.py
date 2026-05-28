@@ -2,11 +2,14 @@
 import os
 import tempfile
 from dataclasses import dataclass
+import importlib
 from pathlib import Path
 
 from sqlalchemy import inspect, select
 
+from . import config_service
 from .config_service import get_config
+from .constants import SERVICE_LABELS, ServiceType
 from .db import connect, get_engine, row_to_dict
 from .render_service import (
     DEFAULT_RENDERER_PATH,
@@ -24,6 +27,14 @@ class HealthItem:
     name: str
     ok: bool
     detail: str = ""
+    level: str = ""
+
+    def __post_init__(self):
+        if not self.level:
+            self.level = "ok" if self.ok else "error"
+        if self.level not in {"ok", "warning", "error"}:
+            raise ValueError(f"unsupported health level: {self.level}")
+        self.ok = self.level != "error"
 
 
 def _check_writable_dir(name: str, path: Path) -> HealthItem:
@@ -100,6 +111,105 @@ def _check_playwright_chromium() -> HealthItem:
         )
 
 
+def _dependency_available(module_name: str) -> tuple[bool, str]:
+    try:
+        importlib.import_module(module_name)
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _check_dependency(name: str, module_name: str, *, required: bool) -> HealthItem:
+    available, detail = _dependency_available(module_name)
+    if available:
+        return HealthItem(name, True, f"{module_name} package available", level="ok")
+    level = "error" if required else "warning"
+    required_text = "required" if required else "optional"
+    reason = f": {detail}" if detail else ""
+    return HealthItem(name, level != "error", f"{module_name} package import failed ({required_text}){reason}", level=level)
+
+
+def _dependency_health_items() -> list[HealthItem]:
+    return [
+        _check_dependency("dependency_pandas", "pandas", required=True),
+        _check_dependency("dependency_talib", "talib", required=True),
+        _check_dependency("dependency_scipy", "scipy", required=True),
+        _check_dependency("dependency_akshare", "akshare", required=False),
+        _check_dependency("dependency_tushare", "tushare", required=False),
+        _check_dependency("dependency_baostock", "baostock", required=False),
+    ]
+
+
+def _has_chinese_font() -> bool:
+    try:
+        from matplotlib import font_manager
+
+        candidates = ("SimHei", "Microsoft YaHei", "Noto Sans CJK", "Source Han Sans", "WenQuanYi")
+        for font in font_manager.fontManager.ttflist:
+            name = getattr(font, "name", "")
+            if any(candidate.lower() in name.lower() for candidate in candidates):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _check_chinese_font() -> HealthItem:
+    if _has_chinese_font():
+        return HealthItem("chinese_font", True, "Chinese font available", level="ok")
+    return HealthItem("chinese_font", True, "Chinese font not detected; rendered Chinese text may use fallback glyphs", level="warning")
+
+
+def _enabled_channels(value) -> set[str]:
+    if isinstance(value, str):
+        return {part.strip() for part in value.split(",") if part.strip()}
+    if isinstance(value, (list, tuple, set)):
+        return {str(part).strip() for part in value if str(part).strip()}
+    return set()
+
+
+def _wechatmp_health_items() -> list[HealthItem]:
+    config = config_service.conf()
+    channels = _enabled_channels(config.get("channel_type"))
+    subscribe_channels = _enabled_channels(config.get("subscribe_msg"))
+    enabled = bool({"wechatmp", "wechatmp_service"} & (channels | subscribe_channels))
+    items = [
+        HealthItem(
+            "wechatmp_channel_enabled",
+            True,
+            "enabled" if enabled else "not enabled",
+            level="ok" if enabled else "warning",
+        )
+    ]
+
+    required_level = "error" if enabled else "warning"
+    for key, label in (
+        ("wechatmp_app_id", "app id"),
+        ("wechatmp_app_secret", "app secret"),
+        ("wechatmp_token", "token"),
+    ):
+        configured = bool(str(config.get(key) or "").strip())
+        items.append(
+            HealthItem(
+                key,
+                configured or not enabled,
+                f"{label} configured" if configured else f"{label} missing",
+                level="ok" if configured else required_level,
+            )
+        )
+
+    aes_configured = bool(str(config.get("wechatmp_aes_key") or "").strip())
+    items.append(
+        HealthItem(
+            "wechatmp_aes_key",
+            True,
+            "aes key configured" if aes_configured else "aes key missing; required when WeChat encryption mode is enabled",
+            level="ok" if aes_configured else "warning",
+        )
+    )
+    return items
+
+
 def _check_stock_dictionary_table() -> HealthItem:
     try:
         exists = inspect(get_engine()).has_table("investment_stock_symbols")
@@ -151,10 +261,47 @@ def _stock_dictionary_health_items() -> list[HealthItem]:
 
 def _check_tushare_token() -> HealthItem:
     configured = bool(get_tushare_token())
-    return HealthItem("tushare_token", configured, "configured" if configured else "unconfigured")
+    return HealthItem("tushare_token", True, "configured" if configured else "unconfigured", level="ok" if configured else "warning")
 
 
-def run_health_checks() -> list[HealthItem]:
+def _run_technical_analysis_smoke() -> HealthItem:
+    try:
+        from .technical_analysis import run_technical_analysis
+
+        result = run_technical_analysis("health-smoke", "300502.SZ 技术分析", "300502.SZ")
+        if result.success:
+            detail = ", ".join(path for path in result.output_files if path) or "ok"
+            return HealthItem("smoke_technical_analysis", True, detail, level="ok")
+        return HealthItem("smoke_technical_analysis", False, result.detail or result.user_prompt or "failed", level="error")
+    except Exception as exc:
+        return HealthItem("smoke_technical_analysis", False, str(exc), level="error")
+
+
+def _run_renderer_smoke_checks() -> list[HealthItem]:
+    from .render_service import RenderRequest, render_card
+
+    samples = (
+        (ServiceType.TECHNICAL_ANALYSIS, "smoke_renderer_ta", "技术分析\n信号：中性\n风险：样例"),
+        (ServiceType.RATE, "smoke_renderer_rate", "利率债市场：样例\n关注久期与流动性。"),
+        (ServiceType.CONVERTIBLE_BOND, "smoke_renderer_cb", "转债市场：样例\n关注估值与正股弹性。"),
+    )
+    output_dir = Path(str(get_storage_dirs()["generated"])) / "health_smoke"
+    items: list[HealthItem] = []
+    for service_type, name, text in samples:
+        try:
+            output_path = output_dir / f"{service_type.value}.png"
+            result = render_card(RenderRequest(service_type, text, str(output_path)))
+            label = SERVICE_LABELS.get(service_type, service_type.value)
+            if result.success:
+                items.append(HealthItem(name, True, f"{label}: {result.image_path}", level="ok"))
+            else:
+                items.append(HealthItem(name, False, f"{label}: {result.detail or result.user_prompt}", level="error"))
+        except Exception as exc:
+            items.append(HealthItem(name, False, str(exc), level="error"))
+    return items
+
+
+def run_health_checks(run_smoke: bool = False) -> list[HealthItem]:
     items = []
     try:
         with connect() as conn:
@@ -174,6 +321,12 @@ def run_health_checks() -> list[HealthItem]:
     items.extend(_stock_dictionary_health_items())
     items.append(_check_tushare_token())
     items.append(_check_model_config())
+    items.extend(_dependency_health_items())
     items.append(_check_playwright_package())
     items.append(_check_playwright_chromium())
+    items.append(_check_chinese_font())
+    items.extend(_wechatmp_health_items())
+    if run_smoke:
+        items.append(_run_technical_analysis_smoke())
+        items.extend(_run_renderer_smoke_checks())
     return items
