@@ -81,11 +81,40 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
     assert inspector.has_table("investment_request_records")
     assert inspector.has_table("investment_daily_contents")
     assert inspector.has_table("investment_output_files")
+    assert inspector.has_table("investment_cache_entries")
+    assert inspector.has_table("investment_operation_audits")
     assert inspector.has_table("investment_stock_symbols")
     assert inspector.has_table("alembic_version")
     with get_engine().connect() as conn:
         alembic_versions = [row[0] for row in conn.exec_driver_sql("select version_num from alembic_version").fetchall()]
-    assert "20260525_0001" in alembic_versions
+    assert "20260527_0008" in alembic_versions
+    request_record_columns = {column["name"] for column in inspector.get_columns("investment_request_records")}
+    assert {"normalized_target", "stock_code", "stock_name", "cache_key", "cache_hit"}.issubset(request_record_columns)
+    daily_content_columns = {column["name"] for column in inspector.get_columns("investment_daily_contents")}
+    assert {"effective_date", "content_version", "direct_output_mode", "archived_at"}.issubset(daily_content_columns)
+    output_file_columns = {column["name"] for column in inspector.get_columns("investment_output_files")}
+    assert {"artifact_role", "file_size", "file_hash", "version_tag"}.issubset(output_file_columns)
+    cache_columns = {column["name"] for column in inspector.get_columns("investment_cache_entries")}
+    assert {
+        "cache_key",
+        "service_type",
+        "normalized_target",
+        "market_date",
+        "version_fingerprint",
+        "output_files",
+        "artifact_owner_id",
+        "status",
+        "hit_count",
+    }.issubset(cache_columns)
+    cache_indexes = {index["name"]: tuple(index.get("column_names") or []) for index in inspector.get_indexes("investment_cache_entries")}
+    assert cache_indexes["idx_investment_cache_lookup"] == (
+        "service_type",
+        "normalized_target",
+        "market_date",
+        "version_fingerprint",
+        "status",
+    )
+    assert cache_indexes["idx_investment_cache_service_date"] == ("service_type", "market_date", "status")
     stock_pk = inspector.get_pk_constraint("investment_stock_symbols").get("constrained_columns") or []
     stock_unique_columns = {
         tuple(item.get("column_names") or [])

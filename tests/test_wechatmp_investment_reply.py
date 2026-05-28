@@ -196,12 +196,17 @@ def test_wechatmp_passive_valid_investment_command_immediately_acknowledges(monk
         raising=False,
     )
 
-    for index, content in enumerate(("利率", "转债", "300502.SZ 技术分析"), start=1):
+    cases = (
+        ("利率", "收到，正在运行，请稍候。"),
+        ("转债", "收到，正在运行，请稍候。"),
+        ("300502.SZ 技术分析", "收到，正在运行，请稍候。回复任意文字可尝试获取结果。"),
+    )
+    for index, (content, expected) in enumerate(cases, start=1):
         current_message["content"] = content
         current_message["msg_id"] = f"msg-ack-{index}"
         response = passive_reply.Query().POST()
 
-        assert response == "收到，正在运行，请稍候。"
+        assert response == expected
 
     assert len(produced_contexts) == 3
 
@@ -320,11 +325,99 @@ def test_wechatmp_active_valid_investment_message_returns_polling_ack(monkeypatc
         raising=False,
     )
 
+    monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: None)
+
     response = active_reply.Query().POST()
 
-    assert response == "收到，正在运行，请稍候。稍后发送任意文字可拉取结果。"
+    assert response == "收到，正在运行，请稍候。"
     assert len(produced_contexts) == 1
     assert "openid" in channel_holder["channel"].active_running
+
+
+def test_wechatmp_active_running_investment_job_does_not_start_duplicate(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+
+    produced_contexts = []
+
+    class FakeChannel:
+        def __init__(self):
+            self.client = SimpleNamespace()
+            self.crypto = None
+            self.active_fallback_cache = {}
+            self.active_running = set()
+
+        def _compose_context(self, ctype, content, **kwargs):
+            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
+
+        def produce(self, context):
+            produced_contexts.append(context)
+
+    class FakeReply:
+        def __init__(self, text, _msg):
+            self.text = text
+
+        def render(self):
+            return self.text
+
+    fake_msg = SimpleNamespace(type="text")
+
+    monkeypatch.setattr(active_reply, "WechatMPChannel", FakeChannel)
+    monkeypatch.setattr(active_reply, "is_encrypted_message", lambda _args: False)
+    monkeypatch.setattr(active_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
+    monkeypatch.setattr(active_reply, "parse_message", lambda _message: fake_msg)
+    monkeypatch.setattr(
+        active_reply,
+        "WeChatMPMessage",
+        lambda _msg, client=None: SimpleNamespace(
+            from_user_id="openid",
+            content="300502.SZ 技术分析",
+            msg_id="msg-active-duplicate",
+            ctype=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(active_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: SimpleNamespace(request_id="req-1"))
+    monkeypatch.setattr(active_reply.web, "input", lambda: {})
+    monkeypatch.setattr(active_reply.web, "data", lambda: b"<xml/>")
+    monkeypatch.setattr(
+        active_reply.web.ctx,
+        "env",
+        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
+        raising=False,
+    )
+
+    response = active_reply.Query().POST()
+
+    assert response == "正在运行，请稍候。"
+    assert produced_contexts == []
+
+
+def test_wechatmp_active_try_mark_running_is_atomic(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    import channel.wechatmp.wechatmp_channel as wechatmp_channel
+
+    instances = wechatmp_channel.WechatMPChannel.__closure__[1].cell_contents
+    instances.clear()
+    monkeypatch.setattr(
+        wechatmp_channel,
+        "conf",
+        lambda: {
+            "wechatmp_app_id": "wx-test",
+            "wechatmp_app_secret": "secret",
+            "wechatmp_token": "token",
+            "wechatmp_aes_key": "",
+            "single_chat_prefix": [""],
+            "concurrency_in_session": 1,
+        },
+    )
+    channel = wechatmp_channel.WechatMPChannel(passive_reply=False)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _index: channel.try_mark_active_running("openid"), range(2)))
+
+    assert results.count(True) == 1
+    assert results.count(False) == 1
 
 
 def test_wechatmp_active_send_text_failure_queues_passive_fallback(monkeypatch):

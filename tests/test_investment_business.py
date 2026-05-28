@@ -6,7 +6,6 @@ from collections import OrderedDict
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 from types import SimpleNamespace
 import sys
@@ -23,12 +22,189 @@ def test_investment_schema_declares_all_tables():
 
     assert {
         "investment_users",
+        "investment_admin_users",
+        "investment_admin_sessions",
         "investment_request_records",
         "investment_daily_contents",
         "investment_output_files",
+        "investment_cache_entries",
         "investment_configs",
         "investment_stock_symbols",
+        "investment_operation_audits",
     }.issubset(metadata.tables)
+
+
+def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(investment_env):
+    from business.investment.auth_service import (
+        authenticate_admin,
+        create_admin_session,
+        create_admin_user,
+        get_admin_session,
+        hash_password,
+        require_permission,
+        verify_password,
+    )
+
+    password_hash = hash_password("secret-pass")
+
+    assert password_hash.startswith("pbkdf2_sha256$")
+    assert "secret-pass" not in password_hash
+    assert verify_password("secret-pass", password_hash) is True
+    assert verify_password("wrong-pass", password_hash) is False
+
+    user_id = create_admin_user("uploader-a", "secret-pass", role="uploader")
+    assert authenticate_admin("uploader-a", "wrong-pass") is None
+    admin = authenticate_admin("uploader-a", "secret-pass")
+    assert admin is not None
+    assert admin.id == user_id
+    assert admin.role == "uploader"
+
+    token = create_admin_session(admin)
+    session = get_admin_session(token)
+    assert session is not None
+    assert session.username == "uploader-a"
+    assert session.role == "uploader"
+    assert require_permission(session, "content.write").allowed is True
+    assert require_permission(session, "users.write").allowed is False
+    assert require_permission(session, "config.write").allowed is False
+
+
+def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentConfigHandler, InvestmentHealthHandler, InvestmentUsersHandler
+
+    create_admin_user("admin-a", "admin-pass", role="admin")
+    create_admin_user("uploader-a", "uploader-pass", role="uploader")
+    create_admin_user("tech-a", "tech-pass", role="technical_admin")
+    admin_token = create_admin_session(authenticate_admin("admin-a", "admin-pass"))
+    uploader_token = create_admin_session(authenticate_admin("uploader-a", "uploader-pass"))
+    tech_token = create_admin_session(authenticate_admin("tech-a", "tech-pass"))
+
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(openid="", enabled=""))
+
+    def use_token(token):
+        monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"openid": "openid-a", "name": "Alice", "allowed_services": ["全部"]}).encode("utf-8"),
+    )
+    use_token(uploader_token)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    with pytest.raises(web_channel.web.HTTPError) as denied_error:
+        InvestmentUsersHandler().POST()
+    denied = json.loads(denied_error.value.data)
+    assert denied["status"] == "error"
+    assert denied["code"] == "permission_denied"
+
+    use_token(admin_token)
+    created = json.loads(InvestmentUsersHandler().POST())
+    assert created["status"] == "success"
+    assert created["action"] == "created"
+
+    use_token(tech_token)
+    health_calls = []
+    monkeypatch.setattr(
+        "business.investment.health.run_health_checks",
+        lambda run_smoke=False: health_calls.append(run_smoke)
+        or [SimpleNamespace(name="database", ok=True, detail="ok", level="ok")],
+    )
+    health = json.loads(InvestmentHealthHandler().GET())
+    assert health["status"] == "success"
+    assert health_calls == [False]
+    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(smoke="1"))
+    full_health = json.loads(InvestmentHealthHandler().POST())
+    assert full_health["status"] == "success"
+    assert full_health["level"] == "ok"
+    assert health_calls == [False, True]
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"configs": {"router.enable_agent_fallback": True}}).encode("utf-8"),
+    )
+    config = json.loads(InvestmentConfigHandler().POST())
+    assert config["status"] == "success"
+
+
+def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
+    from business.investment.auth_service import create_admin_user
+    from channel.web import web_channel
+
+    monkeypatch.setattr(web_channel, "_check_auth", lambda: True)
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {})
+
+    fallback = web_channel._require_investment_permission("users.write")
+    assert fallback.role == "admin"
+    assert fallback.bootstrap is True
+
+    create_admin_user("admin-a", "admin-pass", role="admin")
+    denied = web_channel._investment_permission_error("users.write")
+    assert denied["status"] == "error"
+    assert denied["code"] == "unauthorized"
+
+
+def test_admin_login_with_web_password_enabled_also_authenticates_console(investment_env, monkeypatch):
+    from business.investment.auth_service import create_admin_user
+    from channel.web import web_channel
+    from channel.web.web_channel import AuthCheckHandler, AuthLoginHandler
+
+    create_admin_user("admin-a", "admin-pass", role="admin")
+    cookies = {}
+    headers = []
+
+    monkeypatch.setattr(web_channel, "conf", lambda: {"web_password": "legacy-pass", "web_session_expire_days": 30})
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: headers.append(args))
+    monkeypatch.setattr(
+        web_channel.web,
+        "setcookie",
+        lambda name, value, **_kwargs: cookies.__setitem__(name, value),
+    )
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"username": "admin-a", "password": "admin-pass"}).encode("utf-8"),
+    )
+
+    login_payload = json.loads(AuthLoginHandler().POST())
+
+    assert login_payload["status"] == "success"
+    assert cookies["cow_investment_session"]
+    assert cookies["cow_auth_token"]
+
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: cookies)
+    check_payload = json.loads(AuthCheckHandler().GET())
+
+    assert check_payload["status"] == "success"
+    assert check_payload["authenticated"] is True
+    web_channel._require_auth()
+
+
+def test_real_admin_session_allows_records_and_denies_uploader_cache(investment_env, monkeypatch):
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentCacheHandler, InvestmentRequestRecordsHandler
+
+    create_admin_user("uploader-a", "uploader-pass", role="uploader")
+    token = create_admin_session(authenticate_admin("uploader-a", "uploader-pass"))
+
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(limit="20"))
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    records_payload = json.loads(InvestmentRequestRecordsHandler().GET())
+
+    assert records_payload["status"] == "success"
+    with pytest.raises(web_channel.web.HTTPError) as denied_error:
+        InvestmentCacheHandler().GET()
+    denied = json.loads(denied_error.value.data)
+    assert denied["status"] == "error"
+    assert denied["code"] == "permission_denied"
+    assert denied["permission"] == "cache.read"
 
 
 def _xlsx_bytes(headers, rows):
@@ -335,6 +511,159 @@ def test_web_console_config_save_preserves_masked_investment_sensitive_values(in
     assert get_config("router.enable_agent_fallback") is True
 
 
+def test_investment_skill_upload_python_file_creates_version_and_activates_it(investment_env):
+    from pathlib import Path
+
+    from business.investment.config_service import get_config
+    from business.investment.skill_versions import list_versions, save_upload
+
+    result = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
+
+    script_path = Path(result["script_path"])
+    assert result["version_id"].startswith("skill-")
+    assert result["skill_key"] == "signal-card-renderer"
+    assert script_path.name == "render_card.py"
+    assert script_path.parent.name == "scripts"
+    assert script_path.read_text(encoding="utf-8") == "print('renderer v1')"
+    assert (script_path.parents[1] / "assets" / "template_ta.html").is_file()
+    assert get_config("render.renderer_path") == str(script_path)
+
+    versions = list_versions("signal-card-renderer")
+    uploaded = [item for item in versions if item["version_id"] == result["version_id"]][0]
+    assert uploaded["active"] is True
+    assert uploaded["source"] == "upload"
+    assert any(item["version_id"] == "builtin-default" for item in versions)
+
+
+def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(investment_env):
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    import pytest
+
+    from business.investment.skill_versions import save_upload
+
+    unsafe = BytesIO()
+    with ZipFile(unsafe, "w") as archive:
+        archive.writestr("../escape.py", "bad")
+        archive.writestr("scripts/render_card.py", "print('ok')")
+    with pytest.raises(ValueError, match="unsafe"):
+        save_upload("signal-card-renderer", "skill.zip", unsafe.getvalue(), operator="tester")
+
+    missing = BytesIO()
+    with ZipFile(missing, "w") as archive:
+        archive.writestr("README.md", "no script")
+    with pytest.raises(ValueError, match="render_card.py"):
+        save_upload("signal-card-renderer", "skill.zip", missing.getvalue(), operator="tester")
+
+
+def test_investment_skill_version_activation_switches_between_upload_and_builtin(investment_env):
+    from business.investment.config_service import get_config
+    from business.investment.skill_versions import activate_version, list_versions, save_upload
+
+    uploaded = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v2')", operator="tester")
+
+    activate_version("signal-card-renderer", "builtin-default", operator="tester")
+
+    assert get_config("render.renderer_path", "") == ""
+    builtin = [item for item in list_versions("signal-card-renderer") if item["version_id"] == "builtin-default"][0]
+    assert builtin["active"] is True
+
+    activate_version("signal-card-renderer", uploaded["version_id"], operator="tester")
+
+    assert get_config("render.renderer_path") == uploaded["script_path"]
+
+
+def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_falls_back_to_builtin(investment_env):
+    import pytest
+
+    from business.investment.config_service import get_config
+    from business.investment.skill_versions import delete_version, list_versions, save_upload
+
+    uploaded = save_upload("technical-analysis", "analyze_universal.py", b"print('ta delete')", operator="tester")
+    assert get_config("technical_analysis.skill_path") == uploaded["script_path"]
+
+    deleted = delete_version("technical-analysis", uploaded["version_id"], operator="tester")
+
+    assert deleted["version_id"] == uploaded["version_id"]
+    assert get_config("technical_analysis.skill_path", "") == ""
+    assert uploaded["version_id"] not in [item["version_id"] for item in list_versions("technical-analysis")]
+
+    with pytest.raises(ValueError, match="builtin"):
+        delete_version("technical-analysis", "builtin-default", operator="tester")
+
+
+def test_investment_skill_versions_include_technical_analysis_and_renderer(investment_env):
+    from pathlib import Path
+
+    from business.investment.config_service import get_config
+    from business.investment.skill_versions import activate_version, list_all_skills, save_upload
+
+    technical = save_upload("technical-analysis", "analyze_universal.py", b"print('ta v1')", operator="tester")
+    renderer = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
+
+    assert Path(technical["script_path"]).name == "analyze_universal.py"
+    assert Path(renderer["script_path"]).name == "render_card.py"
+    assert get_config("technical_analysis.skill_path") == technical["script_path"]
+    assert get_config("render.renderer_path") == renderer["script_path"]
+
+    payload = list_all_skills()
+    skill_keys = [item["skill"]["skill_key"] for item in payload]
+    assert skill_keys == ["technical-analysis", "signal-card-renderer"]
+    assert all(item["versions"][0]["version_id"] == "builtin-default" for item in payload)
+
+    activate_version("technical-analysis", "builtin-default", operator="tester")
+    assert get_config("technical_analysis.skill_path", "") == ""
+
+
+def test_web_investment_skill_handlers_list_upload_and_activate_versions(investment_env, monkeypatch):
+    from business.investment.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import (
+        InvestmentSkillActivateHandler,
+        InvestmentSkillDeleteHandler,
+        InvestmentSkillUploadHandler,
+        InvestmentSkillVersionsHandler,
+    )
+
+    auth_calls = []
+    monkeypatch.setattr(web_channel, "_require_auth", lambda: auth_calls.append(True))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    get_payload = json.loads(InvestmentSkillVersionsHandler().GET())
+
+    assert get_payload["status"] == "success"
+    assert [item["skill"]["skill_key"] for item in get_payload["skills"]] == ["technical-analysis", "signal-card-renderer"]
+
+    upload_file = SimpleNamespace(filename="analyze_universal.py", value=b"print('web technical')")
+    monkeypatch.setattr(web_channel, "_raw_web_input", lambda: {"file": upload_file, "operator": "tester"})
+
+    upload_payload = json.loads(InvestmentSkillUploadHandler().POST("technical-analysis"))
+
+    assert upload_payload["status"] == "success"
+    assert upload_payload["version"]["active"] is True
+    assert get_config("technical_analysis.skill_path") == upload_payload["version"]["script_path"]
+
+    monkeypatch.setattr(web_channel.web, "data", lambda: json.dumps({"operator": "tester"}).encode("utf-8"))
+    activate_payload = json.loads(InvestmentSkillActivateHandler().POST("technical-analysis", "builtin-default"))
+
+    assert activate_payload["status"] == "success"
+    assert activate_payload["version"]["active"] is True
+    assert get_config("technical_analysis.skill_path", "") == ""
+
+    renderer_file = SimpleNamespace(filename="render_card.py", value=b"print('web renderer')")
+    monkeypatch.setattr(web_channel, "_raw_web_input", lambda: {"file": renderer_file, "operator": "tester"})
+    renderer_payload = json.loads(InvestmentSkillUploadHandler().POST("signal-card-renderer"))
+    deleted_payload = json.loads(
+        InvestmentSkillDeleteHandler().POST("signal-card-renderer", renderer_payload["version"]["version_id"])
+    )
+
+    assert deleted_payload["status"] == "success"
+    assert deleted_payload["deleted"]["version_id"] == renderer_payload["version"]["version_id"]
+    assert get_config("render.renderer_path", "") == ""
+    assert auth_calls == [True, True, True, True, True]
+
+
 def _call_investment_json_handler(monkeypatch, handler, *, params=None, body=None):
     from channel.web import web_channel
 
@@ -517,6 +846,147 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     assert payload["current_effective"]["status"] == "effective"
     assert payload["current_effective"]["output_image"] == str(image)
     assert payload["current_effective"]["operator"] == "operator-current"
+
+
+def test_investment_web_api_end_to_end_smoke_without_external_services(investment_env, tmp_path, monkeypatch):
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.investment.daily_content import update_generation_success
+    from business.investment.records import get_content_record
+    from business.investment.router import handle_text_message
+    from channel.web import web_channel
+    from channel.web.web_channel import (
+        InvestmentDailyContentEffectiveHandler,
+        InvestmentDailyContentGenerateHandler,
+        InvestmentDailyContentHandler,
+        InvestmentHealthHandler,
+        InvestmentRequestRecordsExportHandler,
+        InvestmentRequestRecordsHandler,
+        InvestmentUsersHandler,
+    )
+
+    create_admin_user("admin-e2e", "admin-pass", role="admin")
+    create_admin_user("readonly-e2e", "readonly-pass", role="readonly")
+    admin_token = create_admin_session(authenticate_admin("admin-e2e", "admin-pass"))
+    readonly_token = create_admin_session(authenticate_admin("readonly-e2e", "readonly-pass"))
+    headers = []
+    current_params = {}
+    current_body = {}
+    current_token = admin_token
+
+    monkeypatch.setattr(web_channel.web, "header", lambda name, value: headers.append((name, value)))
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": current_token})
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(**current_params))
+    monkeypatch.setattr(web_channel.web, "data", lambda: json.dumps(current_body, ensure_ascii=False).encode("utf-8"))
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    monkeypatch.setattr(web_channel.web.ctx, "env", {"CONTENT_TYPE": "application/json"}, raising=False)
+
+    def call_json(handler, *, params=None, body=None, token=None):
+        nonlocal current_params, current_body, current_token
+        current_params = params or {}
+        current_body = body or {}
+        current_token = token or admin_token
+        return json.loads(handler())
+
+    customer = {
+        "openid": "openid-e2e",
+        "name": "E2E Customer",
+        "institution": "E2E Inst",
+        "enabled": True,
+        "allowed_services": ["全部"],
+        "auth_start_at": "2026-01-01T00:00:00",
+        "auth_end_at": "2099-12-31T23:59:59",
+    }
+    with pytest.raises(web_channel.web.HTTPError) as denied_error:
+        call_json(InvestmentUsersHandler().POST, body=customer, token=readonly_token)
+    denied = json.loads(denied_error.value.data)
+    assert denied["code"] == "permission_denied"
+    assert denied["permission"] == "users.write"
+
+    created = call_json(InvestmentUsersHandler().POST, body=customer)
+    assert created["status"] == "success"
+    assert created["action"] == "created"
+    listed_users = call_json(InvestmentUsersHandler().GET, params={"enabled": "true", "openid": "openid-e2e"})
+    assert [user["openid"] for user in listed_users["users"]] == ["openid-e2e"]
+
+    generated_image = tmp_path / "generated-rate.png"
+    generated_image.write_bytes(b"rate")
+    draft = call_json(
+        InvestmentDailyContentHandler().POST,
+        body={"service_type": "利率", "source_text": "rate source", "operator": "admin-e2e"},
+    )
+    content_id = draft["content_id"]
+
+    class ImmediateThread:
+        def __init__(self, target, **_kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    def fake_generate_content(task_content_id):
+        update_generation_success(task_content_id, "rate generated", str(generated_image))
+        return SimpleNamespace(success=True, content_id=task_content_id, generated_text="rate generated", output_image=str(generated_image), output_files=[str(generated_image)])
+
+    monkeypatch.setattr(web_channel.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr("business.investment.daily_content.generate_content", fake_generate_content)
+    generated = call_json(lambda: InvestmentDailyContentGenerateHandler().POST(content_id))
+    assert generated["status"] == "success"
+    assert generated["generation_status"] == "started"
+    assert get_content_record(content_id).output_image == str(generated_image)
+
+    effective = call_json(
+        lambda: InvestmentDailyContentEffectiveHandler().POST(content_id),
+        body={"operator": "admin-e2e", "effective_date": "2026-05-28"},
+    )
+    assert effective["status"] == "success"
+    current = call_json(InvestmentDailyContentHandler().GET, params={"service_type": "rate", "limit": "20"})
+    assert current["current_effective"]["content_id"] == content_id
+
+    cb_image = tmp_path / "cb-current.png"
+    cb_image.write_bytes(b"cb")
+    cb_draft = call_json(
+        InvestmentDailyContentHandler().POST,
+        body={
+            "service_type": "转债",
+            "source_text": "cb source",
+            "generated_text": "cb generated",
+            "output_image": str(cb_image),
+            "operator": "admin-e2e",
+            "effective_date": "2026-05-28",
+        },
+    )
+    call_json(lambda: InvestmentDailyContentEffectiveHandler().POST(cb_draft["content_id"]), body={"operator": "admin-e2e"})
+
+    rate_reply = handle_text_message("openid-e2e", "利率")
+    cb_reply = handle_text_message("openid-e2e", "转债")
+    assert rate_reply.success is True
+    assert rate_reply.output_files == [str(generated_image)]
+    assert cb_reply.success is True
+    assert cb_reply.output_files == [str(cb_image)]
+
+    records = call_json(InvestmentRequestRecordsHandler().GET, params={"limit": "20"})
+    assert {record["raw_input"] for record in records["records"]} >= {"利率", "转债"}
+    assert any(artifact["artifact_role"] == "output_image" for record in records["records"] for artifact in record["output_artifacts"])
+
+    health_calls = []
+    monkeypatch.setattr(
+        "business.investment.health.run_health_checks",
+        lambda run_smoke=False: health_calls.append(run_smoke)
+        or [SimpleNamespace(name="database", ok=True, detail="ok", level="ok")],
+    )
+    health = call_json(InvestmentHealthHandler().GET, params={"smoke": "1"})
+    assert health["status"] == "success"
+    assert health["run_smoke"] is True
+    assert health_calls == [True]
+
+    headers.clear()
+    nonlocal_params = {"start_date": "2026-05-28", "end_date": "2026-05-28", "service_type": "", "year": "", "month": "", "quarter": ""}
+    current_params = nonlocal_params
+    exported = InvestmentRequestRecordsExportHandler().GET()
+    rows = _xlsx_sheet_rows(exported)
+    assert rows[0][:5] == ["请求时间", "OpenID", "客户姓名", "机构", "原始输入"]
+    assert any(row[1:5] == ["openid-e2e", "E2E Customer", "E2E Inst", "利率"] for row in rows[1:])
+    assert ("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") in headers
 
 
 def test_user_service_permission_edges_and_upsert(investment_env):
@@ -712,6 +1182,156 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(inve
     assert persisted.status == Status.GENERATING
 
 
+def test_job_service_reuses_running_technical_analysis_record(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.job_service import find_running_job, start_job_if_absent
+    from business.investment.records import succeed_request_record
+
+    first = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    duplicate = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+
+    assert first.created is True
+    assert duplicate.created is False
+    assert duplicate.record.request_id == first.record.request_id
+    assert find_running_job("openid", "300502.SZ 技术分析").request_id == first.record.request_id
+
+    succeed_request_record(first.record.request_id, output_files=["/tmp/signal.png", "/tmp/chart.png"], elapsed_ms=12)
+    next_job = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+
+    assert next_job.created is True
+    assert next_job.record.request_id != first.record.request_id
+
+
+def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
+    from business.investment import config_service
+    from business.investment.constants import ErrorCode, ServiceType, Status
+    from business.investment.job_service import find_running_job
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": "sk-secret-123"})
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+
+    reply = handle_text_message(
+        "ok",
+        "300502.SZ 技术分析",
+        technical_analysis_handler=lambda *_args: (_ for _ in ()).throw(RuntimeError("backend boom sk-secret-123")),
+    )
+
+    record = list_request_records(limit=1)[0]
+    assert reply.success is False
+    assert reply.error_code == ErrorCode.SYSTEM_ERROR
+    assert record.status == Status.FAILED
+    assert record.error_code == ErrorCode.SYSTEM_ERROR
+    assert "backend boom" in record.error_message
+    assert "sk-secret-123" not in record.error_message
+    assert find_running_job("ok", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS) is None
+
+
+def test_job_service_ignores_stale_running_technical_analysis_record(investment_env):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import text
+
+    from business.investment.constants import ServiceType, Status
+    from business.investment.db import connect
+    from business.investment.job_service import find_running_job, start_job_if_absent
+    from business.investment.records import create_request_record, get_request_record
+
+    old_id = create_request_record("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    stale_time = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
+    with connect() as conn:
+        conn.execute(
+            text("update investment_request_records set created_at=:created_at, updated_at=:created_at where request_id=:request_id"),
+            {"created_at": stale_time, "request_id": old_id},
+        )
+
+    assert find_running_job("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS) is None
+    assert get_request_record(old_id).status == Status.FAILED
+
+    next_job = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+
+    assert next_job.created is True
+    assert next_job.record.request_id != old_id
+
+
+def test_job_service_concurrent_start_creates_single_running_job(investment_env):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from business.investment.constants import ServiceType
+    from business.investment.job_service import start_job_if_absent
+    from business.investment.records import list_request_records
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _index: start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS),
+                range(2),
+            )
+        )
+
+    assert sum(1 for result in results if result.created) == 1
+    assert len({result.record.request_id for result in results}) == 1
+    records = list_request_records(limit=10)
+    running = [record for record in records if record.raw_input == "300502.SZ 技术分析"]
+    assert len(running) == 1
+
+
+def test_router_concurrent_technical_analysis_reuses_running_job_without_duplicate_handler(
+    investment_env,
+    tmp_path,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.technical_analysis import TechnicalAnalysisResult
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    card = tmp_path / "signal.png"
+    chart = tmp_path / "chart.png"
+    report = tmp_path / "report.md"
+    card.write_bytes(b"card")
+    chart.write_bytes(b"chart")
+    report.write_text("report", encoding="utf-8")
+    calls = []
+
+    def slow_handler(_openid, _raw_input, _target):
+        calls.append(_target)
+        time.sleep(0.2)
+        return TechnicalAnalysisResult(
+            True,
+            signal_card_path=str(card),
+            main_chart_path=str(chart),
+            report_path=str(report),
+            output_files=[str(card), str(chart), str(report)],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(
+            pool.map(
+                lambda _index: handle_text_message(
+                    "ok",
+                    "300502.SZ 技术分析",
+                    technical_analysis_handler=slow_handler,
+                ),
+                range(2),
+            )
+        )
+
+    assert len(calls) == 1
+    assert sum(1 for reply in replies if reply.success) == 1
+    waiting = [reply for reply in replies if not reply.success]
+    assert len(waiting) == 1
+    assert waiting[0].reply_text == "正在运行，请稍候。"
+    records = [record for record in list_request_records(limit=10) if record.raw_input == "300502.SZ 技术分析"]
+    assert len(records) == 1
+
+
 def test_request_records_api_includes_generating_timeout_warning(investment_env, monkeypatch):
     from business.investment.constants import ServiceType
     from business.investment.db import connect
@@ -786,6 +1406,279 @@ def test_success_request_records_output_files_table(investment_env):
             "service_type": ServiceType.RATE,
         }
     ]
+
+
+def test_request_records_save_audit_metadata(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, get_request_record, succeed_request_record
+
+    request_id = create_request_record(
+        "openid",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        customer_name="Alice",
+        institution="Inst A",
+        market_date="2026-05-25",
+        cache_key="ta:300502.SZ:2026-05-25",
+        cache_hit=True,
+        program_version="sha256:program12345678",
+        ta_version="sha256:ta123456789012",
+        renderer_version="sha256:renderer123456",
+        template_version="sha256:template123456",
+    )
+    succeed_request_record(request_id, output_files=[], elapsed_ms=12)
+
+    record = get_request_record(request_id)
+
+    assert record.normalized_target == "300502.SZ"
+    assert record.stock_code == "300502.SZ"
+    assert record.stock_name == "新易盛"
+    assert record.customer_name == "Alice"
+    assert record.institution == "Inst A"
+    assert record.market_date == "2026-05-25"
+    assert record.cache_key == "ta:300502.SZ:2026-05-25"
+    assert record.cache_hit is True
+    assert record.program_version == "sha256:program12345678"
+    assert record.ta_version == "sha256:ta123456789012"
+    assert record.renderer_version == "sha256:renderer123456"
+    assert record.template_version == "sha256:template123456"
+
+
+def _xlsx_sheet_rows(content: bytes) -> list[list[object]]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(BytesIO(content))
+    sheet = workbook.active
+    return [list(row) for row in sheet.iter_rows(values_only=True)]
+
+
+def test_export_date_range_helpers_return_inclusive_bounds():
+    from business.investment.export_service import month_range, quarter_range
+
+    assert month_range(2026, 2) == ("2026-02-01T00:00:00", "2026-02-28T23:59:59")
+    assert month_range(2024, 2) == ("2024-02-01T00:00:00", "2024-02-29T23:59:59")
+    assert quarter_range(2026, 2) == ("2026-04-01T00:00:00", "2026-06-30T23:59:59")
+
+
+def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.db import connect
+    from business.investment.export_service import export_request_records_xlsx
+    from business.investment.records import create_request_record, fail_request_record, succeed_request_record
+
+    older = create_request_record("old-openid", "利率", ServiceType.RATE)
+    succeed_request_record(older, output_files=["/tmp/old.png"], elapsed_ms=1)
+    included = create_request_record(
+        "openid-a",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        customer_name="Alice",
+        institution="Inst A",
+        cache_hit=True,
+        program_version="sha256:program",
+        template_version="sha256:template",
+    )
+    succeed_request_record(included, output_files=["/tmp/card.png"], elapsed_ms=15)
+    failed = create_request_record("openid-b", "贵州茅台 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    fail_request_record(failed, ErrorCode.STOCK_NOT_FOUND, detail="not found", elapsed_ms=5)
+
+    with connect() as conn:
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :created_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": "2026-04-30T23:59:59", "request_id": older},
+        )
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :created_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": "2026-05-10T08:00:00", "request_id": included},
+        )
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :created_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": "2026-06-01T00:00:00", "request_id": failed},
+        )
+
+    rows = _xlsx_sheet_rows(
+        export_request_records_xlsx(
+            "2026-05-01T00:00:00",
+            "2026-05-31T23:59:59",
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+        )
+    )
+
+    assert rows == [
+        [
+            "请求时间",
+            "OpenID",
+            "客户姓名",
+            "机构",
+            "原始输入",
+            "服务类型",
+            "股票代码",
+            "股票名称",
+            "状态",
+            "错误码",
+            "错误原因",
+            "缓存命中",
+            "输出文件",
+            "耗时毫秒",
+            "程序版本",
+            "模板版本",
+        ],
+        [
+            "2026-05-10T08:00:00",
+            "openid-a",
+            "Alice",
+            "Inst A",
+            "新易盛 技术分析",
+            "technical_analysis",
+            "300502.SZ",
+            "新易盛",
+            "success",
+            None,
+            None,
+            "是",
+            "/tmp/card.png",
+            15,
+            "sha256:program",
+            "sha256:template",
+        ],
+    ]
+
+
+def test_export_request_records_xlsx_empty_records_contains_only_header(investment_env):
+    from business.investment.export_service import export_request_records_xlsx
+
+    rows = _xlsx_sheet_rows(export_request_records_xlsx("2026-05-01T00:00:00", "2026-05-31T23:59:59"))
+
+    assert len(rows) == 1
+    assert rows[0][0] == "请求时间"
+
+
+def test_export_users_xlsx_filters_enabled_users(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.export_service import export_users_xlsx
+    from business.investment.user_service import create_user
+
+    create_user(
+        "enabled-openid",
+        name="Enabled",
+        institution="Inst A",
+        mobile="13800000000",
+        enabled=True,
+        allowed_services=[ServiceType.RATE],
+        auth_start_at="2026-01-01T00:00:00",
+        auth_end_at="2026-12-31T23:59:59",
+        remark="ok",
+    )
+    create_user("disabled-openid", name="Disabled", enabled=False, allowed_services=[ServiceType.ALL])
+
+    rows = _xlsx_sheet_rows(export_users_xlsx(enabled=True))
+
+    assert rows == [
+        ["OpenID", "姓名", "机构", "手机号", "状态", "服务权限", "授权开始", "授权结束", "备注"],
+        [
+            "enabled-openid",
+            "Enabled",
+            "Inst A",
+            "13800000000",
+            "启用",
+            "rate",
+            "2026-01-01T00:00:00",
+            "2026-12-31T23:59:59",
+            "ok",
+        ],
+    ]
+
+
+def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentRequestRecordsExportHandler, InvestmentUsersExportHandler
+
+    headers = []
+    auth_calls = []
+    monkeypatch.setattr(web_channel, "_require_auth", lambda: auth_calls.append(True))
+    monkeypatch.setattr(web_channel.web, "header", lambda name, value: headers.append((name, value)))
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(start_date="2026-05-01", end_date="2026-05-31", service_type="", enabled=""),
+    )
+
+    request_data = InvestmentRequestRecordsExportHandler().GET()
+
+    assert isinstance(request_data, bytes)
+    assert _xlsx_sheet_rows(request_data)[0][0] == "请求时间"
+    assert ("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") in headers
+    assert any(
+        name == "Content-Disposition" and "investment-requests" in value and value.endswith(".xlsx\"")
+        for name, value in headers
+    )
+
+    headers.clear()
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(enabled="true"))
+
+    user_data = InvestmentUsersExportHandler().GET()
+
+    assert isinstance(user_data, bytes)
+    assert _xlsx_sheet_rows(user_data)[0][0] == "OpenID"
+    assert ("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") in headers
+    assert any(
+        name == "Content-Disposition" and "investment-users" in value and value.endswith(".xlsx\"")
+        for name, value in headers
+    )
+    assert auth_calls == [True, True]
+
+
+def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp_path):
+    from business.investment.artifact_service import record_artifact
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.versioning import file_fingerprint
+
+    artifact = tmp_path / "card.png"
+    artifact.write_bytes(b"card-bytes")
+
+    record_artifact(
+        "request-1",
+        str(artifact),
+        "signal_card",
+        ServiceType.TECHNICAL_ANALYSIS,
+        version_tag="sha256:renderer123456",
+    )
+
+    with connect() as conn:
+        row = conn.execute(
+            text(
+                "select owner_id, file_path, file_type, service_type, artifact_role, file_size, file_hash, version_tag "
+                "from investment_output_files where owner_id = :owner_id"
+            ),
+            {"owner_id": "request-1"},
+        ).mappings().one()
+
+    assert row["file_path"] == str(artifact)
+    assert row["file_type"] == "image"
+    assert row["service_type"] == ServiceType.TECHNICAL_ANALYSIS
+    assert row["artifact_role"] == "signal_card"
+    assert row["file_size"] == len(b"card-bytes")
+    assert row["file_hash"] == file_fingerprint(str(artifact))
+    assert row["version_tag"] == "sha256:renderer123456"
+    assert file_fingerprint(str(tmp_path / "missing.png")).startswith("missing:")
 
 
 def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
@@ -1387,15 +2280,313 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     result = run_technical_analysis("ok", "300502.SZ 技术分析")
 
     assert result.success is True
-    assert calls == [
+    assert calls[:2] == [
         ("skill", "300502", "300502_SZ"),
         ("ai", "# 技术分析报告\n\n核心观点"),
-        ("render", "signal card standard text", "300502_SZ_signal_card.png"),
     ]
+    assert calls[2][0:2] == ("render", "signal card standard text")
+    assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-25_")
+    assert calls[2][2].endswith(".png")
     assert result.report_path == str(report)
     assert result.main_chart_path == str(chart)
-    assert result.signal_card_path.endswith("300502_SZ_signal_card.png")
+    assert Path(result.signal_card_path).name == calls[2][2]
     assert result.output_files == [result.signal_card_path, str(chart), str(report)]
+
+
+def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.technical_analysis import TechnicalAnalysisResult
+    from business.investment.user_service import create_user
+
+    card = tmp_path / "signal.png"
+    chart = tmp_path / "chart.png"
+    report = tmp_path / "report.md"
+    card.write_bytes(b"card")
+    chart.write_bytes(b"chart")
+    report.write_text("report", encoding="utf-8")
+    create_user("ok", name="Alice", institution="Inst A", enabled=True, allowed_services=[ServiceType.ALL])
+
+    reply = handle_text_message(
+        "ok",
+        "新易盛 技术分析",
+        technical_analysis_handler=lambda _openid, _raw_input, _target: TechnicalAnalysisResult(
+            True,
+            signal_card_path=str(card),
+            main_chart_path=str(chart),
+            report_path=str(report),
+            output_files=[str(card), str(chart), str(report)],
+            normalized_target="300502.SZ",
+            stock_code="300502.SZ",
+            stock_name="新易盛",
+            market_date="2026-05-25",
+            program_version="sha256:program12345678",
+            ta_version="sha256:ta123456789012",
+            renderer_version="sha256:renderer123456",
+            template_version="sha256:template123456",
+        ),
+    )
+
+    record = list_request_records(limit=1)[0]
+    assert reply.success is True
+    assert record.customer_name == "Alice"
+    assert record.institution == "Inst A"
+    assert record.normalized_target == "300502.SZ"
+    assert record.stock_code == "300502.SZ"
+    assert record.stock_name == "新易盛"
+    assert record.market_date == "2026-05-25"
+    assert record.program_version.startswith("sha256:")
+    assert record.ta_version.startswith("sha256:")
+    assert record.renderer_version.startswith("sha256:")
+    assert record.template_version.startswith("sha256:")
+
+    with connect() as conn:
+        rows = conn.execute(
+            text(
+                "select file_path, artifact_role, file_size, file_hash, version_tag "
+                "from investment_output_files where owner_id = :owner_id order by id"
+            ),
+            {"owner_id": record.request_id},
+        ).mappings().all()
+
+    assert [(row["file_path"], row["artifact_role"]) for row in rows] == [
+        (str(card), "signal_card"),
+        (str(chart), "main_chart"),
+        (str(report), "markdown_report"),
+    ]
+    assert all(row["file_size"] > 0 for row in rows)
+    assert all(str(row["file_hash"]).startswith("sha256:") for row in rows)
+    assert [row["version_tag"] for row in rows] == [
+        "sha256:renderer123456",
+        "sha256:ta123456789012",
+        "sha256:ta123456789012",
+    ]
+
+
+def test_technical_analysis_reuses_cached_outputs_for_same_target_date_and_version(investment_env, tmp_path, monkeypatch):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import clear_cache_entries, list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = []
+    version_parts = ["sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"]
+
+    def fake_versions():
+        return tuple(version_parts)
+
+    def fake_skill(symbol, output_dir):
+        calls.append(("skill", symbol, len(calls)))
+        report = tmp_path / f"{symbol}_技术分析报告_2026-05-25_{len(calls)}.md"
+        chart = tmp_path / f"{symbol}_TA_2026-05-25_{len(calls)}.png"
+        report.write_text("报告日期：2026-05-25\n核心观点", encoding="utf-8")
+        chart.write_bytes(b"chart")
+        return report, chart
+
+    def fake_ai(report_text):
+        calls.append(("ai", report_text))
+        return SimpleNamespace(success=True, text="日期：2026-05-25\n信号卡标准文本")
+
+    def fake_render(_standard_text, output_path):
+        calls.append(("render", Path(output_path).name))
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "_versions", fake_versions)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+    second = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].cache_key == records[1].cache_key
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.hit_count == 1
+    assert cache_entry.market_date == "2026-05-25"
+
+    version_parts[1] = "sha256:ta-v2"
+    third = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert third.success is True
+    assert third.output_files != first.output_files
+    assert [call[0] for call in calls].count("skill") == 2
+    assert list_request_records(limit=1)[0].cache_hit is False
+
+    removed = clear_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, market_date="2026-05-25")
+    fourth = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert removed >= 1
+    assert fourth.success is True
+    assert [call[0] for call in calls].count("skill") == 3
+
+
+def test_technical_analysis_different_market_date_misses_cache(investment_env, tmp_path, monkeypatch):
+    from business.investment import technical_analysis
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = []
+    current_market_date = ""
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    def fake_skill(symbol, output_dir):
+        calls.append(("skill", symbol, current_market_date))
+        report = tmp_path / f"{symbol}_技术分析报告_{current_market_date}.md"
+        chart = tmp_path / f"{symbol}_TA_{current_market_date}.png"
+        report.write_text(f"报告日期：{current_market_date}\n核心观点", encoding="utf-8")
+        chart.write_bytes(f"chart-{current_market_date}".encode("utf-8"))
+        return report, chart
+
+    def fake_ai(report_text):
+        calls.append(("ai", current_market_date))
+        return SimpleNamespace(success=True, text=f"日期：{current_market_date}\n信号卡标准文本")
+
+    def fake_render(_standard_text, output_path):
+        calls.append(("render", current_market_date))
+        Path(output_path).write_bytes(f"card-{current_market_date}".encode("utf-8"))
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    current_market_date = "2026-05-25"
+    first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+    current_market_date = "2026-05-26"
+    second = handle_text_message("ok", "300502.SZ 2026-05-26 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files != first.output_files
+    assert [call[0] for call in calls].count("skill") == 2
+    records = list_request_records(limit=2)
+    assert records[0].market_date == "2026-05-26"
+    assert records[1].market_date == "2026-05-25"
+    assert records[0].cache_hit is False
+    assert records[1].cache_hit is False
+
+    current_market_date = "2026-05-25"
+    third = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+
+    assert third.success is True
+    assert third.output_files == first.output_files
+    assert [call[0] for call in calls].count("skill") == 2
+    assert Path(third.output_files[0]).read_bytes() == b"card-2026-05-25"
+    assert list_request_records(limit=1)[0].cache_hit is True
+
+
+def test_technical_analysis_market_date_fallback_records_warning(investment_env, tmp_path, monkeypatch):
+    from datetime import date
+
+    from business.investment import technical_analysis
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    report = tmp_path / "report_without_date.md"
+    chart = tmp_path / "chart_without_date.png"
+    report.write_text("核心观点 without date", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    monkeypatch.setattr(technical_analysis, "_run_skill", lambda _symbol, _output_dir: (report, chart))
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="信号卡标准文本 without date"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    record = list_request_records(limit=1)[0]
+    assert reply.success is True
+    assert record.market_date == date.today().isoformat()
+    assert "market_date fallback" in record.error_message
+    assert "market_date fallback" in record.status_warning
+
+
+def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=["/tmp/card.png", "/tmp/chart.png", "/tmp/report.md"],
+        artifact_owner_id="request-1",
+    )
+
+    list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
+
+    assert list_payload["status"] == "success", list_payload
+    assert list_payload["entries"][0]["cache_key"] == cache_key
+    assert list_payload["entries"][0]["output_files"] == ["/tmp/card.png", "/tmp/chart.png", "/tmp/report.md"]
+
+    invalidate_payload = _call_investment_json_handler(
+        monkeypatch,
+        lambda: InvestmentCacheEntryInvalidateHandler().POST(cache_key),
+        body={"operator": "tester"},
+    )
+
+    assert invalidate_payload["status"] == "success"
+    assert invalidate_payload["invalidated"] is True
+
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=["/tmp/card.png"],
+        artifact_owner_id="request-2",
+    )
+    clear_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheClearHandler().POST,
+        body={"service_type": "technical_analysis", "market_date": "2026-05-25", "operator": "tester"},
+    )
+
+    assert clear_payload["status"] == "success"
+    assert clear_payload["removed"] == 1
 
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
@@ -2132,6 +3323,100 @@ def test_daily_content_activation_and_query(investment_env, tmp_path):
     assert latest.output_image == str(second_img)
 
 
+def test_daily_content_versions_are_effective_per_service_and_date(investment_env, tmp_path):
+    from datetime import date, timedelta
+
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import (
+        create_content_draft,
+        get_latest_effective_content,
+        set_content_effective,
+    )
+    from business.investment.records import get_content_record
+
+    today = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+
+    yesterday_first_img = tmp_path / "yesterday-first.png"
+    yesterday_second_img = tmp_path / "yesterday-second.png"
+    tomorrow_img = tmp_path / "tomorrow.png"
+    for path in (yesterday_first_img, yesterday_second_img, tomorrow_img):
+        path.write_bytes(b"png")
+
+    yesterday_first = create_content_draft(ServiceType.RATE, source_text="old")
+    tomorrow_content = create_content_draft(ServiceType.RATE, source_text="future")
+    yesterday_second = create_content_draft(ServiceType.RATE, source_text="replacement")
+
+    set_content_effective(yesterday_first, str(yesterday_first_img), effective_date=yesterday, operator="operator-a")
+    set_content_effective(tomorrow_content, str(tomorrow_img), effective_date=tomorrow, operator="operator-b")
+    set_content_effective(yesterday_second, str(yesterday_second_img), effective_date=yesterday, operator="operator-c")
+
+    assert get_content_record(yesterday_first).status == Status.ARCHIVED
+    assert get_content_record(yesterday_first).archived_at
+    assert get_content_record(yesterday_second).status == Status.EFFECTIVE
+    assert get_content_record(yesterday_second).effective_date == yesterday
+    assert get_content_record(tomorrow_content).status == Status.EFFECTIVE
+    assert get_latest_effective_content(ServiceType.RATE).content_id == yesterday_second
+
+
+def test_rate_direct_output_mode_uses_uploaded_png_without_ai_or_renderer(investment_env, tmp_path):
+    from business.investment.constants import Status
+    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.investment.records import get_content_record
+
+    uploaded = tmp_path / "final-rate.png"
+    uploaded.write_bytes(b"png")
+    content_id = create_rate_content_draft(
+        source_files=[str(uploaded)],
+        source_text="",
+        operator="operator-a",
+        direct_output_mode=True,
+    )
+
+    result = generate_content(
+        content_id,
+        ai_generator=lambda *_args, **_kwargs: pytest.fail("direct output mode must not call AI"),
+        renderer=lambda *_args, **_kwargs: pytest.fail("direct output mode must not call renderer"),
+    )
+
+    record = get_content_record(content_id)
+    assert result.success is True
+    assert result.output_image == str(uploaded)
+    assert result.generated_text == ""
+    assert record.output_image == str(uploaded)
+    assert record.direct_output_mode is True
+    assert record.status == Status.GENERATED
+
+
+def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
+    from business.investment.audit_service import list_operation_audits
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, generate_content, set_content_effective
+
+    first = create_content_draft(ServiceType.RATE, source_text="first", operator="operator-a")
+    second = create_content_draft(ServiceType.RATE, source_text="second", operator="operator-b")
+    generate_content(
+        first,
+        ai_generator=lambda _service_type, _source_text: SimpleNamespace(success=True, text="first text"),
+        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path=str(tmp_path / "first.png")),
+    )
+    set_content_effective(first, operator="operator-a")
+    set_content_effective(second, str(tmp_path / "second.png"), operator="operator-b")
+
+    audits = list_operation_audits(limit=20)
+    actions = [audit.action for audit in audits]
+
+    assert "create" in actions
+    assert "generate" in actions
+    assert "effective" in actions
+    assert "archive" in actions
+    effective = next(audit for audit in audits if audit.action == "effective" and audit.target_id == second)
+    assert effective.operator == "operator-b"
+    assert effective.target_type == "daily_content"
+    assert effective.detail["service_type"] == ServiceType.RATE
+
+
 def test_daily_content_create_upload_generate_and_failure_records(investment_env):
     from business.investment.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import (
@@ -2478,6 +3763,105 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
     assert "chromium executable missing" in items["playwright_chromium"].detail
 
 
+def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, monkeypatch):
+    from business.investment import config_service, health
+
+    monkeypatch.setattr(
+        config_service,
+        "conf",
+        lambda: {
+            "channel_type": "wechatmp_service",
+            "wechatmp_app_id": "",
+            "wechatmp_app_secret": "",
+            "wechatmp_token": "token-ok",
+            "wechatmp_aes_key": "",
+        },
+    )
+    monkeypatch.setattr(
+        health,
+        "_dependency_available",
+        lambda module_name: (module_name in {"pandas", "scipy"}, "" if module_name in {"pandas", "scipy"} else "not installed"),
+        raising=False,
+    )
+    monkeypatch.setattr(health, "_has_chinese_font", lambda: False, raising=False)
+    monkeypatch.setattr(
+        health,
+        "_check_playwright_chromium",
+        lambda: health.HealthItem("playwright_chromium", True, "chromium ok", level="ok"),
+        raising=False,
+    )
+
+    items = {item.name: item for item in health.run_health_checks()}
+
+    assert {item.level for item in items.values()}.issubset({"ok", "warning", "error"})
+    assert items["dependency_pandas"].level == "ok"
+    assert items["dependency_scipy"].level == "ok"
+    assert items["dependency_talib"].level == "error"
+    assert items["dependency_akshare"].level == "warning"
+    assert items["dependency_tushare"].level == "warning"
+    assert items["dependency_baostock"].level == "warning"
+    assert items["chinese_font"].level == "warning"
+    assert items["wechatmp_channel_enabled"].level == "ok"
+    assert items["wechatmp_app_id"].level == "error"
+    assert items["wechatmp_app_secret"].level == "error"
+    assert items["wechatmp_token"].level == "ok"
+    assert items["wechatmp_aes_key"].level == "warning"
+
+
+def test_health_dependency_import_failure_reports_error_detail(investment_env, monkeypatch):
+    from business.investment import health
+
+    def fake_import(module_name):
+        if module_name == "talib":
+            raise OSError("DLL load failed while importing _ta_lib")
+        return object()
+
+    monkeypatch.setattr(health.importlib, "import_module", fake_import)
+
+    item = health._check_dependency("dependency_talib", "talib", required=True)
+
+    assert item.level == "error"
+    assert item.ok is False
+    assert "talib package import failed" in item.detail
+    assert "DLL load failed" in item.detail
+
+
+def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(investment_env, monkeypatch):
+    from business.investment import health
+
+    calls = []
+    monkeypatch.setattr(
+        health,
+        "_run_technical_analysis_smoke",
+        lambda: calls.append("ta") or health.HealthItem("smoke_technical_analysis", True, "ok", level="ok"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        health,
+        "_run_renderer_smoke_checks",
+        lambda: calls.append("renderer") or [
+            health.HealthItem("smoke_renderer_ta", True, "ok", level="ok"),
+            health.HealthItem("smoke_renderer_rate", True, "ok", level="ok"),
+            health.HealthItem("smoke_renderer_cb", True, "ok", level="ok"),
+        ],
+        raising=False,
+    )
+
+    light_items = {item.name: item for item in health.run_health_checks()}
+
+    assert calls == []
+    assert "smoke_technical_analysis" not in light_items
+    assert "smoke_renderer_ta" not in light_items
+
+    full_items = {item.name: item for item in health.run_health_checks(run_smoke=True)}
+
+    assert calls == ["ta", "renderer"]
+    assert full_items["smoke_technical_analysis"].level == "ok"
+    assert full_items["smoke_renderer_ta"].level == "ok"
+    assert full_items["smoke_renderer_rate"].level == "ok"
+    assert full_items["smoke_renderer_cb"].level == "ok"
+
+
 def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(investment_env):
     from business.investment.config_service import save_config
     from business.investment.health import run_health_checks
@@ -2669,3 +4053,72 @@ def test_web_channel_routes_investment_commands_without_permission_check(investm
     assert "[图片:" not in reply.content
     assert _build_investment_web_reply("web-session", "普通聊天") is None
     assert WebChannel().channel_type == "web"
+
+
+def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investment_env, tmp_path, monkeypatch):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.user_service import create_user
+    import channel.wechatmp.wechatmp_channel as wechatmp_channel
+
+    instances = wechatmp_channel.WechatMPChannel.__closure__[1].cell_contents
+    instances.clear()
+    monkeypatch.setattr(
+        wechatmp_channel,
+        "conf",
+        lambda: {
+            "wechatmp_app_id": "wx-test",
+            "wechatmp_app_secret": "secret",
+            "wechatmp_token": "token",
+            "wechatmp_aes_key": "",
+            "single_chat_prefix": [""],
+            "concurrency_in_session": 1,
+        },
+    )
+    channel = wechatmp_channel.WechatMPChannel()
+
+    rate_image = tmp_path / "wechat-rate.png"
+    cb_image = tmp_path / "wechat-cb.png"
+    rate_image.write_bytes(b"rate")
+    cb_image.write_bytes(b"cb")
+    rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-28")
+    cb_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="cb", effective_date="2026-05-28")
+    set_content_effective(rate_id, str(rate_image), operator="tester")
+    set_content_effective(cb_id, str(cb_image), operator="tester")
+
+    create_user("openid-ok", enabled=True, allowed_services=[ServiceType.ALL], auth_end_at="2099-12-31T23:59:59")
+    create_user("openid-disabled", enabled=False, allowed_services=[ServiceType.ALL])
+    create_user("openid-expired", enabled=True, allowed_services=[ServiceType.ALL], auth_end_at="2020-01-01T00:00:00")
+
+    def context(openid, content):
+        msg = SimpleNamespace(from_user_id=openid, other_user_id=openid, msg_id=f"{openid}-{content}")
+        return Context(
+            ContextType.TEXT,
+            content,
+            {
+                "msg": msg,
+                "session_id": openid,
+                "receiver": openid,
+                "channel_type": "wechatmp",
+                "isgroup": False,
+            },
+        )
+
+    rate_reply = channel._generate_reply(context("openid-ok", "利率"))
+    cb_reply = channel._generate_reply(context("openid-ok", "转债"))
+    missing_reply = channel._generate_reply(context("openid-missing", "利率"))
+    disabled_reply = channel._generate_reply(context("openid-disabled", "利率"))
+    expired_reply = channel._generate_reply(context("openid-expired", "利率"))
+
+    assert rate_reply.type == ReplyType.IMAGE_URL
+    assert rate_reply.content == [str(rate_image)]
+    assert cb_reply.type == ReplyType.IMAGE_URL
+    assert cb_reply.content == [str(cb_image)]
+    assert missing_reply.type == ReplyType.TEXT
+    assert missing_reply.content == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert disabled_reply.type == ReplyType.TEXT
+    assert disabled_reply.content == "您的服务已停用，如需恢复请联系服务人员。"
+    assert expired_reply.type == ReplyType.TEXT
+    assert expired_reply.content == "您的授权已过期，如需续期请联系服务人员。"
