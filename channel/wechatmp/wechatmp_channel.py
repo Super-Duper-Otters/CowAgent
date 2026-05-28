@@ -48,6 +48,9 @@ class WechatMPChannel(ChatChannel):
         aes_key = conf().get("wechatmp_aes_key")
         self.client = WechatMPClient(appid, secret)
         self.crypto = None
+        self.active_fallback_cache = defaultdict(list)
+        self.active_running = set()
+        self.active_fallback_lock = threading.Lock()
         if aes_key:
             self.crypto = WeChatCrypto(token, aes_key, appid)
         if self.passive_reply:
@@ -62,6 +65,39 @@ class WechatMPChannel(ChatChannel):
             t = threading.Thread(target=self.start_loop, args=(self.delete_media_loop,))
             t.setDaemon(True)
             t.start()
+
+    def queue_active_fallback(self, receiver, reply_type, reply_content):
+        with self.active_fallback_lock:
+            self.active_fallback_cache[receiver].append((reply_type, reply_content))
+
+    def pop_active_fallback(self, receiver):
+        with self.active_fallback_lock:
+            if not self.active_fallback_cache.get(receiver):
+                return None
+            item = self.active_fallback_cache[receiver].pop(0)
+            if not self.active_fallback_cache[receiver]:
+                del self.active_fallback_cache[receiver]
+            return item
+
+    def mark_active_running(self, receiver):
+        with self.active_fallback_lock:
+            self.active_running.add(receiver)
+
+    def mark_active_done(self, receiver):
+        with self.active_fallback_lock:
+            self.active_running.discard(receiver)
+
+    def is_active_running(self, receiver):
+        with self.active_fallback_lock:
+            return receiver in self.active_running
+
+    def _wechat_error_text(self, action, exc):
+        raw = remove_markdown_symbol(str(exc) or type(exc).__name__)
+        if "48001" in raw or "api unauthorized" in raw.lower():
+            return "{}失败：微信接口未授权或账号未认证，请检查微信公众平台接口权限。".format(action)
+        if len(raw) > 160:
+            raw = raw[:160] + "..."
+        return "{}失败：{}".format(action, raw)
 
     def startup(self):
         if self.passive_reply:
@@ -235,10 +271,15 @@ class WechatMPChannel(ChatChannel):
                 texts = split_string_by_utf8_length(reply_text, MAX_UTF8_LEN)
                 if len(texts) > 1:
                     logger.info("[wechatmp] text too long, split into {} parts".format(len(texts)))
-                for i, text in enumerate(texts):
-                    self.client.message.send_text(receiver, text)
-                    if i != len(texts) - 1:
-                        time.sleep(0.5)  # 休眠0.5秒，防止发送过快乱序
+                try:
+                    for i, text in enumerate(texts):
+                        self.client.message.send_text(receiver, text)
+                        if i != len(texts) - 1:
+                            time.sleep(0.5)  # 休眠0.5秒，防止发送过快乱序
+                except Exception as e:
+                    logger.error("[wechatmp] active text send failed, queue passive fallback for {}: {}".format(receiver, e))
+                    self.queue_active_fallback(receiver, "text", reply_text)
+                    return
                 logger.info("[wechatmp] Do send text to {}: {}".format(receiver, reply_text))
             elif reply.type == ReplyType.VOICE:
                 try:
@@ -285,16 +326,31 @@ class WechatMPChannel(ChatChannel):
                 logger.info("[wechatmp] Do send voice to {}".format(receiver))
             elif reply.type in (ReplyType.IMAGE_URL, ReplyType.IMAGE):  # 从网络或本地文件读取图片
                 for image_content in self._reply_media_items(reply.content):
-                    image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    try:
+                        image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    except Exception as e:
+                        logger.error("[wechatmp] load image failed: {}".format(e))
+                        self.queue_active_fallback(receiver, "text", self._wechat_error_text("图片读取", e))
+                        continue
                     filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                     content_type = "image/" + image_type
                     try:
                         response = self.client.media.upload("image", (filename, image_storage, content_type))
                         logger.debug("[wechatmp] upload image response: {}".format(response))
-                    except WeChatClientException as e:
+                    except Exception as e:
                         logger.error("[wechatmp] upload image failed: {}".format(e))
-                        return
-                    self.client.message.send_image(receiver, response["media_id"])
+                        self.queue_active_fallback(receiver, "text", self._wechat_error_text("图片上传", e))
+                        continue
+                    try:
+                        self.client.message.send_image(receiver, response["media_id"])
+                    except Exception as e:
+                        logger.error("[wechatmp] active image send failed, queue passive fallback for {}: {}".format(receiver, e))
+                        media_id = response.get("media_id")
+                        if media_id:
+                            self.queue_active_fallback(receiver, "image", media_id)
+                        else:
+                            self.queue_active_fallback(receiver, "text", self._wechat_error_text("图片发送", e))
+                        continue
                     logger.info("[wechatmp] Do send image to {}".format(receiver))
             elif reply.type == ReplyType.VIDEO_URL:  # 从网络下载视频
                 video_url = reply.content
@@ -334,9 +390,16 @@ class WechatMPChannel(ChatChannel):
         logger.debug("[wechatmp] Success to generate reply, msgId={}".format(context["msg"].msg_id))
         if self.passive_reply:
             self.running.remove(session_id)
+        else:
+            self.mark_active_done(session_id)
 
     def _fail_callback(self, session_id, exception, context, **kwargs):  # 线程异常结束时的回调函数
         logger.exception("[wechatmp] Fail to generate reply to user, msgId={}, exception={}".format(context["msg"].msg_id, exception))
         if self.passive_reply:
             assert session_id not in self.cache_dict
             self.running.remove(session_id)
+        else:
+            from business.investment.constants import ErrorCode, user_message
+
+            self.queue_active_fallback(session_id, "text", user_message(ErrorCode.SYSTEM_ERROR))
+            self.mark_active_done(session_id)

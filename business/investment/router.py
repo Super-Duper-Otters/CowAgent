@@ -54,6 +54,13 @@ def _image_reply(paths: list[str]) -> str:
     return "\n".join(f"[图片: {path}]" for path in paths)
 
 
+def _failure_reply_with_detail(prompt: str, detail: str) -> str:
+    safe_detail = sanitize_sensitive_text(detail or "").strip()
+    if not safe_detail:
+        return prompt
+    return f"{prompt}\n原因：{safe_detail}"
+
+
 def _agent_fallback_enabled() -> bool:
     value = get_config("router.enable_agent_fallback", False)
     if isinstance(value, str):
@@ -132,7 +139,17 @@ def handle_text_message(
             code = result.error_code or ErrorCode.TECHNICAL_ANALYSIS_FAILED
             prompt = user_message(code)
             fail_request_record(request_id, code, prompt, result.detail, elapsed())
-            return BusinessReply(True, False, prompt, [], route.service_type, code, prompt, sanitize_sensitive_text(result.detail))
+            detail = sanitize_sensitive_text(result.detail)
+            return BusinessReply(
+                True,
+                False,
+                _failure_reply_with_detail(prompt, detail),
+                [],
+                route.service_type,
+                code,
+                prompt,
+                detail,
+            )
         user_output_files = [result.signal_card_path, result.main_chart_path]
         record_output_files = result.output_files or user_output_files
         succeed_request_record(request_id, output_files=record_output_files, elapsed_ms=elapsed())

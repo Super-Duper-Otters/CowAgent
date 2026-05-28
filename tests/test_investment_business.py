@@ -1345,6 +1345,8 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(investment_
 
     record = list_request_records(limit=1)[0]
     assert reply.success is False
+    assert "skill crashed" in reply.reply_text
+    assert api_key not in reply.reply_text
     assert record.error_code == ErrorCode.TECHNICAL_ANALYSIS_FAILED
     assert "skill crashed" in record.error_message
     assert api_key not in record.error_message

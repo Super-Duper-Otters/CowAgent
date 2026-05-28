@@ -15,6 +15,19 @@ from common.utils import split_string_by_utf8_length
 from config import conf, subscribe_msg
 
 
+IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
+
+
+def _is_investment_command(content: str) -> bool:
+    try:
+        from business.investment.router import parse_route
+
+        return parse_route(content).matched
+    except Exception as exc:
+        logger.debug("[wechatmp] investment command check failed: {}".format(exc))
+        return False
+
+
 # This class is instantiated once per query
 class Query:
     def GET(self):
@@ -62,6 +75,9 @@ class Query:
                     if supported and context:
                         channel.running.add(from_user)
                         channel.produce(context)
+                        if _is_investment_command(content):
+                            replyPost = create_reply(IMMEDIATE_ACK_TEXT, msg)
+                            return encrypt_func(replyPost.render())
                     else:
                         trigger_prefix = conf().get("single_chat_prefix", [""])[0]
                         if trigger_prefix or not supported:
