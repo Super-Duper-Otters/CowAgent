@@ -83,6 +83,13 @@ class WechatMPChannel(ChatChannel):
         with self.active_fallback_lock:
             self.active_running.add(receiver)
 
+    def try_mark_active_running(self, receiver):
+        with self.active_fallback_lock:
+            if receiver in self.active_running:
+                return False
+            self.active_running.add(receiver)
+            return True
+
     def mark_active_done(self, receiver):
         with self.active_fallback_lock:
             self.active_running.discard(receiver)

@@ -16,6 +16,7 @@ from config import conf, subscribe_msg
 
 
 IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
+PASSIVE_TECHNICAL_ACK_TEXT = "收到，正在运行，请稍候。回复任意文字可尝试获取结果。"
 
 
 def _is_investment_command(content: str) -> bool:
@@ -26,6 +27,19 @@ def _is_investment_command(content: str) -> bool:
     except Exception as exc:
         logger.debug("[wechatmp] investment command check failed: {}".format(exc))
         return False
+
+
+def _investment_ack_text(content: str) -> str:
+    try:
+        from business.investment.constants import ServiceType
+        from business.investment.router import parse_route
+
+        route = parse_route(content)
+        if route.matched and route.service_type == ServiceType.TECHNICAL_ANALYSIS:
+            return PASSIVE_TECHNICAL_ACK_TEXT
+    except Exception as exc:
+        logger.debug("[wechatmp] investment ack text check failed: {}".format(exc))
+    return IMMEDIATE_ACK_TEXT
 
 
 # This class is instantiated once per query
@@ -76,7 +90,7 @@ class Query:
                         channel.running.add(from_user)
                         channel.produce(context)
                         if _is_investment_command(content):
-                            replyPost = create_reply(IMMEDIATE_ACK_TEXT, msg)
+                            replyPost = create_reply(_investment_ack_text(content), msg)
                             return encrypt_func(replyPost.render())
                     else:
                         trigger_prefix = conf().get("single_chat_prefix", [""])[0]

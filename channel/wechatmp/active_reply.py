@@ -13,8 +13,8 @@ from common.log import logger
 from config import conf, subscribe_msg
 
 
-ACTIVE_IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。稍后发送任意文字可拉取结果。"
-ACTIVE_WAITING_TEXT = "正在运行，请稍候。稍后发送任意文字可拉取结果。"
+ACTIVE_IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
+ACTIVE_WAITING_TEXT = "正在运行，请稍候。"
 
 
 def _render_text_reply(text, msg, encrypt_func):
@@ -53,6 +53,35 @@ def _mark_active_running(channel, openid):
         channel.mark_active_running(openid)
     elif hasattr(channel, "active_running"):
         channel.active_running.add(openid)
+
+
+def _try_mark_active_running(channel, openid):
+    if hasattr(channel, "try_mark_active_running"):
+        return channel.try_mark_active_running(openid)
+    if hasattr(channel, "active_fallback_lock"):
+        with channel.active_fallback_lock:
+            if openid in getattr(channel, "active_running", set()):
+                return False
+            channel.active_running.add(openid)
+            return True
+    if _is_active_running(channel, openid):
+        return False
+    _mark_active_running(channel, openid)
+    return True
+
+
+def _running_investment_job(openid, content):
+    try:
+        from business.investment.constants import ServiceType
+        from business.investment.job_service import find_running_job
+        from business.investment.router import parse_route
+
+        route = parse_route(content)
+        if route.matched and route.service_type == ServiceType.TECHNICAL_ANALYSIS:
+            return find_running_job(openid, content, ServiceType.TECHNICAL_ANALYSIS)
+    except Exception as exc:
+        logger.debug("[wechatmp] active running job check failed: {}".format(exc))
+    return None
 
 
 # This class is instantiated once per query
@@ -110,7 +139,12 @@ class Query:
                         route = parse_route(content)
                         if not route.matched:
                             return _render_text_reply(DEFAULT_UNMATCHED_PROMPT, msg, encrypt_func)
-                        _mark_active_running(channel, from_user)
+                        if _running_investment_job(from_user, content):
+                            logger.info("[wechatmp] active investment job already running for {}".format(from_user))
+                            return _render_text_reply(ACTIVE_WAITING_TEXT, msg, encrypt_func)
+                        if not _try_mark_active_running(channel, from_user):
+                            logger.info("[wechatmp] active task became running for {}".format(from_user))
+                            return _render_text_reply(ACTIVE_WAITING_TEXT, msg, encrypt_func)
                         channel.produce(context)
                         return _render_text_reply(ACTIVE_IMMEDIATE_ACK_TEXT, msg, encrypt_func)
                     except Exception as exc:
