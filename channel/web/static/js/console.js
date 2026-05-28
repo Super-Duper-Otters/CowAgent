@@ -385,6 +385,14 @@ function closeSidebar() {
 }
 
 async function loadInvestmentView(viewId) {
+    if (!currentInvestmentAdmin) {
+        await loadInvestmentAdminSession();
+    }
+    if (!investmentCanView(viewId)) {
+        const element = investmentContentEl(`${viewId}-content`);
+        investmentError(element, '权限不足');
+        return;
+    }
     if (viewId === 'invest-users') return renderInvestmentUsers();
     if (viewId === 'invest-rate') return renderInvestmentContent('rate');
     if (viewId === 'invest-cb') return renderInvestmentContent('convertible_bond');
@@ -414,6 +422,41 @@ const INVEST_STATUS_LABELS = {
 
 const INVEST_CONTENT_POLL_INTERVAL_MS = 2000;
 let investmentContentPollTimer = null;
+let currentInvestmentAdmin = null;
+
+const INVEST_VIEW_PERMISSIONS = {
+    'invest-users': 'users.read',
+    'invest-rate': 'content.read',
+    'invest-cb': 'content.read',
+    'invest-records': 'records.read',
+    'invest-config': 'config.read',
+    'invest-health': 'health.read',
+};
+
+function investmentCan(permission) {
+    if (!permission) return true;
+    const permissions = currentInvestmentAdmin?.permissions || [];
+    return permissions.includes('*') || permissions.includes(permission);
+}
+
+function investmentCanView(viewId) {
+    return investmentCan(INVEST_VIEW_PERMISSIONS[viewId]);
+}
+
+async function loadInvestmentAdminSession() {
+    try {
+        const data = await investmentFetchJson('/api/investment/auth/me');
+        currentInvestmentAdmin = data.admin || null;
+    } catch (error) {
+        currentInvestmentAdmin = null;
+    }
+    document.querySelectorAll('.sidebar-item').forEach(item => {
+        const viewId = item.dataset.view;
+        if (viewId && INVEST_VIEW_PERMISSIONS[viewId]) {
+            item.classList.toggle('hidden', !investmentCanView(viewId));
+        }
+    });
+}
 
 const INVEST_CONFIG_GROUPS = [
     {
@@ -423,12 +466,15 @@ const INVEST_CONFIG_GROUPS = [
         ],
     },
     {
-        title: '技术分析与渲染',
+        title: '技术分析参数',
         keys: [
-            ['technical_analysis.skill_path', '技术分析 Skill 路径', 'text'],
             ['technical_analysis.output_dir', '技术分析输出目录', 'text'],
             ['technical_analysis.default_chart_days', '默认图表天数', 'number'],
-            ['render.renderer_path', 'renderer 路径', 'text'],
+        ],
+    },
+    {
+        title: '图片生成模板',
+        keys: [
             ['render.template_ta_path', '技术分析模板', 'text'],
             ['render.template_rate_path', '利率模板', 'text'],
             ['render.template_cb_path', '转债模板', 'text'],
@@ -496,6 +542,12 @@ function investmentFormatTime(value) {
     return text.replace('T', ' ').replace(/\.\d+/, '').replace(/\+00:00$/, '');
 }
 
+function investmentTodayDate() {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
 function investmentCompactText(value, max = 60) {
     return `<span class="investment-compact-text" title="${escapeHtml(String(value || ''))}">${escapeHtml(investmentTruncate(value, max))}</span>`;
 }
@@ -516,6 +568,22 @@ function investmentFileSummary(files = []) {
     const first = investmentFileName(values[0]);
     const extra = values.length > 1 ? ` 等 ${values.length} 个文件` : '';
     return `<span class="investment-compact-text" title="${escapeHtml(values.join('\n'))}">${escapeHtml(first + extra)}</span>`;
+}
+
+function investmentArtifactTable(artifacts = []) {
+    const values = Array.isArray(artifacts) ? artifacts : [];
+    if (!values.length) return '<span class="investment-muted-inline">无</span>';
+    const rows = values.map(item => `<tr>
+        <td>${escapeHtml(item.artifact_role || '-')}</td>
+        <td>${investmentFileLinks([item.file_path])}</td>
+        <td>${escapeHtml(item.file_size ?? '-')}</td>
+        <td>${investmentCompactText(item.file_hash || '', 28)}</td>
+        <td>${investmentCompactText(item.version_tag || '', 28)}</td>
+    </tr>`).join('');
+    return `<div class="investment-table-scroll"><table class="investment-table">
+        <thead><tr><th>角色</th><th>文件</th><th>大小</th><th>哈希</th><th>版本</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 function investmentEncodedRecord(record) {
@@ -569,12 +637,90 @@ async function investmentFetchJson(url, options) {
     return data;
 }
 
+function investmentDownload(path, params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            query.set(key, String(value).trim());
+        }
+    });
+    const suffix = query.toString();
+    window.location.href = suffix ? `${path}?${suffix}` : path;
+}
+
 function investmentButton(icon, label, onclick, variant = 'secondary') {
     return `<button class="investment-btn ${variant}" onclick="${onclick}"><i class="fas ${icon}"></i><span>${label}</span></button>`;
 }
 
+function investmentButtonIfCan(permission, icon, label, onclick, variant = 'secondary') {
+    if (!investmentCan(permission)) return '';
+    return investmentButton(icon, label, onclick, variant);
+}
+
 function investmentIconButton(icon, label, onclick, variant = 'secondary') {
     return `<button class="investment-btn investment-icon-btn ${variant}" onclick="${onclick}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><i class="fas ${icon}"></i></button>`;
+}
+
+function investmentIconButtonIfCan(permission, icon, label, onclick, variant = 'secondary') {
+    if (!investmentCan(permission)) return '';
+    return investmentIconButton(icon, label, onclick, variant);
+}
+
+function showInvestmentModal(title, bodyHtml) {
+    let overlay = document.getElementById('investment-modal-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'investment-modal-overlay';
+        overlay.className = 'investment-modal-overlay hidden';
+        overlay.innerHTML = `
+            <div class="investment-modal" role="dialog" aria-modal="true" aria-labelledby="investment-modal-title">
+                <div class="investment-modal-header">
+                    <strong id="investment-modal-title"></strong>
+                    <button class="investment-detail-close investment-modal-close" type="button" onclick="hideInvestmentModal()" aria-label="关闭">
+                        <i class="fas fa-xmark"></i>
+                    </button>
+                </div>
+                <div id="investment-modal-body" class="investment-modal-body"></div>
+            </div>`;
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) hideInvestmentModal();
+        });
+        document.body.appendChild(overlay);
+    }
+    document.getElementById('investment-modal-title').textContent = title || '';
+    document.getElementById('investment-modal-body').innerHTML = bodyHtml || '';
+    overlay.classList.remove('hidden');
+}
+
+function hideInvestmentModal() {
+    const overlay = document.getElementById('investment-modal-overlay');
+    if (!overlay) return;
+    overlay.classList.add('hidden');
+    const body = document.getElementById('investment-modal-body');
+    if (body) body.innerHTML = '';
+}
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') hideInvestmentModal();
+});
+
+function showInvestmentToast(message, variant = 'success') {
+    let container = document.getElementById('investment-toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'investment-toast-container';
+        container.className = 'investment-toast-container';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `investment-toast ${variant}`;
+    const icon = variant === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-check';
+    toast.innerHTML = `<i class="fas ${icon}"></i><span>${escapeHtml(message)}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('leaving');
+        setTimeout(() => toast.remove(), 180);
+    }, 2600);
 }
 
 function investmentField(label, id, value = '', type = 'text') {
@@ -586,6 +732,11 @@ function investmentField(label, id, value = '', type = 'text') {
         return `<label class="investment-check"><input id="${id}" type="checkbox" ${checked}><span>${label}</span></label>`;
     }
     return `<label class="investment-field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value || '')}"></label>`;
+}
+
+function investmentTableWrap(tableHtml, scroll = true) {
+    const scrollClass = scroll ? ' investment-table-scroll' : '';
+    return `<div class="investment-table-wrap${scrollClass}">${tableHtml}</div>`;
 }
 
 function investmentStockStats(stats = {}) {
@@ -612,7 +763,7 @@ function investmentStockTools(stats = {}) {
                         <option value="tushare">tushare</option>
                     </select>
                 </label>
-                ${investmentButton('fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+                ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
             </div>
             <div class="investment-inline-form investment-stock-actions">
                 <label class="investment-field investment-stock-query-field">
@@ -637,10 +788,10 @@ function renderInvestmentStockRows(stocks = []) {
             <td>${escapeHtml(stock.source || '')}</td>
             <td>${escapeHtml(stock.updated_at || '')}</td>
         </tr>`).join('');
-    return `<table class="investment-table">
+    return investmentTableWrap(`<table class="investment-table">
         <thead><tr><th>代码</th><th>名称</th><th>市场</th><th>TS Code</th><th>来源</th><th>更新时间</th></tr></thead>
         <tbody>${rows}</tbody>
-    </table>`;
+    </table>`);
 }
 
 async function renderInvestmentUsers() {
@@ -670,7 +821,7 @@ async function renderInvestmentUsers() {
                     </div>
                     ${investmentField('备注', 'invest-user-remark', '', 'textarea')}
                     <div class="investment-actions">
-                        ${investmentButton('fa-floppy-disk', '保存用户', 'saveInvestmentUser()', 'primary')}
+                        ${investmentButtonIfCan('users.write', 'fa-floppy-disk', '保存用户', 'saveInvestmentUser()', 'primary')}
                         ${investmentButton('fa-rotate-left', '清空表单', 'resetInvestmentUserForm()')}
                     </div>
                 </section>
@@ -678,9 +829,23 @@ async function renderInvestmentUsers() {
                     <div class="investment-panel-title"><i class="fas fa-file-excel"></i><span>Excel 导入</span></div>
                     <div class="investment-inline-form">
                         <input id="invest-users-import-file" type="file" accept=".xlsx,.xls">
-                        ${investmentButton('fa-upload', '导入用户', 'importInvestmentUsers()', 'primary')}
+                        ${investmentButtonIfCan('users.write', 'fa-upload', '导入用户', 'importInvestmentUsers()', 'primary')}
                     </div>
                     <div id="invest-users-import-result" class="investment-muted"></div>
+                </section>
+                <section class="investment-panel">
+                    <div class="investment-panel-title"><i class="fas fa-file-export"></i><span>Excel 导出</span></div>
+                    <div class="investment-inline-form">
+                        <label class="investment-field">
+                            <span>用户状态</span>
+                            <select id="invest-users-export-enabled">
+                                <option value="">全部</option>
+                                <option value="true">启用</option>
+                                <option value="false">停用</option>
+                            </select>
+                        </label>
+                        ${investmentButtonIfCan('users.read', 'fa-download', '导出白名单', 'exportInvestmentUsers()', 'primary')}
+                    </div>
                 </section>
                 <section class="investment-table-panel full">
                     <div class="investment-panel-title"><i class="fas fa-users"></i><span>用户列表</span></div>
@@ -703,14 +868,14 @@ function renderInvestmentUsersTable(users) {
             <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
             <td>${escapeHtml(user.auth_end_at || '')}</td>
             <td class="investment-row-actions">
-                ${investmentButton('fa-pen', '编辑', `editInvestmentUser('${encodeURIComponent(JSON.stringify(user))}')`)}
-                ${user.enabled ? investmentButton('fa-ban', '停用', `disableInvestmentUser('${encodeURIComponent(user.openid)}')`, 'danger') : ''}
+                ${investmentButtonIfCan('users.write', 'fa-pen', '编辑', `openInvestmentUserDialog('${encodeURIComponent(JSON.stringify(user))}')`)}
+                ${user.enabled ? investmentButtonIfCan('users.write', 'fa-ban', '停用', `disableInvestmentUser('${encodeURIComponent(user.openid)}')`, 'danger') : ''}
             </td>
         </tr>`).join('');
-    return `<div class="investment-table-wrap"><table class="investment-table">
+    return investmentTableWrap(`<table class="investment-table">
         <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>服务</th><th>状态</th><th>授权结束</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
-    </table></div>`;
+    </table>`);
 }
 
 function resetInvestmentUserForm() {
@@ -722,7 +887,43 @@ function resetInvestmentUserForm() {
     document.querySelectorAll('.invest-user-service').forEach((item, index) => item.checked = index === 0);
 }
 
+function investmentUserServiceChecks(prefix, user = {}) {
+    const services = new Set((user.allowed_services || ['全部']).map(investmentServiceLabel));
+    const options = ['全部', '技术分析', '利率', '转债'];
+    return options.map((option, index) => {
+        const checked = services.has(option) || (!user.openid && index === 0) ? 'checked' : '';
+        return `<label><input type="checkbox" class="${prefix}-service" value="${option}" ${checked}> ${option}</label>`;
+    }).join('');
+}
+
+function openInvestmentUserDialog(encoded = '') {
+    const user = encoded ? JSON.parse(decodeURIComponent(encoded)) : {};
+    const body = `
+        <div class="investment-grid cols-2">
+            ${investmentField('OpenID', 'invest-user-modal-openid', user.openid || '')}
+            ${investmentField('姓名', 'invest-user-modal-name', user.name || '')}
+            ${investmentField('机构', 'invest-user-modal-institution', user.institution || '')}
+            ${investmentField('手机号', 'invest-user-modal-mobile', user.mobile || '')}
+            ${investmentField('授权开始', 'invest-user-modal-auth-start', (user.auth_start_at || '').slice(0, 16), 'datetime-local')}
+            ${investmentField('授权结束', 'invest-user-modal-auth-end', (user.auth_end_at || '').slice(0, 16), 'datetime-local')}
+        </div>
+        <div class="investment-service-row">
+            ${investmentUserServiceChecks('invest-user-modal', user)}
+            <label><input id="invest-user-modal-enabled" type="checkbox" ${user.enabled === false ? '' : 'checked'}> 启用</label>
+        </div>
+        ${investmentField('备注', 'invest-user-modal-remark', user.remark || '', 'textarea')}
+        <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('users.write', 'fa-floppy-disk', '保存用户', "saveInvestmentUser('invest-user-modal')", 'primary')}
+            ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
+        </div>`;
+    showInvestmentModal('用户信息', body);
+}
+
 function editInvestmentUser(encoded) {
+    openInvestmentUserDialog(encoded);
+}
+
+function fillInvestmentUserForm(encoded) {
     const user = JSON.parse(decodeURIComponent(encoded));
     document.getElementById('invest-user-openid').value = user.openid || '';
     document.getElementById('invest-user-name').value = user.name || '';
@@ -738,31 +939,43 @@ function editInvestmentUser(encoded) {
     });
 }
 
-async function saveInvestmentUser() {
-    const services = Array.from(document.querySelectorAll('.invest-user-service:checked')).map(item => item.value);
+async function saveInvestmentUser(prefix = 'invest-user') {
+    const serviceClass = prefix === 'invest-user-modal' ? '.invest-user-modal-service:checked' : '.invest-user-service:checked';
+    const services = Array.from(document.querySelectorAll(serviceClass)).map(item => item.value);
     const body = {
-        openid: document.getElementById('invest-user-openid').value.trim(),
-        name: document.getElementById('invest-user-name').value.trim(),
-        institution: document.getElementById('invest-user-institution').value.trim(),
-        mobile: document.getElementById('invest-user-mobile').value.trim(),
-        enabled: document.getElementById('invest-user-enabled').checked,
+        openid: document.getElementById(`${prefix}-openid`).value.trim(),
+        name: document.getElementById(`${prefix}-name`).value.trim(),
+        institution: document.getElementById(`${prefix}-institution`).value.trim(),
+        mobile: document.getElementById(`${prefix}-mobile`).value.trim(),
+        enabled: document.getElementById(`${prefix}-enabled`).checked,
         allowed_services: services.length ? services : ['全部'],
-        auth_start_at: document.getElementById('invest-user-auth-start').value || null,
-        auth_end_at: document.getElementById('invest-user-auth-end').value || null,
-        remark: document.getElementById('invest-user-remark').value.trim(),
+        auth_start_at: document.getElementById(`${prefix}-auth-start`).value || null,
+        auth_end_at: document.getElementById(`${prefix}-auth-end`).value || null,
+        remark: document.getElementById(`${prefix}-remark`).value.trim(),
     };
-    await investmentFetchJson('/api/investment/users', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-    });
-    await renderInvestmentUsers();
+    try {
+        await investmentFetchJson('/api/investment/users', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        showInvestmentToast('用户已保存');
+        if (prefix === 'invest-user-modal') hideInvestmentModal();
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`保存用户失败：${String(error.message || error)}`, 'error');
+    }
 }
 
 async function disableInvestmentUser(encodedOpenid) {
     const openid = decodeURIComponent(encodedOpenid);
-    await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/disable`, {method: 'POST'});
-    await renderInvestmentUsers();
+    try {
+        await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/disable`, {method: 'POST'});
+        showInvestmentToast('用户已停用');
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`停用失败：${String(error.message || error)}`, 'error');
+    }
 }
 
 async function importInvestmentUsers() {
@@ -774,9 +987,20 @@ async function importInvestmentUsers() {
     }
     const form = new FormData();
     form.append('file', input.files[0]);
-    const data = await investmentFetchJson('/api/investment/users/import', {method: 'POST', body: form});
-    result.textContent = `导入完成：新增 ${data.created || 0}，更新 ${data.updated || 0}`;
-    await renderInvestmentUsers();
+    try {
+        const data = await investmentFetchJson('/api/investment/users/import', {method: 'POST', body: form});
+        result.textContent = `导入完成：新增 ${data.created || 0}，更新 ${data.updated || 0}`;
+        showInvestmentToast('用户导入完成');
+        await renderInvestmentUsers();
+    } catch (error) {
+        result.textContent = String(error.message || error);
+        showInvestmentToast('用户导入失败', 'error');
+    }
+}
+
+function exportInvestmentUsers() {
+    const enabled = document.getElementById('invest-users-export-enabled')?.value || '';
+    investmentDownload('/api/investment/export/users.xlsx', {enabled});
 }
 
 async function renderInvestmentContent(serviceType, options = {}) {
@@ -795,10 +1019,11 @@ async function renderInvestmentContent(serviceType, options = {}) {
                     <div class="investment-panel-heading">
                         <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容历史' : '利率内容历史'}</span></div>
                         <div class="investment-panel-actions">
+                            ${investmentButton('fa-clock-rotate-left', '操作流水', 'renderInvestmentOperationAudits()')}
                             ${investmentButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentAction('${serviceType}')`)}
                         </div>
                     </div>
-                    <div id="invest-content-records-table">${renderInvestmentContentTable(records)}</div>
+                    <div id="invest-content-records-table">${renderInvestmentContentHistoryGroups(records)}</div>
                     <div id="invest-content-detail" class="investment-detail-panel hidden"></div>
                 </section>
             </div>`;
@@ -828,6 +1053,7 @@ function renderInvestmentCurrentEffective(record, serviceType) {
                 <div class="investment-current-preview">${image}</div>
                 <div class="investment-current-meta">
                     <div><span>ID</span><strong>${escapeHtml((record?.content_id || '-').slice(0, 8))}</strong></div>
+                    <div><span>生效日期</span><strong>${escapeHtml(record?.effective_date || '-')}</strong></div>
                     <div><span>生效时间</span><strong>${escapeHtml(investmentFormatTime(record?.effective_at) || '-')}</strong></div>
                     <div><span>操作人</span><strong>${escapeHtml(record?.operator || '-')}</strong></div>
                     <div><span>输出文件</span><strong>${record?.output_image ? investmentFileLinks([record.output_image]) : '-'}</strong></div>
@@ -849,10 +1075,12 @@ function renderInvestmentContentUploadPanel(serviceType) {
             <div class="investment-grid cols-2">
                 <label class="investment-field"><span>资料文件</span><input id="invest-content-files" type="file" multiple></label>
                 <label class="investment-field"><span>操作人</span><input id="invest-content-operator" type="text" value="admin"></label>
+                <label class="investment-field"><span>生效日期</span><input id="invest-content-effective-date" type="date" value="${investmentTodayDate()}"></label>
+                ${!isCb ? `<label class="investment-check investment-direct-output-check"><input id="invest-content-direct-output-mode" type="checkbox"><span>直接上传最终 PNG</span></label>` : ''}
             </div>
             <div class="investment-actions">
-                ${investmentButton('fa-file-circle-plus', '保存草稿', 'createInvestmentContent(false)', 'primary')}
-                ${investmentButton('fa-wand-magic-sparkles', '保存并生成', 'createInvestmentContent(true)', 'primary')}
+                ${investmentButtonIfCan('content.write', 'fa-file-circle-plus', '保存草稿', 'createInvestmentContent(false)', 'primary')}
+                ${investmentButtonIfCan('content.write', 'fa-wand-magic-sparkles', '保存并生成', 'createInvestmentContent(true)', 'primary')}
             </div>
             <div id="invest-content-action-result" class="investment-muted"></div>
         </section>`;
@@ -862,7 +1090,7 @@ async function refreshInvestmentContentRecords(serviceType) {
     const data = await investmentFetchJson(`/api/investment/daily-content?service_type=${encodeURIComponent(serviceType)}`);
     const records = data.contents || [];
     const table = document.getElementById('invest-content-records-table');
-    if (table) table.innerHTML = renderInvestmentContentTable(records);
+    if (table) table.innerHTML = renderInvestmentContentHistoryGroups(records);
     scheduleInvestmentContentPolling(serviceType, records);
     return records;
 }
@@ -900,6 +1128,25 @@ function renderInvestmentImageFlow(record) {
     </div>`;
 }
 
+function renderInvestmentContentHistoryGroups(records) {
+    if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
+    const groups = new Map();
+    records.forEach(record => {
+        const key = record.effective_date || '未设置日期';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(record);
+    });
+    return Array.from(groups.entries()).map(([dateKey, items]) => `
+        <div class="investment-date-group">
+            <div class="investment-date-group-title">
+                <span>${escapeHtml(dateKey)}</span>
+                <span>${items.length} 个版本</span>
+            </div>
+            ${renderInvestmentContentTable(items)}
+        </div>
+    `).join('');
+}
+
 function renderInvestmentContentTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
     const rows = records.map(record => {
@@ -909,40 +1156,40 @@ function renderInvestmentContentTable(records) {
         return `<tr>
             <td class="investment-mono">${escapeHtml((record.content_id || '').slice(0, 8))}</td>
             <td>${investmentServiceLabel(record.service_type)}</td>
+            <td>${escapeHtml(record.effective_date || '-')}</td>
+            <td>v${escapeHtml(record.content_version || 1)}</td>
             <td><span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span></td>
+            <td>${record.direct_output_mode ? '<span class="investment-badge ok">直传 PNG</span>' : '<span class="investment-muted-inline">AI+渲染</span>'}</td>
             <td>${record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<span class="investment-muted-inline">未生成</span>'}</td>
             <td>${investmentCompactText(record.status_warning || record.error_message || '', 42)}</td>
             <td>${escapeHtml(investmentFormatTime(record.created_at))}</td>
             <td class="investment-row-actions">
                 ${investmentIconButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentAction('${actionServiceType}')`)}
-                ${canGenerate ? investmentIconButton('fa-rotate', '生成', `generateInvestmentContent('${record.content_id}', '${actionServiceType}')`) : ''}
-                ${record.output_image ? investmentIconButton('fa-circle-check', '设为生效', `effectiveInvestmentContent('${record.content_id}', '${actionServiceType}')`, 'primary') : ''}
+                ${canGenerate ? investmentIconButtonIfCan('content.generate', 'fa-rotate', '生成', `generateInvestmentContent('${record.content_id}', '${actionServiceType}')`) : ''}
+                ${record.output_image ? investmentIconButtonIfCan('content.effective', 'fa-circle-check', '设为生效', `effectiveInvestmentContent('${record.content_id}', '${actionServiceType}')`, 'primary') : ''}
                 ${investmentIconButton('fa-circle-info', '详情', `showInvestmentContentDetail('${investmentEncodedRecord(record)}')`)}
             </td>
         </tr>`;
     }).join('');
-    return `<div class="investment-table-wrap"><table class="investment-table">
-        <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>输出</th><th>失败原因</th><th>创建时间</th><th>动作</th></tr></thead>
+    return investmentTableWrap(`<table class="investment-table">
+        <thead><tr><th>ID</th><th>类型</th><th>生效日期</th><th>版本</th><th>状态</th><th>模式</th><th>输出</th><th>失败原因</th><th>创建时间</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
-    </table></div>`;
+    </table>`);
 }
 
 function showInvestmentContentDetail(encoded) {
     const record = JSON.parse(decodeURIComponent(encoded));
-    const target = document.getElementById('invest-content-detail') || document.getElementById('invest-record-detail');
-    if (!target) return;
-    target.classList.remove('hidden');
-    target.innerHTML = `
-        <div class="investment-detail-header">
-            <strong>内容详情 ${escapeHtml((record.content_id || '').slice(0, 8))}</strong>
-            <button class="investment-detail-close" onclick="hideInvestmentDetail(this)">关闭</button>
-        </div>
+    const body = `
         <div class="investment-detail-grid">
             <div><span>类型</span><strong>${investmentServiceLabel(record.service_type)}</strong></div>
             <div><span>状态</span><strong>${investmentStatusLabel(record.status)}</strong></div>
             <div><span>操作人</span><strong>${escapeHtml(record.operator || '-')}</strong></div>
+            <div><span>生效日期</span><strong>${escapeHtml(record.effective_date || '-')}</strong></div>
+            <div><span>版本</span><strong>v${escapeHtml(record.content_version || 1)}</strong></div>
+            <div><span>模式</span><strong>${record.direct_output_mode ? '直接 PNG' : 'AI+渲染'}</strong></div>
             <div><span>创建时间</span><strong>${escapeHtml(investmentFormatTime(record.created_at) || '-')}</strong></div>
             <div><span>生效时间</span><strong>${escapeHtml(investmentFormatTime(record.effective_at) || '-')}</strong></div>
+            <div><span>归档时间</span><strong>${escapeHtml(investmentFormatTime(record.archived_at) || '-')}</strong></div>
             <div><span>输出图片</span><strong>${record.output_image ? investmentFileLinks([record.output_image]) : '-'}</strong></div>
         </div>
         <div class="investment-detail-block">
@@ -960,7 +1207,12 @@ function showInvestmentContentDetail(encoded) {
         <div class="investment-detail-block">
             <span>生成文本</span>
             <pre>${escapeHtml(record.generated_text || '无')}</pre>
+        </div>
+        <div class="investment-detail-block">
+            <span>产物审计</span>
+            ${investmentArtifactTable(record.output_artifacts || [])}
         </div>`;
+    showInvestmentModal('内容详情 ' + (record.content_id || '').slice(0, 8), body);
 }
 
 async function createInvestmentContent(generateAfterCreate) {
@@ -973,24 +1225,39 @@ async function createInvestmentContent(generateAfterCreate) {
     const joke = document.getElementById('invest-content-joke-text');
     if (joke) form.append('joke_text', joke.value);
     form.append('operator', document.getElementById('invest-content-operator').value || 'admin');
+    const effectiveDate = document.getElementById('invest-content-effective-date');
+    if (effectiveDate) form.append('effective_date', effectiveDate.value || investmentTodayDate());
+    const directOutput = document.getElementById('invest-content-direct-output-mode');
+    if (directOutput) form.append('direct_output_mode', directOutput.checked ? '1' : '0');
     Array.from(document.getElementById('invest-content-files').files || []).forEach(file => form.append('files', file));
-    const created = await investmentFetchJson('/api/investment/daily-content', {method: 'POST', body: form});
-    let message = '草稿已保存';
-    if (generateAfterCreate) {
-        try {
-            await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(created.content_id)}/generate`, {method: 'POST'});
-            message = '已保存，生成任务已启动';
-        } catch (error) {
-            message = `已保存，生成启动失败：${String(error.message || error)}`;
+    try {
+        const created = await investmentFetchJson('/api/investment/daily-content', {method: 'POST', body: form});
+        let message = '草稿已保存';
+        showInvestmentToast('草稿已保存');
+        if (generateAfterCreate) {
+            try {
+                await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(created.content_id)}/generate`, {method: 'POST'});
+                message = '已保存，生成任务已启动';
+                showInvestmentToast('已启动生成');
+            } catch (error) {
+                message = `已保存，生成启动失败：${String(error.message || error)}`;
+                showInvestmentToast('生成启动失败', 'error');
+            }
         }
+        await renderInvestmentContent(serviceType, {message});
+    } catch (error) {
+        if (result) result.textContent = String(error.message || error);
+        showInvestmentToast('保存内容失败', 'error');
     }
-    await renderInvestmentContent(serviceType, {message});
 }
 
 async function generateInvestmentContent(contentId, serviceType = '') {
     const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
     try {
         await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/generate`, {method: 'POST'});
+        showInvestmentToast('已启动生成');
+    } catch (error) {
+        showInvestmentToast(`生成启动失败：${String(error.message || error)}`, 'error');
     } finally {
         if (currentView === 'invest-records') {
             await renderInvestmentRecords();
@@ -1002,15 +1269,54 @@ async function generateInvestmentContent(contentId, serviceType = '') {
 
 async function effectiveInvestmentContent(contentId, serviceType = '') {
     const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
-    await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/effective`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({operator: 'admin'}),
-    });
-    if (currentView === 'invest-records') {
-        await renderInvestmentRecords();
-    } else {
-        await refreshInvestmentContentRecords(targetServiceType);
+    const effectiveDate = window.prompt('生效日期（YYYY-MM-DD）', investmentTodayDate());
+    if (effectiveDate === null) return;
+    try {
+        await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/effective`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({operator: 'admin', effective_date: effectiveDate || investmentTodayDate()}),
+        });
+        showInvestmentToast('已设为生效');
+        if (currentView === 'invest-records') {
+            await renderInvestmentRecords();
+        } else {
+            await refreshInvestmentContentRecords(targetServiceType);
+        }
+    } catch (error) {
+        showInvestmentToast(`设置生效失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function renderInvestmentOperationAudits(targetId = '') {
+    const params = new URLSearchParams({limit: '80'});
+    if (targetId) {
+        params.set('target_type', 'daily_content');
+        params.set('target_id', targetId);
+    }
+    try {
+        const data = await investmentFetchJson(`/api/investment/audits?${params.toString()}`);
+        const audits = data.audits || [];
+        const body = audits.length ? `
+            <div class="investment-audit-list">
+                ${audits.map(audit => `
+                    <div class="investment-audit-item">
+                        <div>
+                            <strong>${escapeHtml(audit.action || '-')}</strong>
+                            <span>${escapeHtml(audit.target_type || '-')}${audit.target_id ? ' / ' + escapeHtml(String(audit.target_id).slice(0, 8)) : ''}</span>
+                        </div>
+                        <div>
+                            <span>${escapeHtml(audit.operator || '-')}</span>
+                            <span>${escapeHtml(investmentFormatTime(audit.created_at) || '-')}</span>
+                        </div>
+                        <pre>${escapeHtml(JSON.stringify(audit.detail || {}, null, 2))}</pre>
+                    </div>
+                `).join('')}
+            </div>
+        ` : '<div class="investment-empty">暂无操作流水</div>';
+        showInvestmentModal('操作流水', body);
+    } catch (error) {
+        showInvestmentToast(`加载操作流水失败：${String(error.message || error)}`, 'error');
     }
 }
 
@@ -1018,10 +1324,22 @@ async function renderInvestmentRecords() {
     const element = investmentContentEl('invest-records-content');
     investmentLoading(element);
     try {
-        const [requests, contents] = await Promise.all([
+        const cacheRequest = investmentCan('cache.read') ? investmentFetchJson('/api/investment/cache') : Promise.resolve({entries: []});
+        const [requests, contents, caches] = await Promise.all([
             investmentFetchJson('/api/investment/records/requests'),
             investmentFetchJson('/api/investment/records/contents'),
+            cacheRequest,
         ]);
+        const cacheSection = investmentCan('cache.read') ? `
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-heading">
+                        <div class="investment-panel-title"><i class="fas fa-database"></i><span>技术分析缓存</span></div>
+                        <div class="investment-panel-actions">
+                            ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日技术分析', 'clearInvestmentCacheByDate()')}
+                        </div>
+                    </div>
+                    ${renderInvestmentCacheTable(caches.entries || [])}
+                </section>` : '';
         element.innerHTML = `
             <div class="investment-workbench">
                 <section class="investment-panel investment-workbench-full">
@@ -1034,6 +1352,41 @@ async function renderInvestmentRecords() {
                             ${investmentButton('fa-arrows-rotate', '刷新记录', 'renderInvestmentRecords()', 'primary')}
                         </div>
                     </div>
+                    <div class="investment-grid cols-3">
+                        ${investmentField('开始日期', 'invest-export-start-date', '', 'date')}
+                        ${investmentField('结束日期', 'invest-export-end-date', '', 'date')}
+                        <label class="investment-field">
+                            <span>服务类型</span>
+                            <select id="invest-export-service-type">
+                                <option value="">全部</option>
+                                <option value="technical_analysis">技术分析</option>
+                                <option value="rate">利率</option>
+                                <option value="convertible_bond">转债</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="investment-actions">
+                        ${investmentButtonIfCan('records.export', 'fa-download', '按范围导出', 'exportInvestmentRequestRecordsByRange()', 'primary')}
+                        <label class="investment-field">
+                            <span>月度</span>
+                            <input id="invest-export-month" type="month">
+                        </label>
+                        ${investmentButtonIfCan('records.export', 'fa-calendar-days', '导出月度', 'exportInvestmentRequestRecordsByMonth()')}
+                        <label class="investment-field">
+                            <span>年度</span>
+                            <input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${new Date().getFullYear()}">
+                        </label>
+                        <label class="investment-field">
+                            <span>季度</span>
+                            <select id="invest-export-quarter">
+                                <option value="1">Q1</option>
+                                <option value="2">Q2</option>
+                                <option value="3">Q3</option>
+                                <option value="4">Q4</option>
+                            </select>
+                        </label>
+                        ${investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()')}
+                    </div>
                 </section>
                 <section class="investment-table-panel full">
                     <div class="investment-panel-title"><i class="fas fa-message"></i><span>公众号请求记录</span></div>
@@ -1044,6 +1397,7 @@ async function renderInvestmentRecords() {
                     ${renderInvestmentContentTable(contents.records || [])}
                     <div id="invest-content-detail" class="investment-detail-panel hidden"></div>
                 </section>
+                ${cacheSection}
                 <section class="investment-panel investment-workbench-full">
                     <div id="invest-record-detail" class="investment-detail-panel hidden"></div>
                 </section>
@@ -1051,6 +1405,40 @@ async function renderInvestmentRecords() {
     } catch (error) {
         investmentError(element, error);
     }
+}
+
+function investmentExportServiceType() {
+    return document.getElementById('invest-export-service-type')?.value || '';
+}
+
+function exportInvestmentRequestRecordsByRange() {
+    investmentDownload('/api/investment/export/requests.xlsx', {
+        start_date: document.getElementById('invest-export-start-date')?.value || '',
+        end_date: document.getElementById('invest-export-end-date')?.value || '',
+        service_type: investmentExportServiceType(),
+    });
+}
+
+function exportInvestmentRequestRecordsByMonth() {
+    const value = document.getElementById('invest-export-month')?.value || '';
+    if (!value) {
+        showInvestmentToast('请选择导出月份', 'error');
+        return;
+    }
+    const [year, month] = value.split('-');
+    investmentDownload('/api/investment/export/requests.xlsx', {
+        year,
+        month,
+        service_type: investmentExportServiceType(),
+    });
+}
+
+function exportInvestmentRequestRecordsByQuarter() {
+    investmentDownload('/api/investment/export/requests.xlsx', {
+        year: document.getElementById('invest-export-quarter-year')?.value || '',
+        quarter: document.getElementById('invest-export-quarter')?.value || '',
+        service_type: investmentExportServiceType(),
+    });
 }
 
 function renderInvestmentRequestRecordsTable(records) {
@@ -1062,27 +1450,62 @@ function renderInvestmentRequestRecordsTable(records) {
         <td>${investmentServiceLabel(record.service_type)}</td>
         <td><span class="investment-badge ${record.status === 'success' ? 'ok' : 'fail'}">${investmentStatusLabel(record.status)}</span></td>
         <td>${escapeHtml(record.error_code || '')}</td>
+        <td>${record.cache_hit ? '<span class="investment-badge ok">命中</span>' : '<span class="investment-badge">未命中</span>'}</td>
         <td>${investmentCompactText(record.status_warning || record.error_message || record.user_prompt || '', 42)}</td>
         <td>${investmentFileSummary(record.output_files || [])}</td>
         <td>${escapeHtml(investmentFormatTime(record.created_at))}</td>
         <td class="investment-row-actions">${investmentIconButton('fa-circle-info', '详情', `showInvestmentRequestDetail('${investmentEncodedRecord(record)}')`)}</td>
     </tr>`).join('');
-    return `<div class="investment-table-wrap"><table class="investment-table">
-        <thead><tr><th>ID</th><th>OpenID</th><th>输入</th><th>服务</th><th>状态</th><th>错误码</th><th>失败原因</th><th>输出文件</th><th>时间</th><th>动作</th></tr></thead>
+    return investmentTableWrap(`<table class="investment-table">
+        <thead><tr><th>ID</th><th>OpenID</th><th>输入</th><th>服务</th><th>状态</th><th>错误码</th><th>缓存</th><th>失败原因</th><th>输出文件</th><th>时间</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
-    </table></div>`;
+    </table>`);
+}
+
+function renderInvestmentCacheTable(entries) {
+    if (!entries.length) return '<div class="investment-empty">暂无技术分析缓存</div>';
+    const rows = entries.map(entry => `<tr>
+        <td class="investment-mono">${investmentCompactText(entry.cache_key || '', 34)}</td>
+        <td>${investmentServiceLabel(entry.service_type)}</td>
+        <td>${escapeHtml(entry.normalized_target || '')}</td>
+        <td>${escapeHtml(entry.market_date || '')}</td>
+        <td>${escapeHtml(entry.hit_count ?? 0)}</td>
+        <td>${investmentFileSummary(entry.output_files || [])}</td>
+        <td class="investment-row-actions">${investmentIconButtonIfCan('cache.write', 'fa-ban', '失效', `invalidateInvestmentCache('${encodeURIComponent(entry.cache_key || '')}')`, 'danger')}</td>
+    </tr>`).join('');
+    return investmentTableWrap(`<table class="investment-table">
+        <thead><tr><th>Key</th><th>服务</th><th>标的</th><th>日期</th><th>命中</th><th>输出</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`);
+}
+
+async function invalidateInvestmentCache(encodedKey) {
+    try {
+        await investmentFetchJson(`/api/investment/cache/${encodedKey}/invalidate`, {method: 'POST', body: JSON.stringify({operator: 'web-console'})});
+        await renderInvestmentRecords();
+    } catch (error) {
+        showInvestmentToast(`缓存失效失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function clearInvestmentCacheByDate() {
+    const today = new Date().toISOString().slice(0, 10);
+    const marketDate = prompt('清理技术分析缓存日期', today);
+    if (!marketDate) return;
+    try {
+        await investmentFetchJson('/api/investment/cache/clear', {
+            method: 'POST',
+            body: JSON.stringify({service_type: 'technical_analysis', market_date: marketDate, operator: 'web-console'}),
+        });
+        await renderInvestmentRecords();
+    } catch (error) {
+        showInvestmentToast(`缓存清理失败：${String(error.message || error)}`, 'error');
+    }
 }
 
 function showInvestmentRequestDetail(encoded) {
     const record = JSON.parse(decodeURIComponent(encoded));
-    const target = document.getElementById('invest-record-detail');
-    if (!target) return;
-    target.classList.remove('hidden');
-    target.innerHTML = `
-        <div class="investment-detail-header">
-            <strong>请求详情 ${escapeHtml((record.request_id || '').slice(0, 8))}</strong>
-            <button class="investment-detail-close" onclick="hideInvestmentDetail(this)">关闭</button>
-        </div>
+    const body = `
         <div class="investment-detail-grid">
             <div><span>OpenID</span><strong>${escapeHtml(record.openid || '-')}</strong></div>
             <div><span>服务</span><strong>${investmentServiceLabel(record.service_type)}</strong></div>
@@ -1106,10 +1529,36 @@ function showInvestmentRequestDetail(encoded) {
         <div class="investment-detail-block">
             <span>输出文件</span>
             <div>${investmentFileLinks(record.output_files || [])}</div>
+        </div>
+        <div class="investment-detail-block">
+            <span>审计字段</span>
+            <pre>${escapeHtml(JSON.stringify({
+                customer_name: record.customer_name || '',
+                institution: record.institution || '',
+                normalized_target: record.normalized_target || '',
+                stock_code: record.stock_code || '',
+                stock_name: record.stock_name || '',
+                market_date: record.market_date || '',
+                cache_key: record.cache_key || '',
+                cache_hit: Boolean(record.cache_hit),
+                program_version: record.program_version || '',
+                ta_version: record.ta_version || '',
+                renderer_version: record.renderer_version || '',
+                template_version: record.template_version || ''
+            }, null, 2))}</pre>
+        </div>
+        <div class="investment-detail-block">
+            <span>产物审计</span>
+            ${investmentArtifactTable(record.output_artifacts || [])}
         </div>`;
+    showInvestmentModal('请求详情 ' + (record.request_id || '').slice(0, 8), body);
 }
 
 function hideInvestmentDetail(button) {
+    if (!button) {
+        hideInvestmentModal();
+        return;
+    }
     const panel = button.closest('.investment-detail-panel');
     if (panel) {
         panel.classList.add('hidden');
@@ -1133,19 +1582,154 @@ async function renderInvestmentConfig() {
                     <div class="investment-panel-heading">
                         <div>
                             <div class="investment-panel-title"><i class="fas fa-shield-halved"></i><span>系统配置</span></div>
-                            <div class="investment-subtitle">优先维护数据源、技术分析、渲染和存储路径；长 prompt 独立展示，避免误改。</div>
-                        </div>
-                        <div class="investment-panel-actions">
-                            ${investmentButton('fa-floppy-disk', '保存配置', 'saveInvestmentConfig()', 'primary')}
+                            <div class="investment-subtitle">配置项修改后会在当前项旁显示保存按钮，长 prompt 独立展示，避免误改其他配置。</div>
                         </div>
                     </div>
                     <div id="invest-config-save-result" class="investment-muted"></div>
                 </section>
+                ${renderInvestmentSkillManager()}
                 ${groups}
                 ${investmentStockTools(stockData.stats || {})}
             </div>`;
+        loadInvestmentSkillVersions();
     } catch (error) {
         investmentError(element, error);
+    }
+}
+
+function renderInvestmentSkillManager() {
+    return `
+        <section class="investment-panel investment-workbench-full investment-skill-manager">
+            <div class="investment-panel-heading">
+                <div>
+                    <div class="investment-panel-title"><i class="fas fa-code-branch"></i><span>skill配置</span></div>
+                    <div class="investment-subtitle">当前仅启用 technical-analysis 和 signal-card-renderer 两个投资业务 Skill，可上传版本、切换版本或删除上传版本。</div>
+                </div>
+                <div class="investment-panel-actions">
+                    ${investmentButton('fa-arrows-rotate', '刷新版本', 'loadInvestmentSkillVersions()')}
+                </div>
+            </div>
+            <div id="invest-skill-result" class="investment-muted"></div>
+            <div id="invest-skill-versions" class="investment-skill-version-list">
+                <div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载版本中...</span></div>
+            </div>
+        </section>`;
+}
+
+async function loadInvestmentSkillVersions() {
+    const target = document.getElementById('invest-skill-versions');
+    if (!target) return;
+    target.innerHTML = '<div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载版本中...</span></div>';
+    try {
+        const data = await investmentFetchJson('/api/investment/skills/versions');
+        target.innerHTML = renderInvestmentSkillConfigTable(data.skills || []);
+    } catch (error) {
+        target.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error.message || error))}</div>`;
+    }
+}
+
+function renderInvestmentSkillConfigTable(skills = []) {
+    if (!skills.length) return '<div class="investment-empty">暂无投资业务 Skill</div>';
+    const rows = skills.map(item => renderInvestmentSkillConfigRow(item.skill || {}, item.versions || [])).join('');
+    return investmentTableWrap(`<table class="investment-table investment-skill-config-table">
+        <thead><tr><th>Skill 名字</th><th>状态</th><th>版本</th><th>来源</th><th>文件</th><th>上传时间</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`);
+}
+
+function renderInvestmentSkillConfigRow(skill, versions = []) {
+    const skillKey = skill.skill_key || '';
+    const active = versions.find(version => version.active) || versions[0] || {};
+    const source = active.source === 'builtin' ? '内置' : '上传';
+    const versionOptions = versions.map(version => {
+        const label = `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`;
+        const selected = version.version_id === active.version_id ? 'selected' : '';
+        return `<option value="${escapeHtml(version.version_id || '')}" ${selected}>${escapeHtml(label)}</option>`;
+    }).join('');
+    return `<tr data-skill-key="${escapeHtml(skillKey)}">
+        <td>
+            <strong>${escapeHtml(skill.label || skillKey)}</strong>
+            <div class="investment-muted">${escapeHtml(skillKey)}</div>
+        </td>
+        <td><span class="investment-badge ${active.active ? 'ok' : 'fail'}">${active.active ? '生效中' : '未生效'}</span></td>
+        <td>
+            <select id="invest-skill-version-${escapeHtml(skillKey)}" class="investment-skill-version-select">
+                ${versionOptions}
+            </select>
+        </td>
+        <td>${escapeHtml(source)}</td>
+        <td>${investmentCompactText(active.original_filename || '', 34)}</td>
+        <td>${escapeHtml(investmentFormatTime(active.uploaded_at) || '-')}</td>
+        <td class="investment-row-actions investment-skill-config-actions">
+            ${investmentCan('skills.write') ? `<label class="investment-btn investment-skill-upload-btn">
+                <i class="fas fa-upload"></i><span>上传</span>
+                <input id="invest-skill-file-${escapeHtml(skillKey)}" type="file" accept=".py,.zip" onchange="uploadInvestmentSkill('${escapeHtml(skillKey)}')">
+            </label>` : ''}
+            ${investmentIconButtonIfCan('skills.write', 'fa-circle-check', '切换版本', `activateInvestmentSkillVersion('${escapeHtml(skillKey)}', selectedInvestmentSkillVersion('${escapeHtml(skillKey)}'))`, 'primary')}
+            ${investmentIconButtonIfCan('skills.write', 'fa-trash-can', '删除版本', `deleteInvestmentSkillVersion('${escapeHtml(skillKey)}', selectedInvestmentSkillVersion('${escapeHtml(skillKey)}'))`, 'danger')}
+        </td>
+    </tr>`;
+}
+
+function selectedInvestmentSkillVersion(skillKey) {
+    const select = document.getElementById(`invest-skill-version-${skillKey}`);
+    return select ? select.value : '';
+}
+
+async function uploadInvestmentSkill(skillKey) {
+    const input = document.getElementById(`invest-skill-file-${skillKey}`);
+    const result = document.getElementById('invest-skill-result');
+    if (!input || !input.files.length) {
+        if (result) result.textContent = '请选择 .py 或 .zip 文件';
+        return;
+    }
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    form.append('operator', 'web-console');
+    if (result) result.textContent = '上传中...';
+    try {
+        await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/upload`, {method: 'POST', body: form});
+        input.value = '';
+        if (result) result.textContent = 'Skill 已上传并设为生效';
+        showInvestmentToast('Skill 已上传并生效');
+        await loadInvestmentSkillVersions();
+    } catch (error) {
+        if (result) result.textContent = String(error.message || error);
+        showInvestmentToast('Skill 上传失败', 'error');
+    }
+}
+
+async function activateInvestmentSkillVersion(skillKey, versionId) {
+    if (!versionId) return;
+    try {
+        await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/activate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({operator: 'web-console'}),
+        });
+        showInvestmentToast('Skill 版本已生效');
+        await loadInvestmentSkillVersions();
+    } catch (error) {
+        showInvestmentToast(`切换版本失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function deleteInvestmentSkillVersion(skillKey, versionId) {
+    if (!versionId) return;
+    if (versionId === 'builtin-default') {
+        showInvestmentToast('内置版本不能删除', 'error');
+        return;
+    }
+    try {
+        await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/delete`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({operator: 'web-console'}),
+        });
+        showInvestmentToast('Skill 版本已删除');
+        await loadInvestmentSkillVersions();
+    } catch (error) {
+        showInvestmentToast(`删除版本失败：${String(error.message || error)}`, 'error');
     }
 }
 
@@ -1155,16 +1739,82 @@ function renderInvestmentConfigGroup(group, configs) {
         <section class="investment-panel ${hasTextarea ? 'investment-workbench-full' : ''}">
             <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>${group.title}</span></div>
             <div class="investment-grid ${hasTextarea ? 'cols-1' : 'cols-2'}">
-                ${group.keys.map(([key, label, type]) => investmentField(label, `invest-config-${key.replaceAll('.', '-')}`, configs[key], type)).join('')}
+                ${group.keys.map(([key, label, type]) => renderInvestmentConfigField(key, label, type, configs[key])).join('')}
             </div>
         </section>`;
+}
+
+function investmentConfigElementId(key) {
+    return `invest-config-${key.replaceAll('.', '-')}`;
+}
+
+function renderInvestmentConfigField(key, label, type, value = '') {
+    const id = investmentConfigElementId(key);
+    const eventName = type === 'checkbox' ? 'onchange' : 'oninput';
+    const saveButton = investmentCan('config.write') ? `<button id="${id}-save" class="investment-btn investment-config-save hidden" type="button" onclick="saveInvestmentConfigKey('${key}', '${type}')"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
+    const status = `<span id="${id}-status" class="investment-config-status"></span>`;
+    const fieldClass = type === 'textarea' ? 'investment-config-field textarea-config' : 'investment-config-field';
+    let control = '';
+    if (type === 'textarea') {
+        control = `<label class="investment-field textarea"><span>${label}</span><textarea id="${id}" rows="4" ${eventName}="markInvestmentConfigDirty('${key}')">${escapeHtml(value || '')}</textarea></label>`;
+    } else if (type === 'checkbox') {
+        const checked = value === true || value === 'true' || value === '1' ? 'checked' : '';
+        control = `<label class="investment-check"><input id="${id}" type="checkbox" ${checked} ${eventName}="markInvestmentConfigDirty('${key}')"><span>${label}</span></label>`;
+    } else {
+        control = `<label class="investment-field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value || '')}" ${eventName}="markInvestmentConfigDirty('${key}')"></label>`;
+    }
+    return `
+        <div class="${fieldClass}" data-config-key="${escapeHtml(key)}">
+            ${control}
+            <div class="investment-config-actions">${saveButton}${status}</div>
+        </div>`;
+}
+
+function markInvestmentConfigDirty(key) {
+    const id = investmentConfigElementId(key);
+    const button = document.getElementById(`${id}-save`);
+    const status = document.getElementById(`${id}-status`);
+    if (button) button.classList.remove('hidden');
+    if (status) status.textContent = '未保存';
+}
+
+function investmentConfigValue(key, type) {
+    const el = document.getElementById(investmentConfigElementId(key));
+    return type === 'checkbox' ? el.checked : el.value;
+}
+
+async function saveInvestmentConfigKey(key, type) {
+    const id = investmentConfigElementId(key);
+    const button = document.getElementById(`${id}-save`);
+    const status = document.getElementById(`${id}-status`);
+    if (button) button.disabled = true;
+    if (status) status.textContent = '保存中...';
+    try {
+        await investmentFetchJson('/api/investment/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                configs: {[key]: investmentConfigValue(key, type)},
+                operator_role: 'admin',
+                operator: 'web-console',
+            }),
+        });
+        if (button) button.classList.add('hidden');
+        if (status) status.textContent = '已保存';
+        showInvestmentToast('配置已保存');
+    } catch (error) {
+        if (status) status.textContent = String(error.message || error);
+        showInvestmentToast('配置保存失败', 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
 }
 
 async function saveInvestmentConfig() {
     const configs = {};
     INVEST_CONFIG_GROUPS.forEach(group => {
         group.keys.forEach(([key, , type]) => {
-            const el = document.getElementById(`invest-config-${key.replaceAll('.', '-')}`);
+            const el = document.getElementById(investmentConfigElementId(key));
             configs[key] = type === 'checkbox' ? el.checked : el.value;
         });
     });
@@ -1208,31 +1858,55 @@ async function queryInvestmentStocks() {
     }
 }
 
-async function renderInvestmentHealth() {
+function investmentHealthLevelLabel(level) {
+    if (level === 'error') return '错误';
+    if (level === 'warning') return '警告';
+    return '正常';
+}
+
+function investmentHealthLevelClass(level) {
+    if (level === 'error') return 'fail';
+    if (level === 'warning') return 'warning';
+    return 'ok';
+}
+
+async function renderInvestmentHealth(runSmoke = false) {
     const element = investmentContentEl('invest-health-content');
     investmentLoading(element);
     try {
-        const data = await investmentFetchJson('/api/investment/health');
+        const data = await investmentFetchJson(runSmoke ? '/api/investment/health?smoke=1' : '/api/investment/health');
+        const summaryLevel = data.level || (data.ok ? 'ok' : 'error');
+        const summaryClass = investmentHealthLevelClass(summaryLevel);
+        const summaryText = summaryLevel === 'error'
+            ? '存在错误，当前状态不可上线'
+            : (summaryLevel === 'warning' ? '存在警告，可启动但上线前建议处理' : '关键依赖检查通过');
+        const summaryIcon = summaryLevel === 'error'
+            ? 'fa-triangle-exclamation'
+            : (summaryLevel === 'warning' ? 'fa-circle-exclamation' : 'fa-circle-check');
         const rows = (data.checks || []).map(check => `
             <tr>
                 <td>${escapeHtml(check.name)}</td>
-                <td><span class="investment-badge ${check.ok ? 'ok' : 'fail'}">${check.ok ? '通过' : '失败'}</span></td>
+                <td><span class="investment-badge ${investmentHealthLevelClass(check.level || (check.ok ? 'ok' : 'error'))}">${investmentHealthLevelLabel(check.level || (check.ok ? 'ok' : 'error'))}</span></td>
                 <td class="investment-wide">${escapeHtml(check.detail || '')}</td>
             </tr>`).join('');
         element.innerHTML = `
             <div class="investment-layout">
                 <section class="investment-panel full">
-                    <div class="investment-health-summary ${data.ok ? 'ok' : 'fail'}">
-                        <i class="fas ${data.ok ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
-                        <span>${data.ok ? '关键依赖检查通过' : '存在需要处理的依赖或配置问题'}</span>
+                    <div class="investment-panel-title"><i class="fas fa-heart-pulse"></i><span>上线前检查</span></div>
+                    <div class="investment-health-summary ${summaryClass}">
+                        <i class="fas ${summaryIcon}"></i>
+                        <span>${summaryText}</span>
+                    </div>
+                    <div class="investment-actions">
+                        ${investmentButton('fa-vial-circle-check', '运行完整检查', 'runInvestmentFullHealthCheck()', 'primary')}
                     </div>
                 </section>
                 <section class="investment-table-panel full">
                     <div class="investment-panel-title"><i class="fas fa-heart-pulse"></i><span>检查项详情</span></div>
-                    <div class="investment-table-wrap"><table class="investment-table">
+                    ${investmentTableWrap(`<table class="investment-table">
                         <thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
                         <tbody>${rows}</tbody>
-                    </table></div>
+                    </table>`)}
                 </section>
             </div>`;
     } catch (error) {
@@ -1240,20 +1914,37 @@ async function renderInvestmentHealth() {
     }
 }
 
+async function runInvestmentFullHealthCheck() {
+    await renderInvestmentHealth(true);
+}
+
 window.resetInvestmentUserForm = resetInvestmentUserForm;
 window.editInvestmentUser = editInvestmentUser;
+window.openInvestmentUserDialog = openInvestmentUserDialog;
 window.saveInvestmentUser = saveInvestmentUser;
 window.disableInvestmentUser = disableInvestmentUser;
 window.importInvestmentUsers = importInvestmentUsers;
 window.createInvestmentContent = createInvestmentContent;
 window.generateInvestmentContent = generateInvestmentContent;
 window.effectiveInvestmentContent = effectiveInvestmentContent;
+window.renderInvestmentOperationAudits = renderInvestmentOperationAudits;
 window.refreshInvestmentContentAction = refreshInvestmentContentAction;
+window.runInvestmentFullHealthCheck = runInvestmentFullHealthCheck;
 window.renderInvestmentRecords = renderInvestmentRecords;
 window.showInvestmentContentDetail = showInvestmentContentDetail;
 window.showInvestmentRequestDetail = showInvestmentRequestDetail;
+window.invalidateInvestmentCache = invalidateInvestmentCache;
+window.clearInvestmentCacheByDate = clearInvestmentCacheByDate;
 window.hideInvestmentDetail = hideInvestmentDetail;
+window.hideInvestmentModal = hideInvestmentModal;
 window.saveInvestmentConfig = saveInvestmentConfig;
+window.markInvestmentConfigDirty = markInvestmentConfigDirty;
+window.saveInvestmentConfigKey = saveInvestmentConfigKey;
+window.loadInvestmentSkillVersions = loadInvestmentSkillVersions;
+window.uploadInvestmentSkill = uploadInvestmentSkill;
+window.activateInvestmentSkillVersion = activateInvestmentSkillVersion;
+window.deleteInvestmentSkillVersion = deleteInvestmentSkillVersion;
+window.selectedInvestmentSkillVersion = selectedInvestmentSkillVersion;
 window.refreshInvestmentStocks = refreshInvestmentStocks;
 window.queryInvestmentStocks = queryInvestmentStocks;
 
@@ -5708,8 +6399,9 @@ function showLoginScreen() {
     }
 
     const form = document.getElementById('login-form');
+    const usernameInput = document.getElementById('login-username');
     const pwdInput = document.getElementById('login-password');
-    pwdInput.focus();
+    (usernameInput || pwdInput).focus();
 
     form.onsubmit = function(e) {
         e.preventDefault();
@@ -5723,7 +6415,7 @@ function showLoginScreen() {
         fetch('/auth/login', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({password: pwd})
+            body: JSON.stringify({username: usernameInput?.value || '', password: pwd})
         }).then(r => r.json()).then(data => {
             if (data.status === 'success') {
                 overlay.classList.add('hidden');
@@ -5733,7 +6425,7 @@ function showLoginScreen() {
                 errEl.textContent = currentLang === 'zh' ? '密码错误' : 'Wrong password';
                 errEl.classList.remove('hidden');
                 pwdInput.value = '';
-                pwdInput.focus();
+                (usernameInput || pwdInput).focus();
             }
             btn.disabled = false;
         }).catch(() => {
@@ -5763,6 +6455,7 @@ function initApp() {
     applyI18n();
     _applyInputTooltips();
     _restoreSessionPanel();
+    loadInvestmentAdminSession().catch(() => {});
 
     fetch('/api/knowledge/list').then(r => r.json()).then(data => {
         if (data.status === 'success') {
