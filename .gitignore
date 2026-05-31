@@ -10,6 +10,7 @@ python
 config.json
 QR.png
 nohup.out
+nohup.err
 tmp
 plugins.json
 *.log
