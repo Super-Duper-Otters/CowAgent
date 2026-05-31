@@ -25,6 +25,14 @@ ROLE_PERMISSIONS = {
         "content.effective",
         "records.read",
     },
+    "poster": {
+        "content.read",
+        "content.write",
+        "content.generate",
+        "content.effective",
+        "stocks.read",
+        "stocks.write",
+    },
     "technical_admin": {
         "records.read",
         "records.export",

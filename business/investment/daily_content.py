@@ -305,6 +305,22 @@ def _default_renderer(service_type: ServiceType, generated_text: str):
     return render_card(RenderRequest(service_type=service_type, standard_text=generated_text))
 
 
+def _validate_direct_output_png(output_image: str) -> str:
+    path = Path(output_image)
+    if not path.is_absolute():
+        return "direct output mode requires an absolute uploaded PNG path"
+    if path.suffix.lower() != ".png":
+        return "direct output mode only supports PNG files"
+
+    uploads_dir = get_storage_dirs()["uploads"].resolve()
+    resolved = path.resolve(strict=False)
+    if not resolved.is_relative_to(uploads_dir):
+        return "direct output mode requires a PNG file from the investment uploads directory"
+    if not path.is_file():
+        return "direct output mode requires an existing PNG upload"
+    return ""
+
+
 def generate_content(
     content_id: str,
     ai_generator: AIGenerator | None = None,
@@ -327,8 +343,8 @@ def generate_content(
             update_generation_failure(content_id, detail)
             return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.INPUT_ERROR, user_prompt=user_message(ErrorCode.INPUT_ERROR), detail=detail)
         output_image = source_files[0]
-        if Path(output_image).suffix.lower() != ".png":
-            detail = "direct output mode only supports PNG files"
+        detail = _validate_direct_output_png(output_image)
+        if detail:
             update_generation_failure(content_id, detail)
             return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.INPUT_ERROR, user_prompt=user_message(ErrorCode.INPUT_ERROR), detail=detail)
         update_generation_success(content_id, "", output_image)
@@ -472,6 +488,13 @@ def get_latest_effective_content(service_type: ServiceType) -> DailyContentResul
             error_code=ErrorCode.NO_CONTENT,
             user_prompt=user_message(ErrorCode.NO_CONTENT),
             detail=f"no effective content for {service_type}",
+        )
+    if not Path(item["output_image"]).is_file():
+        return DailyContentResult(
+            False,
+            error_code=ErrorCode.NO_CONTENT,
+            user_prompt=user_message(ErrorCode.NO_CONTENT),
+            detail=f"effective content image missing: {item['output_image']}",
         )
     return DailyContentResult(
         True,

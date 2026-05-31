@@ -313,6 +313,20 @@ def list_users(enabled: bool | None = None, openid: str | None = None) -> list[U
 
 def verify_permission(openid: str, service_type: ServiceType) -> PermissionResult:
     user = get_user_by_openid(openid)
+    base_permission = _verify_existing_user(user)
+    if not base_permission.allowed:
+        return base_permission
+    services = user.allowed_services or []
+    if ServiceType.ALL not in services and service_type not in services:
+        return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "service not allowed")
+    return PermissionResult(True)
+
+
+def verify_user_access(openid: str) -> PermissionResult:
+    return _verify_existing_user(get_user_by_openid(openid))
+
+
+def _verify_existing_user(user: User | None) -> PermissionResult:
     if user is None:
         return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "user not found")
     if not user.enabled:
@@ -322,9 +336,6 @@ def verify_permission(openid: str, service_type: ServiceType) -> PermissionResul
         return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "auth not started")
     if user.auth_end_at and now > user.auth_end_at:
         return PermissionResult(False, ErrorCode.AUTH_EXPIRED, user_message(ErrorCode.AUTH_EXPIRED), "auth expired")
-    services = user.allowed_services or []
-    if ServiceType.ALL not in services and service_type not in services:
-        return PermissionResult(False, ErrorCode.UNAUTHORIZED, user_message(ErrorCode.UNAUTHORIZED), "service not allowed")
     return PermissionResult(True)
 
 

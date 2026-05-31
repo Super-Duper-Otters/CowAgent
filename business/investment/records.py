@@ -4,12 +4,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
-from .constants import ErrorCode, ServiceType, Status, user_message
+from .constants import ErrorCode, ServiceType, Status, normalize_service, user_message
 from .db import connect, row_to_dict
-from .schema import investment_daily_contents, investment_output_files, investment_request_records
+from .schema import investment_daily_contents, investment_output_files, investment_request_records, investment_users
 
 
 GENERATING_TIMEOUT_WARNING = "未完成/可能超时"
@@ -43,6 +43,8 @@ class RequestRecord:
     created_at: str = ""
     elapsed_ms: int | None = None
     status_warning: str = ""
+    customer_mobile: str = ""
+    customer_display: str = ""
 
 
 @dataclass
@@ -258,9 +260,44 @@ def fail_request_record(
                 error_code=str(error_code),
                 user_prompt=user_prompt or user_message(error_code),
                 error_message=safe_detail,
+                output_files=_json_list([]),
+                market_date="",
+                cache_key="",
+                cache_hit=0,
+                program_version="",
+                ta_version="",
+                renderer_version="",
+                template_version="",
                 elapsed_ms=elapsed_ms,
                 updated_at=_now(),
             )
+        )
+        conn.execute(delete(investment_output_files).where(investment_output_files.c.owner_id == request_id))
+
+
+def append_request_warning(request_id: str, detail: str) -> None:
+    safe_detail = sanitize_sensitive_text(detail).strip()
+    if not request_id or not safe_detail:
+        return
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_request_records.c.error_message).where(
+                investment_request_records.c.request_id == request_id
+            )
+        ).fetchone()
+        if row is None:
+            return
+        existing = (row_to_dict(row).get("error_message") or "").strip()
+        if existing and safe_detail in existing:
+            next_detail = existing
+        elif existing:
+            next_detail = f"{existing}\n{safe_detail}"
+        else:
+            next_detail = safe_detail
+        conn.execute(
+            update(investment_request_records)
+            .where(investment_request_records.c.request_id == request_id)
+            .values(error_message=next_detail, updated_at=_now())
         )
 
 
@@ -296,6 +333,9 @@ def _row_to_request(row) -> RequestRecord:
     item = row_to_dict(row)
     status = Status(item["status"])
     created_at = item["created_at"]
+    customer_mobile = item.get("customer_mobile") or ""
+    customer_name = item.get("customer_name") or item.get("customer_user_name") or ""
+    institution = item.get("institution") or item.get("customer_user_institution") or ""
     return RequestRecord(
         request_id=item["request_id"],
         openid=item["openid"],
@@ -309,8 +349,8 @@ def _row_to_request(row) -> RequestRecord:
         normalized_target=item.get("normalized_target") or "",
         stock_code=item.get("stock_code") or "",
         stock_name=item.get("stock_name") or "",
-        customer_name=item.get("customer_name") or "",
-        institution=item.get("institution") or "",
+        customer_name=customer_name,
+        institution=institution,
         market_date=item.get("market_date") or "",
         cache_key=item.get("cache_key") or "",
         cache_hit=bool(item.get("cache_hit")),
@@ -321,6 +361,8 @@ def _row_to_request(row) -> RequestRecord:
         created_at=created_at,
         elapsed_ms=item["elapsed_ms"],
         status_warning=_request_status_warning(status, created_at, item["error_message"] or ""),
+        customer_mobile=customer_mobile,
+        customer_display=customer_mobile or item["openid"],
     )
 
 
@@ -334,14 +376,102 @@ def get_request_record(request_id: str) -> RequestRecord:
     return _row_to_request(row)
 
 
-def list_request_records(limit: int = 50) -> list[RequestRecord]:
+def list_request_records(
+    limit: int = 50,
+    *,
+    service_type: ServiceType | str | None = None,
+    status: Status | str | None = None,
+    keyword: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> list[RequestRecord]:
+    records, _total = list_request_records_page(
+        page=1,
+        page_size=limit,
+        service_type=service_type,
+        status=status,
+        keyword=keyword,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return records
+
+
+def list_request_records_page(
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    service_type: ServiceType | str | None = None,
+    status: Status | str | None = None,
+    keyword: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> tuple[list[RequestRecord], int]:
+    table = investment_request_records
+    users = investment_users
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 50))
+    offset = (page - 1) * page_size
+    conditions = []
+    stmt = (
+        select(
+            table,
+            users.c.mobile.label("customer_mobile"),
+            users.c.name.label("customer_user_name"),
+            users.c.institution.label("customer_user_institution"),
+        )
+        .select_from(table.outerjoin(users, table.c.openid == users.c.openid))
+        .order_by(table.c.created_at.desc())
+        .limit(page_size)
+        .offset(offset)
+    )
+    if service_type is not None:
+        normalized_service = normalize_service(service_type)
+        if normalized_service == ServiceType.UNMATCHED and str(service_type) not in {str(ServiceType.UNMATCHED), "unmatched"}:
+            return [], 0
+        conditions.append(table.c.service_type == str(normalized_service))
+    if status is not None:
+        try:
+            normalized_status = Status(status)
+        except ValueError:
+            return [], 0
+        conditions.append(table.c.status == str(normalized_status))
+    if start_date:
+        conditions.append(table.c.created_at >= str(start_date))
+    if end_date:
+        conditions.append(table.c.created_at <= str(end_date))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                table.c.request_id.ilike(pattern),
+                table.c.openid.ilike(pattern),
+                table.c.raw_input.ilike(pattern),
+                table.c.service_type.ilike(pattern),
+                table.c.status.ilike(pattern),
+                table.c.error_code.ilike(pattern),
+                table.c.user_prompt.ilike(pattern),
+                table.c.error_message.ilike(pattern),
+                table.c.normalized_target.ilike(pattern),
+                table.c.stock_code.ilike(pattern),
+                table.c.stock_name.ilike(pattern),
+                table.c.customer_name.ilike(pattern),
+                table.c.institution.ilike(pattern),
+                users.c.name.ilike(pattern),
+                users.c.institution.ilike(pattern),
+                users.c.mobile.ilike(pattern),
+            )
+        )
+    if conditions:
+        stmt = stmt.where(*conditions)
+    count_stmt = select(func.count()).select_from(table.outerjoin(users, table.c.openid == users.c.openid))
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
     with connect() as conn:
-        rows = conn.execute(
-            select(investment_request_records)
-            .order_by(investment_request_records.c.created_at.desc())
-            .limit(limit)
-        ).fetchall()
-    return [_row_to_request(row) for row in rows]
+        total = int(conn.execute(count_stmt).scalar_one() or 0)
+        rows = conn.execute(stmt).fetchall()
+    return [_row_to_request(row) for row in rows], total
 
 
 def list_output_files(owner_id: str) -> list[dict]:
@@ -399,14 +529,54 @@ def _row_to_content(row) -> ContentRecord:
     )
 
 
-def list_content_records(limit: int = 50, service_type: ServiceType | None = None) -> list[ContentRecord]:
+def list_content_records(
+    limit: int = 50,
+    service_type: ServiceType | None = None,
+    effective_date: str | None = None,
+    status: Status | str | None = None,
+) -> list[ContentRecord]:
+    records, _total = list_content_records_page(
+        page=1,
+        page_size=limit,
+        service_type=service_type,
+        effective_date=effective_date,
+        status=status,
+    )
+    return records
+
+
+def list_content_records_page(
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    service_type: ServiceType | None = None,
+    effective_date: str | None = None,
+    status: Status | str | None = None,
+) -> tuple[list[ContentRecord], int]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 50))
+    offset = (page - 1) * page_size
     stmt = select(investment_daily_contents)
+    count_stmt = select(func.count()).select_from(investment_daily_contents)
+    conditions = []
     if service_type is not None:
-        stmt = stmt.where(investment_daily_contents.c.service_type == str(service_type))
-    stmt = stmt.order_by(investment_daily_contents.c.created_at.desc()).limit(limit)
+        conditions.append(investment_daily_contents.c.service_type == str(service_type))
+    if effective_date:
+        conditions.append(investment_daily_contents.c.effective_date == effective_date)
+    if status is not None:
+        try:
+            normalized_status = Status(status)
+        except ValueError:
+            return [], 0
+        conditions.append(investment_daily_contents.c.status == str(normalized_status))
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
+    stmt = stmt.order_by(investment_daily_contents.c.created_at.desc()).limit(page_size).offset(offset)
     with connect() as conn:
+        total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()
-    return [_row_to_content(row) for row in rows]
+    return [_row_to_content(row) for row in rows], total
 
 
 def get_content_record(content_id: str) -> ContentRecord:

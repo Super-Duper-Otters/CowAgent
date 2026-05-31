@@ -6,7 +6,7 @@ from .config_service import get_config, sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, user_message
 from .daily_content import get_latest_effective_content
 from .records import create_request_record, fail_request_record, succeed_request_record
-from .user_service import verify_permission
+from .user_service import verify_permission, verify_user_access
 
 
 DEFAULT_UNMATCHED_PROMPT = """请输入以下格式之一：
@@ -22,6 +22,7 @@ class RouteResult:
     service_type: ServiceType
     raw_input: str
     target_text: str = ""
+    skill_key: str = ""
     error_code: ErrorCode | None = None
 
 
@@ -35,19 +36,15 @@ class BusinessReply:
     error_code: ErrorCode | None = None
     user_prompt: str = ""
     detail: str = ""
+    request_id: str = ""
 
 
 def parse_route(raw_input: str) -> RouteResult:
-    text = (raw_input or "").strip()
-    if text == "利率":
-        return RouteResult(True, ServiceType.RATE, raw_input)
-    if text == "转债":
-        return RouteResult(True, ServiceType.CONVERTIBLE_BOND, raw_input)
-    if text.endswith("技术分析"):
-        target = text[: -len("技术分析")].strip()
-        if target:
-            return RouteResult(True, ServiceType.TECHNICAL_ANALYSIS, raw_input, target)
-        return RouteResult(False, ServiceType.UNMATCHED, raw_input, error_code=ErrorCode.INPUT_ERROR)
+    from .skill_registry import match_investment_skill
+
+    matched = match_investment_skill(raw_input)
+    if matched is not None:
+        return RouteResult(True, matched.service_type, raw_input, matched.target_text, matched.skill_key)
     return RouteResult(False, ServiceType.UNMATCHED, raw_input, error_code=ErrorCode.INPUT_ERROR)
 
 
@@ -108,9 +105,27 @@ def handle_text_message(
     def elapsed() -> int:
         return int((time.time() - start) * 1000)
 
+    customer_metadata = _customer_metadata(openid)
+    if not skip_permission:
+        permission = verify_user_access(openid)
+        if not permission.allowed:
+            request_id = _create_request_record_with_customer(openid, raw_input, None, customer_metadata)
+            fail_request_record(request_id, permission.error_code or ErrorCode.UNAUTHORIZED, permission.user_prompt, permission.detail, elapsed())
+            return BusinessReply(
+                True,
+                False,
+                permission.user_prompt,
+                [],
+                ServiceType.UNMATCHED,
+                permission.error_code,
+                permission.user_prompt,
+                sanitize_sensitive_text(permission.detail),
+                request_id,
+            )
+
     route = parse_route(raw_input)
     if not route.matched:
-        request_id = _create_request_record_with_customer(openid, raw_input, ServiceType.UNMATCHED, _customer_metadata(openid))
+        request_id = _create_request_record_with_customer(openid, raw_input, ServiceType.UNMATCHED, customer_metadata)
         fail_request_record(request_id, route.error_code or ErrorCode.INPUT_ERROR, DEFAULT_UNMATCHED_PROMPT, "unmatched investment route", elapsed())
         return BusinessReply(
             not _agent_fallback_enabled(),
@@ -119,9 +134,9 @@ def handle_text_message(
             [],
             ServiceType.UNMATCHED,
             route.error_code,
+            request_id=request_id,
         )
 
-    customer_metadata = _customer_metadata(openid)
     if not skip_permission:
         permission = verify_permission(openid, route.service_type)
         if not permission.allowed:
@@ -136,7 +151,52 @@ def handle_text_message(
                 permission.error_code,
                 permission.user_prompt,
                 sanitize_sensitive_text(permission.detail),
+                request_id,
             )
+
+    if route.skill_key:
+        from .skill_registry import get_skill_definition
+
+        definition = get_skill_definition(route.skill_key)
+        if definition.handler_type == "script":
+            request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
+            try:
+                from .skill_runner import run_investment_skill
+
+                result = run_investment_skill(definition, openid, raw_input, route.target_text)
+                if not result.success:
+                    code = result.error_code or ErrorCode.SYSTEM_ERROR
+                    prompt = result.user_prompt or user_message(code)
+                    fail_request_record(request_id, code, prompt, result.detail, elapsed())
+                    detail = sanitize_sensitive_text(result.detail)
+                    return BusinessReply(
+                        True,
+                        False,
+                        _failure_reply_with_detail(prompt, detail),
+                        [],
+                        route.service_type,
+                        code,
+                        prompt,
+                        detail,
+                        request_id,
+                    )
+                succeed_request_record(request_id, output_files=result.output_files, elapsed_ms=elapsed())
+                return BusinessReply(True, True, result.reply_text, result.output_files, route.service_type, request_id=request_id)
+            except Exception as exc:
+                detail = sanitize_sensitive_text(str(exc))
+                prompt = user_message(ErrorCode.SYSTEM_ERROR)
+                fail_request_record(request_id, ErrorCode.SYSTEM_ERROR, prompt, detail, elapsed())
+                return BusinessReply(
+                    True,
+                    False,
+                    prompt,
+                    [],
+                    route.service_type,
+                    ErrorCode.SYSTEM_ERROR,
+                    prompt,
+                    detail,
+                    request_id,
+                )
 
     if route.service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
         request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
@@ -153,6 +213,7 @@ def handle_text_message(
                 code,
                 content.user_prompt,
                 sanitize_sensitive_text(content.detail),
+                request_id,
             )
         output_files = [content.output_image]
         succeed_request_record(
@@ -161,12 +222,25 @@ def handle_text_message(
             elapsed_ms=elapsed(),
             artifact_roles={content.output_image: "output_image"},
         )
-        return BusinessReply(True, True, _image_reply(output_files), output_files, route.service_type)
+        return BusinessReply(True, True, _image_reply(output_files), output_files, route.service_type, request_id=request_id)
 
     if route.service_type == ServiceType.TECHNICAL_ANALYSIS:
-        from .job_service import start_job_if_absent_with_metadata
+        from .job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
+        from .technical_analysis import prepare_technical_analysis_cache_context
 
-        job = start_job_if_absent_with_metadata(openid, raw_input, route.service_type, **customer_metadata)
+        cache_context = prepare_technical_analysis_cache_context(raw_input, route.target_text)
+        if cache_context.cache_key:
+            job = start_cache_job_if_absent(
+                openid,
+                raw_input,
+                route.service_type,
+                cache_context.cache_key,
+                normalized_target=cache_context.normalized_target,
+                market_date=cache_context.market_date,
+                **customer_metadata,
+            )
+        else:
+            job = start_job_if_absent_with_metadata(openid, raw_input, route.service_type, **customer_metadata)
         if not job.created:
             return BusinessReply(
                 True,
@@ -176,14 +250,16 @@ def handle_text_message(
                 route.service_type,
                 user_prompt=RUNNING_JOB_PROMPT,
                 detail=job.record.request_id,
+                request_id=job.record.request_id,
             )
         request_id = job.record.request_id
         try:
             if technical_analysis_handler is None:
                 from .technical_analysis import run_technical_analysis
 
-                technical_analysis_handler = run_technical_analysis
-            result = technical_analysis_handler(openid, raw_input, route.target_text)
+                result = run_technical_analysis(openid, raw_input, route.target_text, cache_context=cache_context)
+            else:
+                result = technical_analysis_handler(openid, raw_input, route.target_text)
             if not result.success:
                 code = result.error_code or ErrorCode.TECHNICAL_ANALYSIS_FAILED
                 prompt = user_message(code)
@@ -198,6 +274,7 @@ def handle_text_message(
                     code,
                     prompt,
                     detail,
+                    request_id,
                 )
             user_output_files = [result.signal_card_path, result.main_chart_path]
             record_output_files = result.output_files or user_output_files
@@ -242,7 +319,7 @@ def handle_text_message(
                 warning=result.detail,
                 **customer_metadata,
             )
-            return BusinessReply(True, True, _image_reply(user_output_files), user_output_files, route.service_type)
+            return BusinessReply(True, True, _image_reply(user_output_files), user_output_files, route.service_type, request_id=request_id)
         except Exception as exc:
             detail = sanitize_sensitive_text(str(exc))
             prompt = user_message(ErrorCode.SYSTEM_ERROR)
@@ -256,8 +333,17 @@ def handle_text_message(
                 ErrorCode.SYSTEM_ERROR,
                 prompt,
                 detail,
+                request_id,
             )
 
     request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
     fail_request_record(request_id, ErrorCode.INPUT_ERROR, user_message(ErrorCode.INPUT_ERROR), "unsupported route", elapsed())
-    return BusinessReply(True, False, user_message(ErrorCode.INPUT_ERROR), [], route.service_type, ErrorCode.INPUT_ERROR)
+    return BusinessReply(
+        True,
+        False,
+        user_message(ErrorCode.INPUT_ERROR),
+        [],
+        route.service_type,
+        ErrorCode.INPUT_ERROR,
+        request_id=request_id,
+    )

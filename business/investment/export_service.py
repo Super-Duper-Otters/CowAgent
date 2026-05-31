@@ -4,9 +4,9 @@ from io import BytesIO
 from typing import Iterable
 
 from openpyxl import Workbook
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
-from .constants import ServiceType, normalize_service
+from .constants import ServiceType, Status, normalize_service
 from .db import connect, row_to_dict
 from .schema import investment_request_records, investment_users
 from .user_service import _decode_services
@@ -64,9 +64,12 @@ def export_request_records_xlsx(
     start_date: str,
     end_date: str,
     service_type: str | ServiceType | None = None,
+    status: str | Status | None = None,
+    keyword: str = "",
 ) -> bytes:
     table = investment_request_records
-    stmt = select(table)
+    users = investment_users
+    stmt = select(table).select_from(table.outerjoin(users, table.c.openid == users.c.openid))
     if start_date:
         stmt = stmt.where(table.c.created_at >= str(start_date))
     if end_date:
@@ -75,6 +78,35 @@ def export_request_records_xlsx(
         normalized = normalize_service(service_type)
         if normalized != ServiceType.UNMATCHED:
             stmt = stmt.where(table.c.service_type == str(normalized))
+    if status:
+        try:
+            normalized_status = Status(status)
+        except ValueError:
+            return _workbook_bytes(REQUEST_HEADERS, [], "RequestRecords")
+        stmt = stmt.where(table.c.status == str(normalized_status))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        stmt = stmt.where(
+            or_(
+                table.c.request_id.ilike(pattern),
+                table.c.openid.ilike(pattern),
+                table.c.raw_input.ilike(pattern),
+                table.c.service_type.ilike(pattern),
+                table.c.status.ilike(pattern),
+                table.c.error_code.ilike(pattern),
+                table.c.user_prompt.ilike(pattern),
+                table.c.error_message.ilike(pattern),
+                table.c.normalized_target.ilike(pattern),
+                table.c.stock_code.ilike(pattern),
+                table.c.stock_name.ilike(pattern),
+                table.c.customer_name.ilike(pattern),
+                table.c.institution.ilike(pattern),
+                users.c.name.ilike(pattern),
+                users.c.institution.ilike(pattern),
+                users.c.mobile.ilike(pattern),
+            )
+        )
     stmt = stmt.order_by(table.c.created_at.asc())
 
     with connect() as conn:

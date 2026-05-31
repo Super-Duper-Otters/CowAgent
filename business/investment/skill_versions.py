@@ -2,13 +2,12 @@
 import json
 import shutil
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
 from .config_service import get_config, save_config
-from .render_service import DEFAULT_RENDERER_PATH
+from .skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
 from .storage import get_storage_dirs
 
 
@@ -16,61 +15,8 @@ BUILTIN_VERSION_ID = "builtin-default"
 MANIFEST_NAME = "manifest.json"
 
 
-@dataclass(frozen=True)
-class InvestmentSkillDefinition:
-    skill_key: str
-    label: str
-    description: str
-    config_key: str
-    default_script_path: str
-    script_name: str
-    storage_name: str
-    copy_assets_from: str = ""
-
-    @property
-    def script_relative_path(self) -> Path:
-        return Path("scripts") / self.script_name
-
-    def as_dict(self) -> dict:
-        return {
-            "skill_key": self.skill_key,
-            "label": self.label,
-            "description": self.description,
-            "config_key": self.config_key,
-            "default_script_path": self.default_script_path,
-            "script_name": self.script_name,
-            "storage_name": self.storage_name,
-        }
-
-
-SKILL_REGISTRY: dict[str, InvestmentSkillDefinition] = {
-    "technical-analysis": InvestmentSkillDefinition(
-        skill_key="technical-analysis",
-        label="技术分析 Skill",
-        description="拉取行情并生成技术分析报告、图表和标准信号文本。",
-        config_key="technical_analysis.skill_path",
-        default_script_path="skills/技术分析/scripts/analyze_universal.py",
-        script_name="analyze_universal.py",
-        storage_name="technical-analysis",
-    ),
-    "signal-card-renderer": InvestmentSkillDefinition(
-        skill_key="signal-card-renderer",
-        label="图片生成 Skill",
-        description="把技术分析、利率、转债标准文本渲染为信号卡片图片。",
-        config_key="render.renderer_path",
-        default_script_path=DEFAULT_RENDERER_PATH,
-        script_name="render_card.py",
-        storage_name="signal-card-renderer",
-        copy_assets_from="skills/signal-card-renderer/assets",
-    ),
-}
-
-
 def _definition(skill_key: str) -> InvestmentSkillDefinition:
-    try:
-        return SKILL_REGISTRY[skill_key]
-    except KeyError:
-        raise ValueError(f"unsupported investment skill: {skill_key}") from None
+    return get_skill_definition(skill_key)
 
 
 def _now() -> str:
@@ -161,11 +107,17 @@ def _copy_builtin_assets(definition: InvestmentSkillDefinition, version_dir: Pat
 
 
 def list_skill_definitions() -> list[dict]:
-    return [definition.as_dict() for definition in SKILL_REGISTRY.values()]
+    return [definition.as_dict() for definition in list_definitions()]
+
+
+def _ensure_versioned(definition: InvestmentSkillDefinition) -> None:
+    if not definition.script_name or not definition.config_key:
+        raise ValueError(f"{definition.label} does not support script version management")
 
 
 def save_upload(skill_key: str, filename: str, content: bytes, *, operator: str = "web-console") -> dict:
     definition = _definition(skill_key)
+    _ensure_versioned(definition)
     safe_name = Path(filename or "").name
     suffix = Path(safe_name).suffix.lower()
     if suffix not in {".py", ".zip"}:
@@ -217,6 +169,7 @@ def save_upload(skill_key: str, filename: str, content: bytes, *, operator: str 
 
 def list_versions(skill_key: str) -> list[dict]:
     definition = _definition(skill_key)
+    _ensure_versioned(definition)
     versions = [
         {
             "skill_key": definition.skill_key,
@@ -246,17 +199,18 @@ def list_versions(skill_key: str) -> list[dict]:
 
 
 def list_all_skills() -> list[dict]:
-    return [
-        {
-            "skill": definition.as_dict(),
-            "versions": list_versions(definition.skill_key),
-        }
-        for definition in SKILL_REGISTRY.values()
-    ]
+    items = []
+    for definition in list_definitions():
+        versions = []
+        if definition.script_name and definition.config_key:
+            versions = list_versions(definition.skill_key)
+        items.append({"skill": definition.as_dict(), "versions": versions})
+    return items
 
 
 def activate_version(skill_key: str, version_id: str, *, operator: str = "web-console") -> dict:
     definition = _definition(skill_key)
+    _ensure_versioned(definition)
     if version_id == BUILTIN_VERSION_ID:
         save_config(definition.config_key, "", operator_role="admin", operator=operator)
         return [item for item in list_versions(definition.skill_key) if item["version_id"] == BUILTIN_VERSION_ID][0]
@@ -274,6 +228,7 @@ def activate_version(skill_key: str, version_id: str, *, operator: str = "web-co
 
 def delete_version(skill_key: str, version_id: str, *, operator: str = "web-console") -> dict:
     definition = _definition(skill_key)
+    _ensure_versioned(definition)
     if version_id == BUILTIN_VERSION_ID:
         raise ValueError("builtin skill version cannot be deleted")
 
@@ -292,3 +247,42 @@ def delete_version(skill_key: str, version_id: str, *, operator: str = "web-cons
         "active": False,
         "was_active": was_active,
     }
+
+
+def save_package_upload(filename: str, content: bytes, *, operator: str = "web-console") -> dict:
+    from .skill_registry import _read_uploaded_definition, _uploaded_skill_root
+
+    safe_name = Path(filename or "").name
+    if Path(safe_name).suffix.lower() != ".zip":
+        raise ValueError("investment skill package upload only accepts .zip files")
+    if not content:
+        raise ValueError("uploaded skill package is empty")
+
+    root = _uploaded_skill_root()
+    root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = root / f".upload-{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        archive_path = tmp_dir / safe_name
+        archive_path.write_bytes(content)
+        with ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                target = tmp_dir / _safe_member_path(member.filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(member))
+        if not (tmp_dir / "SKILL.md").is_file():
+            raise ValueError("investment skill package must contain SKILL.md at package root")
+
+        definition = _read_uploaded_definition(tmp_dir)
+        if definition is None:
+            raise ValueError("SKILL.md must contain investment frontmatter")
+        target_dir = root / definition.skill_key
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        tmp_dir.rename(target_dir)
+        return {"skill_key": definition.skill_key, "storage_path": str(target_dir), "operator": operator}
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise

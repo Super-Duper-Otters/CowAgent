@@ -13,10 +13,12 @@ from .schema import investment_configs
 
 SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")
 API_CONFIG_PREFIXES = ("model.", "wechatmp.")
+ADMIN_ONLY_CONFIG_KEYS = {"router.enable_web_open_chat"}
 
 CONFIG_FALLBACK_KEYS = {
     "tushare.token": "tushare_token",
     "router.enable_agent_fallback": "investment_enable_agent_fallback",
+    "router.enable_web_open_chat": "investment_enable_web_open_chat",
     "technical_analysis.skill_path": "investment_ta_skill_path",
     "technical_analysis.output_dir": "investment_ta_output_dir",
     "technical_analysis.default_chart_days": "investment_ta_default_chart_days",
@@ -108,6 +110,8 @@ def _validate_investment_config_keys(keys: list[str] | tuple[str, ...] | set[str
 def can_modify_config(key: str, operator_role: str) -> bool:
     if key.startswith(API_CONFIG_PREFIXES):
         return False
+    if key in ADMIN_ONLY_CONFIG_KEYS:
+        return operator_role == "admin"
     if operator_role in ("admin", "technical_admin"):
         return True
     if is_sensitive_key(key):
