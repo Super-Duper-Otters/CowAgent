@@ -9,6 +9,7 @@ from sqlalchemy import and_, desc, select
 
 from . import cache_service
 from .ai_generation import generate_technical_analysis_text
+from .cache_policy import technical_analysis_cache_expired_after_close
 from .cache_service import (
     build_cache_key,
     find_cache_entry,
@@ -203,6 +204,13 @@ def _compatible_cache_entry_has_files(entry: cache_service.CacheEntry) -> bool:
     return False
 
 
+def _technical_analysis_cache_entry_allowed(entry: cache_service.CacheEntry) -> bool:
+    if technical_analysis_cache_expired_after_close(entry.market_date, entry.updated_at):
+        cache_service._invalidate_cache_entry_if_unchanged(entry)
+        return False
+    return True
+
+
 def _find_compatible_cache_entry_for_market_date(
     *,
     symbol: str,
@@ -220,6 +228,8 @@ def _find_compatible_cache_entry_for_market_date(
         template_version=template_version,
         market_date=market_date,
     ):
+        if not _technical_analysis_cache_entry_allowed(cached):
+            continue
         if _compatible_cache_entry_has_files(cached):
             return cached
     return None
@@ -281,6 +291,8 @@ def _find_cache_context_entry(
         template_version=template_version,
     ):
         return None
+    if not _technical_analysis_cache_entry_allowed(cached):
+        return None
     return cached
 
 
@@ -314,6 +326,8 @@ def prepare_technical_analysis_cache_context(
         version_fingerprint=combined_version,
         market_date=resolved_market_date.market_date,
     )
+    if cached is not None and not _technical_analysis_cache_entry_allowed(cached):
+        cached = None
     if cached is None:
         cached = _find_compatible_cache_entry_for_market_date(
             symbol=symbol,
@@ -402,6 +416,8 @@ def run_technical_analysis(
                 version_fingerprint=cache_lookup_version,
                 market_date=resolved_market_date.market_date,
             )
+            if cached is not None and not _technical_analysis_cache_entry_allowed(cached):
+                cached = None
         if cached is None and cache_lookup_version == combined_version and not (use_cache_context and cache_context.cache_key):
             cached = _find_compatible_cache_entry_for_market_date(
                 symbol=symbol,

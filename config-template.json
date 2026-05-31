@@ -33,6 +33,7 @@
   "wecom_bot_secret": "",
   "web_host": "",
   "web_password": "",
+  "investment.technical_analysis.cache_close_invalidate_time": "15:30",
   "agent": true,
   "agent_max_context_tokens": 50000,
   "agent_max_context_turns": 20,

@@ -3820,6 +3820,139 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     assert cache_entry.artifact_owner_id == records[1].request_id
 
 
+def test_technical_analysis_reuses_today_cache_before_close_cutoff(
+    investment_env, tmp_path, monkeypatch
+):
+    from zoneinfo import ZoneInfo
+
+    from business.investment import cache_policy, technical_analysis
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    monkeypatch.setattr(
+        cache_policy,
+        "beijing_now",
+        lambda: datetime(2026, 5, 29, 15, 29, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+
+
+def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_reruns(
+    investment_env, tmp_path, monkeypatch
+):
+    from zoneinfo import ZoneInfo
+
+    from business.investment import cache_policy, technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.schema import investment_cache_entries
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    monkeypatch.setattr(
+        cache_policy,
+        "beijing_now",
+        lambda: datetime(2026, 5, 29, 15, 31, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    assert first.success is True
+    first_record = list_request_records(limit=1)[0]
+    with connect() as conn:
+        conn.execute(
+            investment_cache_entries.update()
+            .where(investment_cache_entries.c.cache_key == first_record.cache_key)
+            .values(updated_at="2026-05-29T07:00:00+00:00")
+        )
+
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert second.success is True
+    assert second.output_files != first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render", "skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is False
+    assert records[1].cache_hit is False
+    assert records[0].cache_key == records[1].cache_key
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.hit_count == 0
+    assert cache_entry.status == "active"
+
+
+def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
+    investment_env, tmp_path, monkeypatch
+):
+    from zoneinfo import ZoneInfo
+
+    from business.investment import cache_policy, technical_analysis
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
+    monkeypatch.setattr(
+        cache_policy,
+        "beijing_now",
+        lambda: datetime(2026, 5, 29, 15, 31, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-28", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].market_date == "2026-05-28"
+
+
 def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     investment_env, tmp_path, monkeypatch
 ):
@@ -4422,6 +4555,74 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
     assert record.cache_hit is True
     assert record.cache_key == compatible_key
     assert record.cache_key != incompatible_key
+
+
+def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_close_and_reruns(
+    investment_env, tmp_path, monkeypatch
+):
+    from zoneinfo import ZoneInfo
+
+    from business.investment import cache_policy, cache_service, technical_analysis
+    from business.investment.cache_service import list_cache_entries, version_fingerprint
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.schema import investment_cache_entries
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    compatible_key, compatible_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        cache_policy,
+        "beijing_now",
+        lambda: datetime(2026, 5, 29, 15, 31, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    with connect() as conn:
+        conn.execute(
+            investment_cache_entries.update()
+            .where(investment_cache_entries.c.cache_key == compatible_key)
+            .values(updated_at="2026-05-29T07:00:00+00:00")
+        )
+
+    class KnownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+
+    reply = handle_text_message("ok", "天娱数科 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files != compatible_files[:2]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is False
+    assert record.cache_key != compatible_key
+    entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, include_invalidated=True)
+    assert {entry.status for entry in entries if entry.cache_key == compatible_key} == {"invalidated"}
 
 
 def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompatible(
@@ -5147,6 +5348,166 @@ def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investme
     assert entries[0].output_files == ["/tmp/new-card.png", "/tmp/new-chart.png"]
     assert entries[0].artifact_owner_id == "request-new"
     assert entries[0].status == "active"
+
+
+def test_beijing_now_returns_beijing_timezone_datetime():
+    from business.investment.cache_policy import beijing_now
+
+    now = beijing_now()
+
+    assert now.tzinfo is not None
+    assert now.tzname() == "CST"
+    assert now.utcoffset() == timedelta(hours=8)
+
+
+def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 7, 0, tzinfo=UTC),
+            now=datetime(2026, 5, 31, 15, 29),
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_expires_today_cache_written_before_close_cutoff():
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 15, 29, 59),
+            now=datetime(2026, 5, 31, 15, 30),
+        )
+        is True
+    )
+
+
+def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close_cutoff():
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-30",
+            datetime(2026, 5, 30, 15, 0),
+            now=datetime(2026, 5, 31, 15, 30),
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_close_cutoff():
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 15, 30),
+            now=datetime(2026, 5, 31, 15, 31),
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing_time():
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            "2026-05-31T07:29:59+00:00",
+            now="2026-05-31T07:30:00+00:00",
+        )
+        is True
+    )
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            "2026-05-31T15:30:00+08:00",
+            now="2026-05-31T07:30:00+00:00",
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing(investment_env):
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 15, 29, 59),
+            now=datetime(2026, 5, 31, 15, 30),
+        )
+        is True
+    )
+
+
+def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_env):
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.investment.config_service import save_config
+
+    save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45", operator_role="admin")
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 14, 44, 59),
+            now=datetime(2026, 5, 31, 14, 45),
+        )
+        is True
+    )
+
+
+def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(investment_env):
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.investment.config_service import save_config
+
+    save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45:00", operator_role="admin")
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 14, 44, 59),
+            now=datetime(2026, 5, 31, 14, 45),
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment_env):
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.investment.config_service import save_config
+
+    save_config("investment.technical_analysis.cache_close_invalidate_time", "1:02", operator_role="admin")
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 1, 1, 59),
+            now=datetime(2026, 5, 31, 1, 2),
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_env):
+    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.investment.config_service import save_config
+
+    save_config("investment.technical_analysis.cache_close_invalidate_time", " 14:45", operator_role="admin")
+
+    assert (
+        technical_analysis_cache_expired_after_close(
+            "2026-05-31",
+            datetime(2026, 5, 31, 14, 44, 59),
+            now=datetime(2026, 5, 31, 14, 45),
+        )
+        is False
+    )
 
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):

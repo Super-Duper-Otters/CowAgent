@@ -213,6 +213,7 @@ available_setting = {
     "web_port": 9899,
     "web_password": "",  # Web console password; empty means no authentication required
     "web_session_expire_days": 30,  # Auth session expiry in days
+    "investment.technical_analysis.cache_close_invalidate_time": "15:30",  # 技术分析缓存收盘后软失效检查时间（北京时间，HH:MM）
     "agent": True,  # 是否开启Agent模式
     "agent_workspace": "~/cow",  # agent工作空间路径，用于存储skills、memory等
     "agent_max_context_tokens": 50000,  # Agent模式下最大上下文tokens
