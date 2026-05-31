@@ -10,6 +10,7 @@ class PassiveReplyResult:
     replies: list[tuple[str, str]] = field(default_factory=list)
     created_at: float = 0.0
     service_type: object = ""
+    request_id: str = ""
 
 
 class PassiveReplyCache:
@@ -20,16 +21,17 @@ class PassiveReplyCache:
         self._pending_commands = {}
         self._lock = threading.RLock()
 
-    def append_result(self, receiver, title, replies, service_type=""):
+    def append_result(self, receiver, title, replies, service_type="", request_id=""):
         with self._lock:
             self._results[receiver] = PassiveReplyResult(
                 title=title or "",
                 replies=list(replies or []),
                 created_at=self._now(),
                 service_type=service_type or "",
+                request_id=request_id or "",
             )
 
-    def append_reply(self, receiver, reply_type, reply_content, title="", service_type=""):
+    def append_reply(self, receiver, reply_type, reply_content, title="", service_type="", request_id=""):
         with self._lock:
             result = self._get_live_result_locked(receiver)
             if result is None:
@@ -38,12 +40,15 @@ class PassiveReplyCache:
                     replies=[(reply_type, reply_content)],
                     created_at=self._now(),
                     service_type=service_type or "",
+                    request_id=request_id or "",
                 )
                 return
             if title and not result.title:
                 result.title = title
             if service_type and not result.service_type:
                 result.service_type = service_type
+            if request_id and not result.request_id:
+                result.request_id = request_id
             result.replies.append((reply_type, reply_content))
 
     def peek_result(self, receiver):
@@ -56,6 +61,7 @@ class PassiveReplyCache:
                 replies=list(result.replies),
                 created_at=result.created_at,
                 service_type=result.service_type,
+                request_id=result.request_id,
             )
 
     def _get_live_result_locked(self, receiver):

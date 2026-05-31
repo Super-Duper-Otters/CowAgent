@@ -22,6 +22,9 @@ CANCEL_PENDING_RESULT_TEXT = "已放弃本次技术分析结果。"
 RUNNING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。"
 PENDING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。"
 RUNNING_STALE_SECONDS = 15 * 60
+PERMISSION_DENIED_RECORD_TTL_SECONDS = 15 * 60
+_permission_denied_record_keys = {}
+_permission_denied_record_lock = threading.RLock()
 
 
 def _investment_route(content: str):
@@ -69,7 +72,7 @@ def _investment_ack_text(content: str) -> str:
     return IMMEDIATE_ACK_TEXT
 
 
-def _investment_permission_prompt(openid: str, content: str) -> str:
+def _investment_permission_prompt(openid: str, content: str, dedupe_key: str = "") -> str:
     try:
         from business.investment.router import parse_route
         from business.investment.user_service import verify_permission
@@ -80,6 +83,7 @@ def _investment_permission_prompt(openid: str, content: str) -> str:
         permission = verify_permission(openid, route.service_type)
         if permission.allowed:
             return ""
+        _record_permission_denied_request(openid, content, permission, dedupe_key=dedupe_key)
         return permission.user_prompt
     except Exception as exc:
         logger.debug("[wechatmp] investment permission check failed: {}".format(exc))
@@ -88,19 +92,65 @@ def _investment_permission_prompt(openid: str, content: str) -> str:
         return user_message(ErrorCode.SYSTEM_ERROR)
 
 
-def _investment_user_access_prompt(openid: str) -> str:
+def _investment_user_access_prompt(openid: str, dedupe_key: str = "") -> str:
     try:
         from business.investment.user_service import verify_user_access
 
         permission = verify_user_access(openid)
         if permission.allowed:
             return ""
+        _record_permission_denied_request(openid, "", permission, dedupe_key=dedupe_key)
         return permission.user_prompt
     except Exception as exc:
         logger.debug("[wechatmp] investment user access check failed: {}".format(exc))
         from business.investment.constants import ErrorCode, user_message
 
         return user_message(ErrorCode.SYSTEM_ERROR)
+
+
+def _claim_permission_denied_record_key(dedupe_key: str) -> bool:
+    if not dedupe_key:
+        return True
+    now = time.time()
+    with _permission_denied_record_lock:
+        expired = [
+            key
+            for key, recorded_at in _permission_denied_record_keys.items()
+            if now - recorded_at > PERMISSION_DENIED_RECORD_TTL_SECONDS
+        ]
+        for key in expired:
+            _permission_denied_record_keys.pop(key, None)
+        if dedupe_key in _permission_denied_record_keys:
+            return False
+        _permission_denied_record_keys[dedupe_key] = now
+        return True
+
+
+def _release_permission_denied_record_key(dedupe_key: str) -> None:
+    if not dedupe_key:
+        return
+    with _permission_denied_record_lock:
+        _permission_denied_record_keys.pop(dedupe_key, None)
+
+
+def _record_permission_denied_request(openid: str, content: str, permission, dedupe_key: str = "") -> None:
+    if not _claim_permission_denied_record_key(dedupe_key):
+        return
+    try:
+        from business.investment.constants import ErrorCode, ServiceType
+        from business.investment.records import create_request_record, fail_request_record
+
+        request_id = create_request_record(openid, content or "", ServiceType.UNAUTHORIZED_REQUEST)
+        fail_request_record(
+            request_id,
+            getattr(permission, "error_code", None) or ErrorCode.UNAUTHORIZED,
+            getattr(permission, "user_prompt", "") or "",
+            getattr(permission, "detail", "") or "permission denied before investment router",
+            0,
+        )
+    except Exception as exc:
+        _release_permission_denied_record_key(dedupe_key)
+        logger.debug("[wechatmp] record permission denied request failed: {}".format(exc))
 
 
 def _cleanup_expired(cache):
@@ -115,7 +165,7 @@ def _peek_cached_result(cache, receiver):
         return peek(receiver)
     replies = cache.get(receiver) if hasattr(cache, "get") else None
     if replies:
-        return type("CachedResult", (), {"title": "", "replies": replies, "service_type": ""})()
+        return type("CachedResult", (), {"title": "", "replies": replies, "service_type": "", "request_id": ""})()
     return None
 
 
@@ -171,7 +221,7 @@ def _is_direct_ready_result_request(content, cached_result):
     return bool(getattr(cached_result, "service_type", "")) and cached_result.service_type == current_route.service_type
 
 
-def _permission_prompt_for_cached_result(openid, cached_result):
+def _permission_prompt_for_cached_result(openid, cached_result, content="", dedupe_key=""):
     service_type = getattr(cached_result, "service_type", "")
     if not service_type:
         return ""
@@ -182,6 +232,8 @@ def _permission_prompt_for_cached_result(openid, cached_result):
         permission = verify_permission(openid, normalize_service(service_type))
         if permission.allowed:
             return ""
+        raw_input = getattr(cached_result, "title", "") or content or ""
+        _record_permission_denied_request(openid, raw_input, permission, dedupe_key=dedupe_key)
         return permission.user_prompt
     except Exception as exc:
         logger.debug("[wechatmp] cached investment permission check failed: {}".format(exc))
@@ -268,15 +320,31 @@ def _unmatched_prompt():
         return "请输入以下格式之一："
 
 
-def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type=""):
+def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type="", request_id=""):
     append_reply = getattr(cache, "append_reply", None)
     if append_reply:
-        append_reply(receiver, reply_type, reply_content, title, service_type=service_type)
+        append_reply(receiver, reply_type, reply_content, title, service_type=service_type, request_id=request_id)
         return
     cache.setdefault(receiver, []).append((reply_type, reply_content))
 
 
-def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, content, request_cnt, cached_item, cache_title="", service_type=""):
+def _mark_cached_result_delivered(cached_result, rendered_reply):
+    if rendered_reply == "success":
+        return
+    request_id = getattr(cached_result, "request_id", "")
+    if not request_id:
+        return
+    try:
+        from business.investment import records
+
+        mark_request_delivered = getattr(records, "mark_request_delivered", None)
+        if mark_request_delivered:
+            mark_request_delivered(request_id)
+    except Exception as exc:
+        logger.debug("[wechatmp] mark investment request delivered failed: {}".format(exc))
+
+
+def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, content, request_cnt, cached_item, cache_title="", service_type="", request_id=""):
     if cached_item is None:
         return "success"
     reply_type, reply_content = cached_item
@@ -291,7 +359,7 @@ def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, cont
                 max_split=1,
             )
             reply_text = splits[0] + continue_text
-            _append_cached_reply(channel.cache_dict, from_user, "text", splits[1], cache_title, service_type=service_type)
+            _append_cached_reply(channel.cache_dict, from_user, "text", splits[1], cache_title, service_type=service_type, request_id=request_id)
 
         logger.info(
             "[wechatmp] Request {} do send to {} {}: {}\n{}".format(
@@ -381,7 +449,10 @@ class Query:
                 content = wechatmp_msg.content
                 message_id = wechatmp_msg.msg_id
 
-                access_prompt = _investment_user_access_prompt(from_user)
+                access_prompt = _investment_user_access_prompt(
+                    from_user,
+                    dedupe_key=f"user-access:{from_user}:{message_id}",
+                )
                 if access_prompt:
                     replyPost = create_reply(access_prompt, msg)
                     return encrypt_func(replyPost.render())
@@ -394,14 +465,19 @@ class Query:
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
                     if content == "1" or _is_direct_ready_result_request(content, pending_result):
-                        permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                        permission_prompt = _permission_prompt_for_cached_result(
+                            from_user,
+                            pending_result,
+                            content,
+                            dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
+                        )
                         if permission_prompt:
                             replyPost = create_reply(permission_prompt, msg)
                             return encrypt_func(replyPost.render())
                         if content == "1":
                             _pop_pending_command(channel.cache_dict, from_user)
                         cached_item = _pop_cached_reply(channel.cache_dict, from_user)
-                        return _render_cached_reply(
+                        rendered_reply = _render_cached_reply(
                             channel,
                             msg,
                             encrypt_func,
@@ -412,9 +488,17 @@ class Query:
                             cached_item,
                             pending_result.title,
                             getattr(pending_result, "service_type", ""),
+                            getattr(pending_result, "request_id", ""),
                         )
+                        _mark_cached_result_delivered(pending_result, rendered_reply)
+                        return rendered_reply
                     if content == "0":
-                        permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                        permission_prompt = _permission_prompt_for_cached_result(
+                            from_user,
+                            pending_result,
+                            content,
+                            dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
+                        )
                         if permission_prompt:
                             replyPost = create_reply(permission_prompt, msg)
                             return encrypt_func(replyPost.render())
@@ -451,7 +535,11 @@ class Query:
                     logger.debug("[wechatmp] context: {} {} {}".format(context, wechatmp_msg, supported))
 
                     if supported and context:
-                        permission_prompt = _investment_permission_prompt(from_user, content)
+                        permission_prompt = _investment_permission_prompt(
+                            from_user,
+                            content,
+                            dedupe_key=f"request:{from_user}:{message_id}:{content}",
+                        )
                         if permission_prompt:
                             replyPost = create_reply(permission_prompt, msg)
                             return encrypt_func(replyPost.render())
@@ -530,12 +618,17 @@ class Query:
                 # Only one request can access to the cached data
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
-                    permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                    permission_prompt = _permission_prompt_for_cached_result(
+                        from_user,
+                        pending_result,
+                        content,
+                        dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
+                    )
                     if permission_prompt:
                         replyPost = create_reply(permission_prompt, msg)
                         return encrypt_func(replyPost.render())
                 cached_item = _pop_cached_reply(channel.cache_dict, from_user)
-                return _render_cached_reply(
+                rendered_reply = _render_cached_reply(
                     channel,
                     msg,
                     encrypt_func,
@@ -546,7 +639,11 @@ class Query:
                     cached_item,
                     pending_result.title if pending_result is not None else "",
                     getattr(pending_result, "service_type", "") if pending_result is not None else "",
+                    getattr(pending_result, "request_id", "") if pending_result is not None else "",
                 )
+                if pending_result is not None:
+                    _mark_cached_result_delivered(pending_result, rendered_reply)
+                return rendered_reply
 
             elif msg.type == "event":
                 logger.info("[wechatmp] Event {} from {}".format(msg.event, msg.source))

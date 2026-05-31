@@ -273,6 +273,7 @@ def test_investment_request_export_panel_is_scoped_and_mode_based():
     panel_body = _js_function_body(js, "renderInvestmentRequestExportPanel")
     assert "公众号请求导出" in panel_body
     assert "导出当前筛选" in panel_body
+    assert "全量导出" in panel_body
     assert "按日期范围" in panel_body
     assert "按月导出" in panel_body
     assert "按季度导出" in panel_body
@@ -282,8 +283,60 @@ def test_investment_request_export_panel_is_scoped_and_mode_based():
     range_body = _js_function_body(js, "exportInvestmentRequestRecordsByRange")
     assert "investmentRecordsQueryParams('requests')" in current_body
     assert "请选择导出开始和结束日期" in range_body
+    assert "function exportInvestmentRequestRecordsFull()" in js
     assert ".investment-request-export-panel" in css
     assert ".investment-request-export-modes" in css
+
+
+def test_investment_request_export_exposes_unauthorized_and_customer_filter():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    panel_body = _js_function_body(js, "renderInvestmentRequestExportPanel")
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    range_body = _js_function_body(js, "exportInvestmentRequestRecordsByRange")
+    month_body = _js_function_body(js, "exportInvestmentRequestRecordsByMonth")
+    quarter_body = _js_function_body(js, "exportInvestmentRequestRecordsByQuarter")
+    current_body = _js_function_body(js, "exportInvestmentRequestRecordsByCurrentFilters")
+    full_body = _js_function_body(js, "exportInvestmentRequestRecordsFull")
+
+    assert "unauthorized_request: '无权限请求'" in js
+    assert "['unauthorized_request', '无权限请求']" in filters_body
+    assert '<option value="unauthorized_request">无权限请求</option>' in panel_body
+    assert "id=\"invest-export-customer\"" in panel_body
+    assert "OpenID/手机号" in panel_body
+    assert "function investmentExportCustomer()" in js
+    assert "params.set('customer', customer)" in current_body
+    assert "customer: investmentExportCustomer()" in full_body
+    assert "customer: investmentExportCustomer()" in range_body
+    assert "customer: investmentExportCustomer()" in month_body
+    assert "customer: investmentExportCustomer()" in quarter_body
+
+
+def test_investment_records_default_to_beijing_today_filters():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    state_start = js.index("let investmentRecordsState =")
+    state_end = js.index("const INVEST_VIEW_PERMISSIONS")
+    state_body = js[state_start:state_end]
+    default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
+    load_body = _js_function_body(js, "loadInvestmentRecordsTab")
+
+    assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
+    assert "cache: {page: '1', page_size: '120', market_date: investmentTodayDate()}" in state_body
+    assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
+    assert "start_date: investmentTodayDate()" in default_body
+    assert "end_date: investmentTodayDate()" in default_body
+    assert "market_date: investmentTodayDate()" in default_body
+    assert "data.market_dates[0]" not in load_body
+    assert "timeZone: 'Asia/Shanghai'" in _js_function_body(js, "investmentTodayDate")
+
+
+def test_investment_cache_empty_date_falls_back_to_today_before_loading():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    apply_body = _js_function_body(js, "applyInvestmentCacheDate")
+    assert "?.value || investmentTodayDate()" in apply_body
+    assert "await loadInvestmentRecordsTab('cache')" in apply_body
 
 
 def test_investment_records_page_uses_tab_workspace_and_drawer():
@@ -421,6 +474,30 @@ def test_investment_generated_content_drawer_hides_low_value_long_cache_fields()
     assert "生成内容详情" in js
 
 
+def test_investment_request_drawer_keeps_error_details_and_audit_fields():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    request_table = _js_function_body(js, "renderInvestmentRequestRecordsTable")
+    drawer_body = _js_function_body(js, "renderInvestmentRequestDrawer")
+
+    assert "function investmentDeliveryStatusClass(" in js
+    assert "record.delivery_status" in request_table
+    assert "<th>生成</th><th>交付</th><th>提示摘要</th>" in request_table
+    assert "record.status_warning === '未完成/可能超时' ? 'generating' : record.status" in request_table
+    assert "record.user_prompt || record.delivery_status || '正常'" in request_table
+    assert "record.delivery_detail || record.error_message" not in request_table
+    assert "生成状态" in drawer_body
+    assert "交付状态" in drawer_body
+    assert "用户提示" in drawer_body
+    assert "错误/警告详情" in drawer_body
+    assert "审计字段" in drawer_body
+    assert "record.normalized_target" in drawer_body
+    assert "record.cache_key" in drawer_body
+    assert "输出文件" in drawer_body
+    assert "产物审计" in drawer_body
+    assert "investmentArtifactTable(record.output_artifacts || [])" in drawer_body
+
+
 def test_investment_records_times_are_formatted_as_beijing_time():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -455,10 +532,10 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     state_start = js.index("let investmentRecordsState =")
     state_end = js.index("const INVEST_VIEW_PERMISSIONS")
     state_body = js[state_start:state_end]
-    assert "requests: {page: '1', page_size: '80'}" in state_body
+    assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
     assert "contents: {page: '1', page_size: '80'}" in state_body
-    assert "cache: {page: '1', page_size: '120', market_date: ''}" in state_body
-    assert "audits: {page: '1', page_size: '80'}" in state_body
+    assert "cache: {page: '1', page_size: '120', market_date: investmentTodayDate()}" in state_body
+    assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
 
     switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
     assert "investmentRecordsState.filters[tab]" in switch_body

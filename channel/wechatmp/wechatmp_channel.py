@@ -200,7 +200,14 @@ class WechatMPChannel(ChatChannel):
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
                 reply_text = remove_markdown_symbol(reply.content)
                 logger.info("[wechatmp] text cached, receiver {}\n{}".format(receiver, reply_text))
-                self.cache_dict.append_reply(receiver, "text", reply_text, cache_title, service_type=investment_service_type)
+                self.cache_dict.append_reply(
+                    receiver,
+                    "text",
+                    reply_text,
+                    cache_title,
+                    service_type=investment_service_type,
+                    request_id=investment_request_id,
+                )
             elif reply.type == ReplyType.VOICE:
                 try:
                     voice_file_path = reply.content
@@ -222,7 +229,14 @@ class WechatMPChannel(ChatChannel):
                             return
                         media_id = response["media_id"]
                         logger.info("[wechatmp] voice uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                        self.cache_dict.append_reply(receiver, "voice", media_id, cache_title, service_type=investment_service_type)
+                        self.cache_dict.append_reply(
+                            receiver,
+                            "voice",
+                            media_id,
+                            cache_title,
+                            service_type=investment_service_type,
+                            request_id=investment_request_id,
+                        )
                 except ImportError as e:
                     logger.error("[wechatmp] voice conversion failed: {}".format(e))
                     logger.error("[wechatmp] please install pydub: pip install pydub")
@@ -259,7 +273,14 @@ class WechatMPChannel(ChatChannel):
                     uploaded_media_ids.append(media_id)
                 try:
                     for media_id in uploaded_media_ids:
-                        self.cache_dict.append_reply(receiver, "image", media_id, cache_title, service_type=investment_service_type)
+                        self.cache_dict.append_reply(
+                            receiver,
+                            "image",
+                            media_id,
+                            cache_title,
+                            service_type=investment_service_type,
+                            request_id=investment_request_id,
+                        )
                 except Exception as e:
                     logger.error("[wechatmp] cache image failed: {}".format(e))
                     self.cache_dict.discard_result(receiver)
@@ -282,7 +303,14 @@ class WechatMPChannel(ChatChannel):
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict.append_reply(receiver, "video", media_id, cache_title, service_type=investment_service_type)
+                self.cache_dict.append_reply(
+                    receiver,
+                    "video",
+                    media_id,
+                    cache_title,
+                    service_type=investment_service_type,
+                    request_id=investment_request_id,
+                )
 
             elif reply.type == ReplyType.VIDEO:  # 从文件读取视频
                 video_storage = reply.content
@@ -298,7 +326,14 @@ class WechatMPChannel(ChatChannel):
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict.append_reply(receiver, "video", media_id, cache_title, service_type=investment_service_type)
+                self.cache_dict.append_reply(
+                    receiver,
+                    "video",
+                    media_id,
+                    cache_title,
+                    service_type=investment_service_type,
+                    request_id=investment_request_id,
+                )
 
         else:
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:

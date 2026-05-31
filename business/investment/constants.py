@@ -6,6 +6,7 @@ class ServiceType(StrEnum):
     TECHNICAL_ANALYSIS = "technical_analysis"
     RATE = "rate"
     CONVERTIBLE_BOND = "convertible_bond"
+    UNAUTHORIZED_REQUEST = "unauthorized_request"
     UNMATCHED = "unmatched"
     ALL = "all"
 
@@ -14,6 +15,7 @@ SERVICE_LABELS = {
     ServiceType.TECHNICAL_ANALYSIS: "技术分析",
     ServiceType.RATE: "利率",
     ServiceType.CONVERTIBLE_BOND: "转债",
+    ServiceType.UNAUTHORIZED_REQUEST: "无权限请求",
     ServiceType.ALL: "全部",
 }
 
@@ -25,6 +27,8 @@ SERVICE_ALIASES = {
     "convertible_bond": ServiceType.CONVERTIBLE_BOND,
     "转债": ServiceType.CONVERTIBLE_BOND,
     "cb": ServiceType.CONVERTIBLE_BOND,
+    "unauthorized_request": ServiceType.UNAUTHORIZED_REQUEST,
+    "无权限请求": ServiceType.UNAUTHORIZED_REQUEST,
     "all": ServiceType.ALL,
     "全部": ServiceType.ALL,
 }

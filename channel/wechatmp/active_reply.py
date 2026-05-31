@@ -1,4 +1,5 @@
 import time
+import threading
 
 import web
 from wechatpy import parse_message
@@ -15,6 +16,9 @@ from config import conf, subscribe_msg
 
 ACTIVE_IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
 ACTIVE_WAITING_TEXT = "正在运行，请稍候。"
+PERMISSION_DENIED_RECORD_TTL_SECONDS = 15 * 60
+_permission_denied_record_keys = {}
+_permission_denied_record_lock = threading.RLock()
 
 
 def _render_text_reply(text, msg, encrypt_func):
@@ -84,7 +88,7 @@ def _running_investment_job(openid, content):
     return None
 
 
-def _investment_permission_prompt(openid, route):
+def _investment_permission_prompt(openid, route, dedupe_key=""):
     try:
         if not route.matched:
             return ""
@@ -93,10 +97,58 @@ def _investment_permission_prompt(openid, route):
         permission = verify_permission(openid, route.service_type)
         if permission.allowed:
             return ""
+        _record_permission_denied_request(openid, getattr(route, "raw_input", ""), permission, dedupe_key=dedupe_key)
         return permission.user_prompt
     except Exception as exc:
         logger.debug("[wechatmp] active investment permission check failed: {}".format(exc))
-        return ""
+        from business.investment.constants import ErrorCode, user_message
+
+        return user_message(ErrorCode.SYSTEM_ERROR)
+
+
+def _claim_permission_denied_record_key(dedupe_key: str) -> bool:
+    if not dedupe_key:
+        return True
+    now = time.time()
+    with _permission_denied_record_lock:
+        expired = [
+            key
+            for key, recorded_at in _permission_denied_record_keys.items()
+            if now - recorded_at > PERMISSION_DENIED_RECORD_TTL_SECONDS
+        ]
+        for key in expired:
+            _permission_denied_record_keys.pop(key, None)
+        if dedupe_key in _permission_denied_record_keys:
+            return False
+        _permission_denied_record_keys[dedupe_key] = now
+        return True
+
+
+def _release_permission_denied_record_key(dedupe_key: str) -> None:
+    if not dedupe_key:
+        return
+    with _permission_denied_record_lock:
+        _permission_denied_record_keys.pop(dedupe_key, None)
+
+
+def _record_permission_denied_request(openid: str, content: str, permission, dedupe_key: str = "") -> None:
+    if not _claim_permission_denied_record_key(dedupe_key):
+        return
+    try:
+        from business.investment.constants import ErrorCode, ServiceType
+        from business.investment.records import create_request_record, fail_request_record
+
+        request_id = create_request_record(openid, content or "", ServiceType.UNAUTHORIZED_REQUEST)
+        fail_request_record(
+            request_id,
+            getattr(permission, "error_code", None) or ErrorCode.UNAUTHORIZED,
+            getattr(permission, "user_prompt", "") or "",
+            getattr(permission, "detail", "") or "permission denied before investment router",
+            0,
+        )
+    except Exception as exc:
+        _release_permission_denied_record_key(dedupe_key)
+        logger.debug("[wechatmp] active record permission denied request failed: {}".format(exc))
 
 
 # This class is instantiated once per query
@@ -154,7 +206,11 @@ class Query:
                         route = parse_route(content)
                         if not route.matched:
                             return _render_text_reply(DEFAULT_UNMATCHED_PROMPT, msg, encrypt_func)
-                        permission_prompt = _investment_permission_prompt(from_user, route)
+                        permission_prompt = _investment_permission_prompt(
+                            from_user,
+                            route,
+                            dedupe_key=f"active-request:{from_user}:{message_id}:{content}",
+                        )
                         if permission_prompt:
                             return _render_text_reply(permission_prompt, msg, encrypt_func)
                         if _running_investment_job(from_user, content):
@@ -167,7 +223,9 @@ class Query:
                         return _render_text_reply(ACTIVE_IMMEDIATE_ACK_TEXT, msg, encrypt_func)
                     except Exception as exc:
                         logger.exception("[wechatmp] active investment pre-reply failed: {}".format(exc))
-                    channel.produce(context)
+                        from business.investment.constants import ErrorCode, user_message
+
+                        return _render_text_reply(user_message(ErrorCode.SYSTEM_ERROR), msg, encrypt_func)
                 # The reply will be sent by channel.send() in another thread
                 return "success"
             elif msg.type == "event":

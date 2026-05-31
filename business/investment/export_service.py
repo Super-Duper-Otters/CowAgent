@@ -6,8 +6,9 @@ from typing import Iterable
 from openpyxl import Workbook
 from sqlalchemy import or_, select
 
-from .constants import ServiceType, Status, normalize_service
+from .constants import ServiceType, Status
 from .db import connect, row_to_dict
+from .records import _visible_delivery_message, _service_condition
 from .schema import investment_request_records, investment_users
 from .user_service import _decode_services
 
@@ -66,6 +67,7 @@ def export_request_records_xlsx(
     service_type: str | ServiceType | None = None,
     status: str | Status | None = None,
     keyword: str = "",
+    customer: str = "",
 ) -> bytes:
     table = investment_request_records
     users = investment_users
@@ -74,10 +76,11 @@ def export_request_records_xlsx(
         stmt = stmt.where(table.c.created_at >= str(start_date))
     if end_date:
         stmt = stmt.where(table.c.created_at <= str(end_date))
-    if service_type:
-        normalized = normalize_service(service_type)
-        if normalized != ServiceType.UNMATCHED:
-            stmt = stmt.where(table.c.service_type == str(normalized))
+    service_condition, impossible = _service_condition(table, service_type)
+    if impossible:
+        return _workbook_bytes(REQUEST_HEADERS, [], "RequestRecords")
+    if service_condition is not None:
+        stmt = stmt.where(service_condition)
     if status:
         try:
             normalized_status = Status(status)
@@ -107,6 +110,17 @@ def export_request_records_xlsx(
                 users.c.mobile.ilike(pattern),
             )
         )
+    customer_text = str(customer or "").strip()
+    if customer_text:
+        customer_pattern = f"%{customer_text}%"
+        stmt = stmt.where(
+            or_(
+                table.c.openid.ilike(customer_pattern),
+                users.c.mobile.ilike(customer_pattern),
+                users.c.name.ilike(customer_pattern),
+                users.c.institution.ilike(customer_pattern),
+            )
+        )
     stmt = stmt.order_by(table.c.created_at.asc())
 
     with connect() as conn:
@@ -124,7 +138,7 @@ def export_request_records_xlsx(
             item.get("stock_name") or "",
             item.get("status") or "",
             item.get("error_code") or None,
-            item.get("error_message") or None,
+            _visible_delivery_message(item.get("error_message") or "") or None,
             "是" if item.get("cache_hit") else "否",
             "\n".join(_load_output_files(item.get("output_files"))),
             item.get("elapsed_ms"),

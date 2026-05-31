@@ -14,6 +14,14 @@ from .schema import investment_daily_contents, investment_output_files, investme
 
 GENERATING_TIMEOUT_WARNING = "未完成/可能超时"
 GENERATING_TIMEOUT_MINUTES = 30
+DELIVERY_DELIVERED_MARKER = "[delivery:delivered]"
+DELIVERY_FAILURE_KEYWORDS = (
+    "上传失败",
+    "发送失败",
+    "send failed",
+    "upload failed",
+    "media upload failed",
+)
 
 
 @dataclass
@@ -45,6 +53,8 @@ class RequestRecord:
     status_warning: str = ""
     customer_mobile: str = ""
     customer_display: str = ""
+    delivery_status: str = ""
+    delivery_detail: str = ""
 
 
 @dataclass
@@ -99,9 +109,51 @@ def _status_warning(status: Status, created_at: str) -> str:
 
 
 def _request_status_warning(status: Status, created_at: str, error_message: str = "") -> str:
-    if status == Status.SUCCESS and error_message:
-        return error_message
+    visible_message = _visible_delivery_message(error_message)
+    if status == Status.SUCCESS and visible_message:
+        return visible_message
     return _status_warning(status, created_at)
+
+
+def _visible_delivery_message(error_message: str = "") -> str:
+    lines = [
+        line.strip()
+        for line in str(error_message or "").splitlines()
+        if line.strip() and line.strip() != DELIVERY_DELIVERED_MARKER
+    ]
+    return "\n".join(lines)
+
+
+def _has_delivery_failure(detail: str = "") -> bool:
+    lowered = str(detail or "").lower()
+    return any(keyword.lower() in lowered for keyword in DELIVERY_FAILURE_KEYWORDS)
+
+
+def _delivery_status(status: Status, error_message: str = "", output_files: list[str] | None = None) -> tuple[str, str]:
+    visible_message = _visible_delivery_message(error_message)
+    if status == Status.FAILED:
+        return "未交付", visible_message or "生成失败，未向客户交付结果"
+    if status == Status.GENERATING:
+        return "待生成", "内容仍在生成中，尚未进入交付"
+    if status != Status.SUCCESS:
+        return "未知", visible_message or "记录状态暂无法判断"
+    if _has_delivery_failure(visible_message):
+        return "交付异常", visible_message
+    if DELIVERY_DELIVERED_MARKER in str(error_message or ""):
+        return "已交付", visible_message or "客户已收到结果"
+    if output_files:
+        return "待客户领取", visible_message or "内容已生成，等待客户在公众号领取结果"
+    return "已交付", visible_message or "已返回客户可读内容"
+
+
+def _service_condition(table, service_type: ServiceType | str | None):
+    if service_type is None or str(service_type or "").strip() == "":
+        return None, False
+    normalized_service = normalize_service(service_type)
+    valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
+    if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
+        return None, True
+    return table.c.service_type == str(normalized_service), False
 
 
 def _audit_values(**metadata) -> dict[str, object]:
@@ -301,6 +353,10 @@ def append_request_warning(request_id: str, detail: str) -> None:
         )
 
 
+def mark_request_delivered(request_id: str) -> None:
+    append_request_warning(request_id, DELIVERY_DELIVERED_MARKER)
+
+
 def record_success_request(openid: str, raw_input: str, service_type: ServiceType, output_files: list[str], elapsed_ms: int) -> str:
     request_id = create_request_record(openid, raw_input, service_type)
     succeed_request_record(request_id, output_files=output_files, elapsed_ms=elapsed_ms)
@@ -336,6 +392,10 @@ def _row_to_request(row) -> RequestRecord:
     customer_mobile = item.get("customer_mobile") or ""
     customer_name = item.get("customer_name") or item.get("customer_user_name") or ""
     institution = item.get("institution") or item.get("customer_user_institution") or ""
+    output_files = _load_list(item["output_files"])
+    raw_error_message = item["error_message"] or ""
+    visible_error_message = _visible_delivery_message(raw_error_message)
+    delivery_status, delivery_detail = _delivery_status(status, raw_error_message, output_files)
     return RequestRecord(
         request_id=item["request_id"],
         openid=item["openid"],
@@ -344,8 +404,8 @@ def _row_to_request(row) -> RequestRecord:
         status=status,
         error_code=ErrorCode(item["error_code"]) if item["error_code"] else None,
         user_prompt=item["user_prompt"] or "",
-        error_message=item["error_message"] or "",
-        output_files=_load_list(item["output_files"]),
+        error_message=visible_error_message,
+        output_files=output_files,
         normalized_target=item.get("normalized_target") or "",
         stock_code=item.get("stock_code") or "",
         stock_name=item.get("stock_name") or "",
@@ -360,9 +420,11 @@ def _row_to_request(row) -> RequestRecord:
         template_version=item.get("template_version") or "",
         created_at=created_at,
         elapsed_ms=item["elapsed_ms"],
-        status_warning=_request_status_warning(status, created_at, item["error_message"] or ""),
+        status_warning=_request_status_warning(status, created_at, raw_error_message),
         customer_mobile=customer_mobile,
         customer_display=customer_mobile or item["openid"],
+        delivery_status=delivery_status,
+        delivery_detail=delivery_detail,
     )
 
 
@@ -382,6 +444,7 @@ def list_request_records(
     service_type: ServiceType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
+    customer: str = "",
     start_date: str = "",
     end_date: str = "",
 ) -> list[RequestRecord]:
@@ -391,6 +454,7 @@ def list_request_records(
         service_type=service_type,
         status=status,
         keyword=keyword,
+        customer=customer,
         start_date=start_date,
         end_date=end_date,
     )
@@ -404,6 +468,7 @@ def list_request_records_page(
     service_type: ServiceType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
+    customer: str = "",
     start_date: str = "",
     end_date: str = "",
 ) -> tuple[list[RequestRecord], int]:
@@ -425,11 +490,11 @@ def list_request_records_page(
         .limit(page_size)
         .offset(offset)
     )
-    if service_type is not None:
-        normalized_service = normalize_service(service_type)
-        if normalized_service == ServiceType.UNMATCHED and str(service_type) not in {str(ServiceType.UNMATCHED), "unmatched"}:
-            return [], 0
-        conditions.append(table.c.service_type == str(normalized_service))
+    service_condition, impossible = _service_condition(table, service_type)
+    if impossible:
+        return [], 0
+    if service_condition is not None:
+        conditions.append(service_condition)
     if status is not None:
         try:
             normalized_status = Status(status)
@@ -461,6 +526,17 @@ def list_request_records_page(
                 users.c.name.ilike(pattern),
                 users.c.institution.ilike(pattern),
                 users.c.mobile.ilike(pattern),
+            )
+        )
+    customer_text = str(customer or "").strip()
+    if customer_text:
+        customer_pattern = f"%{customer_text}%"
+        conditions.append(
+            or_(
+                table.c.openid.ilike(customer_pattern),
+                users.c.mobile.ilike(customer_pattern),
+                users.c.name.ilike(customer_pattern),
+                users.c.institution.ilike(customer_pattern),
             )
         )
     if conditions:

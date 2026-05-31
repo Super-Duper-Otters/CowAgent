@@ -109,14 +109,14 @@ def handle_text_message(
     if not skip_permission:
         permission = verify_user_access(openid)
         if not permission.allowed:
-            request_id = _create_request_record_with_customer(openid, raw_input, None, customer_metadata)
+            request_id = _create_request_record_with_customer(openid, raw_input, ServiceType.UNAUTHORIZED_REQUEST, customer_metadata)
             fail_request_record(request_id, permission.error_code or ErrorCode.UNAUTHORIZED, permission.user_prompt, permission.detail, elapsed())
             return BusinessReply(
                 True,
                 False,
                 permission.user_prompt,
                 [],
-                ServiceType.UNMATCHED,
+                ServiceType.UNAUTHORIZED_REQUEST,
                 permission.error_code,
                 permission.user_prompt,
                 sanitize_sensitive_text(permission.detail),
@@ -140,14 +140,14 @@ def handle_text_message(
     if not skip_permission:
         permission = verify_permission(openid, route.service_type)
         if not permission.allowed:
-            request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
+            request_id = _create_request_record_with_customer(openid, raw_input, ServiceType.UNAUTHORIZED_REQUEST, customer_metadata)
             fail_request_record(request_id, permission.error_code or ErrorCode.UNAUTHORIZED, permission.user_prompt, permission.detail, elapsed())
             return BusinessReply(
                 True,
                 False,
                 permission.user_prompt,
                 [],
-                route.service_type,
+                ServiceType.UNAUTHORIZED_REQUEST,
                 permission.error_code,
                 permission.user_prompt,
                 sanitize_sensitive_text(permission.detail),

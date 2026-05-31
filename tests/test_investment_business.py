@@ -1411,6 +1411,46 @@ def test_request_records_page_returns_total_offset_and_api_pagination(investment
     assert capped_payload["pagination"]["total"] == 5
 
 
+def test_request_records_page_filters_by_openid_or_mobile(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
+    from business.investment.user_service import create_user
+
+    create_user("openid-a", name="Alice", institution="Inst A", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
+    create_user("openid-b", name="Bob", institution="Inst B", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
+    first = create_request_record("openid-a", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    second = create_request_record("openid-b", "利率", ServiceType.RATE)
+    succeed_request_record(first, output_files=["/tmp/a.png"], elapsed_ms=1)
+    succeed_request_record(second, output_files=["/tmp/b.png"], elapsed_ms=1)
+
+    by_openid, total_openid = list_request_records_page(page=1, page_size=20, customer="openid-a")
+    by_mobile, total_mobile = list_request_records_page(page=1, page_size=20, customer="13900000000")
+    by_name, total_name = list_request_records_page(page=1, page_size=20, customer="Alice")
+    by_institution, total_institution = list_request_records_page(page=1, page_size=20, customer="Inst B")
+
+    assert total_openid == 1
+    assert [record.openid for record in by_openid] == ["openid-a"]
+    assert total_mobile == 1
+    assert [record.openid for record in by_mobile] == ["openid-b"]
+    assert total_name == 1
+    assert [record.openid for record in by_name] == ["openid-a"]
+    assert total_institution == 1
+    assert [record.openid for record in by_institution] == ["openid-b"]
+
+
+def test_request_records_page_unknown_service_returns_empty(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
+
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    succeed_request_record(request_id, output_files=["/tmp/rate.png"], elapsed_ms=1)
+
+    records, total = list_request_records_page(page=1, page_size=20, service_type="unknown-service")
+
+    assert records == []
+    assert total == 0
+
+
 def test_content_records_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
     from business.investment.constants import ServiceType
     from business.investment.daily_content import create_content_draft
@@ -2105,6 +2145,56 @@ def test_records_save_failure_success_and_order(investment_env):
     assert "14.153.6.203" in warned.status_warning
 
 
+def test_request_record_delivery_status_is_business_facing(investment_env):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.records import (
+        append_request_warning,
+        create_request_record,
+        fail_request_record,
+        get_request_record,
+        mark_request_delivered,
+        succeed_request_record,
+    )
+
+    generated = create_request_record("openid", "技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    succeed_request_record(generated, output_files=["/tmp/report.png"], elapsed_ms=10)
+    assert get_request_record(generated).delivery_status == "待客户领取"
+
+    mark_request_delivered(generated)
+    delivered = get_request_record(generated)
+    assert delivered.delivery_status == "已交付"
+    assert delivered.delivery_detail == "客户已收到结果"
+    assert delivered.error_message == ""
+    assert delivered.status_warning == ""
+
+    append_request_warning(generated, "图片上传失败：Error code: 40164")
+    failed_delivery = get_request_record(generated)
+    assert failed_delivery.delivery_status == "交付异常"
+    assert failed_delivery.delivery_detail == "图片上传失败：Error code: 40164"
+
+    failed = create_request_record("openid", "利率", ServiceType.RATE)
+    fail_request_record(failed, ErrorCode.NO_CONTENT, "今日内容尚未更新，请稍后再试。", "no active content", 5)
+    failed_record = get_request_record(failed)
+    assert failed_record.delivery_status == "未交付"
+    assert failed_record.delivery_detail == "no active content"
+
+
+def test_export_request_records_hides_internal_delivery_marker(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.export_service import export_request_records_xlsx
+    from business.investment.records import create_request_record, mark_request_delivered, succeed_request_record
+
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    succeed_request_record(request_id, output_files=[], elapsed_ms=12)
+    mark_request_delivered(request_id)
+
+    rows = _xlsx_sheet_rows(export_request_records_xlsx("", "", service_type="rate"))
+
+    assert rows[1][4] == "利率"
+    assert rows[1][10] in ("", None)
+    assert "[delivery:delivered]" not in str(rows[1])
+
+
 def test_old_generating_request_records_are_flagged_without_mutating_status(investment_env):
     from business.investment.constants import ServiceType, Status
     from business.investment.db import connect
@@ -2583,6 +2673,15 @@ def test_request_records_save_audit_metadata(investment_env):
     assert record.template_version == "sha256:template123456"
 
 
+def test_unauthorized_request_service_type_is_normalized_and_labeled():
+    from business.investment.constants import SERVICE_LABELS, ServiceType, normalize_service
+
+    assert ServiceType.UNAUTHORIZED_REQUEST == "unauthorized_request"
+    assert SERVICE_LABELS[ServiceType.UNAUTHORIZED_REQUEST] == "无权限请求"
+    assert normalize_service("unauthorized_request") == ServiceType.UNAUTHORIZED_REQUEST
+    assert normalize_service("无权限请求") == ServiceType.UNAUTHORIZED_REQUEST
+
+
 def _xlsx_sheet_rows(content: bytes) -> list[list[object]]:
     from openpyxl import load_workbook
 
@@ -2597,6 +2696,17 @@ def test_export_date_range_helpers_return_inclusive_bounds():
     assert month_range(2026, 2) == ("2026-02-01T00:00:00", "2026-02-28T23:59:59")
     assert month_range(2024, 2) == ("2024-02-01T00:00:00", "2024-02-29T23:59:59")
     assert quarter_range(2026, 2) == ("2026-04-01T00:00:00", "2026-06-30T23:59:59")
+
+
+def test_investment_date_bound_treats_plain_dates_as_beijing_days():
+    from channel.web.web_channel import _investment_date_bound, _investment_month_bounds, _investment_quarter_bounds
+
+    assert _investment_date_bound("2026-05-31") == "2026-05-30T16:00:00"
+    assert _investment_date_bound("2026-05-31", end=True) == "2026-05-31T15:59:59.999999"
+    assert _investment_date_bound("2026-05-31T12:30:00") == "2026-05-31T12:30:00"
+    assert _investment_date_bound("2026-05-31 12:30:00", end=True) == "2026-05-31 12:30:00"
+    assert _investment_month_bounds(2026, 5) == ("2026-04-30T16:00:00", "2026-05-31T15:59:59.999999")
+    assert _investment_quarter_bounds(2026, 2) == ("2026-03-31T16:00:00", "2026-06-30T15:59:59.999999")
 
 
 def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
@@ -2696,6 +2806,78 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(investmen
             "sha256:program",
             "sha256:template",
         ],
+    ]
+
+
+def test_export_request_records_xlsx_filters_by_service_customer_and_range(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.export_service import export_request_records_xlsx
+    from business.investment.records import create_request_record, succeed_request_record
+    from business.investment.user_service import create_user
+
+    create_user("openid-a", name="Alice", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
+    create_user("openid-b", name="Bob", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
+    included = create_request_record("openid-a", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS, stock_name="新易盛")
+    wrong_service = create_request_record("openid-a", "利率", ServiceType.RATE)
+    wrong_user = create_request_record("openid-b", "贵州茅台 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    succeed_request_record(included, output_files=["/tmp/card.png"], elapsed_ms=1)
+    succeed_request_record(wrong_service, output_files=["/tmp/rate.png"], elapsed_ms=1)
+    succeed_request_record(wrong_user, output_files=["/tmp/other.png"], elapsed_ms=1)
+    with connect() as conn:
+        for request_id in [included, wrong_service, wrong_user]:
+            conn.execute(
+                text(
+                    "update investment_request_records "
+                    "set created_at = '2026-05-10T08:00:00' "
+                    "where request_id = :request_id"
+                ),
+                {"request_id": request_id},
+            )
+
+    rows = _xlsx_sheet_rows(
+        export_request_records_xlsx(
+            "2026-05-01T00:00:00",
+            "2026-05-31T23:59:59",
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            customer="13800000000",
+        )
+    )
+
+    assert len(rows) == 2
+    assert rows[1][1] == "openid-a"
+    assert rows[1][4] == "新易盛 技术分析"
+
+
+def test_export_request_records_xlsx_unknown_service_returns_only_header(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.export_service import export_request_records_xlsx
+    from business.investment.records import create_request_record, succeed_request_record
+
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    succeed_request_record(request_id, output_files=["/tmp/rate.png"], elapsed_ms=1)
+
+    rows = _xlsx_sheet_rows(export_request_records_xlsx("", "", service_type="unknown-service"))
+
+    assert rows == [
+        [
+            "请求时间",
+            "OpenID",
+            "客户姓名",
+            "机构",
+            "原始输入",
+            "服务类型",
+            "股票代码",
+            "股票名称",
+            "状态",
+            "错误码",
+            "错误原因",
+            "缓存命中",
+            "输出文件",
+            "耗时毫秒",
+            "程序版本",
+            "模板版本",
+        ]
     ]
 
 
@@ -6795,9 +6977,12 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
     from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
     from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.investment.user_service import create_user
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
 
     miss = handle_text_message("ok", "hello")
 

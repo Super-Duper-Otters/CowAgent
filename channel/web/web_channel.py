@@ -7,6 +7,8 @@ import mimetypes
 import os
 import threading
 import uuid
+from calendar import monthrange
+from datetime import datetime, timedelta, timezone
 from queue import Queue, Empty
 from typing import Tuple
 from urllib.parse import quote
@@ -2624,7 +2626,32 @@ def _investment_date_bound(value: str, end: bool = False) -> str:
         return ""
     if "T" in text or " " in text:
         return text
-    return f"{text}T23:59:59" if end else f"{text}T00:00:00"
+    beijing_zone = timezone(timedelta(hours=8))
+    parsed_date = datetime.strptime(text, "%Y-%m-%d").date()
+    if end:
+        beijing_bound = datetime.combine(parsed_date, datetime.max.time(), tzinfo=beijing_zone)
+        return beijing_bound.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
+    beijing_bound = datetime.combine(parsed_date, datetime.min.time(), tzinfo=beijing_zone)
+    return beijing_bound.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _investment_month_bounds(year: int, month: int) -> tuple[str, str]:
+    last_day = monthrange(int(year), int(month))[1]
+    return (
+        _investment_date_bound(f"{int(year):04d}-{int(month):02d}-01"),
+        _investment_date_bound(f"{int(year):04d}-{int(month):02d}-{last_day:02d}", end=True),
+    )
+
+
+def _investment_quarter_bounds(year: int, quarter: int) -> tuple[str, str]:
+    quarter_value = int(quarter)
+    if quarter_value < 1 or quarter_value > 4:
+        raise ValueError("quarter must be between 1 and 4")
+    start_month = (quarter_value - 1) * 3 + 1
+    end_month = start_month + 2
+    start_date, _ = _investment_month_bounds(int(year), start_month)
+    _, end_date = _investment_month_bounds(int(year), end_month)
+    return start_date, end_date
 
 
 def _investment_stock_stats():
@@ -2660,23 +2687,30 @@ class InvestmentRequestRecordsExportHandler:
         try:
             from business.investment.export_service import export_request_records_xlsx
 
-            params = web.input(start_date='', end_date='', service_type='', status='', keyword='', year='', month='', quarter='')
+            params = web.input(
+                start_date='',
+                end_date='',
+                service_type='',
+                status='',
+                keyword='',
+                customer='',
+                year='',
+                month='',
+                quarter='',
+            )
             start_date = _investment_date_bound(params.start_date)
             end_date = _investment_date_bound(params.end_date, end=True)
             if getattr(params, "year", "") and getattr(params, "month", ""):
-                from business.investment.export_service import month_range
-
-                start_date, end_date = month_range(int(params.year), int(params.month))
+                start_date, end_date = _investment_month_bounds(int(params.year), int(params.month))
             elif getattr(params, "year", "") and getattr(params, "quarter", ""):
-                from business.investment.export_service import quarter_range
-
-                start_date, end_date = quarter_range(int(params.year), int(params.quarter))
+                start_date, end_date = _investment_quarter_bounds(int(params.year), int(params.quarter))
             data = export_request_records_xlsx(
                 start_date,
                 end_date,
                 service_type=params.service_type or None,
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
+                customer=getattr(params, "customer", "") or "",
             )
             return _investment_xlsx_response(data, "investment-requests.xlsx")
         except Exception as e:
@@ -3004,6 +3038,7 @@ class InvestmentRequestRecordsHandler:
                 service_type='',
                 status='',
                 keyword='',
+                customer='',
                 start_date='',
                 end_date='',
             )
@@ -3023,6 +3058,7 @@ class InvestmentRequestRecordsHandler:
                 service_type=service_type,
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
+                customer=getattr(params, "customer", "") or "",
                 start_date=_investment_date_bound(getattr(params, "start_date", "")),
                 end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
             )

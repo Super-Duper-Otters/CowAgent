@@ -422,6 +422,7 @@ const INVEST_SERVICE_LABELS = {
     technical_analysis: '技术分析',
     rate: '利率',
     convertible_bond: '转债',
+    unauthorized_request: '无权限请求',
     all: '全部',
     unmatched: '未命中',
 };
@@ -449,10 +450,10 @@ let investmentRecordsState = {
     cacheCategory: '',
     exportMode: 'current',
     filters: {
-        requests: {page: '1', page_size: '80'},
+        requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
         contents: {page: '1', page_size: '80'},
-        cache: {page: '1', page_size: '120', market_date: ''},
-        audits: {page: '1', page_size: '80'},
+        cache: {page: '1', page_size: '120', market_date: investmentTodayDate()},
+        audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
     },
     pagination: {
         requests: {page: 1, page_size: 80, total: 0, total_pages: 1},
@@ -632,9 +633,16 @@ function investmentFormatBeijingTime(value) {
 }
 
 function investmentTodayDate() {
-    const now = new Date();
-    const tzOffset = now.getTimezoneOffset() * 60000;
-    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 10);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date()).reduce((acc, part) => {
+        acc[part.type] = part.value;
+        return acc;
+    }, {});
+    return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function investmentCompactText(value, max = 60) {
@@ -701,6 +709,13 @@ function investmentStatusClass(status) {
     if (status === 'success' || status === 'generated' || status === 'effective') return 'ok';
     if (status === 'failed' || status === 'generate_failed') return 'fail';
     if (status === 'generating') return 'pending';
+    return '';
+}
+
+function investmentDeliveryStatusClass(status) {
+    if (status === '已交付') return 'ok';
+    if (status === '交付异常' || status === '未交付') return 'fail';
+    if (status === '待客户领取' || status === '待生成') return 'pending';
     return '';
 }
 
@@ -1544,8 +1559,12 @@ function investmentExportServiceType() {
     return document.getElementById('invest-export-service-type')?.value || '';
 }
 
+function investmentExportCustomer() {
+    return document.getElementById('invest-export-customer')?.value || '';
+}
+
 function changeInvestmentRequestExportMode(mode) {
-    const allowed = ['current', 'range', 'month', 'quarter'];
+    const allowed = ['current', 'full', 'range', 'month', 'quarter'];
     investmentRecordsState.exportMode = allowed.includes(mode) ? mode : 'current';
     const panel = document.querySelector('.investment-request-export-panel');
     if (panel) panel.outerHTML = renderInvestmentRequestExportPanel();
@@ -1555,7 +1574,16 @@ function exportInvestmentRequestRecordsByCurrentFilters() {
     const params = investmentRecordsQueryParams('requests');
     params.delete('page');
     params.delete('page_size');
+    const customer = investmentExportCustomer();
+    if (customer) params.set('customer', customer);
     investmentDownload('/api/investment/export/requests.xlsx', Object.fromEntries(params.entries()));
+}
+
+function exportInvestmentRequestRecordsFull() {
+    investmentDownload('/api/investment/export/requests.xlsx', {
+        service_type: investmentExportServiceType(),
+        customer: investmentExportCustomer(),
+    });
 }
 
 function exportInvestmentRequestRecordsByRange() {
@@ -1573,6 +1601,7 @@ function exportInvestmentRequestRecordsByRange() {
         start_date: startDate,
         end_date: endDate,
         service_type: investmentExportServiceType(),
+        customer: investmentExportCustomer(),
     });
 }
 
@@ -1587,6 +1616,7 @@ function exportInvestmentRequestRecordsByMonth() {
         year,
         month,
         service_type: investmentExportServiceType(),
+        customer: investmentExportCustomer(),
     });
 }
 
@@ -1600,6 +1630,7 @@ function exportInvestmentRequestRecordsByQuarter() {
         year,
         quarter: document.getElementById('invest-export-quarter')?.value || '',
         service_type: investmentExportServiceType(),
+        customer: investmentExportCustomer(),
     });
 }
 
@@ -1735,9 +1766,16 @@ function investmentRecordsDefaultPageSize(tab) {
 }
 
 function investmentRecordsDefaultFilters(tab) {
-    return tab === 'cache'
-        ? {page: '1', page_size: investmentRecordsDefaultPageSize(tab), market_date: ''}
-        : {page: '1', page_size: investmentRecordsDefaultPageSize(tab)};
+    if (tab === 'requests') {
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
+    }
+    if (tab === 'cache') {
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), market_date: investmentTodayDate()};
+    }
+    if (tab === 'audits') {
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
+    }
+    return {page: '1', page_size: investmentRecordsDefaultPageSize(tab)};
 }
 
 function investmentRecordsFilterValue(key) {
@@ -1803,16 +1841,26 @@ function renderInvestmentRequestExportPanel() {
                 <option value="technical_analysis">技术分析</option>
                 <option value="rate">利率</option>
                 <option value="convertible_bond">转债</option>
+                <option value="unauthorized_request">无权限请求</option>
             </select>
         </label>`;
+    const customerField = '<label class="investment-field"><span>OpenID/手机号</span><input id="invest-export-customer" type="text" value=""></label>';
     const fieldsByMode = {
-        current: '<div class="investment-request-export-note">使用上方公众号请求筛选条件导出。</div>',
+        current: `
+            <div class="investment-request-export-note">使用上方公众号请求筛选条件导出。</div>
+            ${customerField}`,
+        full: `
+            <div class="investment-request-export-note">不限制日期，按下方条件导出全部请求记录。</div>
+            ${customerField}
+            ${serviceField}`,
         range: `
             ${investmentField('开始日期', 'invest-export-start-date', '', 'date')}
             ${investmentField('结束日期', 'invest-export-end-date', '', 'date')}
+            ${customerField}
             ${serviceField}`,
         month: `
             <label class="investment-field"><span>月度</span><input id="invest-export-month" type="month"></label>
+            ${customerField}
             ${serviceField}`,
         quarter: `
             <label class="investment-field"><span>年度</span><input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${new Date().getFullYear()}"></label>
@@ -1820,10 +1868,12 @@ function renderInvestmentRequestExportPanel() {
                 <span>季度</span>
                 <select id="invest-export-quarter"><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select>
             </label>
+            ${customerField}
             ${serviceField}`,
     };
     const actionsByMode = {
         current: investmentButtonIfCan('records.export', 'fa-download', '导出当前筛选', 'exportInvestmentRequestRecordsByCurrentFilters()', 'primary'),
+        full: investmentButtonIfCan('records.export', 'fa-download', '全量导出', 'exportInvestmentRequestRecordsFull()', 'primary'),
         range: investmentButtonIfCan('records.export', 'fa-download', '导出范围', 'exportInvestmentRequestRecordsByRange()', 'primary'),
         month: investmentButtonIfCan('records.export', 'fa-calendar-days', '导出月度', 'exportInvestmentRequestRecordsByMonth()', 'primary'),
         quarter: investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()', 'primary'),
@@ -1834,6 +1884,7 @@ function renderInvestmentRequestExportPanel() {
                 <div class="investment-panel-title"><i class="fas fa-file-export"></i><span>公众号请求导出</span></div>
                 <div class="investment-request-export-modes">
                     ${investmentRequestExportModeButton('current', '导出当前筛选', 'fa-filter')}
+                    ${investmentRequestExportModeButton('full', '全量导出', 'fa-download')}
                     ${investmentRequestExportModeButton('range', '按日期范围', 'fa-calendar-days')}
                     ${investmentRequestExportModeButton('month', '按月导出', 'fa-calendar')}
                     ${investmentRequestExportModeButton('quarter', '按季度导出', 'fa-chart-pie')}
@@ -1888,7 +1939,7 @@ function renderInvestmentRecordsFilters(tab) {
     if (tab === 'requests') {
         controls = [
             field('keyword', '客户/输入/错误'),
-            select('service_type', '服务', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债']]),
+            select('service_type', '服务', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']]),
             select('status', '状态', [['', '全部'], ['success', '成功'], ['failed', '失败'], ['generating', '生成中']]),
             field('start_date', '开始日期', 'date'),
             field('end_date', '结束日期', 'date'),
@@ -2041,9 +2092,6 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
             const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
             investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
             investmentRecordsApplyPagination('cache', data.pagination);
-            if (!investmentRecordsState.filters.cache.market_date && data.market_dates?.[0]) {
-                investmentRecordsState.filters.cache.market_date = data.market_dates[0];
-            }
             html = `${renderInvestmentRecordsCacheTab(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination(tab)}`;
         } else {
             const data = await investmentFetchJson(`/api/investment/audits?${investmentRecordsQueryParams('audits').toString()}`);
@@ -2072,15 +2120,16 @@ function renderInvestmentRequestRecordsTable(records) {
         <td>${investmentCompactText(record.customer_display || record.openid || '', 24)}</td>
         <td>${investmentServiceLabel(record.service_type)}</td>
         <td>${investmentRecordClamp(record.stock_name || record.stock_code || record.normalized_target || record.raw_input || '-', 2, 46)}</td>
-        <td><span class="investment-badge ${investmentStatusClass(record.status_warning ? 'generating' : record.status)}">${investmentStatusLabel(record.status)}${record.status_warning === '未完成/可能超时' ? ' / 可能超时' : ''}</span></td>
-        <td>${investmentRecordClamp(record.status_warning || record.error_message || record.user_prompt || record.error_code || '正常', 2, 54)}</td>
+        <td><span class="investment-badge ${investmentStatusClass(record.status_warning === '未完成/可能超时' ? 'generating' : record.status)}">${investmentStatusLabel(record.status)}${record.status_warning === '未完成/可能超时' ? ' / 可能超时' : ''}</span></td>
+        <td><span class="investment-badge ${investmentDeliveryStatusClass(record.delivery_status)}">${escapeHtml(record.delivery_status || '-')}</span></td>
+        <td>${investmentRecordClamp(record.status_warning === '未完成/可能超时' ? record.status_warning : (record.user_prompt || record.delivery_status || '正常'), 2, 54)}</td>
         <td>${record.cache_hit ? '<span class="investment-badge ok">命中</span>' : '<span class="investment-badge">未命中</span>'}</td>
         <td>${escapeHtml(record.elapsed_ms == null ? '-' : `${record.elapsed_ms} ms`)}</td>
         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at))}</td>
         <td class="investment-row-actions">${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('request', '${investmentEncodedRecord(record)}')`)}</td>
     </tr>`).join('');
     return investmentRecordTableShell(`<table class="investment-table investment-records-table">
-        <thead><tr><th>客户</th><th>服务</th><th>标的/输入</th><th>状态</th><th>错误摘要</th><th>缓存</th><th>耗时</th><th>北京时间</th><th>操作</th></tr></thead>
+        <thead><tr><th>客户</th><th>服务</th><th>标的/输入</th><th>生成</th><th>交付</th><th>提示摘要</th><th>缓存</th><th>耗时</th><th>北京时间</th><th>操作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
 }
@@ -2228,7 +2277,7 @@ async function selectInvestmentCacheDate(date) {
 }
 
 async function applyInvestmentCacheDate() {
-    investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || '';
+    investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || investmentTodayDate();
     investmentRecordsState.filters.cache.page = '1';
     investmentRecordsState.cacheCategory = '';
     await loadInvestmentRecordsTab('cache');
@@ -2346,13 +2395,27 @@ function renderInvestmentRequestDrawer(record) {
             ['OpenID', escapeHtml(record.openid || '-')],
             ['手机号', escapeHtml(record.customer_mobile || '-')],
             ['服务', investmentServiceLabel(record.service_type)],
-            ['状态', investmentStatusLabel(record.status)],
+            ['生成状态', investmentStatusLabel(record.status)],
+            ['交付状态', `<span class="investment-badge ${investmentDeliveryStatusClass(record.delivery_status)}">${escapeHtml(record.delivery_status || '-')}</span>`],
             ['耗时', escapeHtml(record.elapsed_ms == null ? '-' : `${record.elapsed_ms} ms`)],
             ['北京时间', escapeHtml(investmentFormatBeijingTime(record.created_at) || '-')],
         ]))}
         ${investmentDrawerPre('原始输入', record.raw_input || '')}
-        ${investmentDrawerPre('错误/警告', record.status_warning || record.error_message || '')}
+        ${investmentDrawerPre('用户提示', record.user_prompt || '')}
+        ${investmentDrawerPre('错误/警告详情', record.status_warning || record.delivery_detail || record.error_message || '')}
+        ${investmentDrawerSection('审计字段', investmentDrawerFacts([
+            ['规范标的', escapeHtml(record.normalized_target || '-')],
+            ['证券代码', escapeHtml(record.stock_code || '-')],
+            ['证券名称', escapeHtml(record.stock_name || '-')],
+            ['市场日期', escapeHtml(record.market_date || '-')],
+            ['缓存 Key', escapeHtml(record.cache_key || '-')],
+            ['程序版本', escapeHtml(record.program_version || '-')],
+            ['TA 版本', escapeHtml(record.ta_version || '-')],
+            ['渲染版本', escapeHtml(record.renderer_version || '-')],
+            ['模板版本', escapeHtml(record.template_version || '-')],
+        ]))}
         ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.output_files || [])}</div>`)}
+        ${investmentDrawerSection('产物审计', investmentArtifactTable(record.output_artifacts || []))}
     `;
 }
 

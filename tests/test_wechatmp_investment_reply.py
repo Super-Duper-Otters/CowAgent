@@ -13,6 +13,12 @@ def _default_investment_user_access(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_investment_record_writes(monkeypatch):
+    monkeypatch.setattr("business.investment.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
+    monkeypatch.setattr("business.investment.records.fail_request_record", lambda *args, **_kwargs: None)
+
+
 def _reset_wechatmp_singleton(wechatmp_channel):
     instances = wechatmp_channel.WechatMPChannel.__closure__[1].cell_contents
     instances.clear()
@@ -115,6 +121,38 @@ def test_passive_reply_cache_returns_list_copies_for_legacy_access():
 
     assert cache.pop_result("openid") == ("image", "media-1")
     assert cache.pop_result("openid") is None
+
+
+def test_passive_reply_cache_preserves_request_id_without_breaking_legacy_access():
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    cache = PassiveReplyCache()
+    cache.append_result(
+        "openid",
+        "利率",
+        [("image", "media-1")],
+        service_type=ServiceType.RATE,
+        request_id="request-1",
+    )
+
+    cached_result = cache.peek_result("openid")
+
+    assert cached_result.request_id == "request-1"
+    assert cache.get("openid") == [("image", "media-1")]
+    assert cache["openid"] == [("image", "media-1")]
+    assert cache.pop_result("openid") == ("image", "media-1")
+
+    cache.append_reply(
+        "openid",
+        "text",
+        "ready",
+        "转债",
+        service_type=ServiceType.CONVERTIBLE_BOND,
+        request_id="request-2",
+    )
+
+    assert cache.peek_result("openid").request_id == "request-2"
+    assert cache.pop_result("openid") == ("text", "ready")
 
 
 def test_passive_reply_cache_append_cleanup_and_pop_are_thread_safe():
@@ -258,6 +296,35 @@ def test_wechatmp_passive_send_uploads_image_list_without_text_marker(monkeypatc
         ("image", "openid-msg-1.png"),
     ]
     assert channel.cache_dict["openid"] == [("image", "media-1"), ("image", "media-2")]
+
+
+def test_wechatmp_passive_send_preserves_investment_request_id_in_cache(monkeypatch, tmp_path):
+    from bridge.reply import Reply, ReplyType
+
+    channel = _wechatmp_channel(monkeypatch)
+    text_reply = Reply(ReplyType.TEXT, "ready")
+    text_reply.investment_request_id = "request-text"
+    text_reply.investment_service_type = ServiceType.RATE
+
+    channel.send(text_reply, _context(openid="openid-text", msg_id="msg-text"))
+
+    assert channel.cache_dict.peek_result("openid-text").request_id == "request-text"
+
+    image_path = tmp_path / "main.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    class FakeMedia:
+        def upload(self, media_type, media):
+            return {"media_id": "media-image"}
+
+    channel.client.media = FakeMedia()
+    image_reply = Reply(ReplyType.IMAGE_URL, [str(image_path)])
+    image_reply.investment_request_id = "request-image"
+    image_reply.investment_service_type = ServiceType.TECHNICAL_ANALYSIS
+
+    channel.send(image_reply, _context(openid="openid-image", msg_id="msg-image"))
+
+    assert channel.cache_dict.peek_result("openid-image").request_id == "request-image"
 
 
 def test_wechatmp_passive_send_closes_local_image_file_after_upload_success(monkeypatch, tmp_path):
@@ -540,6 +607,40 @@ def test_wechatmp_passive_pending_image_returns_only_after_user_confirms(monkeyp
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
 
     assert passive_reply.Query().POST() == "<image>media-1</image>"
+    assert produced_contexts == []
+
+
+def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(monkeypatch):
+    import business.investment.records as records
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    produced_contexts = []
+    delivered = []
+    channel = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
+    channel.cache_dict.append_result(
+        "openid",
+        "利率",
+        [("image", "media-1")],
+        service_type=ServiceType.RATE,
+        request_id="request-1",
+    )
+    current_message = {"content": "1", "msg_id": "msg-delivered-1"}
+
+    class FakeImageReply:
+        def __init__(self, message):
+            self.message = message
+            self.media_id = ""
+
+        def render(self):
+            return f"<image>{self.media_id}</image>"
+
+    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
+    monkeypatch.setattr(records, "mark_request_delivered", lambda request_id: delivered.append(request_id), raising=False)
+
+    assert passive_reply.Query().POST() == "<image>media-1</image>"
+    assert delivered == ["request-1"]
     assert produced_contexts == []
 
 
@@ -1474,6 +1575,264 @@ def test_wechatmp_passive_permission_error_does_not_start_investment_generation(
     assert "openid" not in channel.running
 
 
+def test_wechatmp_passive_permission_prompt_records_failed_precheck(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    monkeypatch.setattr(
+        "business.investment.user_service.verify_permission",
+        lambda _openid, _service_type: SimpleNamespace(
+            allowed=False,
+            error_code=ErrorCode.UNAUTHORIZED,
+            user_prompt="您暂未开通该服务，如需开通请联系服务人员。",
+            detail="permission denied",
+        ),
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    prompt = passive_reply._investment_permission_prompt("openid", "利率")
+
+    assert prompt == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert calls[0] == ("create", ("openid", "利率", ServiceType.UNAUTHORIZED_REQUEST))
+    assert calls[1][0] == "fail"
+    assert calls[1][1][0] == "request-id"
+    assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
+
+
+def test_wechatmp_passive_permission_denied_records_are_deduped_by_message_key(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    passive_reply._permission_denied_record_keys.clear()
+    permission = SimpleNamespace(
+        allowed=False,
+        error_code=ErrorCode.UNAUTHORIZED,
+        user_prompt="无权限",
+        detail="permission denied",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    passive_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+    passive_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+
+    assert [call[0] for call in calls] == ["create", "fail"]
+
+
+def test_wechatmp_cached_result_permission_prompt_records_failed_precheck(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.investment.constants import ErrorCode
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    calls = []
+    cache = PassiveReplyCache()
+    cache.append_result(
+        "openid",
+        "利率",
+        [("image", "media-rate")],
+        service_type=ServiceType.RATE,
+        request_id="request-rate",
+    )
+    monkeypatch.setattr(
+        "business.investment.user_service.verify_permission",
+        lambda _openid, _service_type: SimpleNamespace(
+            allowed=False,
+            error_code=ErrorCode.UNAUTHORIZED,
+            user_prompt="您暂未开通该服务，如需开通请联系服务人员。",
+            detail="permission denied",
+        ),
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    prompt = passive_reply._permission_prompt_for_cached_result(
+        "openid",
+        cache.peek_result("openid"),
+        "1",
+        dedupe_key="cached-msg-1",
+    )
+
+    assert prompt == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert calls[0] == ("create", ("openid", "利率", ServiceType.UNAUTHORIZED_REQUEST))
+    assert calls[1][0] == "fail"
+    assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
+
+
+def test_wechatmp_passive_user_access_permission_prompt_records_failed_precheck_with_empty_input(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    monkeypatch.setattr(
+        "business.investment.user_service.verify_user_access",
+        lambda _openid: SimpleNamespace(
+            allowed=False,
+            error_code=ErrorCode.USER_DISABLED,
+            user_prompt="您的服务已停用，如需恢复请联系服务人员。",
+            detail="user disabled",
+        ),
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    prompt = passive_reply._investment_user_access_prompt("openid")
+
+    assert prompt == "您的服务已停用，如需恢复请联系服务人员。"
+    assert calls[0] == ("create", ("openid", "", ServiceType.UNAUTHORIZED_REQUEST))
+    assert calls[1][0] == "fail"
+    assert calls[1][1][0] == "request-id"
+    assert calls[1][1][1] == ErrorCode.USER_DISABLED
+
+
+def test_wechatmp_active_permission_prompt_records_failed_precheck(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    route = SimpleNamespace(matched=True, service_type=ServiceType.RATE, raw_input="利率")
+    monkeypatch.setattr(
+        "business.investment.user_service.verify_permission",
+        lambda _openid, _service_type: SimpleNamespace(
+            allowed=False,
+            error_code=ErrorCode.UNAUTHORIZED,
+            user_prompt="您暂未开通该服务，如需开通请联系服务人员。",
+            detail="permission denied",
+        ),
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    prompt = active_reply._investment_permission_prompt("openid", route)
+
+    assert prompt == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert calls[0] == ("create", ("openid", "利率", ServiceType.UNAUTHORIZED_REQUEST))
+    assert calls[1][0] == "fail"
+    assert calls[1][1][0] == "request-id"
+    assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
+
+
+def test_wechatmp_active_permission_denied_records_are_deduped_by_message_key(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    active_reply._permission_denied_record_keys.clear()
+    permission = SimpleNamespace(
+        allowed=False,
+        error_code=ErrorCode.UNAUTHORIZED,
+        user_prompt="无权限",
+        detail="permission denied",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.create_request_record",
+        lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
+    )
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    active_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+    active_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+
+    assert [call[0] for call in calls] == ["create", "fail"]
+
+
+def test_wechatmp_passive_permission_denied_record_retries_after_write_failure(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    passive_reply._permission_denied_record_keys.clear()
+    permission = SimpleNamespace(
+        allowed=False,
+        error_code=ErrorCode.UNAUTHORIZED,
+        user_prompt="无权限",
+        detail="permission denied",
+    )
+
+    def fake_create(*args, **_kwargs):
+        calls.append(("create", args))
+        if len(calls) == 1:
+            raise RuntimeError("database unavailable")
+        return "request-id"
+
+    monkeypatch.setattr("business.investment.records.create_request_record", fake_create)
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    passive_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+    passive_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+
+    assert [call[0] for call in calls] == ["create", "create", "fail"]
+
+
+def test_wechatmp_active_permission_denied_record_retries_after_write_failure(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+    from business.investment.constants import ErrorCode
+
+    calls = []
+    active_reply._permission_denied_record_keys.clear()
+    permission = SimpleNamespace(
+        allowed=False,
+        error_code=ErrorCode.UNAUTHORIZED,
+        user_prompt="无权限",
+        detail="permission denied",
+    )
+
+    def fake_create(*args, **_kwargs):
+        calls.append(("create", args))
+        if len(calls) == 1:
+            raise RuntimeError("database unavailable")
+        return "request-id"
+
+    monkeypatch.setattr("business.investment.records.create_request_record", fake_create)
+    monkeypatch.setattr(
+        "business.investment.records.fail_request_record",
+        lambda *args, **_kwargs: calls.append(("fail", args)),
+    )
+
+    active_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+    active_reply._record_permission_denied_request("openid", "利率", permission, dedupe_key="msg-1")
+
+    assert [call[0] for call in calls] == ["create", "create", "fail"]
+
+
 def test_wechatmp_passive_pending_result_confirm_rechecks_permission_before_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1919,6 +2278,135 @@ def test_wechatmp_active_disabled_investment_user_gets_service_stopped_prompt(mo
     response = active_reply.Query().POST()
 
     assert response == "您的服务已停用，如需恢复请联系服务人员。"
+    assert produced_contexts == []
+    assert channel_holder["channel"].active_running == set()
+
+
+def test_wechatmp_active_permission_check_error_does_not_start_generation(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+
+    produced_contexts = []
+    channel_holder = {}
+
+    class FakeChannel:
+        def __init__(self):
+            self.client = SimpleNamespace()
+            self.crypto = None
+            self.active_fallback_cache = {}
+            self.active_running = set()
+            channel_holder["channel"] = self
+
+        def _compose_context(self, ctype, content, **kwargs):
+            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
+
+        def produce(self, context):
+            produced_contexts.append(context)
+
+    class FakeReply:
+        def __init__(self, text, _msg):
+            self.text = text
+
+        def render(self):
+            return self.text
+
+    fake_msg = SimpleNamespace(type="text")
+
+    monkeypatch.setattr(active_reply, "WechatMPChannel", FakeChannel)
+    monkeypatch.setattr(active_reply, "is_encrypted_message", lambda _args: False)
+    monkeypatch.setattr(active_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
+    monkeypatch.setattr(active_reply, "parse_message", lambda _message: fake_msg)
+    monkeypatch.setattr(
+        active_reply,
+        "WeChatMPMessage",
+        lambda _msg, client=None: SimpleNamespace(
+            from_user_id="openid",
+            content="300502.SZ 技术分析",
+            msg_id="msg-active-permission-error",
+            ctype=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(active_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: None)
+    monkeypatch.setattr(
+        "business.investment.user_service.verify_permission",
+        lambda _openid, _service_type: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(active_reply.web, "input", lambda: {})
+    monkeypatch.setattr(active_reply.web, "data", lambda: b"<xml/>")
+    monkeypatch.setattr(
+        active_reply.web.ctx,
+        "env",
+        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
+        raising=False,
+    )
+
+    response = active_reply.Query().POST()
+
+    assert response == "系统暂时繁忙，请稍后重试。"
+    assert produced_contexts == []
+    assert channel_holder["channel"].active_running == set()
+
+
+def test_wechatmp_active_parse_route_error_does_not_start_generation(monkeypatch):
+    import channel.wechatmp.active_reply as active_reply
+
+    produced_contexts = []
+    channel_holder = {}
+
+    class FakeChannel:
+        def __init__(self):
+            self.client = SimpleNamespace()
+            self.crypto = None
+            self.active_fallback_cache = {}
+            self.active_running = set()
+            channel_holder["channel"] = self
+
+        def _compose_context(self, ctype, content, **kwargs):
+            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
+
+        def produce(self, context):
+            produced_contexts.append(context)
+
+    class FakeReply:
+        def __init__(self, text, _msg):
+            self.text = text
+
+        def render(self):
+            return self.text
+
+    fake_msg = SimpleNamespace(type="text")
+
+    monkeypatch.setattr(active_reply, "WechatMPChannel", FakeChannel)
+    monkeypatch.setattr(active_reply, "is_encrypted_message", lambda _args: False)
+    monkeypatch.setattr(active_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
+    monkeypatch.setattr(active_reply, "parse_message", lambda _message: fake_msg)
+    monkeypatch.setattr(
+        active_reply,
+        "WeChatMPMessage",
+        lambda _msg, client=None: SimpleNamespace(
+            from_user_id="openid",
+            content="300502.SZ 技术分析",
+            msg_id="msg-active-parse-error",
+            ctype=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(active_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(
+        "business.investment.router.parse_route",
+        lambda _content: (_ for _ in ()).throw(RuntimeError("router unavailable")),
+    )
+    monkeypatch.setattr(active_reply.web, "input", lambda: {})
+    monkeypatch.setattr(active_reply.web, "data", lambda: b"<xml/>")
+    monkeypatch.setattr(
+        active_reply.web.ctx,
+        "env",
+        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
+        raising=False,
+    )
+
+    response = active_reply.Query().POST()
+
+    assert response == "系统暂时繁忙，请稍后重试。"
     assert produced_contexts == []
     assert channel_holder["channel"].active_running == set()
 
