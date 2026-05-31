@@ -53,6 +53,7 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert verify_password("wrong-pass", password_hash) is False
 
     user_id = create_admin_user("uploader-a", "secret-pass", role="uploader")
+    poster_id = create_admin_user("poster-a", "poster-pass", role="poster")
     assert authenticate_admin("uploader-a", "wrong-pass") is None
     admin = authenticate_admin("uploader-a", "secret-pass")
     assert admin is not None
@@ -68,18 +69,40 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert require_permission(session, "users.write").allowed is False
     assert require_permission(session, "config.write").allowed is False
 
+    poster = authenticate_admin("poster-a", "poster-pass")
+    assert poster is not None
+    assert poster.id == poster_id
+    assert poster.role == "poster"
+    assert require_permission(poster, "content.write").allowed is True
+    assert require_permission(poster, "content.generate").allowed is True
+    assert require_permission(poster, "content.effective").allowed is True
+    assert require_permission(poster, "stocks.write").allowed is True
+    assert require_permission(poster, "records.read").allowed is False
+    assert require_permission(poster, "config.read").allowed is False
+    assert require_permission(poster, "users.write").allowed is False
+
+
+def test_investment_migrations_do_not_seed_fixed_default_admin_accounts(investment_env):
+    from business.investment.auth_service import authenticate_admin
+
+    assert authenticate_admin("admin", "password") is None
+    for username in ("poster1", "poster2", "poster3"):
+        assert authenticate_admin(username, "password") is None
+
 
 def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
-    from channel.web.web_channel import InvestmentConfigHandler, InvestmentHealthHandler, InvestmentUsersHandler
+    from channel.web.web_channel import InvestmentConfigHandler, InvestmentHealthHandler, InvestmentStocksHandler, InvestmentUsersHandler
 
     create_admin_user("admin-a", "admin-pass", role="admin")
     create_admin_user("uploader-a", "uploader-pass", role="uploader")
     create_admin_user("tech-a", "tech-pass", role="technical_admin")
+    create_admin_user("poster-a", "poster-pass", role="poster")
     admin_token = create_admin_session(authenticate_admin("admin-a", "admin-pass"))
     uploader_token = create_admin_session(authenticate_admin("uploader-a", "uploader-pass"))
     tech_token = create_admin_session(authenticate_admin("tech-a", "tech-pass"))
+    poster_token = create_admin_session(authenticate_admin("poster-a", "poster-pass"))
 
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
     monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(openid="", enabled=""))
@@ -129,10 +152,47 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     config = json.loads(InvestmentConfigHandler().POST())
     assert config["status"] == "success"
 
+    use_token(poster_token)
+    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(**({"name": "", "limit": "5"} | kwargs)))
+    stocks = json.loads(InvestmentStocksHandler().GET())
+    assert stocks["status"] == "success"
+    with pytest.raises(web_channel.web.HTTPError) as poster_config_error:
+        InvestmentConfigHandler().GET()
+    poster_denied = json.loads(poster_config_error.value.data)
+    assert poster_denied["status"] == "error"
+    assert poster_denied["code"] == "permission_denied"
+    assert poster_denied["permission"] == "config.read"
+
+
+def test_investment_auth_me_allows_poster_without_records_permission(investment_env, monkeypatch):
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentAuthMeHandler
+
+    create_admin_user("poster-a", "poster-pass", role="poster")
+    token = create_admin_session(authenticate_admin("poster-a", "poster-pass"))
+
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    payload = json.loads(InvestmentAuthMeHandler().GET())
+
+    assert payload["status"] == "success"
+    assert payload["admin"]["role"] == "poster"
+    assert "content.write" in payload["admin"]["permissions"]
+    assert "stocks.write" in payload["admin"]["permissions"]
+    assert "records.read" not in payload["admin"]["permissions"]
+
 
 def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
+    from business.investment.db import connect
+    from business.investment.schema import investment_admin_sessions, investment_admin_users
     from business.investment.auth_service import create_admin_user
     from channel.web import web_channel
+
+    with connect() as conn:
+        conn.execute(investment_admin_sessions.delete())
+        conn.execute(investment_admin_users.delete())
 
     monkeypatch.setattr(web_channel, "_check_auth", lambda: True)
     monkeypatch.setattr(web_channel.web, "cookies", lambda: {})
@@ -202,6 +262,27 @@ def test_chat_page_redirects_to_login_when_console_session_missing(monkeypatch):
         ChatHandler().GET()
 
     assert redirects == ["/login?next=%2Fchat%3Fview%3Dinvest-records"]
+
+
+def test_web_message_api_requires_console_admin_login(monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import MessageHandler
+
+    class FakeWebChannel:
+        def post_message(self):
+            return "unexpected"
+
+    monkeypatch.setattr(web_channel, "_check_console_auth", lambda: False)
+    monkeypatch.setattr(web_channel, "_require_auth", lambda: None)
+    monkeypatch.setattr(web_channel, "WebChannel", lambda: FakeWebChannel())
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    with pytest.raises(web_channel.web.HTTPError) as exc_info:
+        MessageHandler().POST()
+
+    payload = json.loads(exc_info.value.data)
+    assert payload["status"] == "error"
+    assert payload["message"] == "Unauthorized"
 
 
 def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
@@ -507,6 +588,20 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
     assert can_modify_config("tushare.token", "admin") is True
 
 
+def test_web_open_chat_config_is_admin_only(investment_env):
+    from business.investment.config_service import can_modify_config, get_config, save_config
+
+    assert get_config("router.enable_web_open_chat", False) is False
+    assert can_modify_config("router.enable_web_open_chat", "technical_admin") is False
+    assert can_modify_config("router.enable_web_open_chat", "admin") is True
+
+    with pytest.raises(PermissionError):
+        save_config("router.enable_web_open_chat", True, operator_role="technical_admin")
+
+    save_config("router.enable_web_open_chat", True, operator_role="admin")
+    assert get_config("router.enable_web_open_chat") is True
+
+
 def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(investment_env):
     from sqlalchemy import select
 
@@ -551,6 +646,147 @@ def test_web_console_config_save_preserves_masked_investment_sensitive_values(in
 
     assert get_config("tushare.token") == token
     assert get_config("router.enable_agent_fallback") is True
+
+
+def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_skills(investment_env):
+    from business.investment.skill_registry import list_investment_skills
+
+    keys = {item["skill_key"] for item in list_investment_skills()}
+
+    assert {"technical-analysis", "rate", "convertible-bond", "signal-card-renderer"} <= keys
+    assert "image-generation" not in keys
+    assert "knowledge-wiki" not in keys
+
+
+def test_investment_skill_loader_applies_web_trigger_override(investment_env):
+    from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
+    from business.investment.skill_registry import match_investment_skill
+
+    save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
+
+    assert match_investment_skill("利率") is None
+    matched = match_investment_skill("今日利率")
+    assert matched is not None
+    assert matched.skill_key == "rate"
+    assert matched.service_type == ServiceType.RATE
+
+
+def test_investment_skill_loader_extracts_suffix_target(investment_env):
+    from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
+    from business.investment.skill_registry import match_investment_skill
+
+    save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
+
+    matched = match_investment_skill("300502.SZ 走势分析")
+    assert matched is not None
+    assert matched.skill_key == "technical-analysis"
+    assert matched.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert matched.target_text == "300502.SZ"
+
+
+def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.skill_registry import list_investment_skills, match_investment_skill
+    from business.investment.skill_versions import save_package_upload
+
+    package = tmp_path / "macro.zip"
+    skill_md = """---
+name: macro-analysis
+description: 宏观分析投研 Skill
+investment:
+  label: 宏观分析
+  enabled: true
+  routable: true
+  service_type: macro_analysis
+  match_type: exact
+  triggers:
+    - 宏观
+  handler_type: script
+  entry: scripts/macro_analysis.py
+  output_mode: text
+---
+# Macro Analysis
+"""
+    script = "import json\nprint(json.dumps({'success': True, 'reply_text': 'macro ok', 'output_files': []}, ensure_ascii=False))\n"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("SKILL.md", skill_md)
+        archive.writestr("scripts/macro_analysis.py", script)
+
+    save_package_upload("macro.zip", package.read_bytes(), operator="pytest")
+
+    keys = {item["skill_key"] for item in list_investment_skills()}
+    assert "macro-analysis" in keys
+    matched = match_investment_skill("宏观")
+    assert matched is not None
+    assert matched.skill_key == "macro-analysis"
+    assert matched.service_type == ServiceType.UNMATCHED
+
+
+def test_uploaded_investment_skill_package_rejects_unsafe_skill_key(investment_env, tmp_path):
+    import pytest
+
+    from business.investment.skill_versions import save_package_upload
+
+    package = tmp_path / "unsafe.zip"
+    skill_md = """---
+name: ../escape
+description: unsafe
+investment:
+  label: Unsafe
+  triggers: [unsafe]
+  handler_type: script
+  entry: scripts/run.py
+---
+# Unsafe
+"""
+    with ZipFile(package, "w") as archive:
+        archive.writestr("SKILL.md", skill_md)
+        archive.writestr("scripts/run.py", "print('{}')\n")
+
+    with pytest.raises(ValueError, match="unsafe investment skill key"):
+        save_package_upload("unsafe.zip", package.read_bytes(), operator="pytest")
+
+
+def test_uploaded_script_investment_skill_executes_from_route(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.router import handle_text_message
+    from business.investment.skill_versions import save_package_upload
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    package = tmp_path / "macro.zip"
+    skill_md = """---
+name: macro-script
+description: 宏观分析投研 Skill
+investment:
+  label: 宏观脚本
+  enabled: true
+  routable: true
+  service_type: macro_analysis
+  match_type: exact
+  triggers:
+    - 宏观脚本
+  handler_type: script
+  entry: scripts/macro.py
+  output_mode: text
+---
+# Macro
+"""
+    script = "import json\nprint(json.dumps({'success': True, 'reply_text': 'macro script ok', 'output_files': []}, ensure_ascii=False))\n"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("SKILL.md", skill_md)
+        archive.writestr("scripts/macro.py", script)
+
+    save_package_upload("macro.zip", package.read_bytes(), operator="pytest")
+
+    reply = handle_text_message("ok", "宏观脚本")
+
+    assert reply.handled is True
+    assert reply.success is True
+    assert reply.service_type == ServiceType.UNMATCHED
+    assert reply.reply_text == "macro script ok"
 
 
 def test_investment_skill_upload_python_file_creates_version_and_activates_it(investment_env):
@@ -635,7 +871,7 @@ def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_fall
         delete_version("technical-analysis", "builtin-default", operator="tester")
 
 
-def test_investment_skill_versions_include_technical_analysis_and_renderer(investment_env):
+def test_investment_skill_versions_include_loaded_skills(investment_env):
     from pathlib import Path
 
     from business.investment.config_service import get_config
@@ -650,9 +886,12 @@ def test_investment_skill_versions_include_technical_analysis_and_renderer(inves
     assert get_config("render.renderer_path") == renderer["script_path"]
 
     payload = list_all_skills()
-    skill_keys = [item["skill"]["skill_key"] for item in payload]
-    assert skill_keys == ["technical-analysis", "signal-card-renderer"]
-    assert all(item["versions"][0]["version_id"] == "builtin-default" for item in payload)
+    by_key = {item["skill"]["skill_key"]: item for item in payload}
+    assert {"technical-analysis", "signal-card-renderer", "rate", "convertible-bond"} <= set(by_key)
+    assert by_key["technical-analysis"]["versions"][0]["version_id"] == "builtin-default"
+    assert by_key["signal-card-renderer"]["versions"][0]["version_id"] == "builtin-default"
+    assert by_key["rate"]["versions"] == []
+    assert by_key["convertible-bond"]["versions"] == []
 
     activate_version("technical-analysis", "builtin-default", operator="tester")
     assert get_config("technical_analysis.skill_path", "") == ""
@@ -668,14 +907,15 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
         InvestmentSkillVersionsHandler,
     )
 
-    auth_calls = []
-    monkeypatch.setattr(web_channel, "_require_auth", lambda: auth_calls.append(True))
+    _login_default_investment_admin(monkeypatch)
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
 
     get_payload = json.loads(InvestmentSkillVersionsHandler().GET())
 
     assert get_payload["status"] == "success"
-    assert [item["skill"]["skill_key"] for item in get_payload["skills"]] == ["technical-analysis", "signal-card-renderer"]
+    assert {"technical-analysis", "signal-card-renderer", "rate", "convertible-bond"} <= {
+        item["skill"]["skill_key"] for item in get_payload["skills"]
+    }
 
     upload_file = SimpleNamespace(filename="analyze_universal.py", value=b"print('web technical')")
     monkeypatch.setattr(web_channel, "_raw_web_input", lambda: {"file": upload_file, "operator": "tester"})
@@ -703,21 +943,147 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
     assert deleted_payload["status"] == "success"
     assert deleted_payload["deleted"]["version_id"] == renderer_payload["version"]["version_id"]
     assert get_config("render.renderer_path", "") == ""
-    assert auth_calls == [True, True, True, True, True]
+
+
+def test_web_user_disable_button_updates_permission_path(investment_env, monkeypatch):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user, get_user_by_openid
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUserDisableHandler
+
+    create_user("disable-button-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("business.investment.technical_analysis.run_technical_analysis", lambda *_args, **_kwargs: pytest.fail("disabled user must not enter technical analysis"))
+
+    payload = json.loads(InvestmentUserDisableHandler().POST("disable-button-openid"))
+    reply = handle_text_message("disable-button-openid", "300502.SZ 技术分析")
+
+    assert payload["status"] == "success"
+    assert get_user_by_openid("disable-button-openid").enabled is False
+    assert reply.success is False
+    assert reply.error_code == ErrorCode.USER_DISABLED
+    assert reply.reply_text == "您的服务已停用，如需恢复请联系服务人员。"
+
+
+def test_router_authenticates_before_parsing_unmatched_input(investment_env, monkeypatch):
+    import pytest
+
+    from business.investment.constants import ErrorCode, ServiceType
+    import business.investment.router as router
+    from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.investment.user_service import create_user
+
+    monkeypatch.setattr(router, "parse_route", lambda _raw_input: pytest.fail("unauthorized input must not be parsed"))
+
+    denied = handle_text_message("missing-openid", "hello")
+
+    assert denied.success is False
+    assert denied.error_code == ErrorCode.UNAUTHORIZED
+    assert denied.reply_text == "您暂未开通该服务，如需开通请联系服务人员。"
+
+    create_user("ok-unmatched-openid", enabled=True, allowed_services=[ServiceType.RATE])
+    monkeypatch.setattr(
+        router,
+        "parse_route",
+        lambda raw_input: router.RouteResult(False, ServiceType.UNMATCHED, raw_input, error_code=ErrorCode.INPUT_ERROR),
+    )
+
+    miss = handle_text_message("ok-unmatched-openid", "hello")
+
+    assert miss.success is False
+    assert miss.error_code == ErrorCode.INPUT_ERROR
+    assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
+
+
+def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeypatch):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.user_service import create_user, verify_permission
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUsersHandler
+
+    create_user("edit-button-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "env", {"CONTENT_TYPE": "application/json"}, raising=False)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "openid": "edit-button-openid",
+                "name": "Edited",
+                "institution": "Edited Inst",
+                "enabled": True,
+                "allowed_services": ["利率"],
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentUsersHandler().POST())
+
+    assert payload["status"] == "success"
+    assert payload["action"] == "updated"
+    assert verify_permission("edit-button-openid", ServiceType.RATE).allowed is True
+    technical = verify_permission("edit-button-openid", ServiceType.TECHNICAL_ANALYSIS)
+    assert technical.allowed is False
+    assert technical.error_code == ErrorCode.UNAUTHORIZED
+
+
+def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_env, monkeypatch):
+    from business.investment.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentSkillSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "enabled": False,
+                "triggers": ["今日利率", "利率观察"],
+                "operator": "pytest",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentSkillSettingsHandler().POST("rate"))
+
+    assert payload["status"] == "success"
+    assert get_config("skill.rate.enabled") is False
+    assert get_config("skill.rate.triggers") == ["今日利率", "利率观察"]
+
+
+def _login_default_investment_admin(monkeypatch, *, username="admin", password="password"):
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from channel.web import web_channel
+
+    admin = authenticate_admin(username, password)
+    if admin is None:
+        create_admin_user(username, password, role="admin")
+        admin = authenticate_admin(username, password)
+    assert admin is not None
+    token = create_admin_session(admin)
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    return token
 
 
 def _call_investment_json_handler(monkeypatch, handler, *, params=None, body=None):
     from channel.web import web_channel
 
-    auth_calls = []
-    monkeypatch.setattr(web_channel, "_require_auth", lambda: auth_calls.append(True))
+    _login_default_investment_admin(monkeypatch)
     monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(**(params or {})))
     monkeypatch.setattr(web_channel.web, "data", lambda: json.dumps(body or {}, ensure_ascii=False).encode("utf-8"))
     monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
 
     raw = handler()
     payload = json.loads(raw)
-    assert auth_calls == [True]
     return payload
 
 
@@ -890,6 +1256,540 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     assert payload["current_effective"]["operator"] == "operator-current"
 
 
+def test_list_content_records_filters_by_effective_date(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft
+    from business.investment.records import list_content_records
+
+    create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
+    expected_id = create_content_draft(ServiceType.RATE, source_text="today rate", effective_date="2026-05-29")
+    create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="today cb", effective_date="2026-05-29")
+
+    records = list_content_records(
+        service_type=ServiceType.RATE,
+        effective_date="2026-05-29",
+    )
+
+    assert [record.content_id for record in records] == [expected_id]
+    assert {record.effective_date for record in records} == {"2026-05-29"}
+
+
+def test_web_content_handlers_accept_effective_date_filter(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft
+    from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
+
+    old_id = create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
+    expected_id = create_content_draft(ServiceType.RATE, source_text="today rate", effective_date="2026-05-29")
+
+    daily_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "rate", "limit": "20", "effective_date": "2026-05-29"},
+    )
+    records_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentContentRecordsHandler().GET,
+        params={"service_type": "rate", "limit": "20", "effective_date": "2026-05-29"},
+    )
+
+    assert [content["content_id"] for content in daily_payload["contents"]] == [expected_id]
+    assert [record["content_id"] for record in records_payload["records"]] == [expected_id]
+    assert old_id not in {content["content_id"] for content in daily_payload["contents"]}
+
+
+def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft
+    from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
+
+    rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-29")
+    cb_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="cb", effective_date="2026-05-29")
+
+    invalid_limit_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "rate", "limit": "bad"},
+    )
+    negative_limit_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentContentRecordsHandler().GET,
+        params={"service_type": "rate", "limit": "-10"},
+    )
+    oversized_limit_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "rate", "limit": "9999"},
+    )
+    unmatched_daily_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "unknown-service", "limit": "20"},
+    )
+    unmatched_records_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentContentRecordsHandler().GET,
+        params={"service_type": "unknown-service", "limit": "20"},
+    )
+
+    assert invalid_limit_payload["status"] == "success"
+    assert [content["content_id"] for content in invalid_limit_payload["contents"]] == [rate_id]
+    assert negative_limit_payload["status"] == "success"
+    assert len(negative_limit_payload["records"]) == 1
+    assert oversized_limit_payload["status"] == "success"
+    assert [content["content_id"] for content in oversized_limit_payload["contents"]] == [rate_id]
+    assert unmatched_daily_payload["contents"] == []
+    assert unmatched_daily_payload["current_effective"] is None
+    assert unmatched_records_payload["records"] == []
+    assert cb_id not in {content["content_id"] for content in oversized_limit_payload["contents"]}
+
+
+def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch):
+    from business.investment.audit_service import record_operation_audit
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record
+    from channel.web.web_channel import InvestmentOperationAuditsHandler, InvestmentRequestRecordsHandler
+
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    audit_id = record_operation_audit("created", "request", request_id, operator="tester")
+
+    records_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={"limit": "bad"},
+    )
+    audits_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentOperationAuditsHandler().GET,
+        params={"limit": "bad"},
+    )
+
+    assert records_payload["status"] == "success"
+    assert [record["request_id"] for record in records_payload["records"]] == [request_id]
+    assert audits_payload["status"] == "success"
+    assert [audit["audit_id"] for audit in audits_payload["audits"]] == [audit_id]
+
+
+def test_request_records_page_returns_total_offset_and_api_pagination(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.records import create_request_record, list_request_records_page
+    from channel.web.web_channel import InvestmentRequestRecordsHandler
+
+    request_ids = [
+        create_request_record(f"openid-page-{index}", f"分页请求 {index}", ServiceType.RATE)
+        for index in range(5)
+    ]
+    with connect() as conn:
+        for index, request_id in enumerate(request_ids):
+            conn.execute(
+                text(
+                    "update investment_request_records "
+                    "set created_at = :created_at, updated_at = :created_at "
+                    "where request_id = :request_id"
+                ),
+                {"created_at": f"2026-05-29T00:0{index}:00+00:00", "request_id": request_id},
+            )
+
+    records, total = list_request_records_page(page=2, page_size=2, service_type=ServiceType.RATE, keyword="分页请求")
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={"page": "2", "page_size": "2", "service_type": "rate", "keyword": "分页请求"},
+    )
+    capped_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={"page": "1", "page_size": "9999", "service_type": "rate", "keyword": "分页请求"},
+    )
+
+    assert total == 5
+    assert [record.request_id for record in records] == [request_ids[2], request_ids[1]]
+    assert [record["request_id"] for record in payload["records"]] == [request_ids[2], request_ids[1]]
+    assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+    assert capped_payload["pagination"]["page_size"] == 200
+    assert capped_payload["pagination"]["total"] == 5
+
+
+def test_content_records_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft
+    from business.investment.db import connect
+    from business.investment.records import list_content_records_page
+    from channel.web.web_channel import InvestmentContentRecordsHandler
+
+    content_ids = [
+        create_content_draft(ServiceType.RATE, source_text=f"分页内容 {index}", effective_date="2026-05-29")
+        for index in range(5)
+    ]
+    create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="excluded", effective_date="2026-05-29")
+    with connect() as conn:
+        for index, content_id in enumerate(content_ids):
+            conn.execute(
+                text(
+                    "update investment_daily_contents "
+                    "set created_at = :created_at, updated_at = :created_at "
+                    "where content_id = :content_id"
+                ),
+                {"created_at": f"2026-05-29T01:0{index}:00+00:00", "content_id": content_id},
+            )
+
+    records, total = list_content_records_page(
+        page=2,
+        page_size=2,
+        service_type=ServiceType.RATE,
+        effective_date="2026-05-29",
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentContentRecordsHandler().GET,
+        params={"page": "2", "page_size": "2", "service_type": "rate", "effective_date": "2026-05-29"},
+    )
+
+    assert total == 5
+    assert [record.content_id for record in records] == [content_ids[2], content_ids[1]]
+    assert [record["content_id"] for record in payload["records"]] == [content_ids[2], content_ids[1]]
+    assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+
+
+def test_operation_audits_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+    from business.investment.audit_service import list_operation_audits_page, record_operation_audit
+    from business.investment.db import connect
+    from channel.web.web_channel import InvestmentOperationAuditsHandler
+
+    audit_ids = [
+        record_operation_audit("cache.invalidate", "investment_cache_entry", f"cache-{index}", operator="page-ops")
+        for index in range(5)
+    ]
+    record_operation_audit("config.update", "investment_config", "excluded", operator="page-ops")
+    with connect() as conn:
+        for index, audit_id in enumerate(audit_ids):
+            conn.execute(
+                text("update investment_operation_audits set created_at = :created_at where audit_id = :audit_id"),
+                {"created_at": f"2026-05-29T02:0{index}:00+00:00", "audit_id": audit_id},
+            )
+
+    audits, total = list_operation_audits_page(
+        page=2,
+        page_size=2,
+        action="cache.invalidate",
+        operator="page-ops",
+        keyword="cache-",
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentOperationAuditsHandler().GET,
+        params={"page": "2", "page_size": "2", "action": "cache.invalidate", "operator": "page-ops", "keyword": "cache-"},
+    )
+
+    assert total == 5
+    assert [audit.audit_id for audit in audits] == [audit_ids[2], audit_ids[1]]
+    assert [audit["audit_id"] for audit in payload["audits"]] == [audit_ids[2], audit_ids[1]]
+    assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+
+
+def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    cache_keys = []
+    for index in range(5):
+        cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, f"30050{index}.SZ", "2026-05-29", "v1")
+        cache_keys.append(cache_key)
+        write_cache_entry(
+            cache_key=cache_key,
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=f"30050{index}.SZ",
+            market_date="2026-05-29",
+            version_fingerprint="v1",
+            output_files=[f"/tmp/card-{index}.png"],
+        )
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.RATE, "RATE", "2026-05-29", "v1"),
+        service_type=ServiceType.RATE,
+        normalized_target="RATE",
+        market_date="2026-05-29",
+        version_fingerprint="v1",
+        output_files=["/tmp/rate.png"],
+    )
+    with connect() as conn:
+        for index, cache_key in enumerate(cache_keys):
+            conn.execute(
+                text("update investment_cache_entries set updated_at = :updated_at where cache_key = :cache_key"),
+                {"updated_at": f"2026-05-29T03:0{index}:00+00:00", "cache_key": cache_key},
+            )
+
+    entries, total = list_cache_entries_page(
+        page=2,
+        page_size=2,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        market_date="2026-05-29",
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "2", "page_size": "2", "service_type": "technical_analysis", "market_date": "2026-05-29"},
+    )
+
+    assert total == 5
+    assert [entry.cache_key for entry in entries] == [cache_keys[2], cache_keys[1]]
+    assert [entry["cache_key"] for entry in payload["entries"]] == [cache_keys[2], cache_keys[1]]
+    assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+    assert payload["market_dates"] == ["2026-05-29"]
+
+
+def test_request_records_api_filters_and_prefers_mobile_customer_display(investment_env, monkeypatch):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.db import connect
+    from business.investment.records import create_request_record, fail_request_record, succeed_request_record
+    from business.investment.user_service import create_user
+    from channel.web.web_channel import InvestmentRequestRecordsHandler
+
+    create_user(
+        "openid-mobile",
+        name="Mobile Customer",
+        institution="Inst Mobile",
+        mobile="13900000000",
+        allowed_services=[ServiceType.ALL],
+    )
+    create_user("openid-plain", name="Plain Customer", allowed_services=[ServiceType.ALL])
+    included = create_request_record("openid-mobile", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    succeed_request_record(included, output_files=["/tmp/card.png"], elapsed_ms=18, stock_name="新易盛")
+    failed = create_request_record("openid-plain", "利率", ServiceType.RATE)
+    fail_request_record(failed, ErrorCode.NO_CONTENT, detail="no active content", elapsed_ms=3)
+
+    with connect() as conn:
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :created_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": "2026-05-29T01:00:00+00:00", "request_id": included},
+        )
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at = :created_at, updated_at = :created_at "
+                "where request_id = :request_id"
+            ),
+            {"created_at": "2026-05-30T01:00:00+00:00", "request_id": failed},
+        )
+
+    mobile_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={
+            "service_type": "technical_analysis",
+            "status": "success",
+            "keyword": "13900000000",
+            "start_date": "2026-05-29",
+            "end_date": "2026-05-29",
+            "limit": "20",
+        },
+    )
+    openid_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={"keyword": "openid-plain", "limit": "20"},
+    )
+
+    assert mobile_payload["status"] == "success"
+    assert [record["request_id"] for record in mobile_payload["records"]] == [included]
+    assert mobile_payload["records"][0]["customer_mobile"] == "13900000000"
+    assert mobile_payload["records"][0]["customer_display"] == "13900000000"
+    assert mobile_payload["records"][0]["customer_name"] == "Mobile Customer"
+    assert mobile_payload["records"][0]["institution"] == "Inst Mobile"
+    assert [record["request_id"] for record in openid_payload["records"]] == [failed]
+    assert openid_payload["records"][0]["customer_mobile"] == ""
+    assert openid_payload["records"][0]["customer_display"] == "openid-plain"
+
+
+def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(investment_env, monkeypatch):
+    from business.investment.audit_service import record_operation_audit
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft
+    from business.investment.db import connect
+    from business.investment.records import create_request_record
+    from channel.web import web_channel
+    from channel.web.web_channel import (
+        InvestmentCacheHandler,
+        InvestmentContentRecordsHandler,
+        InvestmentOperationAuditsHandler,
+        InvestmentRequestRecordsHandler,
+    )
+
+    rate_request_id = create_request_record("openid-rate", "利率", ServiceType.RATE)
+    ta_request_id = create_request_record("openid-ta", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    rate_content_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-31")
+    cb_content_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="cb", effective_date="2026-05-31")
+    audit_id = record_operation_audit(
+        "cache.invalidate",
+        "investment_cache_entry",
+        target_id="rate-cache",
+        operator="rate-operator",
+        detail={"reason": "rate filter check"},
+    )
+    excluded_audit_id = record_operation_audit(
+        "config.update",
+        "investment_config",
+        target_id="router",
+        operator="other-operator",
+        detail={"reason": "other"},
+    )
+    rate_cache_key = build_cache_key(ServiceType.RATE, "RATE", "2026-05-31", "v1")
+    ta_cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-31", "v1")
+    write_cache_entry(
+        cache_key=rate_cache_key,
+        service_type=ServiceType.RATE,
+        normalized_target="RATE",
+        market_date="2026-05-31",
+        version_fingerprint="v1",
+        output_files=["/tmp/rate.png"],
+    )
+    write_cache_entry(
+        cache_key=ta_cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-31",
+        version_fingerprint="v1",
+        output_files=["/tmp/ta.png"],
+    )
+    with connect() as conn:
+        for request_id in (rate_request_id, ta_request_id):
+            conn.execute(
+                text(
+                    "update investment_request_records "
+                    "set created_at = :created_at, updated_at = :created_at "
+                    "where request_id = :request_id"
+                ),
+                {"created_at": "2026-05-31T01:00:00+00:00", "request_id": request_id},
+            )
+        for current_audit_id in (audit_id, excluded_audit_id):
+            conn.execute(
+                text("update investment_operation_audits set created_at = :created_at where audit_id = :audit_id"),
+                {"created_at": "2026-05-31T02:00:00+00:00", "audit_id": current_audit_id},
+            )
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    def call(handler, params):
+        monkeypatch.setattr(
+            web_channel.web,
+            "input",
+            lambda **defaults: SimpleNamespace(**({**defaults, **params})),
+        )
+        return json.loads(handler())
+
+    requests_payload = call(
+        InvestmentRequestRecordsHandler().GET,
+        {
+            "service_type": "rate",
+            "keyword": "利率",
+            "start_date": "2026-05-31",
+            "end_date": "2026-05-31",
+            "page": "1",
+            "page_size": "80",
+        },
+    )
+    contents_payload = call(
+        InvestmentContentRecordsHandler().GET,
+        {"service_type": "rate", "effective_date": "2026-05-31", "page": "1", "page_size": "80"},
+    )
+    cache_payload = call(
+        InvestmentCacheHandler().GET,
+        {"service_type": "rate", "market_date": "2026-05-31", "page": "1", "page_size": "80"},
+    )
+    audits_payload = call(
+        InvestmentOperationAuditsHandler().GET,
+        {
+            "action": "cache.invalidate",
+            "target_type": "investment_cache_entry",
+            "target_id": "rate-cache",
+            "operator": "rate-operator",
+            "keyword": "rate filter",
+            "start_date": "2026-05-31",
+            "end_date": "2026-05-31",
+            "page": "1",
+            "page_size": "80",
+        },
+    )
+
+    assert [record["request_id"] for record in requests_payload["records"]] == [rate_request_id]
+    assert ta_request_id not in {record["request_id"] for record in requests_payload["records"]}
+    assert requests_payload["pagination"]["total"] == 1
+    assert [record["content_id"] for record in contents_payload["records"]] == [rate_content_id]
+    assert cb_content_id not in {record["content_id"] for record in contents_payload["records"]}
+    assert contents_payload["pagination"]["total"] == 1
+    assert [entry["cache_key"] for entry in cache_payload["entries"]] == [rate_cache_key]
+    assert ta_cache_key not in {entry["cache_key"] for entry in cache_payload["entries"]}
+    assert cache_payload["pagination"]["total"] == 1
+    assert [audit["audit_id"] for audit in audits_payload["audits"]] == [audit_id]
+    assert excluded_audit_id not in {audit["audit_id"] for audit in audits_payload["audits"]}
+    assert audits_payload["pagination"]["total"] == 1
+
+
+def test_operation_audits_api_filters_by_operator_action_keyword_and_date(investment_env, monkeypatch):
+    from business.investment.audit_service import record_operation_audit
+    from business.investment.db import connect
+    from channel.web.web_channel import InvestmentOperationAuditsHandler
+
+    included = record_operation_audit(
+        "cache.invalidate",
+        "investment_cache_entry",
+        "cache-a",
+        operator="ops-a",
+        detail={"reason": "refresh stale cache"},
+    )
+    excluded = record_operation_audit(
+        "config.update",
+        "investment_config",
+        "router.enable_web_open_chat",
+        operator="ops-b",
+        detail={"reason": "config change"},
+    )
+
+    with connect() as conn:
+        conn.execute(
+            text(
+                "update investment_operation_audits "
+                "set created_at = :created_at "
+                "where audit_id = :audit_id"
+            ),
+            {"created_at": "2026-05-29T02:00:00+00:00", "audit_id": included},
+        )
+        conn.execute(
+            text(
+                "update investment_operation_audits "
+                "set created_at = :created_at "
+                "where audit_id = :audit_id"
+            ),
+            {"created_at": "2026-05-30T02:00:00+00:00", "audit_id": excluded},
+        )
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentOperationAuditsHandler().GET,
+        params={
+            "action": "cache.invalidate",
+            "operator": "ops-a",
+            "target_type": "investment_cache_entry",
+            "keyword": "stale",
+            "start_date": "2026-05-29",
+            "end_date": "2026-05-29",
+            "limit": "20",
+        },
+    )
+
+    assert payload["status"] == "success"
+    assert [audit["audit_id"] for audit in payload["audits"]] == [included]
+    assert excluded not in {audit["audit_id"] for audit in payload["audits"]}
+
+
 def test_investment_web_api_end_to_end_smoke_without_external_services(investment_env, tmp_path, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.investment.daily_content import update_generation_success
@@ -1022,7 +1922,8 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
     assert health_calls == [True]
 
     headers.clear()
-    nonlocal_params = {"start_date": "2026-05-28", "end_date": "2026-05-28", "service_type": "", "year": "", "month": "", "quarter": ""}
+    export_date = datetime.now(UTC).date().isoformat()
+    nonlocal_params = {"start_date": export_date, "end_date": export_date, "service_type": "", "year": "", "month": "", "quarter": ""}
     current_params = nonlocal_params
     exported = InvestmentRequestRecordsExportHandler().GET()
     rows = _xlsx_sheet_rows(exported)
@@ -1179,6 +2080,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
 def test_records_save_failure_success_and_order(investment_env):
     from business.investment.constants import ErrorCode, ServiceType
     from business.investment.records import (
+        append_request_warning,
         create_request_record,
         fail_request_record,
         get_request_record,
@@ -1196,6 +2098,11 @@ def test_records_save_failure_success_and_order(investment_env):
     assert failed.error_code == ErrorCode.NO_CONTENT
     assert failed.error_message == "no active content"
     assert [record.request_id for record in list_request_records(limit=2)] == [second, first]
+
+    append_request_warning(first, "微信图片上传失败：Error code: 40164, message: invalid ip 14.153.6.203 not in whitelist")
+    warned = get_request_record(first)
+    assert "40164" in warned.error_message
+    assert "14.153.6.203" in warned.status_warning
 
 
 def test_old_generating_request_records_are_flagged_without_mutating_status(investment_env):
@@ -1242,6 +2149,119 @@ def test_job_service_reuses_running_technical_analysis_record(investment_env):
 
     assert next_job.created is True
     assert next_job.record.request_id != first.record.request_id
+
+
+def test_job_service_reuses_running_cache_job_across_users(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.investment.records import succeed_request_record
+
+    cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
+
+    first = start_cache_job_if_absent(
+        "openid-a",
+        "300502.SZ 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        cache_key,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+    duplicate = start_cache_job_if_absent(
+        "openid-b",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        cache_key,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+
+    assert first.created is True
+    assert duplicate.created is False
+    assert duplicate.record.request_id == first.record.request_id
+    assert find_running_cache_job(cache_key, ServiceType.TECHNICAL_ANALYSIS).request_id == first.record.request_id
+    assert first.record.cache_key == cache_key
+    assert first.record.normalized_target == "300502.SZ"
+    assert first.record.market_date == "2026-05-25"
+
+    succeed_request_record(first.record.request_id, output_files=["/tmp/signal.png", "/tmp/chart.png"], elapsed_ms=12)
+    next_job = start_cache_job_if_absent(
+        "openid-b",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        cache_key,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+
+    assert next_job.created is True
+    assert next_job.record.request_id != first.record.request_id
+
+
+def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(investment_env):
+    from business.investment.constants import ServiceType, Status
+    from business.investment.db import connect
+    from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.investment.records import get_request_record
+
+    cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
+    first = start_cache_job_if_absent(
+        "openid-a",
+        "300502.SZ 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        cache_key,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+    stale_time = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
+    with connect() as conn:
+        conn.execute(
+            text(
+                "update investment_request_records "
+                "set created_at=:created_at, updated_at=:created_at where request_id=:request_id"
+            ),
+            {"created_at": stale_time, "request_id": first.record.request_id},
+        )
+
+    assert find_running_cache_job(cache_key, ServiceType.TECHNICAL_ANALYSIS) is None
+    assert get_request_record(first.record.request_id).status == Status.FAILED
+
+    next_job = start_cache_job_if_absent(
+        "openid-b",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        cache_key,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+
+    assert next_job.created is True
+    assert next_job.record.request_id != first.record.request_id
+
+
+def test_job_service_allows_different_cache_keys_to_run_together(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.job_service import start_cache_job_if_absent
+
+    first = start_cache_job_if_absent(
+        "openid-a",
+        "300502.SZ 2026-05-25 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        "technical_analysis:300502.SZ:2026-05-25:v1",
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+    )
+    second = start_cache_job_if_absent(
+        "openid-b",
+        "300502.SZ 2026-05-26 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        "technical_analysis:300502.SZ:2026-05-26:v1",
+        normalized_target="300502.SZ",
+        market_date="2026-05-26",
+    )
+
+    assert first.created is True
+    assert second.created is True
+    assert second.record.request_id != first.record.request_id
 
 
 def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
@@ -1372,6 +2392,80 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
     assert waiting[0].reply_text == "正在运行，请稍候。"
     records = [record for record in list_request_records(limit=10) if record.raw_input == "300502.SZ 技术分析"]
     assert len(records) == 1
+
+
+def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_users(
+    investment_env,
+    tmp_path,
+    monkeypatch,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+
+    from business.investment import technical_analysis
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.technical_analysis import TechnicalAnalysisResult
+    from business.investment.user_service import create_user
+
+    create_user("openid-a", enabled=True, allowed_services=[ServiceType.ALL])
+    create_user("openid-b", enabled=True, allowed_services=[ServiceType.ALL])
+    card = tmp_path / "signal.png"
+    chart = tmp_path / "chart.png"
+    report = tmp_path / "report.md"
+    card.write_bytes(b"card")
+    chart.write_bytes(b"chart")
+    report.write_text("report", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    def slow_handler(_openid, _raw_input, _target):
+        calls.append(_openid)
+        time.sleep(0.2)
+        return TechnicalAnalysisResult(
+            True,
+            signal_card_path=str(card),
+            main_chart_path=str(chart),
+            report_path=str(report),
+            output_files=[str(card), str(chart), str(report)],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(
+            pool.map(
+                lambda openid: handle_text_message(
+                    openid,
+                    "300502.SZ 技术分析",
+                    technical_analysis_handler=slow_handler,
+                ),
+                ["openid-a", "openid-b"],
+            )
+        )
+
+    assert len(calls) == 1
+    assert sum(1 for reply in replies if reply.success) == 1
+    waiting = [reply for reply in replies if not reply.success]
+    assert len(waiting) == 1
+    assert waiting[0].reply_text == "正在运行，请稍候。"
+    records = [record for record in list_request_records(limit=10) if record.raw_input == "300502.SZ 技术分析"]
+    assert len(records) == 1
+    assert records[0].cache_key
+    assert records[0].normalized_target == "300502.SZ"
+    assert records[0].market_date == "2026-05-25"
 
 
 def test_request_records_api_includes_generating_timeout_warning(investment_env, monkeypatch):
@@ -1560,6 +2654,8 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(investmen
             "2026-05-01T00:00:00",
             "2026-05-31T23:59:59",
             service_type=ServiceType.TECHNICAL_ANALYSIS,
+            status="success",
+            keyword="Alice",
         )
     )
 
@@ -1653,8 +2749,7 @@ def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
     from channel.web.web_channel import InvestmentRequestRecordsExportHandler, InvestmentUsersExportHandler
 
     headers = []
-    auth_calls = []
-    monkeypatch.setattr(web_channel, "_require_auth", lambda: auth_calls.append(True))
+    _login_default_investment_admin(monkeypatch)
     monkeypatch.setattr(web_channel.web, "header", lambda name, value: headers.append((name, value)))
     monkeypatch.setattr(
         web_channel.web,
@@ -1684,7 +2779,6 @@ def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
         name == "Content-Disposition" and "investment-users" in value and value.endswith(".xlsx\"")
         for name, value in headers
     )
-    assert auth_calls == [True, True]
 
 
 def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp_path):
@@ -2319,6 +3413,14 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
     monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
 
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
     result = run_technical_analysis("ok", "300502.SZ 技术分析")
 
     assert result.success is True
@@ -2327,12 +3429,14 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
         ("ai", "# 技术分析报告\n\n核心观点"),
     ]
     assert calls[2][0:2] == ("render", "signal card standard text")
-    assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-25_")
+    assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-29_")
     assert calls[2][2].endswith(".png")
     assert result.report_path == str(report)
     assert result.main_chart_path == str(chart)
     assert Path(result.signal_card_path).name == calls[2][2]
     assert result.output_files == [result.signal_card_path, str(chart), str(report)]
+    assert result.market_date == "2026-05-29"
+    assert "2026-05-29" in result.cache_key
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
@@ -2407,45 +3511,117 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
     ]
 
 
-def test_technical_analysis_reuses_cached_outputs_for_same_target_date_and_version(investment_env, tmp_path, monkeypatch):
+def _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-25"):
     from business.investment import technical_analysis
-    from business.investment.cache_service import clear_cache_entries, list_cache_entries
-    from business.investment.constants import ServiceType
-    from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
-    from business.investment.user_service import create_user
 
-    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = []
-    version_parts = ["sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"]
 
-    def fake_versions():
-        return tuple(version_parts)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
 
     def fake_skill(symbol, output_dir):
         calls.append(("skill", symbol, len(calls)))
-        report = tmp_path / f"{symbol}_技术分析报告_2026-05-25_{len(calls)}.md"
-        chart = tmp_path / f"{symbol}_TA_2026-05-25_{len(calls)}.png"
-        report.write_text("报告日期：2026-05-25\n核心观点", encoding="utf-8")
+        report = tmp_path / f"{symbol}_技术分析报告_{generated_market_date}_{len(calls)}.md"
+        chart = tmp_path / f"{symbol}_TA_{generated_market_date}_{len(calls)}.png"
+        report.write_text(f"报告日期：{generated_market_date}\n核心观点", encoding="utf-8")
         chart.write_bytes(b"chart")
         return report, chart
 
     def fake_ai(report_text):
         calls.append(("ai", report_text))
-        return SimpleNamespace(success=True, text="日期：2026-05-25\n信号卡标准文本")
+        return SimpleNamespace(success=True, text=f"日期：{generated_market_date}\n信号卡标准文本")
 
     def fake_render(_standard_text, output_path):
         calls.append(("render", Path(output_path).name))
         Path(output_path).write_bytes(b"card")
         return SimpleNamespace(success=True, image_path=str(output_path), detail="")
 
-    monkeypatch.setattr(technical_analysis, "_versions", fake_versions)
     monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
     monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
     monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+    return calls
 
-    first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
-    second = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+
+def _write_legacy_technical_analysis_cache(
+    tmp_path,
+    *,
+    normalized_target,
+    market_date,
+    version_fingerprint,
+    program_version="sha256:old-program",
+    ta_version="sha256:ta-v1",
+    renderer_version="sha256:renderer-v1",
+    template_version="sha256:template-v1",
+):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, succeed_request_record
+
+    cached_card = tmp_path / f"cached-card-{market_date}.png"
+    cached_chart = tmp_path / f"cached-chart-{market_date}.png"
+    cached_report = tmp_path / f"cached-report-{market_date}.md"
+    cached_card.write_bytes(f"cached-card-{market_date}".encode("utf-8"))
+    cached_chart.write_bytes(f"cached-chart-{market_date}".encode("utf-8"))
+    cached_report.write_text(f"cached report {market_date}", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, normalized_target, market_date, version_fingerprint)
+    request_id = create_request_record(
+        "ok",
+        f"{normalized_target} 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target=normalized_target,
+    )
+    succeed_request_record(
+        request_id,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+        elapsed_ms=1,
+        normalized_target=normalized_target,
+        stock_code=normalized_target,
+        stock_name=normalized_target,
+        market_date=market_date,
+        cache_key=cache_key,
+        program_version=program_version,
+        ta_version=ta_version,
+        renderer_version=renderer_version,
+        template_version=template_version,
+    )
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target=normalized_target,
+        market_date=market_date,
+        version_fingerprint=version_fingerprint,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+        artifact_owner_id=request_id,
+    )
+    return cache_key, [str(cached_card), str(cached_chart), str(cached_report)]
+
+
+def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_resolver_confirms_market_date(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    second = handle_text_message("ok", "300502.SZ 技术分析")
 
     assert first.success is True
     assert second.success is True
@@ -2459,21 +3635,1032 @@ def test_technical_analysis_reuses_cached_outputs_for_same_target_date_and_versi
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
     assert cache_entry.hit_count == 1
     assert cache_entry.market_date == "2026-05-25"
+    assert cache_entry.artifact_owner_id == records[1].request_id
 
-    version_parts[1] = "sha256:ta-v2"
-    third = handle_text_message("ok", "300502.SZ 技术分析")
 
-    assert third.success is True
-    assert third.output_files != first.output_files
-    assert [call[0] for call in calls].count("skill") == 2
-    assert list_request_records(limit=1)[0].cache_hit is False
+def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
 
-    removed = clear_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, market_date="2026-05-25")
-    fourth = handle_text_message("ok", "300502.SZ 技术分析")
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
 
-    assert removed >= 1
-    assert fourth.success is True
-    assert [call[0] for call in calls].count("skill") == 3
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    assert first.success is True
+    Path(first.output_files[0]).unlink()
+
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert second.success is True
+    assert second.output_files != first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render", "skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is False
+    assert records[1].cache_hit is False
+    assert records[0].cache_key == records[1].cache_key
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.status == "active"
+    assert cache_entry.artifact_owner_id == records[0].request_id
+
+
+def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(investment_env, tmp_path, monkeypatch):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType, Status
+    from business.investment.db import connect
+    from business.investment.records import get_request_record, list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    def fail_router_cache_write(**_kwargs):
+        raise RuntimeError("cache write failed after generation")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+    monkeypatch.setattr(cache_service, "write_cache_entry", fail_router_cache_write)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is False
+    assert reply.error_code is not None
+    assert list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS) == []
+    request_record = get_request_record(list_request_records(limit=1)[0].request_id)
+    assert request_record.status == Status.FAILED
+    assert request_record.output_files == []
+    assert request_record.cache_key == ""
+    assert request_record.market_date == ""
+    assert request_record.cache_hit is False
+    with connect() as conn:
+        artifact_count = conn.execute(
+            text("select count(*) from investment_output_files where owner_id = :request_id"),
+            {"request_id": request_record.request_id},
+        ).scalar_one()
+    assert artifact_count == 0
+
+
+def test_router_default_technical_analysis_resolver_once_reuses_preview_resolution(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+    resolver_calls = []
+
+    class CountingResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            resolver_calls.append((symbol, requested_market_date))
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", CountingResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert resolver_calls == [("300502.SZ", "")]
+    record = list_request_records(limit=1)[0]
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert record.cache_key == cache_entry.cache_key
+    assert record.market_date == "2026-05-25"
+
+
+def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_date(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    record = list_request_records(limit=1)[0]
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert record.market_date == "2026-05-25"
+    assert "2026-05-25" in record.cache_key
+    assert record.cache_key == cache_entry.cache_key
+    assert cache_entry.market_date == "2026-05-25"
+
+
+def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(investment_env, tmp_path, monkeypatch):
+    from business.investment import technical_analysis
+    from business.investment.market_date_resolver import MarketDateResolver
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        MarketDateResolver,
+        "_latest_market_date",
+        lambda _self, _symbol: SimpleNamespace(market_date="2026-05-26", known=True, source="latest"),
+    )
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", MarketDateResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+    second = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].cache_key == records[1].cache_key
+    assert records[0].market_date == "2026-05-25"
+    assert records[1].market_date == "2026-05-25"
+
+
+def test_technical_analysis_explicit_market_date_overrides_generated_output_date(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == "2026-05-25"
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="explicit")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+    second = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].market_date == "2026-05-25"
+    assert records[1].market_date == "2026-05-25"
+    assert records[0].cache_key == records[1].cache_key
+    assert "2026-05-25" in records[0].cache_key
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.market_date == "2026-05-25"
+    assert "2026-05-25" in cache_entry.cache_key
+
+
+def test_technical_analysis_unknown_market_date_does_not_reuse_recent_latest_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+    combined_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    cached_card = tmp_path / "cached-card.png"
+    cached_chart = tmp_path / "cached-chart.png"
+    cached_report = tmp_path / "cached-report.md"
+    cached_card.write_bytes(b"cached-card")
+    cached_chart.write_bytes(b"cached-chart")
+    cached_report.write_text("cached report", encoding="utf-8")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", combined_version),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=combined_version,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    reply = handle_text_message("ok", "天娱数科 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files != [str(cached_card), str(cached_chart)]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is False
+    assert record.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-25", combined_version)
+    assert record.market_date == "2026-05-25"
+    assert record.normalized_target == "002354.SZ"
+    cache_entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, limit=10)
+    cached_entry = next(
+        entry
+        for entry in cache_entries
+        if entry.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", combined_version)
+    )
+    assert cached_entry.hit_count == 0
+
+
+def test_technical_analysis_unknown_cache_context_does_not_reuse_latest_cache_when_program_wrapper_changes(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    old_cache_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    cached_card = tmp_path / "cached-card.png"
+    cached_chart = tmp_path / "cached-chart.png"
+    cached_report = tmp_path / "cached-report.md"
+    cached_card.write_bytes(b"cached-card")
+    cached_chart.write_bytes(b"cached-chart")
+    cached_report.write_text("cached report", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", old_cache_version)
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=old_cache_version,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v2", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+
+    assert context.program_version == "sha256:program-v2"
+    assert context.version_fingerprint == old_cache_version
+    assert context.cache_key == ""
+    assert context.market_date == ""
+    assert context.cache_lookup_version_fingerprint == old_cache_version
+
+
+def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_version_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, succeed_request_record
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    cached_card = tmp_path / "cached-card.png"
+    cached_chart = tmp_path / "cached-chart.png"
+    cached_report = tmp_path / "cached-report.md"
+    cached_card.write_bytes(b"cached-card")
+    cached_chart.write_bytes(b"cached-chart")
+    cached_report.write_text("cached report", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", legacy_cache_version)
+    request_id = create_request_record(
+        "ok",
+        "天娱数科 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+    )
+    succeed_request_record(
+        request_id,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+        elapsed_ms=1,
+        normalized_target="002354.SZ",
+        stock_code="002354.SZ",
+        stock_name="天娱数科",
+        market_date="2026-05-29",
+        cache_key=cache_key,
+        program_version="sha256:old-program",
+        ta_version="sha256:ta-v1",
+        renderer_version="sha256:renderer-v1",
+        template_version="sha256:template-v1",
+    )
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+        artifact_owner_id=request_id,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+
+    assert context.program_version == "sha256:new-program"
+    assert context.version_fingerprint == version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    assert context.cache_key == ""
+    assert context.market_date == ""
+    assert context.cache_lookup_version_fingerprint == context.version_fingerprint
+
+
+def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_latest_cache_without_context(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    cache_key, cached_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    result = technical_analysis.run_technical_analysis("ok", "天娱数科 技术分析")
+
+    assert result.success is True
+    assert result.cache_hit is False
+    assert result.cache_key != cache_key
+    assert result.output_files != cached_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+
+def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    compatible_key, _compatible_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-27",
+        version_fingerprint=legacy_cache_version,
+    )
+    _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-28",
+        version_fingerprint=legacy_cache_version,
+        ta_version="sha256:ta-v2",
+    )
+    missing_owner_files = []
+    for name in ["missing-owner-card.png", "missing-owner-chart.png", "missing-owner-report.md"]:
+        path = tmp_path / name
+        path.write_text("missing owner", encoding="utf-8")
+        missing_owner_files.append(str(path))
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", legacy_cache_version),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+        output_files=missing_owner_files,
+        artifact_owner_id="",
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+
+    assert context.cache_key != compatible_key
+    assert context.cache_key == ""
+    assert context.market_date == ""
+    assert context.cache_lookup_version_fingerprint == version_fingerprint(
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+
+
+def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_lookup_would_find_incompatible_row(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, list_request_records, succeed_request_record
+    from business.investment.router import handle_text_message
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    compatible_key, compatible_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    incompatible_card = tmp_path / "incompatible-card.png"
+    incompatible_chart = tmp_path / "incompatible-chart.png"
+    incompatible_report = tmp_path / "incompatible-report.md"
+    incompatible_card.write_bytes(b"incompatible-card")
+    incompatible_chart.write_bytes(b"incompatible-chart")
+    incompatible_report.write_text("incompatible report", encoding="utf-8")
+    incompatible_key = "manual-incompatible-cache-key"
+    incompatible_owner_id = create_request_record(
+        "ok",
+        "天娱数科 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+    )
+    succeed_request_record(
+        incompatible_owner_id,
+        output_files=[str(incompatible_card), str(incompatible_chart), str(incompatible_report)],
+        elapsed_ms=1,
+        normalized_target="002354.SZ",
+        stock_code="002354.SZ",
+        stock_name="天娱数科",
+        market_date="2026-05-29",
+        cache_key=incompatible_key,
+        program_version="sha256:old-program",
+        ta_version="sha256:ta-v2",
+        renderer_version="sha256:renderer-v1",
+        template_version="sha256:template-v1",
+    )
+    write_cache_entry(
+        cache_key=incompatible_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+        output_files=[str(incompatible_card), str(incompatible_chart), str(incompatible_report)],
+        artifact_owner_id=incompatible_owner_id,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class KnownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+
+    reply = handle_text_message("ok", "天娱数科 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files == compatible_files[:2]
+    assert calls == []
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is True
+    assert record.cache_key == compatible_key
+    assert record.cache_key != incompatible_key
+
+
+def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompatible(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import list_cache_entries, version_fingerprint
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.schema import investment_request_records
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    compatible_key, compatible_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class KnownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+    owner_id = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0].artifact_owner_id
+    with connect() as conn:
+        conn.execute(
+            investment_request_records.update()
+            .where(investment_request_records.c.request_id == owner_id)
+            .values(ta_version="sha256:ta-v2")
+        )
+
+    result = technical_analysis.run_technical_analysis("ok", "天娱数科 技术分析", cache_context=context)
+
+    assert context.cache_key == compatible_key
+    assert result.success is True
+    assert result.cache_hit is False
+    assert result.cache_key == compatible_key
+    assert result.output_files != compatible_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+
+def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in_window(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-20",
+        version_fingerprint=legacy_cache_version,
+    )
+    incompatible_key, _incompatible_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+        ta_version="sha256:ta-v2",
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+
+    assert context.cache_key != incompatible_key
+    assert context.market_date == ""
+    assert context.cache_key == ""
+    assert context.cache_lookup_version_fingerprint == version_fingerprint(
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+
+
+def test_technical_analysis_known_market_date_reuses_legacy_program_version_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    cache_key, cached_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="002354.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class KnownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+
+    reply = handle_text_message("ok", "天娱数科 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files == cached_files[:2]
+    assert calls == []
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is True
+    assert record.cache_key == cache_key
+    assert record.market_date == "2026-05-29"
+
+
+def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    cache_key, cached_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="300502.SZ",
+        market_date="2026-05-28",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class ExplicitResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == "2026-05-28"
+            return SimpleNamespace(market_date="2026-05-28", known=True, source="explicit")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ExplicitResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 2026-05-28 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files == cached_files[:2]
+    assert calls == []
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is True
+    assert record.cache_key == cache_key
+    assert record.market_date == "2026-05-28"
+
+
+def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_legacy_date(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
+    legacy_cache_version = version_fingerprint(
+        "sha256:old-program",
+        "sha256:ta-v1",
+        "sha256:renderer-v1",
+        "sha256:template-v1",
+    )
+    _cache_key, cached_files = _write_legacy_technical_analysis_cache(
+        tmp_path,
+        normalized_target="300502.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=legacy_cache_version,
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+
+    class ExplicitResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == "2026-05-28"
+            return SimpleNamespace(market_date="2026-05-28", known=True, source="explicit")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ExplicitResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 2026-05-28 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files != cached_files[:2]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is False
+    assert record.market_date == "2026-05-28"
+
+
+def test_technical_analysis_cache_key_version_changes_when_output_versions_change(
+    investment_env, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import version_fingerprint
+    from business.investment.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "pytest"}], source="pytest")
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "002354.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    def context_version(ta_version, renderer_version, template_version):
+        monkeypatch.setattr(
+            technical_analysis,
+            "_versions",
+            lambda: ("sha256:program-v1", ta_version, renderer_version, template_version),
+        )
+        return technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析").version_fingerprint
+
+    base = context_version("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+
+    assert base == version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    assert context_version("sha256:ta-v2", "sha256:renderer-v1", "sha256:template-v1") != base
+    assert context_version("sha256:ta-v1", "sha256:renderer-v2", "sha256:template-v1") != base
+    assert context_version("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v2") != base
+
+
+def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fallback_window(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+    combined_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    old_card = tmp_path / "old-card.png"
+    old_chart = tmp_path / "old-chart.png"
+    old_report = tmp_path / "old-report.md"
+    old_card.write_bytes(b"old-card")
+    old_chart.write_bytes(b"old-chart")
+    old_report.write_text("old report", encoding="utf-8")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-20", combined_version),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-20",
+        version_fingerprint=combined_version,
+        output_files=[str(old_card), str(old_chart), str(old_report)],
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+
+    class UnknownResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files != [str(old_card), str(old_chart)]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is False
+    assert record.market_date == "2026-05-25"
+
+
+def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service, technical_analysis
+    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
+    combined_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+    cached_card = tmp_path / "cached-card.png"
+    cached_chart = tmp_path / "cached-chart.png"
+    cached_report = tmp_path / "cached-report.md"
+    cached_card.write_bytes(b"cached-card")
+    cached_chart.write_bytes(b"cached-chart")
+    cached_report.write_text("cached report", encoding="utf-8")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-29", combined_version),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-29",
+        version_fingerprint=combined_version,
+        output_files=[str(cached_card), str(cached_chart), str(cached_report)],
+    )
+    monkeypatch.setattr(cache_service, "_today", lambda: datetime(2026, 5, 29).date(), raising=False)
+
+    class ExplicitResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            assert requested_market_date == "2026-05-28"
+            return SimpleNamespace(market_date="2026-05-28", known=True, source="explicit")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ExplicitResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 2026-05-28 技术分析")
+
+    assert reply.success is True
+    assert reply.output_files != [str(cached_card), str(cached_chart)]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    record = list_request_records(limit=1)[0]
+    assert record.cache_hit is False
+    assert record.market_date == "2026-05-28"
+
+
+def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investment_env, tmp_path, monkeypatch):
+    from business.investment import technical_analysis
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols([{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "pytest"}], source="pytest")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    first = handle_text_message("ok", "新易盛 技术分析")
+    second = handle_text_message("ok", "新易盛 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].normalized_target == "300502.SZ"
+    assert records[1].normalized_target == "300502.SZ"
 
 
 def test_technical_analysis_different_market_date_misses_cache(investment_env, tmp_path, monkeypatch):
@@ -2539,10 +4726,11 @@ def test_technical_analysis_different_market_date_misses_cache(investment_env, t
     assert list_request_records(limit=1)[0].cache_hit is True
 
 
-def test_technical_analysis_market_date_fallback_records_warning(investment_env, tmp_path, monkeypatch):
-    from datetime import date
-
+def test_technical_analysis_unknown_generated_market_date_does_not_cache_current_date(
+    investment_env, tmp_path, monkeypatch
+):
     from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
     from business.investment.router import handle_text_message
@@ -2559,26 +4747,348 @@ def test_technical_analysis_market_date_fallback_records_warning(investment_env,
         "_versions",
         lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
-    monkeypatch.setattr(technical_analysis, "_run_skill", lambda _symbol, _output_dir: (report, chart))
+    calls = []
+
+    class UnknownResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    def fake_skill(symbol, _output_dir):
+        calls.append(("skill", symbol))
+        return report, chart
+
+    def fake_ai(_report_text):
+        calls.append(("ai", len(calls)))
+        return SimpleNamespace(success=True, text="信号卡标准文本 without date")
+
+    def fake_render(_standard_text, output_path):
+        calls.append(("render", Path(output_path).name))
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert [call[0] for call in calls] == ["skill", "ai", "render", "skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].market_date == ""
+    assert records[1].market_date == ""
+    assert records[0].cache_key == ""
+    assert records[1].cache_key == ""
+    assert records[0].cache_hit is False
+    assert records[1].cache_hit is False
+    assert "market_date unknown" in records[0].status_warning
+    assert list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS) == []
+
+
+def test_technical_analysis_invalid_generated_market_date_does_not_cache(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    invalid_market_date = "2026-02-31"
+    report = tmp_path / f"300502_技术分析报告_{invalid_market_date}.md"
+    chart = tmp_path / f"300502_TA_{invalid_market_date}.png"
+    report.write_text(f"报告日期：{invalid_market_date}\n核心观点", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
     monkeypatch.setattr(
         technical_analysis,
-        "generate_technical_analysis_text",
-        lambda _report_text: SimpleNamespace(success=True, text="信号卡标准文本 without date"),
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
+
+    class UnknownResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    def fake_skill(_symbol, _output_dir):
+        return report, chart
+
+    def fake_ai(_report_text):
+        return SimpleNamespace(success=True, text=f"日期：{invalid_market_date}\n信号卡标准文本")
 
     def fake_render(_standard_text, output_path):
         Path(output_path).write_bytes(b"card")
         return SimpleNamespace(success=True, image_path=str(output_path), detail="")
 
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
     monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
 
     reply = handle_text_message("ok", "300502.SZ 技术分析")
 
-    record = list_request_records(limit=1)[0]
     assert reply.success is True
-    assert record.market_date == date.today().isoformat()
-    assert "market_date fallback" in record.error_message
-    assert "market_date fallback" in record.status_warning
+    record = list_request_records(limit=1)[0]
+    assert record.market_date == ""
+    assert record.cache_key == ""
+    assert list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS) == []
+
+
+def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_have_no_date(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import technical_analysis
+    from business.investment.cache_service import list_cache_entries
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_request_records
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    report = tmp_path / "report_without_date.md"
+    chart = tmp_path / "chart_without_date.png"
+    report.write_text("核心观点 without date", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    def fake_skill(symbol, _output_dir):
+        calls.append(("skill", symbol))
+        return report, chart
+
+    def fake_ai(_report_text):
+        calls.append(("ai", len(calls)))
+        return SimpleNamespace(success=True, text="信号卡标准文本 without date")
+
+    def fake_render(_standard_text, output_path):
+        calls.append(("render", Path(output_path).name))
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    first = handle_text_message("ok", "300502.SZ 技术分析")
+    second = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert first.success is True
+    assert second.success is True
+    assert second.output_files == first.output_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    records = list_request_records(limit=2)
+    assert records[0].cache_hit is True
+    assert records[1].cache_hit is False
+    assert records[0].market_date == "2026-05-25"
+    assert records[1].market_date == "2026-05-25"
+    assert records[0].cache_key
+    assert records[1].cache_key
+    assert records[0].cache_key == records[1].cache_key
+    cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.market_date == "2026-05-25"
+
+
+def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
+    from business.investment.market_date_resolver import MarketDateResolver
+
+    calls = []
+
+    monkeypatch.setattr(
+        MarketDateResolver,
+        "_latest_market_date",
+        lambda _self, _symbol: calls.append(_symbol)
+        or SimpleNamespace(market_date="2026-05-26", known=True, source="latest"),
+    )
+
+    resolver = MarketDateResolver()
+
+    result = resolver.resolve("300502.SZ", "2026-02-31")
+
+    assert result.market_date == ""
+    assert result.known is False
+    assert result.source == "unknown"
+    assert calls == []
+
+
+def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investment_env):
+    from business.investment.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
+    from business.investment.constants import ServiceType
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=["/tmp/old-card.png"],
+        artifact_owner_id="request-old",
+    )
+    increment_cache_hit(cache_key)
+
+    rewritten = write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=["/tmp/new-card.png", "/tmp/new-chart.png"],
+        artifact_owner_id="request-new",
+    )
+
+    assert rewritten.hit_count == 1
+    assert rewritten.output_files == ["/tmp/new-card.png", "/tmp/new-chart.png"]
+    assert rewritten.artifact_owner_id == "request-new"
+    assert rewritten.status == "active"
+    entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)
+    assert len(entries) == 1
+    assert entries[0].hit_count == 1
+    assert entries[0].output_files == ["/tmp/new-card.png", "/tmp/new-chart.png"]
+    assert entries[0].artifact_owner_id == "request-new"
+    assert entries[0].status == "active"
+
+
+def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):
+    from business.investment.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
+    from business.investment.constants import ServiceType
+
+    card = tmp_path / "card.png"
+    chart = tmp_path / "chart.png"
+    report = tmp_path / "report.md"
+    card.write_bytes(b"card")
+    chart.write_bytes(b"chart")
+    report.write_text("report", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=[str(card), str(chart), str(report)],
+        artifact_owner_id="request-1",
+    )
+    chart.unlink()
+
+    entry = find_cache_entry(
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        require_files=True,
+    )
+
+    assert entry is None
+    assert list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS) == []
+    entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, include_invalidated=True)
+    assert len(entries) == 1
+    assert entries[0].cache_key == cache_key
+    assert entries[0].status == "invalidated"
+
+
+def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_active_entry(
+    investment_env, tmp_path, monkeypatch
+):
+    from business.investment import cache_service
+    from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business.investment.constants import ServiceType
+
+    old_card = tmp_path / "old-card.png"
+    new_card = tmp_path / "new-card.png"
+    new_card.write_bytes(b"new-card")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=[str(old_card)],
+        artifact_owner_id="request-old",
+    )
+
+    def rewrite_entry_before_missing_file_result(paths):
+        assert paths == [str(old_card)]
+        write_cache_entry(
+            cache_key=cache_key,
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target="300502.SZ",
+            market_date="2026-05-25",
+            version_fingerprint="v1",
+            output_files=[str(new_card)],
+            artifact_owner_id="request-new",
+        )
+        return False
+
+    monkeypatch.setattr(cache_service, "_files_available", rewrite_entry_before_missing_file_result)
+
+    entry = cache_service.find_cache_entry(
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        require_files=True,
+    )
+
+    assert entry is None
+    entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)
+    assert len(entries) == 1
+    assert entries[0].cache_key == cache_key
+    assert entries[0].status == "active"
+    assert entries[0].output_files == [str(new_card)]
+    assert entries[0].artifact_owner_id == "request-new"
+
+
+def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investment_env):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business.investment.constants import ServiceType
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+
+    def write(output_file: str):
+        return write_cache_entry(
+            cache_key=cache_key,
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target="300502.SZ",
+            market_date="2026-05-25",
+            version_fingerprint="v1",
+            output_files=[output_file],
+            artifact_owner_id=output_file,
+        )
+
+    output_files = [f"/tmp/card-{index}.png" for index in range(12)]
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(write, output_files))
+
+    assert {result.cache_key for result in results} == {cache_key}
+    entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)
+    assert len(entries) == 1
+    assert entries[0].cache_key == cache_key
+    assert entries[0].status == "active"
+    assert entries[0].hit_count >= 0
+    assert entries[0].output_files in [[output_file] for output_file in output_files]
+    assert entries[0].artifact_owner_id in set(output_files)
 
 
 def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, monkeypatch):
@@ -2612,6 +5122,19 @@ def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, mo
     assert invalidate_payload["status"] == "success"
     assert invalidate_payload["invalidated"] is True
 
+    default_list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
+    assert default_list_payload["status"] == "success"
+    assert default_list_payload["entries"] == []
+
+    invalidated_list_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"limit": "20", "include_invalidated": "1"},
+    )
+    assert invalidated_list_payload["status"] == "success"
+    assert invalidated_list_payload["entries"][0]["cache_key"] == cache_key
+    assert invalidated_list_payload["entries"][0]["status"] == "invalidated"
+
     write_cache_entry(
         cache_key=cache_key,
         service_type=ServiceType.TECHNICAL_ANALYSIS,
@@ -2629,6 +5152,68 @@ def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, mo
 
     assert clear_payload["status"] == "success"
     assert clear_payload["removed"] == 1
+
+
+def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-05-25",
+        version_fingerprint="v1",
+        output_files=["/tmp/card.png"],
+        artifact_owner_id="request-1",
+    )
+
+    invalid_limit_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": "technical_analysis", "limit": "bad"},
+    )
+    unmatched_service_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": "unknown-service", "limit": "20"},
+    )
+
+    assert invalid_limit_payload["status"] == "success"
+    assert [entry["cache_key"] for entry in invalid_limit_payload["entries"]] == [cache_key]
+    assert invalid_limit_payload["market_dates"] == ["2026-05-25"]
+    assert unmatched_service_payload["status"] == "success"
+    assert unmatched_service_payload["entries"] == []
+
+
+def test_file_serve_handler_rejects_paths_outside_allowed_storage(investment_env, tmp_path, monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import FileServeHandler
+
+    _login_default_investment_admin(monkeypatch)
+    secret = tmp_path / "outside-secret.txt"
+    secret.write_text("secret", encoding="utf-8")
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(path=str(secret)))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    with pytest.raises(web_channel.web.HTTPError):
+        FileServeHandler().GET()
+
+
+def test_file_serve_handler_allows_investment_storage_file(investment_env, monkeypatch):
+    from business.investment.storage import get_storage_dirs
+    from channel.web import web_channel
+    from channel.web.web_channel import FileServeHandler
+
+    _login_default_investment_admin(monkeypatch)
+    image = get_storage_dirs()["generated"] / "allowed.png"
+    image.write_bytes(b"png")
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(path=str(image)))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    assert FileServeHandler().GET() == b"png"
 
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
@@ -3403,14 +5988,13 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
 
 
 def test_rate_direct_output_mode_uses_uploaded_png_without_ai_or_renderer(investment_env, tmp_path):
-    from business.investment.constants import Status
-    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import create_rate_content_draft, generate_content, save_source_file
     from business.investment.records import get_content_record
 
-    uploaded = tmp_path / "final-rate.png"
-    uploaded.write_bytes(b"png")
+    uploaded = save_source_file(ServiceType.RATE, "final-rate.png", b"png")
     content_id = create_rate_content_draft(
-        source_files=[str(uploaded)],
+        source_files=[uploaded],
         source_text="",
         operator="operator-a",
         direct_output_mode=True,
@@ -3424,11 +6008,84 @@ def test_rate_direct_output_mode_uses_uploaded_png_without_ai_or_renderer(invest
 
     record = get_content_record(content_id)
     assert result.success is True
-    assert result.output_image == str(uploaded)
+    assert result.output_image == uploaded
     assert result.generated_text == ""
-    assert record.output_image == str(uploaded)
+    assert record.output_image == uploaded
     assert record.direct_output_mode is True
     assert record.status == Status.GENERATED
+
+
+@pytest.mark.parametrize(
+    ("case_name", "source_path_factory", "expected_detail"),
+    [
+        (
+            "missing png",
+            lambda uploads_dir, _tmp_path: str(uploads_dir / "rate" / "missing.png"),
+            "direct output mode requires an existing PNG upload",
+        ),
+        (
+            "directory png",
+            lambda uploads_dir, _tmp_path: _mkdir_and_return(uploads_dir / "rate" / "directory.png"),
+            "direct output mode requires an existing PNG upload",
+        ),
+        (
+            "relative png",
+            lambda _uploads_dir, _tmp_path: "relative.png",
+            "direct output mode requires an absolute uploaded PNG path",
+        ),
+        (
+            "non-png",
+            lambda uploads_dir, _tmp_path: _write_and_return(uploads_dir / "rate" / "rate.xlsx", b"excel"),
+            "direct output mode only supports PNG files",
+        ),
+    ],
+)
+def test_rate_direct_output_mode_rejects_invalid_uploaded_png_paths(
+    investment_env,
+    tmp_path,
+    case_name,
+    source_path_factory,
+    expected_detail,
+):
+    from business.investment.constants import ErrorCode, ServiceType, Status
+    from business.investment.daily_content import create_rate_content_draft, generate_content, save_source_file
+    from business.investment.records import get_content_record, list_output_files
+    from business.investment.storage import get_storage_dirs
+
+    source_path = source_path_factory(get_storage_dirs()["uploads"], tmp_path)
+    content_id = create_rate_content_draft(
+        source_files=[source_path],
+        source_text="",
+        operator=f"operator-{case_name}",
+        direct_output_mode=True,
+    )
+
+    result = generate_content(
+        content_id,
+        ai_generator=lambda *_args, **_kwargs: pytest.fail("invalid direct output mode must not call AI"),
+        renderer=lambda *_args, **_kwargs: pytest.fail("invalid direct output mode must not call renderer"),
+    )
+
+    record = get_content_record(content_id)
+    assert result.success is False
+    assert result.error_code == ErrorCode.INPUT_ERROR
+    assert expected_detail in result.detail
+    assert record.status == Status.GENERATE_FAILED
+    assert expected_detail in record.error_message
+    assert record.generated_text == ""
+    assert record.output_image == ""
+    assert list_output_files(content_id) == []
+
+
+def _mkdir_and_return(path: Path) -> str:
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def _write_and_return(path: Path, content: bytes) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return str(path)
 
 
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
@@ -3633,7 +6290,7 @@ def test_daily_content_upload_saves_files_under_investment_upload_dir(investment
         save_source_file(ServiceType.RATE, "../escape.txt", b"bad")
 
 
-def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env):
+def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env, tmp_path):
     from business.investment.constants import ServiceType, Status
     from business.investment.daily_content import (
         create_rate_content_draft,
@@ -3646,36 +6303,42 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
 
     first_id = create_rate_content_draft(source_text="first")
     second_id = create_rate_content_draft(source_text="second")
+    first_image = tmp_path / "first.png"
+    second_image = tmp_path / "second.png"
+    regenerated_image = tmp_path / "second-v2.png"
+    first_image.write_bytes(b"first")
+    second_image.write_bytes(b"second")
+    regenerated_image.write_bytes(b"second-v2")
 
     generate_content(
         first_id,
         ai_generator=lambda _service_type, _source_text: SimpleNamespace(success=True, text="first text"),
-        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path="/generated/first.png"),
+        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path=str(first_image)),
     )
     generate_content(
         second_id,
         ai_generator=lambda _service_type, _source_text: SimpleNamespace(success=True, text="second text"),
-        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path="/generated/second.png"),
+        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path=str(second_image)),
     )
     set_content_effective(first_id, operator="operator-a")
     set_content_effective(second_id, operator="operator-b")
 
     assert get_content_record(first_id).status == Status.ARCHIVED
     assert get_content_record(second_id).status == Status.EFFECTIVE
-    assert get_latest_effective_content(ServiceType.RATE).output_image == "/generated/second.png"
+    assert get_latest_effective_content(ServiceType.RATE).output_image == str(second_image)
 
     regenerated = regenerate_content(
         second_id,
         ai_generator=lambda _service_type, _source_text: SimpleNamespace(success=True, text="second text regenerated"),
-        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path="/generated/second-v2.png"),
+        renderer=lambda _service_type, _text: SimpleNamespace(success=True, image_path=str(regenerated_image)),
     )
 
     assert regenerated.success is True
     assert regenerated.generated_text == "second text regenerated"
-    assert regenerated.output_image == "/generated/second-v2.png"
+    assert regenerated.output_image == str(regenerated_image)
     updated_record = get_content_record(second_id)
     assert updated_record.generated_text == "second text regenerated"
-    assert updated_record.output_image == "/generated/second-v2.png"
+    assert updated_record.output_image == str(regenerated_image)
     assert updated_record.status == Status.GENERATED
 
 
@@ -3687,6 +6350,25 @@ def test_daily_content_convertible_bond_no_effective_content_prompt(investment_e
     assert empty.success is False
     assert empty.error_code == ErrorCode.NO_CONTENT
     assert empty.user_prompt == "今日内容尚未更新，请稍后再试。"
+
+
+@pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
+def test_daily_content_effective_content_image_missing_returns_no_content(investment_env, tmp_path, service_type):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+
+    service = ServiceType(service_type)
+    missing_image = tmp_path / f"missing-{service_type}.png"
+    content_id = create_content_draft(service, source_text="content")
+    set_content_effective(content_id, str(missing_image), operator="admin")
+
+    result = get_latest_effective_content(service)
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.NO_CONTENT
+    assert result.user_prompt == "今日内容尚未更新，请稍后再试。"
+    assert "effective content image missing" in result.detail
+    assert str(missing_image) in result.detail
 
 
 def test_render_service_validates_output_files(investment_env, tmp_path):
@@ -4023,11 +6705,14 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
 def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_path):
     from business.investment.constants import ErrorCode
     from business.investment.constants import ServiceType
+    from business.investment.config_service import save_config
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import list_request_records
     from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
     from business.investment.user_service import create_user
 
+    secret = "sk-secret"
+    save_config("tushare.token", secret, operator_role="admin")
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     image = tmp_path / "rate.png"
     image.write_bytes(b"png")
@@ -4052,6 +6737,26 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     assert bypassed.success is True
     assert bypassed.output_files == [str(image)]
 
+    missing_image = tmp_path / f"missing-rate-{secret}.png"
+    missing_content_id = create_content_draft(ServiceType.RATE, source_text="missing rate")
+    set_content_effective(missing_content_id, str(missing_image), operator="admin")
+
+    missing_image_reply = handle_text_message("ok", "利率")
+    assert missing_image_reply.success is False
+    assert missing_image_reply.reply_text == "今日内容尚未更新，请稍后再试。"
+    assert missing_image_reply.output_files == []
+    assert str(missing_image) not in missing_image_reply.reply_text
+    assert "effective content image missing" in missing_image_reply.detail
+    assert secret not in missing_image_reply.detail
+    missing_image_record = list_request_records(limit=1)[0]
+    assert missing_image_record.service_type == ServiceType.RATE
+    assert missing_image_record.raw_input == "利率"
+    assert missing_image_record.error_code == ErrorCode.NO_CONTENT
+    assert missing_image_record.user_prompt == "今日内容尚未更新，请稍后再试。"
+    assert "effective content image missing" in missing_image_record.error_message
+    assert secret not in missing_image_record.error_message
+    assert missing_image_record.output_files == []
+
     miss = handle_text_message("ok", "hello")
     assert miss.success is False
     assert miss.handled is True
@@ -4060,6 +6765,32 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     assert miss_record.service_type == ServiceType.UNMATCHED
     assert miss_record.error_code == ErrorCode.INPUT_ERROR
     assert miss_record.user_prompt == DEFAULT_UNMATCHED_PROMPT
+
+
+def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
+    from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
+    from business.investment.router import parse_route
+
+    save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
+
+    assert parse_route("利率").matched is False
+    assert parse_route("今日利率").service_type == ServiceType.RATE
+
+    route = parse_route("300502.SZ 走势分析")
+    assert route.matched is True
+    assert route.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert route.target_text == "300502.SZ"
+
+
+def test_parse_route_ignores_disabled_investment_skill(investment_env):
+    from business.investment.config_service import save_config
+    from business.investment.router import parse_route
+
+    save_config("skill.rate.enabled", False, operator_role="admin", operator="pytest")
+
+    assert parse_route("利率").matched is False
 
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
@@ -4075,26 +6806,107 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
     assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
 
 
-def test_web_channel_routes_investment_commands_without_permission_check(investment_env, tmp_path):
+def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
+    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply
 
+    create_user("web-session-user", enabled=True, allowed_services=[ServiceType.ALL])
     image = tmp_path / "rate card.png"
     image.write_bytes(b"png")
     content_id = create_content_draft(ServiceType.RATE, source_text="rate")
     set_content_effective(content_id, str(image), operator="admin")
 
-    reply = _build_investment_web_reply("web-session-without-user", "利率")
+    reply = _build_investment_web_reply("web-session-user", "利率")
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
     assert "![rate card.png](/api/file?path=" in reply.content
     assert "%20" in reply.content
     assert "[图片:" not in reply.content
-    assert _build_investment_web_reply("web-session", "普通聊天") is None
+    plain = _build_investment_web_reply("web-session", "普通聊天")
+    assert plain is not None
+    assert plain.type == ReplyType.TEXT
+    assert plain.content == DEFAULT_UNMATCHED_PROMPT
     assert WebChannel().channel_type == "web"
+
+
+def test_web_channel_uses_configured_investment_skill_triggers(investment_env, tmp_path):
+    from bridge.reply import ReplyType
+    from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.user_service import create_user
+    from channel.web.web_channel import _build_investment_web_reply
+
+    create_user("web-session", enabled=True, allowed_services=[ServiceType.ALL])
+    save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
+    image = tmp_path / "rate override.png"
+    image.write_bytes(b"png")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), operator="admin")
+
+    reply = _build_investment_web_reply("web-session", "今日利率")
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert "![rate override.png](/api/file?path=" in reply.content
+
+
+def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
+    from bridge.reply import ReplyType
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.user_service import create_user
+    from channel.web.web_channel import _build_investment_web_reply
+
+    create_user("disabled-web", enabled=False, allowed_services=[ServiceType.ALL])
+    image = tmp_path / "admin-rate.png"
+    image.write_bytes(b"png")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), operator="admin")
+
+    reply = _build_investment_web_reply("disabled-web", "利率")
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert "![admin-rate.png](/api/file?path=" in reply.content
+
+
+def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, monkeypatch):
+    from bridge.reply import Reply, ReplyType
+    from business.investment.config_service import save_config
+    from bridge.context import Context, ContextType
+    from channel.chat_channel import ChatChannel
+    from channel.web.web_channel import WebChannel, WebMessage
+
+    save_config("router.enable_web_open_chat", True, operator_role="admin")
+    calls = []
+
+    def fake_fetch_reply_content(query, context):
+        calls.append((query, context.get("session_id")))
+        return Reply(ReplyType.TEXT, "plain model reply")
+
+    import bridge.bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.Bridge(), "fetch_reply_content", fake_fetch_reply_content)
+    monkeypatch.setattr(
+        ChatChannel,
+        "_generate_reply",
+        lambda *_args, **_kwargs: pytest.fail("web open chat must not enter AgentBridge path"),
+    )
+
+    context = Context(ContextType.TEXT, "普通聊天", {"msg": WebMessage("msg-1", "普通聊天")})
+    context["session_id"] = "web-session"
+
+    reply = WebChannel()._generate_reply(context)
+
+    assert reply.type == ReplyType.TEXT
+    assert reply.content == "plain model reply"
+    assert calls == [("普通聊天", "web-session")]
 
 
 def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investment_env, tmp_path, monkeypatch):

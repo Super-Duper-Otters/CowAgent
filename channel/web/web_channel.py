@@ -121,6 +121,15 @@ def _require_auth():
                             json.dumps({"status": "error", "message": "Unauthorized"}))
 
 
+def _require_console_auth():
+    if not _check_console_auth():
+        raise web.HTTPError(
+            "401 Unauthorized",
+            {"Content-Type": "application/json; charset=utf-8"},
+            json.dumps({"status": "error", "message": "Unauthorized"}, ensure_ascii=False),
+        )
+
+
 def _investment_session_token():
     return web.cookies().get("cow_investment_session", "")
 
@@ -294,8 +303,9 @@ class WebMessage(ChatMessage):
 
 
 def _is_investment_web_command(prompt: str) -> bool:
-    text = (prompt or "").strip()
-    return text in ("利率", "转债") or text.endswith("技术分析")
+    from business.investment.skill_registry import match_investment_skill
+
+    return match_investment_skill(prompt) is not None
 
 
 def _format_investment_web_reply(business_reply) -> str:
@@ -309,14 +319,20 @@ def _format_investment_web_reply(business_reply) -> str:
 
 
 def _build_investment_web_reply(session_id: str, prompt: str):
-    if not _is_investment_web_command(prompt):
-        return None
-    from business.investment.router import handle_text_message
+    if _is_investment_web_command(prompt):
+        from business.investment.router import handle_text_message
 
-    business_reply = handle_text_message(session_id, prompt, skip_permission=True)
-    if not business_reply.handled:
+        business_reply = handle_text_message(session_id, prompt, skip_permission=True)
+        if not business_reply.handled:
+            return None
+        return Reply(ReplyType.TEXT, _format_investment_web_reply(business_reply))
+
+    from business.investment.config_service import get_config
+    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+
+    if get_config("router.enable_web_open_chat", False):
         return None
-    return Reply(ReplyType.TEXT, _format_investment_web_reply(business_reply))
+    return Reply(ReplyType.TEXT, DEFAULT_UNMATCHED_PROMPT)
 
 
 @singleton
@@ -359,7 +375,9 @@ class WebChannel(ChatChannel):
                 from business.investment.constants import ErrorCode, user_message
 
                 return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
-        return super()._generate_reply(context, reply)
+        from bridge.bridge import Bridge
+
+        return Bridge().fetch_reply_content(context.content, context)
 
     def send(self, reply: Reply, context: Context):
         try:
@@ -914,6 +932,8 @@ class WebChannel(ChatChannel):
             '/api/investment/cache/clear', 'InvestmentCacheClearHandler',
             '/api/investment/cache/(.*)/invalidate', 'InvestmentCacheEntryInvalidateHandler',
             '/api/investment/skills/versions', 'InvestmentSkillVersionsHandler',
+            '/api/investment/skills/packages/upload', 'InvestmentSkillPackageUploadHandler',
+            '/api/investment/skills/(.*)/settings', 'InvestmentSkillSettingsHandler',
             '/api/investment/skills/(.*)/upload', 'InvestmentSkillUploadHandler',
             '/api/investment/skills/(.*)/versions/(.*)/activate', 'InvestmentSkillActivateHandler',
             '/api/investment/skills/(.*)/versions/(.*)/delete', 'InvestmentSkillDeleteHandler',
@@ -1052,20 +1072,20 @@ class AuthLogoutHandler:
 
 class MessageHandler:
     def POST(self):
-        _require_auth()
+        _require_console_auth()
         return WebChannel().post_message()
 
 
 class UploadHandler:
     def POST(self):
-        _require_auth()
+        _require_console_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         return WebChannel().upload_file()
 
 
 class UploadsHandler:
     def GET(self, file_name):
-        _require_auth()
+        _require_console_auth()
         try:
             upload_dir = _get_upload_dir()
             full_path = os.path.normpath(os.path.join(upload_dir, file_name))
@@ -1085,9 +1105,31 @@ class UploadsHandler:
             raise web.notfound()
 
 
+def _is_path_under(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(root)]) == os.path.abspath(root)
+    except ValueError:
+        return False
+
+
+def _allowed_file_roots():
+    roots = [_get_upload_dir()]
+    try:
+        from business.investment.storage import get_storage_dirs
+
+        roots.append(str(get_storage_dirs()["root"]))
+    except Exception as exc:
+        logger.debug("[WebChannel] investment storage root unavailable: {}".format(exc))
+    return roots
+
+
+def _is_allowed_file_path(file_path: str) -> bool:
+    return any(_is_path_under(file_path, root) for root in _allowed_file_roots())
+
+
 class FileServeHandler:
     def GET(self):
-        _require_auth()
+        _require_console_auth()
         try:
             params = web.input(path="")
             file_path = params.path
@@ -1095,6 +1137,8 @@ class FileServeHandler:
                 raise web.notfound()
             file_path = os.path.normpath(file_path)
             if not os.path.isfile(file_path):
+                raise web.notfound()
+            if not _is_allowed_file_path(file_path):
                 raise web.notfound()
             content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
             file_name = os.path.basename(file_path)
@@ -1113,13 +1157,13 @@ class FileServeHandler:
 
 class PollHandler:
     def POST(self):
-        _require_auth()
+        _require_console_auth()
         return WebChannel().poll_response()
 
 
 class StreamHandler:
     def GET(self):
-        _require_auth()
+        _require_console_auth()
         params = web.input(request_id='')
         request_id = params.request_id
         if not request_id:
@@ -2527,6 +2571,42 @@ def _investment_bool(value) -> bool:
     return str(value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _investment_safe_limit(value, default: int = 50, minimum: int = 1, maximum: int = 200) -> int:
+    try:
+        limit = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(limit, maximum))
+
+
+def _investment_safe_page(value, default: int = 1) -> int:
+    try:
+        page = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return max(1, page)
+
+
+def _investment_safe_pagination(params, default_page_size: int) -> tuple[int, int]:
+    page = _investment_safe_page(getattr(params, "page", "1"))
+    page_size_value = getattr(params, "page_size", "")
+    if page_size_value in (None, ""):
+        page_size_value = getattr(params, "limit", "")
+    page_size = _investment_safe_limit(page_size_value, default=default_page_size, minimum=1, maximum=200)
+    return page, page_size
+
+
+def _investment_pagination_payload(page: int, page_size: int, total: int) -> dict:
+    total = max(0, int(total or 0))
+    page_size = max(1, int(page_size or 1))
+    return {
+        "page": max(1, int(page or 1)),
+        "page_size": page_size,
+        "total": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
 def _investment_json_response(payload):
     web.header('Content-Type', 'application/json; charset=utf-8')
     return json.dumps(payload, ensure_ascii=False)
@@ -2566,7 +2646,9 @@ def _investment_stock_stats():
 class InvestmentAuthMeHandler:
     def GET(self):
         try:
-            admin = _require_investment_permission("records.read")
+            admin = _current_investment_admin()
+            if admin is None:
+                return _investment_json_response({"status": "error", "code": "unauthorized", "message": "未登录或登录已过期"})
             return _investment_json_response({"status": "success", "admin": _investment_admin_payload(admin)})
         except web.HTTPError as error:
             return error.data
@@ -2578,7 +2660,7 @@ class InvestmentRequestRecordsExportHandler:
         try:
             from business.investment.export_service import export_request_records_xlsx
 
-            params = web.input(start_date='', end_date='', service_type='', year='', month='', quarter='')
+            params = web.input(start_date='', end_date='', service_type='', status='', keyword='', year='', month='', quarter='')
             start_date = _investment_date_bound(params.start_date)
             end_date = _investment_date_bound(params.end_date, end=True)
             if getattr(params, "year", "") and getattr(params, "month", ""):
@@ -2593,6 +2675,8 @@ class InvestmentRequestRecordsExportHandler:
                 start_date,
                 end_date,
                 service_type=params.service_type or None,
+                status=getattr(params, "status", "") or None,
+                keyword=getattr(params, "keyword", "") or "",
             )
             return _investment_xlsx_response(data, "investment-requests.xlsx")
         except Exception as e:
@@ -2723,12 +2807,20 @@ class InvestmentDailyContentHandler:
             from business.investment.daily_content import get_latest_effective_content
             from business.investment.records import get_content_record
 
-            params = web.input(limit='50', service_type='')
-            service_value = getattr(params, "service_type", "")
+            params = web.input(limit='50', service_type='', effective_date='')
+            service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
-                service_type = None
-            contents = list_content_records(limit=int(params.limit), service_type=service_type)
+                return _investment_json_response({
+                    "status": "success",
+                    "current_effective": None,
+                    "contents": [],
+                })
+            contents = list_content_records(
+                limit=_investment_safe_limit(getattr(params, "limit", "50")),
+                service_type=service_type,
+                effective_date=getattr(params, "effective_date", "") or None,
+            )
             current_effective = None
             if service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
                 latest = get_latest_effective_content(service_type)
@@ -2862,17 +2954,36 @@ class InvestmentOperationAuditsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.investment.audit_service import list_operation_audits
+            from business.investment.audit_service import list_operation_audits_page
 
-            params = web.input(limit='50', target_type='', target_id='')
-            audits = list_operation_audits(
-                limit=int(params.limit),
-                target_type=params.target_type or None,
-                target_id=params.target_id or None,
+            params = web.input(
+                limit='50',
+                page='1',
+                page_size='',
+                action='',
+                target_type='',
+                target_id='',
+                operator='',
+                keyword='',
+                start_date='',
+                end_date='',
+            )
+            page, page_size = _investment_safe_pagination(params, 80)
+            audits, total = list_operation_audits_page(
+                page=page,
+                page_size=page_size,
+                action=getattr(params, "action", "") or None,
+                target_type=getattr(params, "target_type", "") or None,
+                target_id=getattr(params, "target_id", "") or None,
+                operator=getattr(params, "operator", "") or None,
+                keyword=getattr(params, "keyword", "") or "",
+                start_date=_investment_date_bound(getattr(params, "start_date", "")),
+                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
             )
             return _investment_json_response({
                 "status": "success",
                 "audits": [audit.__dict__ for audit in audits],
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] audits GET error: {e}")
@@ -2883,9 +2994,38 @@ class InvestmentRequestRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.investment.records import list_output_files, list_request_records
+            from business.investment.records import list_output_files, list_request_records_page
+            from business.investment.constants import ServiceType, normalize_service
 
-            records = list_request_records(limit=int(web.input(limit='50').limit))
+            params = web.input(
+                limit='50',
+                page='1',
+                page_size='',
+                service_type='',
+                status='',
+                keyword='',
+                start_date='',
+                end_date='',
+            )
+            service_value = str(getattr(params, "service_type", "") or "").strip()
+            service_type = normalize_service(service_value) if service_value else None
+            if service_type == ServiceType.UNMATCHED and service_value not in {"unmatched", str(ServiceType.UNMATCHED)}:
+                page, page_size = _investment_safe_pagination(params, 80)
+                return _investment_json_response({
+                    "status": "success",
+                    "records": [],
+                    "pagination": _investment_pagination_payload(page, page_size, 0),
+                })
+            page, page_size = _investment_safe_pagination(params, 80)
+            records, total = list_request_records_page(
+                page=page,
+                page_size=page_size,
+                service_type=service_type,
+                status=getattr(params, "status", "") or None,
+                keyword=getattr(params, "keyword", "") or "",
+                start_date=_investment_date_bound(getattr(params, "start_date", "")),
+                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
+            )
             return _investment_json_response({
                 "status": "success",
                 "records": [record.__dict__ | {
@@ -2894,6 +3034,7 @@ class InvestmentRequestRecordsHandler:
                     "error_code": str(record.error_code) if record.error_code else "",
                     "output_artifacts": list_output_files(record.request_id),
                 } for record in records],
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] request records error: {e}")
@@ -2905,14 +3046,26 @@ class InvestmentContentRecordsHandler:
         _require_investment_permission("records.read")
         try:
             from business.investment.constants import ServiceType, normalize_service
-            from business.investment.records import list_content_records, list_output_files
+            from business.investment.records import list_content_records_page, list_output_files
 
-            params = web.input(limit='50', service_type='')
-            service_value = getattr(params, "service_type", "")
+            params = web.input(limit='50', page='1', page_size='', service_type='', effective_date='', status='')
+            service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
-                service_type = None
-            records = list_content_records(limit=int(params.limit), service_type=service_type)
+                page, page_size = _investment_safe_pagination(params, 80)
+                return _investment_json_response({
+                    "status": "success",
+                    "records": [],
+                    "pagination": _investment_pagination_payload(page, page_size, 0),
+                })
+            page, page_size = _investment_safe_pagination(params, 80)
+            records, total = list_content_records_page(
+                page=page,
+                page_size=page_size,
+                service_type=service_type,
+                effective_date=getattr(params, "effective_date", "") or None,
+                status=getattr(params, "status", "") or None,
+            )
             return _investment_json_response({
                 "status": "success",
                 "records": [record.__dict__ | {
@@ -2920,6 +3073,7 @@ class InvestmentContentRecordsHandler:
                     "status": str(record.status),
                     "output_artifacts": list_output_files(record.content_id),
                 } for record in records],
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] content records error: {e}")
@@ -2930,23 +3084,37 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.investment.cache_service import list_cache_entries
+            from business.investment.cache_service import list_cache_entries_page, list_cache_market_dates
             from business.investment.constants import ServiceType, normalize_service
 
-            params = web.input(limit='50', service_type='', market_date='', include_invalidated='')
-            service_value = getattr(params, "service_type", "")
+            params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', include_invalidated='')
+            service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
-                service_type = None
-            entries = list_cache_entries(
-                limit=int(getattr(params, "limit", "50") or 50),
+                page, page_size = _investment_safe_pagination(params, 120)
+                return _investment_json_response({
+                    "status": "success",
+                    "entries": [],
+                    "market_dates": [],
+                    "pagination": _investment_pagination_payload(page, page_size, 0),
+                })
+            include_invalidated = str(getattr(params, "include_invalidated", "")).lower() in {"1", "true", "yes"}
+            page, page_size = _investment_safe_pagination(params, 120)
+            entries, total = list_cache_entries_page(
+                page=page,
+                page_size=page_size,
                 service_type=service_type,
                 market_date=getattr(params, "market_date", "") or "",
-                include_invalidated=str(getattr(params, "include_invalidated", "")).lower() in {"1", "true", "yes"},
+                include_invalidated=include_invalidated,
             )
             return _investment_json_response({
                 "status": "success",
                 "entries": [entry.__dict__ | {"service_type": str(entry.service_type)} for entry in entries],
+                "market_dates": list_cache_market_dates(
+                    service_type=service_type,
+                    include_invalidated=include_invalidated,
+                ),
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] cache entries error: {e}")
@@ -3051,6 +3219,72 @@ class InvestmentSkillVersionsHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] skill versions GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentSkillSettingsHandler:
+    def POST(self, skill_key):
+        _require_investment_permission("skills.write")
+        try:
+            from business.investment.config_service import save_config
+            from business.investment.skill_registry import get_skill_definition
+            from business.investment.skill_versions import list_all_skills
+
+            definition = get_skill_definition(skill_key)
+            body = _investment_json_body()
+            operator = body.get("operator", "web-console")
+
+            if "enabled" in body:
+                save_config(
+                    definition.enabled_config_key,
+                    bool(body.get("enabled")),
+                    operator_role="admin",
+                    operator=operator,
+                )
+
+            if "triggers" in body:
+                triggers = body.get("triggers") or []
+                if isinstance(triggers, str):
+                    triggers = [item.strip() for item in triggers.replace("，", ",").split(",")]
+                triggers = [str(item).strip() for item in triggers if str(item).strip()]
+                if definition.routable and not triggers:
+                    return _investment_json_response({"status": "error", "message": "triggers cannot be empty"})
+                save_config(
+                    definition.triggers_config_key,
+                    triggers,
+                    operator_role="admin",
+                    operator=operator,
+                )
+
+            return _investment_json_response({"status": "success", "skills": list_all_skills()})
+        except Exception as e:
+            logger.error(f"[Investment] skill settings error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentSkillPackageUploadHandler:
+    def POST(self):
+        _require_investment_permission("skills.write")
+        try:
+            from business.investment.skill_versions import list_all_skills, save_package_upload
+
+            params = _raw_web_input()
+            file_obj = params.get("file")
+            if file_obj is None:
+                return _investment_json_response({"status": "error", "message": "file required"})
+            filename = getattr(file_obj, "filename", "") or getattr(file_obj, "name", "") or "investment-skill.zip"
+            uploaded = save_package_upload(
+                os.path.basename(filename),
+                _read_uploaded_file_bytes(file_obj),
+                operator=params.get("operator", "web-console"),
+            )
+            return _investment_json_response({
+                "status": "success",
+                "uploaded": uploaded,
+                "skills": list_all_skills(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] skill package upload error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

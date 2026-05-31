@@ -193,6 +193,9 @@
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-records">
                             <i class="fas fa-table-list item-icon text-xs w-5 text-center"></i><span>业务记录</span>
                         </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-skills">
+                            <i class="fas fa-code-branch item-icon text-xs w-5 text-center"></i><span>投资Skill</span>
+                        </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-config">
                             <i class="fas fa-shield-halved item-icon text-xs w-5 text-center"></i><span>系统配置</span>
                         </a>
@@ -280,6 +283,27 @@
 
                 <div class="flex-1"></div>
 
+                <!-- Authenticated Admin -->
+                <div id="auth-user-summary"
+                     class="hidden sm:flex items-center gap-2 min-w-0 max-w-[220px] px-2.5 py-1.5 rounded-lg
+                            border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5">
+                    <div class="w-7 h-7 rounded-md bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-user-shield text-primary-500 text-xs"></i>
+                    </div>
+                    <div class="min-w-0 leading-tight">
+                        <div id="auth-user-name" class="text-xs font-medium text-slate-700 dark:text-slate-100 truncate">--</div>
+                        <div id="auth-user-role" class="text-[11px] text-slate-400 dark:text-slate-500 truncate">--</div>
+                    </div>
+                </div>
+
+                <!-- Logout -->
+                <button id="auth-logout-btn"
+                        class="hidden p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
+                               cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onclick="logoutConsole()" data-tooltip="退出登录" data-tooltip-pos="bottom" title="Logout">
+                    <i class="fas fa-right-from-bracket text-base"></i>
+                </button>
+
                 <!-- Language Toggle -->
                 <button id="lang-toggle" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
                                                  text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
@@ -297,26 +321,6 @@
                     <i id="theme-icon" class="fas fa-moon"></i>
                 </button>
 
-                <!-- Docs Link -->
-                <a href="https://docs.cowagent.ai" target="_blank" rel="noopener noreferrer"
-                   class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
-                          cursor-pointer transition-colors duration-150" title="Documentation">
-                    <i class="fas fa-book text-base"></i>
-                </a>
-
-                <!-- Website Link -->
-                <a href="https://cowagent.ai" target="_blank" rel="noopener noreferrer"
-                   class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
-                          cursor-pointer transition-colors duration-150" title="Website">
-                    <i class="fas fa-home text-base"></i>
-                </a>
-
-                <!-- GitHub Link -->
-                <a href="https://github.com/zhayujie/chatgpt-on-wechat" target="_blank" rel="noopener noreferrer"
-                   class="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
-                          cursor-pointer transition-colors duration-150" title="GitHub">
-                    <i class="fab fa-github text-lg"></i>
-                </a>
             </header>
 
             <!-- Content Area -->
@@ -975,6 +979,15 @@
                         <div class="max-w-6xl mx-auto">
                             <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">系统配置</h2>
                             <div id="invest-config-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-invest-skills" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资Skill</h2>
+                            <div id="invest-skills-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
                         </div>
                     </div>
                 </div>
