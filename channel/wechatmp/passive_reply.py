@@ -1,9 +1,10 @@
 import asyncio
+import threading
 import time
 
 import web
 from wechatpy import parse_message
-from wechatpy.replies import ImageReply, VoiceReply, create_reply
+from wechatpy.replies import ImageReply, VideoReply, VoiceReply, create_reply
 import textwrap
 from bridge.context import *
 from bridge.reply import *
@@ -16,30 +17,341 @@ from config import conf, subscribe_msg
 
 
 IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
-PASSIVE_TECHNICAL_ACK_TEXT = "收到，正在运行，请稍候。回复任意文字可尝试获取结果。"
+PASSIVE_TECHNICAL_ACK_TEXT = "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。"
+CANCEL_PENDING_RESULT_TEXT = "已放弃本次技术分析结果。"
+RUNNING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。"
+PENDING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。"
+RUNNING_STALE_SECONDS = 15 * 60
 
 
-def _is_investment_command(content: str) -> bool:
+def _investment_route(content: str):
     try:
-        from business.investment.router import parse_route
-
-        return parse_route(content).matched
-    except Exception as exc:
-        logger.debug("[wechatmp] investment command check failed: {}".format(exc))
-        return False
-
-
-def _investment_ack_text(content: str) -> str:
-    try:
-        from business.investment.constants import ServiceType
         from business.investment.router import parse_route
 
         route = parse_route(content)
-        if route.matched and route.service_type == ServiceType.TECHNICAL_ANALYSIS:
-            return PASSIVE_TECHNICAL_ACK_TEXT
+        return route if route.matched else None
     except Exception as exc:
-        logger.debug("[wechatmp] investment ack text check failed: {}".format(exc))
+        logger.debug("[wechatmp] investment route check failed: {}".format(exc))
+        return None
+
+
+def _is_investment_command(content: str) -> bool:
+    return _investment_route(content) is not None
+
+
+def _is_technical_analysis_route(route) -> bool:
+    try:
+        from business.investment.constants import ServiceType
+
+        return route is not None and route.service_type == ServiceType.TECHNICAL_ANALYSIS
+    except Exception as exc:
+        logger.debug("[wechatmp] technical analysis route check failed: {}".format(exc))
+        return False
+
+
+def _technical_analysis_target(content: str) -> str:
+    route = _investment_route(content)
+    if _is_technical_analysis_route(route):
+        target = (route.target_text or "").strip()
+        if target:
+            return target
+    text = (content or "").strip()
+    trigger = "技术分析"
+    if text.endswith(trigger):
+        text = text[: -len(trigger)].strip()
+    return text or "本次"
+
+
+def _investment_ack_text(content: str) -> str:
+    route = _investment_route(content)
+    if _is_technical_analysis_route(route):
+        return PASSIVE_TECHNICAL_ACK_TEXT.format(_technical_analysis_target(content))
     return IMMEDIATE_ACK_TEXT
+
+
+def _investment_permission_prompt(openid: str, content: str) -> str:
+    try:
+        from business.investment.router import parse_route
+        from business.investment.user_service import verify_permission
+
+        route = parse_route(content)
+        if not route.matched:
+            return ""
+        permission = verify_permission(openid, route.service_type)
+        if permission.allowed:
+            return ""
+        return permission.user_prompt
+    except Exception as exc:
+        logger.debug("[wechatmp] investment permission check failed: {}".format(exc))
+        from business.investment.constants import ErrorCode, user_message
+
+        return user_message(ErrorCode.SYSTEM_ERROR)
+
+
+def _investment_user_access_prompt(openid: str) -> str:
+    try:
+        from business.investment.user_service import verify_user_access
+
+        permission = verify_user_access(openid)
+        if permission.allowed:
+            return ""
+        return permission.user_prompt
+    except Exception as exc:
+        logger.debug("[wechatmp] investment user access check failed: {}".format(exc))
+        from business.investment.constants import ErrorCode, user_message
+
+        return user_message(ErrorCode.SYSTEM_ERROR)
+
+
+def _cleanup_expired(cache):
+    cleanup = getattr(cache, "cleanup_expired", None)
+    if cleanup:
+        cleanup()
+
+
+def _peek_cached_result(cache, receiver):
+    peek = getattr(cache, "peek_result", None)
+    if peek:
+        return peek(receiver)
+    replies = cache.get(receiver) if hasattr(cache, "get") else None
+    if replies:
+        return type("CachedResult", (), {"title": "", "replies": replies, "service_type": ""})()
+    return None
+
+
+def _pop_cached_reply(cache, receiver):
+    pop_result = getattr(cache, "pop_result", None)
+    if pop_result:
+        return pop_result(receiver)
+    if receiver not in cache:
+        return None
+    try:
+        item = cache[receiver].pop(0)
+        if not cache[receiver]:
+            del cache[receiver]
+        return item
+    except IndexError:
+        return None
+
+
+def _discard_cached_result(cache, receiver):
+    discard = getattr(cache, "discard_result", None)
+    if discard:
+        discard(receiver)
+        return
+    if receiver in cache:
+        del cache[receiver]
+
+
+def _set_pending_command(cache, receiver, content):
+    setter = getattr(cache, "set_pending_command", None)
+    if setter:
+        setter(receiver, content)
+
+
+def _pop_pending_command(cache, receiver):
+    popper = getattr(cache, "pop_pending_command", None)
+    if popper:
+        return popper(receiver)
+    return None
+
+
+def _pending_result_prompt(title):
+    route = _investment_route(title or "")
+    if _is_technical_analysis_route(route) or str(title or "").strip().endswith("技术分析"):
+        return PENDING_TECHNICAL_ANALYSIS_TEXT.format(_technical_analysis_target(title or ""))
+    prefix = title or ""
+    return "{}结果已生成完成，是否需要返回？无需则回复 0，需要则回复 1。".format(prefix)
+
+
+def _is_direct_ready_result_request(content, cached_result):
+    current_route = _investment_route(content)
+    if current_route is None or _is_technical_analysis_route(current_route):
+        return False
+    return bool(getattr(cached_result, "service_type", "")) and cached_result.service_type == current_route.service_type
+
+
+def _permission_prompt_for_cached_result(openid, cached_result):
+    service_type = getattr(cached_result, "service_type", "")
+    if not service_type:
+        return ""
+    try:
+        from business.investment.constants import normalize_service
+        from business.investment.user_service import verify_permission
+
+        permission = verify_permission(openid, normalize_service(service_type))
+        if permission.allowed:
+            return ""
+        return permission.user_prompt
+    except Exception as exc:
+        logger.debug("[wechatmp] cached investment permission check failed: {}".format(exc))
+        from business.investment.constants import ErrorCode, user_message
+
+        return user_message(ErrorCode.SYSTEM_ERROR)
+
+
+def _technical_titles(channel):
+    titles = getattr(channel, "technical_analysis_titles", None)
+    if titles is None:
+        titles = {}
+        try:
+            setattr(channel, "technical_analysis_titles", titles)
+        except Exception:
+            return {}
+    return titles
+
+
+def _running_started_at(channel):
+    started_at = getattr(channel, "running_started_at", None)
+    if started_at is None:
+        started_at = {}
+        try:
+            setattr(channel, "running_started_at", started_at)
+        except Exception:
+            return {}
+    return started_at
+
+
+def _running_lock(channel):
+    lock = getattr(channel, "running_lock", None)
+    if lock is None:
+        lock = threading.RLock()
+        try:
+            setattr(channel, "running_lock", lock)
+        except Exception:
+            return threading.RLock()
+    return lock
+
+
+def _set_running_technical_title(channel, receiver, content):
+    _technical_titles(channel)[receiver] = _technical_analysis_target(content)
+
+
+def _get_running_technical_title(channel, receiver):
+    return _technical_titles(channel).get(receiver, "")
+
+
+def _mark_running(channel, receiver, is_technical_analysis, content):
+    with _running_lock(channel):
+        channel.running.add(receiver)
+        _running_started_at(channel)[receiver] = time.time()
+        if is_technical_analysis:
+            _set_running_technical_title(channel, receiver, content)
+
+
+def _clear_running(channel, receiver):
+    with _running_lock(channel):
+        channel.running.discard(receiver)
+        _running_started_at(channel).pop(receiver, None)
+        _technical_titles(channel).pop(receiver, None)
+
+
+def _cleanup_stale_running(channel, receiver=None):
+    now = time.time()
+    started_at = _running_started_at(channel)
+    receivers = [receiver] if receiver else list(started_at)
+    with _running_lock(channel):
+        for item in receivers:
+            started = started_at.get(item)
+            if started is not None and now - started > RUNNING_STALE_SECONDS:
+                channel.running.discard(item)
+                started_at.pop(item, None)
+                _technical_titles(channel).pop(item, None)
+
+
+def _unmatched_prompt():
+    try:
+        from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+
+        return DEFAULT_UNMATCHED_PROMPT
+    except Exception:
+        return "请输入以下格式之一："
+
+
+def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type=""):
+    append_reply = getattr(cache, "append_reply", None)
+    if append_reply:
+        append_reply(receiver, reply_type, reply_content, title, service_type=service_type)
+        return
+    cache.setdefault(receiver, []).append((reply_type, reply_content))
+
+
+def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, content, request_cnt, cached_item, cache_title="", service_type=""):
+    if cached_item is None:
+        return "success"
+    reply_type, reply_content = cached_item
+    if reply_type == "text":
+        if len(reply_content.encode("utf8")) <= MAX_UTF8_LEN:
+            reply_text = reply_content
+        else:
+            continue_text = "\n【未完待续，回复任意文字以继续】"
+            splits = split_string_by_utf8_length(
+                reply_content,
+                MAX_UTF8_LEN - len(continue_text.encode("utf-8")),
+                max_split=1,
+            )
+            reply_text = splits[0] + continue_text
+            _append_cached_reply(channel.cache_dict, from_user, "text", splits[1], cache_title, service_type=service_type)
+
+        logger.info(
+            "[wechatmp] Request {} do send to {} {}: {}\n{}".format(
+                request_cnt,
+                from_user,
+                message_id,
+                content,
+                reply_text,
+            )
+        )
+        replyPost = create_reply(reply_text, msg)
+        return encrypt_func(replyPost.render())
+
+    if reply_type == "voice":
+        media_id = reply_content
+        asyncio.run_coroutine_threadsafe(channel.delete_media(media_id), channel.delete_media_loop)
+        logger.info(
+            "[wechatmp] Request {} do send to {} {}: {} voice media_id {}".format(
+                request_cnt,
+                from_user,
+                message_id,
+                content,
+                media_id,
+            )
+        )
+        replyPost = VoiceReply(message=msg)
+        replyPost.media_id = media_id
+        return encrypt_func(replyPost.render())
+
+    if reply_type == "image":
+        media_id = reply_content
+        logger.info(
+            "[wechatmp] Request {} do send to {} {}: {} image media_id {}".format(
+                request_cnt,
+                from_user,
+                message_id,
+                content,
+                media_id,
+            )
+        )
+        replyPost = ImageReply(message=msg)
+        replyPost.media_id = media_id
+        return encrypt_func(replyPost.render())
+
+    if reply_type == "video":
+        media_id = reply_content
+        logger.info(
+            "[wechatmp] Request {} do send to {} {}: {} video media_id {}".format(
+                request_cnt,
+                from_user,
+                message_id,
+                content,
+                media_id,
+            )
+        )
+        replyPost = VideoReply(message=msg)
+        replyPost.media_id = media_id
+        return encrypt_func(replyPost.render())
+
+    return "success"
 
 
 # This class is instantiated once per query
@@ -52,6 +364,7 @@ class Query:
             args = web.input()
             request_time = time.time()
             channel = WechatMPChannel()
+            _cleanup_expired(channel.cache_dict)
             message = web.data()
             encrypt_func = lambda x: x
             if is_encrypted_message(args):
@@ -68,13 +381,64 @@ class Query:
                 content = wechatmp_msg.content
                 message_id = wechatmp_msg.msg_id
 
+                access_prompt = _investment_user_access_prompt(from_user)
+                if access_prompt:
+                    replyPost = create_reply(access_prompt, msg)
+                    return encrypt_func(replyPost.render())
+
                 supported = True
                 if "【收到不支持的消息类型，暂无法显示】" in content:
                     supported = False  # not supported, used to refresh
 
+                _cleanup_stale_running(channel, from_user)
+                pending_result = _peek_cached_result(channel.cache_dict, from_user)
+                if pending_result is not None:
+                    if content == "1" or _is_direct_ready_result_request(content, pending_result):
+                        permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                        if permission_prompt:
+                            replyPost = create_reply(permission_prompt, msg)
+                            return encrypt_func(replyPost.render())
+                        if content == "1":
+                            _pop_pending_command(channel.cache_dict, from_user)
+                        cached_item = _pop_cached_reply(channel.cache_dict, from_user)
+                        return _render_cached_reply(
+                            channel,
+                            msg,
+                            encrypt_func,
+                            from_user,
+                            message_id,
+                            content,
+                            1,
+                            cached_item,
+                            pending_result.title,
+                            getattr(pending_result, "service_type", ""),
+                        )
+                    if content == "0":
+                        permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                        if permission_prompt:
+                            replyPost = create_reply(permission_prompt, msg)
+                            return encrypt_func(replyPost.render())
+                        _discard_cached_result(channel.cache_dict, from_user)
+                        pending_command = _pop_pending_command(channel.cache_dict, from_user)
+                        if pending_command:
+                            content = pending_command
+                        else:
+                            replyPost = create_reply(CANCEL_PENDING_RESULT_TEXT, msg)
+                            return encrypt_func(replyPost.render())
+                    else:
+                        _set_pending_command(channel.cache_dict, from_user, content)
+                        replyPost = create_reply(_pending_result_prompt(pending_result.title), msg)
+                        return encrypt_func(replyPost.render())
+
+                if content == "1" and from_user in channel.running:
+                    technical_title = _get_running_technical_title(channel, from_user)
+                    if technical_title:
+                        replyPost = create_reply(RUNNING_TECHNICAL_ANALYSIS_TEXT.format(technical_title), msg)
+                        return encrypt_func(replyPost.render())
+
                 # New request
                 if (
-                    channel.cache_dict.get(from_user) is None
+                    _peek_cached_result(channel.cache_dict, from_user) is None
                     and from_user not in channel.running
                     or content.startswith("#")
                     and message_id not in channel.request_cnt  # insert the godcmd
@@ -87,9 +451,15 @@ class Query:
                     logger.debug("[wechatmp] context: {} {} {}".format(context, wechatmp_msg, supported))
 
                     if supported and context:
-                        channel.running.add(from_user)
+                        permission_prompt = _investment_permission_prompt(from_user, content)
+                        if permission_prompt:
+                            replyPost = create_reply(permission_prompt, msg)
+                            return encrypt_func(replyPost.render())
+                        route = _investment_route(content)
+                        is_technical_analysis = _is_technical_analysis_route(route)
+                        _mark_running(channel, from_user, is_technical_analysis, content)
                         channel.produce(context)
-                        if _is_investment_command(content):
+                        if is_technical_analysis:
                             replyPost = create_reply(_investment_ack_text(content), msg)
                             return encrypt_func(replyPost.render())
                     else:
@@ -154,72 +524,29 @@ class Query:
                 channel.request_cnt.pop(message_id)
 
                 # no return because of bandwords or other reasons
-                if from_user not in channel.cache_dict and from_user not in channel.running:
+                if _peek_cached_result(channel.cache_dict, from_user) is None and from_user not in channel.running:
                     return "success"
 
                 # Only one request can access to the cached data
-                try:
-                    (reply_type, reply_content) = channel.cache_dict[from_user].pop(0)
-                    if not channel.cache_dict[from_user]:  # If popping the message makes the list empty, delete the user entry from cache
-                        del channel.cache_dict[from_user]
-                except IndexError:
-                    return "success"
-
-                if reply_type == "text":
-                    if len(reply_content.encode("utf8")) <= MAX_UTF8_LEN:
-                        reply_text = reply_content
-                    else:
-                        continue_text = "\n【未完待续，回复任意文字以继续】"
-                        splits = split_string_by_utf8_length(
-                            reply_content,
-                            MAX_UTF8_LEN - len(continue_text.encode("utf-8")),
-                            max_split=1,
-                        )
-                        reply_text = splits[0] + continue_text
-                        channel.cache_dict[from_user].append(("text", splits[1]))
-
-                    logger.info(
-                        "[wechatmp] Request {} do send to {} {}: {}\n{}".format(
-                            request_cnt,
-                            from_user,
-                            message_id,
-                            content,
-                            reply_text,
-                        )
-                    )
-                    replyPost = create_reply(reply_text, msg)
-                    return encrypt_func(replyPost.render())
-
-                elif reply_type == "voice":
-                    media_id = reply_content
-                    asyncio.run_coroutine_threadsafe(channel.delete_media(media_id), channel.delete_media_loop)
-                    logger.info(
-                        "[wechatmp] Request {} do send to {} {}: {} voice media_id {}".format(
-                            request_cnt,
-                            from_user,
-                            message_id,
-                            content,
-                            media_id,
-                        )
-                    )
-                    replyPost = VoiceReply(message=msg)
-                    replyPost.media_id = media_id
-                    return encrypt_func(replyPost.render())
-
-                elif reply_type == "image":
-                    media_id = reply_content
-                    logger.info(
-                        "[wechatmp] Request {} do send to {} {}: {} image media_id {}".format(
-                            request_cnt,
-                            from_user,
-                            message_id,
-                            content,
-                            media_id,
-                        )
-                    )
-                    replyPost = ImageReply(message=msg)
-                    replyPost.media_id = media_id
-                    return encrypt_func(replyPost.render())
+                pending_result = _peek_cached_result(channel.cache_dict, from_user)
+                if pending_result is not None:
+                    permission_prompt = _permission_prompt_for_cached_result(from_user, pending_result)
+                    if permission_prompt:
+                        replyPost = create_reply(permission_prompt, msg)
+                        return encrypt_func(replyPost.render())
+                cached_item = _pop_cached_reply(channel.cache_dict, from_user)
+                return _render_cached_reply(
+                    channel,
+                    msg,
+                    encrypt_func,
+                    from_user,
+                    message_id,
+                    content,
+                    request_cnt,
+                    cached_item,
+                    pending_result.title if pending_result is not None else "",
+                    getattr(pending_result, "service_type", "") if pending_result is not None else "",
+                )
 
             elif msg.type == "event":
                 logger.info("[wechatmp] Event {} from {}".format(msg.event, msg.source))

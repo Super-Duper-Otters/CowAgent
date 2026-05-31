@@ -10,12 +10,13 @@ import requests
 import web
 from wechatpy.crypto import WeChatCrypto
 from wechatpy.exceptions import WeChatClientException
-from collections import defaultdict
 
 from bridge.context import *
 from bridge.reply import *
 from channel.chat_channel import ChatChannel
 from channel.wechatmp.common import *
+from channel.wechatmp.media_cache import image_media_cache, local_image_media_key
+from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 from channel.wechatmp.wechatmp_client import WechatMPClient
 from common.log import logger
 from common.singleton import singleton
@@ -39,7 +40,9 @@ except ImportError as e:
 class WechatMPChannel(ChatChannel):
     def __init__(self, passive_reply=True):
         super().__init__()
-        self.passive_reply = passive_reply
+        if passive_reply is False:
+            logger.warning("[wechatmp] active reply mode is disabled; falling back to passive reply")
+        self.passive_reply = True
         self.NOT_SUPPORT_REPLYTYPE = []
         self._http_server = None
         appid = conf().get("wechatmp_app_id")
@@ -48,16 +51,16 @@ class WechatMPChannel(ChatChannel):
         aes_key = conf().get("wechatmp_aes_key")
         self.client = WechatMPClient(appid, secret)
         self.crypto = None
-        self.active_fallback_cache = defaultdict(list)
-        self.active_running = set()
-        self.active_fallback_lock = threading.Lock()
         if aes_key:
             self.crypto = WeChatCrypto(token, aes_key, appid)
         if self.passive_reply:
             # Cache the reply to the user's first message
-            self.cache_dict = defaultdict(list)
+            self.cache_dict = PassiveReplyCache()
             # Record whether the current message is being processed
             self.running = set()
+            self.technical_analysis_titles = {}
+            self.running_started_at = {}
+            self.running_lock = threading.RLock()
             # Count the request from wechat official server by message_id
             self.request_cnt = dict()
             # The permanent media need to be deleted to avoid media number limit
@@ -67,36 +70,23 @@ class WechatMPChannel(ChatChannel):
             t.start()
 
     def queue_active_fallback(self, receiver, reply_type, reply_content):
-        with self.active_fallback_lock:
-            self.active_fallback_cache[receiver].append((reply_type, reply_content))
+        logger.warning("[wechatmp] active fallback is disabled; ignore fallback for {}".format(receiver))
 
     def pop_active_fallback(self, receiver):
-        with self.active_fallback_lock:
-            if not self.active_fallback_cache.get(receiver):
-                return None
-            item = self.active_fallback_cache[receiver].pop(0)
-            if not self.active_fallback_cache[receiver]:
-                del self.active_fallback_cache[receiver]
-            return item
+        return None
 
     def mark_active_running(self, receiver):
-        with self.active_fallback_lock:
-            self.active_running.add(receiver)
+        logger.warning("[wechatmp] active running state is disabled; ignore mark for {}".format(receiver))
 
     def try_mark_active_running(self, receiver):
-        with self.active_fallback_lock:
-            if receiver in self.active_running:
-                return False
-            self.active_running.add(receiver)
-            return True
+        logger.warning("[wechatmp] active running state is disabled; ignore try_mark for {}".format(receiver))
+        return False
 
     def mark_active_done(self, receiver):
-        with self.active_fallback_lock:
-            self.active_running.discard(receiver)
+        logger.warning("[wechatmp] active running state is disabled; ignore done for {}".format(receiver))
 
     def is_active_running(self, receiver):
-        with self.active_fallback_lock:
-            return receiver in self.active_running
+        return False
 
     def _wechat_error_text(self, action, exc):
         raw = remove_markdown_symbol(str(exc) or type(exc).__name__)
@@ -107,10 +97,7 @@ class WechatMPChannel(ChatChannel):
         return "{}失败：{}".format(action, raw)
 
     def startup(self):
-        if self.passive_reply:
-            urls = ("/wx", "channel.wechatmp.passive_reply.Query")
-        else:
-            urls = ("/wx", "channel.wechatmp.active_reply.Query")
+        urls = ("/wx", "channel.wechatmp.passive_reply.Query")
         app = web.application(urls, globals(), autoreload=False)
         port = conf().get("wechatmp_port", 8080)
         func = web.httpserver.StaticMiddleware(app.wsgifunc())
@@ -146,8 +133,13 @@ class WechatMPChannel(ChatChannel):
                 if business_reply.handled:
                     output_files = [path for path in business_reply.output_files if path]
                     if business_reply.success and output_files:
-                        return Reply(ReplyType.IMAGE_URL, output_files)
-                    return Reply(ReplyType.TEXT, business_reply.reply_text)
+                        result = Reply(ReplyType.IMAGE_URL, output_files)
+                    else:
+                        result = Reply(ReplyType.TEXT, business_reply.reply_text)
+                    result.investment_service_type = business_reply.service_type
+                    if getattr(business_reply, "request_id", ""):
+                        result.investment_request_id = business_reply.request_id
+                    return result
             except Exception as exc:
                 logger.exception("[wechatmp] investment router failed: {}".format(exc))
                 from business.investment.constants import ErrorCode, user_message
@@ -182,6 +174,16 @@ class WechatMPChannel(ChatChannel):
             return value, image_type
         raise ValueError("unsupported image content")
 
+    def _record_investment_delivery_warning(self, request_id, detail):
+        if not request_id:
+            return
+        try:
+            from business.investment.records import append_request_warning
+
+            append_request_warning(request_id, detail)
+        except Exception as exc:
+            logger.warning("[wechatmp] record investment delivery warning failed: {}".format(exc))
+
     async def delete_media(self, media_id):
         logger.debug("[wechatmp] permanent media {} will be deleted in 10s".format(media_id))
         await asyncio.sleep(10)
@@ -191,10 +193,14 @@ class WechatMPChannel(ChatChannel):
     def send(self, reply: Reply, context: Context):
         receiver = context["receiver"]
         if self.passive_reply:
+            self.cache_dict.cleanup_expired()
+            cache_title = context.content if isinstance(context.content, str) else ""
+            investment_request_id = getattr(reply, "investment_request_id", "")
+            investment_service_type = getattr(reply, "investment_service_type", "")
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
                 reply_text = remove_markdown_symbol(reply.content)
                 logger.info("[wechatmp] text cached, receiver {}\n{}".format(receiver, reply_text))
-                self.cache_dict[receiver].append(("text", reply_text))
+                self.cache_dict.append_reply(receiver, "text", reply_text, cache_title, service_type=investment_service_type)
             elif reply.type == ReplyType.VOICE:
                 try:
                     voice_file_path = reply.content
@@ -216,14 +222,21 @@ class WechatMPChannel(ChatChannel):
                             return
                         media_id = response["media_id"]
                         logger.info("[wechatmp] voice uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                        self.cache_dict[receiver].append(("voice", media_id))
+                        self.cache_dict.append_reply(receiver, "voice", media_id, cache_title, service_type=investment_service_type)
                 except ImportError as e:
                     logger.error("[wechatmp] voice conversion failed: {}".format(e))
                     logger.error("[wechatmp] please install pydub: pip install pydub")
                     return
 
             elif reply.type in (ReplyType.IMAGE_URL, ReplyType.IMAGE):  # 从网络或本地文件读取图片
+                uploaded_media_ids = []
                 for image_content in self._reply_media_items(reply.content):
+                    media_cache_key = local_image_media_key(image_content)
+                    cached_media_id = image_media_cache.get(media_cache_key)
+                    if cached_media_id:
+                        logger.info("[wechatmp] image media cache hit, receiver {}, media_id {}".format(receiver, cached_media_id))
+                        uploaded_media_ids.append(cached_media_id)
+                        continue
                     image_storage, image_type = self._image_storage_from_path_or_url(image_content)
                     filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                     content_type = "image/" + image_type
@@ -231,11 +244,26 @@ class WechatMPChannel(ChatChannel):
                         response = self.client.media.upload("image", (filename, image_storage, content_type))
                         logger.debug("[wechatmp] upload image response: {}".format(response))
                     except WeChatClientException as e:
+                        warning = self._wechat_error_text("图片上传", e)
                         logger.error("[wechatmp] upload image failed: {}".format(e))
+                        self._record_investment_delivery_warning(investment_request_id, warning)
+                        self.cache_dict.discard_result(receiver)
                         return
+                    finally:
+                        local_image_path = image_content[7:] if isinstance(image_content, str) and image_content.startswith("file://") else image_content
+                        if isinstance(local_image_path, str) and os.path.exists(local_image_path):
+                            image_storage.close()
                     media_id = response["media_id"]
+                    image_media_cache.set(media_cache_key, media_id)
                     logger.info("[wechatmp] image uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                    self.cache_dict[receiver].append(("image", media_id))
+                    uploaded_media_ids.append(media_id)
+                try:
+                    for media_id in uploaded_media_ids:
+                        self.cache_dict.append_reply(receiver, "image", media_id, cache_title, service_type=investment_service_type)
+                except Exception as e:
+                    logger.error("[wechatmp] cache image failed: {}".format(e))
+                    self.cache_dict.discard_result(receiver)
+                    return
             elif reply.type == ReplyType.VIDEO_URL:  # 从网络下载视频
                 video_url = reply.content
                 video_res = requests.get(video_url, stream=True)
@@ -254,7 +282,7 @@ class WechatMPChannel(ChatChannel):
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict[receiver].append(("video", media_id))
+                self.cache_dict.append_reply(receiver, "video", media_id, cache_title, service_type=investment_service_type)
 
             elif reply.type == ReplyType.VIDEO:  # 从文件读取视频
                 video_storage = reply.content
@@ -270,7 +298,7 @@ class WechatMPChannel(ChatChannel):
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))
-                self.cache_dict[receiver].append(("video", media_id))
+                self.cache_dict.append_reply(receiver, "video", media_id, cache_title, service_type=investment_service_type)
 
         else:
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
@@ -396,15 +424,21 @@ class WechatMPChannel(ChatChannel):
     def _success_callback(self, session_id, context, **kwargs):  # 线程异常结束时的回调函数
         logger.debug("[wechatmp] Success to generate reply, msgId={}".format(context["msg"].msg_id))
         if self.passive_reply:
-            self.running.remove(session_id)
+            with self.running_lock:
+                self.running.discard(session_id)
+                self.running_started_at.pop(session_id, None)
+                self.technical_analysis_titles.pop(session_id, None)
         else:
             self.mark_active_done(session_id)
 
     def _fail_callback(self, session_id, exception, context, **kwargs):  # 线程异常结束时的回调函数
         logger.exception("[wechatmp] Fail to generate reply to user, msgId={}, exception={}".format(context["msg"].msg_id, exception))
         if self.passive_reply:
-            assert session_id not in self.cache_dict
-            self.running.remove(session_id)
+            self.cache_dict.discard_result(session_id)
+            with self.running_lock:
+                self.running.discard(session_id)
+                self.running_started_at.pop(session_id, None)
+                self.technical_analysis_titles.pop(session_id, None)
         else:
             from business.investment.constants import ErrorCode, user_message
 

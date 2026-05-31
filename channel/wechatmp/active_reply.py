@@ -84,6 +84,21 @@ def _running_investment_job(openid, content):
     return None
 
 
+def _investment_permission_prompt(openid, route):
+    try:
+        if not route.matched:
+            return ""
+        from business.investment.user_service import verify_permission
+
+        permission = verify_permission(openid, route.service_type)
+        if permission.allowed:
+            return ""
+        return permission.user_prompt
+    except Exception as exc:
+        logger.debug("[wechatmp] active investment permission check failed: {}".format(exc))
+        return ""
+
+
 # This class is instantiated once per query
 class Query:
     def GET(self):
@@ -139,6 +154,9 @@ class Query:
                         route = parse_route(content)
                         if not route.matched:
                             return _render_text_reply(DEFAULT_UNMATCHED_PROMPT, msg, encrypt_func)
+                        permission_prompt = _investment_permission_prompt(from_user, route)
+                        if permission_prompt:
+                            return _render_text_reply(permission_prompt, msg, encrypt_func)
                         if _running_investment_job(from_user, content):
                             logger.info("[wechatmp] active investment job already running for {}".format(from_user))
                             return _render_text_reply(ACTIVE_WAITING_TEXT, msg, encrypt_func)

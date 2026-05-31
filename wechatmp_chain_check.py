@@ -588,9 +588,7 @@ def check_direct_media_upload(config: dict[str, Any], image_path: Path | None, r
         sys.path.insert(0, str(root))
         from channel.wechatmp.wechatmp_client import WechatMPClient
 
-        wechat_session = requests.Session()
-        wechat_session.trust_env = False
-        client = WechatMPClient(appid, secret, session=wechat_session)
+        client = WechatMPClient(appid, secret)
         client.fetch_access_token()
         content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
         with image_path.open("rb") as handle:
@@ -624,9 +622,7 @@ def check_direct_customer_service_image_send(
         sys.path.insert(0, str(root))
         from channel.wechatmp.wechatmp_client import WechatMPClient
 
-        wechat_session = requests.Session()
-        wechat_session.trust_env = False
-        client = WechatMPClient(appid, secret, session=wechat_session)
+        client = WechatMPClient(appid, secret)
         client.fetch_access_token()
         content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
         with image_path.open("rb") as handle:
