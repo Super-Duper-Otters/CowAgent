@@ -66,6 +66,7 @@ def _fake_passive_post(monkeypatch, passive_reply, channel, current_message, pro
         ),
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
         "business.investment.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
@@ -846,6 +847,7 @@ def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
     current_message = {"content": "天娱数科 技术分析", "msg_id": "msg-tech-ack"}
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
 
     response = passive_reply.Query().POST()
 
@@ -919,6 +921,7 @@ def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(m
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: True, raising=False)
     monkeypatch.setattr(
         "business.investment.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
@@ -932,7 +935,7 @@ def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(m
         raising=False,
     )
 
-    assert passive_reply.Query().POST() == "已收到，正在运行「天娱数科」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。"
+    assert passive_reply.Query().POST() == "已命中「天娱数科」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。"
 
     current_message["content"] = "1"
     current_message["msg_id"] = "msg-tech-cache-hit-confirm"
@@ -990,6 +993,7 @@ def test_wechatmp_passive_cache_miss_returns_running_ack(monkeypatch):
         ),
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
         "business.investment.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
@@ -1128,6 +1132,7 @@ def test_wechatmp_passive_one_without_pending_result_uses_normal_request_path(mo
         ),
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
         "business.investment.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
@@ -1783,6 +1788,7 @@ def test_wechatmp_passive_technical_analysis_does_not_wait_for_ready_image(monke
         ),
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
         "business.investment.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),

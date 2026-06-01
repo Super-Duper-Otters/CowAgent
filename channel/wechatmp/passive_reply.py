@@ -18,6 +18,7 @@ from config import conf, subscribe_msg
 
 IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
 PASSIVE_TECHNICAL_ACK_TEXT = "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。"
+PASSIVE_TECHNICAL_CACHE_HIT_TEXT = "已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。"
 CANCEL_PENDING_RESULT_TEXT = "已放弃本次技术分析结果。"
 RUNNING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。"
 PENDING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。"
@@ -65,9 +66,26 @@ def _technical_analysis_target(content: str) -> str:
     return text or "本次"
 
 
+def _technical_analysis_cache_hit(content: str) -> bool:
+    route = _investment_route(content)
+    if not _is_technical_analysis_route(route):
+        return False
+    try:
+        from business.investment.technical_analysis import prepare_technical_analysis_cache_context
+        from business.investment.cache_service import find_cache_entry_by_key
+
+        context = prepare_technical_analysis_cache_context(content, route.target_text)
+        return bool(context.cache_key and find_cache_entry_by_key(context.cache_key) is not None)
+    except Exception as exc:
+        logger.debug("[wechatmp] technical analysis cache check failed: {}".format(exc))
+        return False
+
+
 def _investment_ack_text(content: str) -> str:
     route = _investment_route(content)
     if _is_technical_analysis_route(route):
+        if _technical_analysis_cache_hit(content):
+            return PASSIVE_TECHNICAL_CACHE_HIT_TEXT.format(_technical_analysis_target(content))
         return PASSIVE_TECHNICAL_ACK_TEXT.format(_technical_analysis_target(content))
     return IMMEDIATE_ACK_TEXT
 
