@@ -14,6 +14,7 @@ from .cache_service import (
     build_cache_key,
     find_cache_entry,
     find_cache_entry_by_key,
+    find_latest_cache_entry,
     increment_cache_hit,
     version_fingerprint,
 )
@@ -235,6 +236,24 @@ def _find_compatible_cache_entry_for_market_date(
     return None
 
 
+def _find_latest_current_cache_entry(
+    *,
+    symbol: str,
+    version_fingerprint: str,
+):
+    for _attempt in range(5):
+        cached = find_latest_cache_entry(
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=symbol,
+            version_fingerprint=version_fingerprint,
+        )
+        if cached is None:
+            return None
+        if _technical_analysis_cache_entry_allowed(cached):
+            return cached
+    return None
+
+
 def _cache_entry_owner_matches_versions(
     entry: cache_service.CacheEntry,
     *,
@@ -308,16 +327,20 @@ def prepare_technical_analysis_cache_context(
     combined_version = _cache_version_fingerprint(ta_version, renderer_version, template_version)
     resolved_market_date = MarketDateResolver().resolve(symbol, requested_market_date)
     if not resolved_market_date.known or not resolved_market_date.market_date:
+        cached = _find_latest_current_cache_entry(
+            symbol=symbol,
+            version_fingerprint=combined_version,
+        )
         return TechnicalAnalysisCacheContext(
             normalized_target=symbol,
-            market_date="",
+            market_date=cached.market_date if cached is not None else "",
             program_version=program_version,
             ta_version=ta_version,
             renderer_version=renderer_version,
             template_version=template_version,
             version_fingerprint=combined_version,
-            cache_lookup_version_fingerprint=combined_version,
-            cache_key="",
+            cache_lookup_version_fingerprint=cached.version_fingerprint if cached is not None else combined_version,
+            cache_key=cached.cache_key if cached is not None else "",
             resolved_market_date=resolved_market_date,
         )
     cached = find_cache_entry(
@@ -397,7 +420,18 @@ def run_technical_analysis(
         resolved_market_date = cache_context.resolved_market_date
     else:
         resolved_market_date = MarketDateResolver().resolve(symbol, requested_market_date)
-    if resolved_market_date.known and resolved_market_date.market_date:
+    if use_cache_context and cache_context.cache_key:
+        cached = _find_cache_context_entry(
+            cache_context,
+            symbol=symbol,
+            expected_market_date=resolved_market_date.market_date if resolved_market_date.known else cache_context.market_date,
+            expected_version_fingerprint=cache_lookup_version,
+            current_version_fingerprint=combined_version,
+            ta_version=ta_version,
+            renderer_version=renderer_version,
+            template_version=template_version,
+        )
+    if cached is None and resolved_market_date.known and resolved_market_date.market_date:
         if use_cache_context and cache_context.cache_key:
             cached = _find_cache_context_entry(
                 cache_context,

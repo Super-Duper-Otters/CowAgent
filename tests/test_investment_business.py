@@ -4263,7 +4263,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     assert "2026-05-25" in cache_entry.cache_key
 
 
-def test_technical_analysis_unknown_market_date_does_not_reuse_recent_latest_cache(
+def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import cache_service, technical_analysis
@@ -4305,12 +4305,12 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_recent_latest_cac
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
     assert reply.success is True
-    assert reply.output_files != [str(cached_card), str(cached_chart)]
-    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    assert reply.output_files == [str(cached_card), str(cached_chart)]
+    assert calls == []
     record = list_request_records(limit=1)[0]
-    assert record.cache_hit is False
-    assert record.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-25", combined_version)
-    assert record.market_date == "2026-05-25"
+    assert record.cache_hit is True
+    assert record.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", combined_version)
+    assert record.market_date == "2026-05-29"
     assert record.normalized_target == "002354.SZ"
     cache_entries = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS, limit=10)
     cached_entry = next(
@@ -4318,10 +4318,10 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_recent_latest_cac
         for entry in cache_entries
         if entry.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", combined_version)
     )
-    assert cached_entry.hit_count == 0
+    assert cached_entry.hit_count == 1
 
 
-def test_technical_analysis_unknown_cache_context_does_not_reuse_latest_cache_when_program_wrapper_changes(
+def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_program_wrapper_changes(
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import cache_service, technical_analysis
@@ -4365,8 +4365,8 @@ def test_technical_analysis_unknown_cache_context_does_not_reuse_latest_cache_wh
 
     assert context.program_version == "sha256:program-v2"
     assert context.version_fingerprint == old_cache_version
-    assert context.cache_key == ""
-    assert context.market_date == ""
+    assert context.cache_key == cache_key
+    assert context.market_date == "2026-05-29"
     assert context.cache_lookup_version_fingerprint == old_cache_version
 
 
