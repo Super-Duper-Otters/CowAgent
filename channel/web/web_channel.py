@@ -921,6 +921,9 @@ class WebChannel(ChatChannel):
             '/api/investment/export/requests.xlsx', 'InvestmentRequestRecordsExportHandler',
             '/api/investment/export/users.xlsx', 'InvestmentUsersExportHandler',
             '/api/investment/auth/me', 'InvestmentAuthMeHandler',
+            '/api/investment/admin-users/(.*)/status/(enable|disable)', 'InvestmentAdminUserStatusHandler',
+            '/api/investment/admin-users/(.*)/password', 'InvestmentAdminUserPasswordHandler',
+            '/api/investment/admin-users', 'InvestmentAdminUsersHandler',
             '/api/investment/users/import', 'InvestmentUsersImportHandler',
             '/api/investment/users', 'InvestmentUsersHandler',
             '/api/investment/users/(.*)/disable', 'InvestmentUserDisableHandler',
@@ -2679,6 +2682,89 @@ class InvestmentAuthMeHandler:
             return _investment_json_response({"status": "success", "admin": _investment_admin_payload(admin)})
         except web.HTTPError as error:
             return error.data
+
+
+def _investment_admin_user_payload(admin):
+    return {
+        "id": admin.id,
+        "username": admin.username,
+        "role": admin.role,
+        "enabled": admin.enabled,
+        "last_login_at": admin.last_login_at,
+    }
+
+
+class InvestmentAdminUsersHandler:
+    def GET(self):
+        _require_investment_permission("admin_users.read")
+        try:
+            from business.investment.auth_service import list_admin_users
+
+            return _investment_json_response({
+                "status": "success",
+                "users": [_investment_admin_user_payload(admin) for admin in list_admin_users()],
+            })
+        except Exception as e:
+            logger.error(f"[Investment] admin users GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        _require_investment_permission("admin_users.write")
+        try:
+            from business.investment.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
+
+            body = _investment_json_body()
+            username = str(body.get("username", "")).strip()
+            if not username:
+                return _investment_json_response({"status": "error", "message": "username required"})
+            role = str(body.get("role", "") or "readonly").strip()
+            password = str(body.get("password", "") or "")
+            enabled = body.get("enabled")
+            existing = get_admin_user(username)
+            if existing:
+                update_admin_user(username, role=role or existing.role, enabled=bool(enabled) if enabled is not None else None)
+                if password:
+                    reset_admin_password(username, password)
+                action = "updated"
+            else:
+                if not password:
+                    return _investment_json_response({"status": "error", "message": "password required"})
+                create_admin_user(username, password, role=role or "readonly", enabled=bool(enabled) if enabled is not None else True)
+                action = "created"
+            return _investment_json_response({"status": "success", "action": action})
+        except Exception as e:
+            logger.error(f"[Investment] admin users POST error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentAdminUserStatusHandler:
+    def POST(self, username, action):
+        _require_investment_permission("admin_users.write")
+        try:
+            from business.investment.auth_service import update_admin_user
+
+            update_admin_user(username, enabled=(action == "enable"))
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] admin user status error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentAdminUserPasswordHandler:
+    def POST(self, username):
+        _require_investment_permission("admin_users.write")
+        try:
+            from business.investment.auth_service import reset_admin_password
+
+            body = _investment_json_body()
+            password = str(body.get("password", "") or "")
+            if not password:
+                return _investment_json_response({"status": "error", "message": "password required"})
+            reset_admin_password(username, password)
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] admin user password reset error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
 
 
 class InvestmentRequestRecordsExportHandler:

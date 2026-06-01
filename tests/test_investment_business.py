@@ -82,18 +82,61 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert require_permission(poster, "users.write").allowed is False
 
 
-def test_investment_migrations_do_not_seed_fixed_default_admin_accounts(investment_env):
+def test_investment_migrations_seed_default_admin_and_posters(investment_env):
     from business.investment.auth_service import authenticate_admin
 
-    assert authenticate_admin("admin", "password") is None
+    admin = authenticate_admin("admin", "password")
+    assert admin is not None
+    assert admin.role == "admin"
+
     for username in ("poster1", "poster2", "poster3"):
-        assert authenticate_admin(username, "password") is None
+        poster = authenticate_admin(username, "password")
+        assert poster is not None
+        assert poster.role == "poster"
+
+
+def test_admin_user_service_lists_updates_and_resets_password(investment_env):
+    from business.investment.auth_service import (
+        authenticate_admin,
+        create_admin_user,
+        list_admin_users,
+        reset_admin_password,
+        update_admin_user,
+    )
+
+    create_admin_user("ops-a", "old-pass", role="uploader")
+
+    users = {user.username: user for user in list_admin_users()}
+    assert users["ops-a"].role == "uploader"
+    assert users["ops-a"].enabled is True
+    assert "password_hash" not in users["ops-a"].__dict__
+
+    update_admin_user("ops-a", role="technical_admin", enabled=False)
+    assert authenticate_admin("ops-a", "old-pass") is None
+    disabled = {user.username: user for user in list_admin_users()}["ops-a"]
+    assert disabled.role == "technical_admin"
+    assert disabled.enabled is False
+
+    update_admin_user("ops-a", enabled=True)
+    reset_admin_password("ops-a", "new-pass")
+    assert authenticate_admin("ops-a", "old-pass") is None
+    reset_user = authenticate_admin("ops-a", "new-pass")
+    assert reset_user is not None
+    assert reset_user.role == "technical_admin"
 
 
 def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
-    from channel.web.web_channel import InvestmentConfigHandler, InvestmentHealthHandler, InvestmentStocksHandler, InvestmentUsersHandler
+    from channel.web.web_channel import (
+        InvestmentAdminUserPasswordHandler,
+        InvestmentAdminUserStatusHandler,
+        InvestmentAdminUsersHandler,
+        InvestmentConfigHandler,
+        InvestmentHealthHandler,
+        InvestmentStocksHandler,
+        InvestmentUsersHandler,
+    )
 
     create_admin_user("admin-a", "admin-pass", role="admin")
     create_admin_user("uploader-a", "uploader-pass", role="uploader")
@@ -162,6 +205,54 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     assert poster_denied["status"] == "error"
     assert poster_denied["code"] == "permission_denied"
     assert poster_denied["permission"] == "config.read"
+
+    with pytest.raises(web_channel.web.HTTPError) as poster_admin_error:
+        InvestmentAdminUsersHandler().GET()
+    poster_admin_denied = json.loads(poster_admin_error.value.data)
+    assert poster_admin_denied["status"] == "error"
+    assert poster_admin_denied["code"] == "permission_denied"
+
+    use_token(admin_token)
+    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace())
+    admin_users = json.loads(InvestmentAdminUsersHandler().GET())
+    assert admin_users["status"] == "success"
+    assert any(item["username"] == "admin-a" and item["role"] == "admin" for item in admin_users["users"])
+    assert all("password" not in item for item in admin_users["users"])
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"username": "ops-web", "password": "ops-pass", "role": "uploader"}).encode("utf-8"),
+    )
+    created_admin = json.loads(InvestmentAdminUsersHandler().POST())
+    assert created_admin["status"] == "success"
+    assert created_admin["action"] == "created"
+    assert authenticate_admin("ops-web", "ops-pass").role == "uploader"
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"username": "ops-web", "role": "technical_admin"}).encode("utf-8"),
+    )
+    updated_admin = json.loads(InvestmentAdminUsersHandler().POST())
+    assert updated_admin["status"] == "success"
+    assert updated_admin["action"] == "updated"
+    assert authenticate_admin("ops-web", "ops-pass").role == "technical_admin"
+
+    disabled_admin = json.loads(InvestmentAdminUserStatusHandler().POST("ops-web", "disable"))
+    assert disabled_admin["status"] == "success"
+    assert authenticate_admin("ops-web", "ops-pass") is None
+
+    enabled_admin = json.loads(InvestmentAdminUserStatusHandler().POST("ops-web", "enable"))
+    assert enabled_admin["status"] == "success"
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"password": "reset-pass"}).encode("utf-8"),
+    )
+    reset_admin = json.loads(InvestmentAdminUserPasswordHandler().POST("ops-web"))
+    assert reset_admin["status"] == "success"
+    assert authenticate_admin("ops-web", "reset-pass").role == "technical_admin"
 
 
 def test_investment_auth_me_allows_poster_without_records_permission(investment_env, monkeypatch):

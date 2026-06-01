@@ -65,6 +65,7 @@ class AdminUser:
     role: str
     enabled: bool = True
     bootstrap: bool = False
+    last_login_at: str = ""
 
 
 @dataclass
@@ -122,6 +123,7 @@ def _row_to_admin(row) -> AdminUser | None:
         username=item["username"],
         role=item["role"],
         enabled=bool(item["enabled"]),
+        last_login_at=item.get("last_login_at") or "",
     )
 
 
@@ -148,6 +150,40 @@ def create_admin_user(username: str, password: str, *, role: str = "readonly", e
             return int(result.inserted_primary_key[0])
         row = conn.execute(select(investment_admin_users.c.id).where(investment_admin_users.c.username == username)).fetchone()
     return int(row_to_dict(row)["id"])
+
+
+def list_admin_users() -> list[AdminUser]:
+    with connect() as conn:
+        rows = conn.execute(select(investment_admin_users).order_by(investment_admin_users.c.username.asc())).fetchall()
+    return [admin for row in rows if (admin := _row_to_admin(row))]
+
+
+def get_admin_user(username: str) -> AdminUser | None:
+    with connect() as conn:
+        row = conn.execute(select(investment_admin_users).where(investment_admin_users.c.username == username)).fetchone()
+    return _row_to_admin(row)
+
+
+def update_admin_user(username: str, *, role: str | None = None, enabled: bool | None = None) -> None:
+    values = {}
+    if role is not None:
+        values["role"] = normalize_role(role)
+    if enabled is not None:
+        values["enabled"] = 1 if enabled else 0
+    if not values:
+        return
+    values["updated_at"] = _now()
+    with connect() as conn:
+        conn.execute(update(investment_admin_users).where(investment_admin_users.c.username == username).values(**values))
+
+
+def reset_admin_password(username: str, password: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            update(investment_admin_users)
+            .where(investment_admin_users.c.username == username)
+            .values(password_hash=hash_password(password), updated_at=_now())
+        )
 
 
 def authenticate_admin(username: str, password: str) -> AdminUser | None:

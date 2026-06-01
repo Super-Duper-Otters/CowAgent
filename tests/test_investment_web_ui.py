@@ -194,6 +194,20 @@ def test_investment_user_and_skill_edit_buttons_call_write_apis():
     assert "await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(selectedVersion)}/activate`, {" in js
 
 
+def test_investment_users_page_splits_customers_and_admin_staff():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert "let currentInvestmentUserPanel = 'customers';" in js
+    assert "function switchInvestmentUserPanel(" in js
+    assert "renderInvestmentCustomerUsers(" in js
+    assert "renderInvestmentAdminUsers(" in js
+    assert "/api/investment/admin-users" in js
+    assert "/api/investment/admin-users/${encodeURIComponent(username)}/status/${action}" in js
+    assert "/api/investment/admin-users/${encodeURIComponent(username)}/password" in js
+    assert "investmentCan('admin_users.read')" in js
+    assert "investmentButtonIfCan('admin_users.write'" in js
+
+
 def test_investment_config_no_longer_embeds_skill_manager():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 

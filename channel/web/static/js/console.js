@@ -442,6 +442,7 @@ const INVEST_CONTENT_POLL_INTERVAL_MS = 2000;
 let investmentContentPollTimer = null;
 let currentInvestmentAdmin = null;
 let currentConsoleAuthenticated = false;
+let currentInvestmentUserPanel = 'customers';
 let currentInvestmentSkills = [];
 let currentInvestmentSkillDialogKey = '';
 let investmentRecordsState = {
@@ -918,6 +919,34 @@ function renderInvestmentStockRows(stocks = []) {
 
 async function renderInvestmentUsers() {
     const element = investmentContentEl('invest-users-content');
+    const canSeeAdminUsers = investmentCan('admin_users.read');
+    if (currentInvestmentUserPanel === 'admins' && !canSeeAdminUsers) {
+        currentInvestmentUserPanel = 'customers';
+    }
+    element.innerHTML = `
+        <div class="investment-tabs">
+            <button class="investment-tab ${currentInvestmentUserPanel === 'customers' ? 'active' : ''}" onclick="switchInvestmentUserPanel('customers')">
+                <i class="fas fa-user-check"></i><span>客户</span>
+            </button>
+            ${canSeeAdminUsers ? `<button class="investment-tab ${currentInvestmentUserPanel === 'admins' ? 'active' : ''}" onclick="switchInvestmentUserPanel('admins')">
+                <i class="fas fa-user-shield"></i><span>后台人员</span>
+            </button>` : ''}
+        </div>
+        <div id="investment-users-panel-content"></div>`;
+    if (currentInvestmentUserPanel === 'admins') {
+        await renderInvestmentAdminUsers();
+    } else {
+        await renderInvestmentCustomerUsers();
+    }
+}
+
+function switchInvestmentUserPanel(panel) {
+    currentInvestmentUserPanel = panel === 'admins' ? 'admins' : 'customers';
+    renderInvestmentUsers();
+}
+
+async function renderInvestmentCustomerUsers() {
+    const element = document.getElementById('investment-users-panel-content') || investmentContentEl('invest-users-content');
     investmentLoading(element);
     try {
         const data = await investmentFetchJson('/api/investment/users');
@@ -998,6 +1027,134 @@ function renderInvestmentUsersTable(users) {
         <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>服务</th><th>状态</th><th>授权结束</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
+}
+
+async function renderInvestmentAdminUsers() {
+    const element = document.getElementById('investment-users-panel-content') || investmentContentEl('invest-users-content');
+    investmentLoading(element);
+    try {
+        const data = await investmentFetchJson('/api/investment/admin-users');
+        const users = data.users || [];
+        element.innerHTML = `
+            <div class="investment-layout">
+                <section class="investment-panel">
+                    <div class="investment-panel-title"><i class="fas fa-user-shield"></i><span>后台人员维护</span></div>
+                    <div class="investment-grid cols-3">
+                        ${investmentField('账号', 'invest-admin-username')}
+                        ${investmentField('初始密码', 'invest-admin-password', '', 'password')}
+                        <label class="investment-field">
+                            <span>角色</span>
+                            <select id="invest-admin-role">${investmentAdminRoleOptions('readonly')}</select>
+                        </label>
+                    </div>
+                    <div class="investment-service-row">
+                        <label><input id="invest-admin-enabled" type="checkbox" checked> 启用</label>
+                    </div>
+                    <div class="investment-actions">
+                        ${investmentButtonIfCan('admin_users.write', 'fa-floppy-disk', '保存后台人员', 'saveInvestmentAdminUser()', 'primary')}
+                        ${investmentButton('fa-rotate-left', '清空表单', 'resetInvestmentAdminUserForm()')}
+                    </div>
+                </section>
+                <section class="investment-table-panel full">
+                    <div class="investment-panel-title"><i class="fas fa-users-gear"></i><span>后台人员列表</span></div>
+                    ${renderInvestmentAdminUsersTable(users)}
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+function investmentAdminRoleOptions(selected) {
+    return ['admin', 'poster', 'uploader', 'technical_admin', 'readonly']
+        .map(role => `<option value="${role}" ${role === selected ? 'selected' : ''}>${escapeHtml(investmentAdminRoleLabel(role))}</option>`)
+        .join('');
+}
+
+function renderInvestmentAdminUsersTable(users) {
+    if (!users.length) return '<div class="investment-empty">暂无后台人员</div>';
+    const rows = users.map(user => `
+        <tr>
+            <td>${escapeHtml(user.username || '')}</td>
+            <td>${escapeHtml(investmentAdminRoleLabel(user.role || ''))}</td>
+            <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
+            <td>${escapeHtml(investmentFormatBeijingTime(user.last_login_at || '') || '-')}</td>
+            <td class="investment-row-actions">
+                ${investmentButtonIfCan('admin_users.write', 'fa-pen', '编辑', `fillInvestmentAdminUserForm('${encodeURIComponent(JSON.stringify(user))}')`)}
+                ${investmentButtonIfCan('admin_users.write', user.enabled ? 'fa-ban' : 'fa-check', user.enabled ? '停用' : '启用', `setInvestmentAdminUserStatus('${encodeURIComponent(user.username)}', '${user.enabled ? 'disable' : 'enable'}')`, user.enabled ? 'danger' : 'secondary')}
+                ${investmentButtonIfCan('admin_users.write', 'fa-key', '重置密码', `resetInvestmentAdminPassword('${encodeURIComponent(user.username)}')`)}
+            </td>
+        </tr>`).join('');
+    return investmentTableWrap(`<table class="investment-table">
+        <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>最近登录</th><th>动作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`);
+}
+
+function resetInvestmentAdminUserForm() {
+    const username = document.getElementById('invest-admin-username');
+    const password = document.getElementById('invest-admin-password');
+    const role = document.getElementById('invest-admin-role');
+    const enabled = document.getElementById('invest-admin-enabled');
+    if (username) username.value = '';
+    if (password) password.value = '';
+    if (role) role.value = 'readonly';
+    if (enabled) enabled.checked = true;
+}
+
+function fillInvestmentAdminUserForm(encoded) {
+    const user = JSON.parse(decodeURIComponent(encoded));
+    document.getElementById('invest-admin-username').value = user.username || '';
+    document.getElementById('invest-admin-password').value = '';
+    document.getElementById('invest-admin-role').value = user.role || 'readonly';
+    document.getElementById('invest-admin-enabled').checked = user.enabled !== false;
+}
+
+async function saveInvestmentAdminUser() {
+    const body = {
+        username: document.getElementById('invest-admin-username').value.trim(),
+        password: document.getElementById('invest-admin-password').value,
+        role: document.getElementById('invest-admin-role').value,
+        enabled: document.getElementById('invest-admin-enabled').checked,
+    };
+    try {
+        await investmentFetchJson('/api/investment/admin-users', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        showInvestmentToast('后台人员已保存');
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`保存后台人员失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function setInvestmentAdminUserStatus(encodedUsername, action) {
+    const username = decodeURIComponent(encodedUsername);
+    try {
+        await investmentFetchJson(`/api/investment/admin-users/${encodeURIComponent(username)}/status/${action}`, {method: 'POST'});
+        showInvestmentToast(action === 'enable' ? '后台人员已启用' : '后台人员已停用');
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`状态更新失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function resetInvestmentAdminPassword(encodedUsername) {
+    const username = decodeURIComponent(encodedUsername);
+    const password = window.prompt(`请输入 ${username} 的新密码`);
+    if (!password) return;
+    try {
+        await investmentFetchJson(`/api/investment/admin-users/${encodeURIComponent(username)}/password`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password}),
+        });
+        showInvestmentToast('密码已重置');
+    } catch (error) {
+        showInvestmentToast(`重置密码失败：${String(error.message || error)}`, 'error');
+    }
 }
 
 function resetInvestmentUserForm() {

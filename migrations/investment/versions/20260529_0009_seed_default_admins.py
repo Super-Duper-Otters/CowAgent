@@ -1,5 +1,5 @@
 # encoding:utf-8
-"""Reserved migration slot; no default admin seeding.
+"""Seed default investment admin accounts.
 
 Revision ID: 20260529_0009
 Revises: 20260527_0008
@@ -12,10 +12,49 @@ branch_labels = None
 depends_on = None
 
 
+def _now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
 def upgrade() -> None:
-    # Intentionally no-op. Admin accounts must be created explicitly through
-    # the admin API or test fixtures; migrations must not seed fixed passwords.
-    pass
+    import sqlalchemy as sa
+
+    from alembic import op
+    from business.investment.auth_service import hash_password
+
+    bind = op.get_bind()
+    table = sa.table(
+        "investment_admin_users",
+        sa.column("username", sa.Text()),
+        sa.column("password_hash", sa.Text()),
+        sa.column("role", sa.Text()),
+        sa.column("enabled", sa.Integer()),
+        sa.column("created_at", sa.Text()),
+        sa.column("updated_at", sa.Text()),
+    )
+    now = _now()
+    accounts = [
+        ("admin", "admin"),
+        ("poster1", "poster"),
+        ("poster2", "poster"),
+        ("poster3", "poster"),
+    ]
+    for username, role in accounts:
+        exists = bind.execute(sa.select(table.c.username).where(table.c.username == username)).scalar_one_or_none()
+        if exists:
+            continue
+        bind.execute(
+            table.insert().values(
+                username=username,
+                password_hash=hash_password("password"),
+                role=role,
+                enabled=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
 
 def downgrade() -> None:
