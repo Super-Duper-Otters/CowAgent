@@ -52,34 +52,34 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert verify_password("secret-pass", password_hash) is True
     assert verify_password("wrong-pass", password_hash) is False
 
-    user_id = create_admin_user("uploader-a", "secret-pass", role="uploader")
-    poster_id = create_admin_user("poster-a", "poster-pass", role="poster")
-    assert authenticate_admin("uploader-a", "wrong-pass") is None
-    admin = authenticate_admin("uploader-a", "secret-pass")
+    user_id = create_admin_user("operator-a", "secret-pass", role="content_operator")
+    legacy_id = create_admin_user("legacy-poster-a", "poster-pass", role="poster")
+    assert authenticate_admin("operator-a", "wrong-pass") is None
+    admin = authenticate_admin("operator-a", "secret-pass")
     assert admin is not None
     assert admin.id == user_id
-    assert admin.role == "uploader"
+    assert admin.role == "content_operator"
 
     token = create_admin_session(admin)
     session = get_admin_session(token)
     assert session is not None
-    assert session.username == "uploader-a"
-    assert session.role == "uploader"
+    assert session.username == "operator-a"
+    assert session.role == "content_operator"
+    assert require_permission(session, "content.upload").allowed is True
+    assert require_permission(session, "content.publish").allowed is True
     assert require_permission(session, "content.write").allowed is True
-    assert require_permission(session, "users.write").allowed is False
+    assert require_permission(session, "content.effective").allowed is True
+    assert require_permission(session, "customers.write").allowed is False
+    assert require_permission(session, "admin_users.write").allowed is False
+    assert require_permission(session, "audits.read").allowed is False
     assert require_permission(session, "config.write").allowed is False
 
-    poster = authenticate_admin("poster-a", "poster-pass")
-    assert poster is not None
-    assert poster.id == poster_id
-    assert poster.role == "poster"
-    assert require_permission(poster, "content.write").allowed is True
-    assert require_permission(poster, "content.generate").allowed is True
-    assert require_permission(poster, "content.effective").allowed is True
-    assert require_permission(poster, "stocks.write").allowed is True
-    assert require_permission(poster, "records.read").allowed is False
-    assert require_permission(poster, "config.read").allowed is False
-    assert require_permission(poster, "users.write").allowed is False
+    legacy = authenticate_admin("legacy-poster-a", "poster-pass")
+    assert legacy is not None
+    assert legacy.id == legacy_id
+    assert legacy.role == "content_operator"
+    assert require_permission(legacy, "content.publish").allowed is True
+    assert require_permission(legacy, "customers.write").allowed is False
 
 
 def test_investment_migrations_seed_default_admin_and_posters(investment_env):
@@ -92,7 +92,7 @@ def test_investment_migrations_seed_default_admin_and_posters(investment_env):
     for username in ("poster1", "poster2", "poster3"):
         poster = authenticate_admin(username, "password")
         assert poster is not None
-        assert poster.role == "poster"
+        assert poster.role == "content_operator"
 
 
 def test_admin_user_service_lists_updates_and_resets_password(investment_env):
@@ -104,17 +104,17 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
         update_admin_user,
     )
 
-    create_admin_user("ops-a", "old-pass", role="uploader")
+    create_admin_user("ops-a", "old-pass", role="content_operator")
 
     users = {user.username: user for user in list_admin_users()}
-    assert users["ops-a"].role == "uploader"
+    assert users["ops-a"].role == "content_operator"
     assert users["ops-a"].enabled is True
     assert "password_hash" not in users["ops-a"].__dict__
 
-    update_admin_user("ops-a", role="technical_admin", enabled=False)
+    update_admin_user("ops-a", role="admin", enabled=False)
     assert authenticate_admin("ops-a", "old-pass") is None
     disabled = {user.username: user for user in list_admin_users()}["ops-a"]
-    assert disabled.role == "technical_admin"
+    assert disabled.role == "admin"
     assert disabled.enabled is False
 
     update_admin_user("ops-a", enabled=True)
@@ -122,10 +122,32 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
     assert authenticate_admin("ops-a", "old-pass") is None
     reset_user = authenticate_admin("ops-a", "new-pass")
     assert reset_user is not None
-    assert reset_user.role == "technical_admin"
+    assert reset_user.role == "admin"
+
+    with pytest.raises(ValueError, match="not found"):
+        update_admin_user("missing-admin", enabled=False)
+    with pytest.raises(ValueError, match="not found"):
+        reset_admin_password("missing-admin", "new-pass")
+
+    from business.investment.db import connect
+    from business.investment.schema import investment_admin_users
+
+    update_admin_user("ops-a", role="content_operator")
+    create_admin_user("solo-admin", "admin-pass", role="admin")
+    with connect() as conn:
+        conn.execute(
+            investment_admin_users.update()
+            .where(investment_admin_users.c.username != "solo-admin")
+            .values(enabled=0)
+        )
+    with pytest.raises(ValueError, match="last enabled admin"):
+        update_admin_user("solo-admin", role="content_operator")
+    with pytest.raises(ValueError, match="last enabled admin"):
+        update_admin_user("solo-admin", enabled=False)
 
 
 def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
+    from business.investment.audit_service import list_operation_audits
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import (
@@ -134,18 +156,15 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
         InvestmentAdminUsersHandler,
         InvestmentConfigHandler,
         InvestmentHealthHandler,
-        InvestmentStocksHandler,
         InvestmentUsersHandler,
     )
 
     create_admin_user("admin-a", "admin-pass", role="admin")
-    create_admin_user("uploader-a", "uploader-pass", role="uploader")
+    create_admin_user("operator-a", "operator-pass", role="content_operator")
     create_admin_user("tech-a", "tech-pass", role="technical_admin")
-    create_admin_user("poster-a", "poster-pass", role="poster")
     admin_token = create_admin_session(authenticate_admin("admin-a", "admin-pass"))
-    uploader_token = create_admin_session(authenticate_admin("uploader-a", "uploader-pass"))
+    operator_token = create_admin_session(authenticate_admin("operator-a", "operator-pass"))
     tech_token = create_admin_session(authenticate_admin("tech-a", "tech-pass"))
-    poster_token = create_admin_session(authenticate_admin("poster-a", "poster-pass"))
 
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
     monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(openid="", enabled=""))
@@ -158,7 +177,7 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
         "data",
         lambda: json.dumps({"openid": "openid-a", "name": "Alice", "allowed_services": ["全部"]}).encode("utf-8"),
     )
-    use_token(uploader_token)
+    use_token(operator_token)
     monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
     with pytest.raises(web_channel.web.HTTPError) as denied_error:
         InvestmentUsersHandler().POST()
@@ -195,10 +214,7 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     config = json.loads(InvestmentConfigHandler().POST())
     assert config["status"] == "success"
 
-    use_token(poster_token)
-    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(**({"name": "", "limit": "5"} | kwargs)))
-    stocks = json.loads(InvestmentStocksHandler().GET())
-    assert stocks["status"] == "success"
+    use_token(operator_token)
     with pytest.raises(web_channel.web.HTTPError) as poster_config_error:
         InvestmentConfigHandler().GET()
     poster_denied = json.loads(poster_config_error.value.data)
@@ -222,22 +238,25 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     monkeypatch.setattr(
         web_channel.web,
         "data",
-        lambda: json.dumps({"username": "ops-web", "password": "ops-pass", "role": "uploader"}).encode("utf-8"),
+        lambda: json.dumps({"username": "ops-web", "password": "ops-pass", "role": "poster"}).encode("utf-8"),
     )
     created_admin = json.loads(InvestmentAdminUsersHandler().POST())
     assert created_admin["status"] == "success"
     assert created_admin["action"] == "created"
-    assert authenticate_admin("ops-web", "ops-pass").role == "uploader"
+    assert authenticate_admin("ops-web", "ops-pass").role == "content_operator"
 
     monkeypatch.setattr(
         web_channel.web,
         "data",
-        lambda: json.dumps({"username": "ops-web", "role": "technical_admin"}).encode("utf-8"),
+        lambda: json.dumps({"username": "ops-web", "role": "admin"}).encode("utf-8"),
     )
     updated_admin = json.loads(InvestmentAdminUsersHandler().POST())
     assert updated_admin["status"] == "success"
     assert updated_admin["action"] == "updated"
-    assert authenticate_admin("ops-web", "ops-pass").role == "technical_admin"
+    assert authenticate_admin("ops-web", "ops-pass").role == "admin"
+
+    missing_admin = json.loads(InvestmentAdminUserStatusHandler().POST("missing-web", "disable"))
+    assert missing_admin["status"] == "error"
 
     disabled_admin = json.loads(InvestmentAdminUserStatusHandler().POST("ops-web", "disable"))
     assert disabled_admin["status"] == "success"
@@ -252,16 +271,23 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     )
     reset_admin = json.loads(InvestmentAdminUserPasswordHandler().POST("ops-web"))
     assert reset_admin["status"] == "success"
-    assert authenticate_admin("ops-web", "reset-pass").role == "technical_admin"
+    assert authenticate_admin("ops-web", "reset-pass").role == "admin"
+
+    audits = list_operation_audits(limit=20, target_type="admin_user", target_id="ops-web")
+    actions = [audit.action for audit in audits]
+    assert "admin_user.create" in actions
+    assert "admin_user.update" in actions
+    assert "admin_user.disable" in actions
+    assert "admin_user.reset_password" in actions
 
 
-def test_investment_auth_me_allows_poster_without_records_permission(investment_env, monkeypatch):
+def test_investment_auth_me_allows_content_operator_without_customer_or_audit_permission(investment_env, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAuthMeHandler
 
-    create_admin_user("poster-a", "poster-pass", role="poster")
-    token = create_admin_session(authenticate_admin("poster-a", "poster-pass"))
+    create_admin_user("operator-a", "operator-pass", role="content_operator")
+    token = create_admin_session(authenticate_admin("operator-a", "operator-pass"))
 
     monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
@@ -269,10 +295,12 @@ def test_investment_auth_me_allows_poster_without_records_permission(investment_
     payload = json.loads(InvestmentAuthMeHandler().GET())
 
     assert payload["status"] == "success"
-    assert payload["admin"]["role"] == "poster"
+    assert payload["admin"]["role"] == "content_operator"
+    assert "content.upload" in payload["admin"]["permissions"]
+    assert "content.publish" in payload["admin"]["permissions"]
     assert "content.write" in payload["admin"]["permissions"]
-    assert "stocks.write" in payload["admin"]["permissions"]
-    assert "records.read" not in payload["admin"]["permissions"]
+    assert "customers.write" not in payload["admin"]["permissions"]
+    assert "audits.read" not in payload["admin"]["permissions"]
 
 
 def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
@@ -288,12 +316,12 @@ def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(inves
     monkeypatch.setattr(web_channel, "_check_auth", lambda: True)
     monkeypatch.setattr(web_channel.web, "cookies", lambda: {})
 
-    fallback = web_channel._require_investment_permission("users.write")
+    fallback = web_channel._require_investment_permission("customers.write")
     assert fallback.role == "admin"
     assert fallback.bootstrap is True
 
     create_admin_user("admin-a", "admin-pass", role="admin")
-    denied = web_channel._investment_permission_error("users.write")
+    denied = web_channel._investment_permission_error("customers.write")
     assert denied["status"] == "error"
     assert denied["code"] == "unauthorized"
 
@@ -397,22 +425,26 @@ def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
     assert redirects == ["/chat"]
 
 
-def test_real_admin_session_allows_records_and_denies_uploader_cache(investment_env, monkeypatch):
+def test_content_operator_session_denies_records_and_cache(investment_env, monkeypatch):
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentCacheHandler, InvestmentRequestRecordsHandler
 
-    create_admin_user("uploader-a", "uploader-pass", role="uploader")
-    token = create_admin_session(authenticate_admin("uploader-a", "uploader-pass"))
+    create_admin_user("operator-a", "operator-pass", role="content_operator")
+    token = create_admin_session(authenticate_admin("operator-a", "operator-pass"))
 
     monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
     monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(limit="20"))
     monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
 
-    records_payload = json.loads(InvestmentRequestRecordsHandler().GET())
+    with pytest.raises(web_channel.web.HTTPError) as records_denied_error:
+        InvestmentRequestRecordsHandler().GET()
+    records_denied = json.loads(records_denied_error.value.data)
+    assert records_denied["status"] == "error"
+    assert records_denied["code"] == "permission_denied"
+    assert records_denied["permission"] == "records.read"
 
-    assert records_payload["status"] == "success"
     with pytest.raises(web_channel.web.HTTPError) as denied_error:
         InvestmentCacheHandler().GET()
     denied = json.loads(denied_error.value.data)
@@ -1073,6 +1105,112 @@ def test_web_user_disable_button_updates_permission_path(investment_env, monkeyp
     assert reply.success is False
     assert reply.error_code == ErrorCode.USER_DISABLED
     assert reply.reply_text == "您的服务已停用，如需恢复请联系服务人员。"
+
+
+def test_web_customer_search_enable_and_audits_use_customer_permissions(investment_env, monkeypatch):
+    from business.investment.audit_service import list_operation_audits
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user, get_user_by_openid
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUserStatusHandler, InvestmentUsersHandler
+
+    _login_default_investment_admin(monkeypatch, username="audit-admin")
+    create_user(
+        "search-openid",
+        name="Search Alice",
+        institution="North Fund",
+        mobile="13800138000",
+        enabled=False,
+        allowed_services=[ServiceType.RATE],
+    )
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(keyword="North", enabled=""))
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    listed = json.loads(InvestmentUsersHandler().GET())
+    assert [user["openid"] for user in listed["users"]] == ["search-openid"]
+
+    enabled = json.loads(InvestmentUserStatusHandler().POST("search-openid", "enable"))
+    assert enabled["status"] == "success"
+    assert get_user_by_openid("search-openid").enabled is True
+
+    audits = list_operation_audits(limit=10, target_type="customer", target_id="search-openid")
+    assert [audit.action for audit in audits][:1] == ["customer.enable"]
+    assert audits[0].operator == "audit-admin"
+
+
+def test_web_user_management_apis_support_keyword_and_pagination(investment_env, monkeypatch):
+    from business.investment.auth_service import create_admin_user
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentAdminUsersHandler, InvestmentUsersHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    for index in range(5):
+        create_user(
+            f"customer-page-{index}",
+            name=f"Paged Customer {index}",
+            institution="North Fund" if index < 4 else "South Fund",
+            mobile=f"1380000000{index}",
+            allowed_services=[ServiceType.ALL],
+        )
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="North", enabled="", page="2", page_size="2"),
+    )
+    customers = json.loads(InvestmentUsersHandler().GET())
+
+    assert customers["status"] == "success"
+    assert customers["pagination"] == {"page": 2, "page_size": 2, "total": 4, "total_pages": 2}
+    assert len(customers["users"]) == 2
+    assert all("North" in user["institution"] for user in customers["users"])
+
+    for index in range(5):
+        role = "admin" if index == 0 else "content_operator"
+        create_admin_user(f"ops-page-{index}", "password", role=role)
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="ops-page", page="2", page_size="2"),
+    )
+    admins = json.loads(InvestmentAdminUsersHandler().GET())
+
+    assert admins["status"] == "success"
+    assert admins["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+    assert [user["username"] for user in admins["users"]] == ["ops-page-2", "ops-page-3"]
+
+
+def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUsersHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    create_user("1o92zVw4BYH2qai", name="A", allowed_services=[ServiceType.ALL])
+    create_user("o92zVw4BYH2qaib", name="B", allowed_services=[ServiceType.ALL])
+    create_user("runtime-user-62b63e3cca25", name="Runtime", allowed_services=[ServiceType.ALL])
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="92", enabled="", page="1", page_size="20"),
+    )
+
+    payload = json.loads(InvestmentUsersHandler().GET())
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 2
+    assert [user["openid"] for user in payload["users"]] == ["o92zVw4BYH2qaib", "1o92zVw4BYH2qai"]
 
 
 def test_router_authenticates_before_parsing_unmatched_input(investment_env, monkeypatch):
@@ -2014,7 +2152,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
         call_json(InvestmentUsersHandler().POST, body=customer, token=readonly_token)
     denied = json.loads(denied_error.value.data)
     assert denied["code"] == "permission_denied"
-    assert denied["permission"] == "users.write"
+    assert denied["permission"] == "customers.write"
 
     created = call_json(InvestmentUsersHandler().POST, body=customer)
     assert created["status"] == "success"
@@ -2218,7 +2356,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
                 "true",
                 "全部",
                 "",
-                "",
+                "2026-12-31",
                 "created",
             ],
         ],
@@ -2231,8 +2369,8 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
     assert rows[0].mobile == "13900000000"
     assert rows[0].enabled is True
     assert rows[0].allowed_services == "转债"
-    assert rows[0].auth_start_at == datetime(2026, 1, 1, 0, 0)
-    assert rows[0].auth_end_at == datetime(2026, 12, 31, 23, 59, 59)
+    assert rows[0].auth_start_at == datetime(2025, 12, 31, 16, 0)
+    assert rows[0].auth_end_at == datetime(2026, 12, 30, 16, 0)
     assert rows[0].remark == "renewed"
 
     result = import_users_from_excel(payload)
@@ -2247,6 +2385,105 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
     assert verify_permission("existing-openid", ServiceType.CONVERTIBLE_BOND).allowed is True
     assert verify_permission("existing-openid", ServiceType.RATE).allowed is False
     assert verify_permission("new-openid", ServiceType.TECHNICAL_ANALYSIS).allowed is True
+
+
+def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(investment_env):
+    from datetime import datetime
+    from business.investment.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
+
+    payload = _xlsx_bytes(
+        ["手机号", "服务权限", "授权结束日期"],
+        [["13800138000", "利率", "2026-12-31"]],
+    )
+
+    rows = parse_users_excel(payload)
+
+    assert len(rows) == 1
+    assert rows[0].openid.startswith("pending-mobile-13800138000-")
+    assert rows[0].mobile == "13800138000"
+    assert rows[0].allowed_services == "利率"
+    assert rows[0].auth_start_at is not None
+    assert rows[0].auth_start_at.hour == 16
+    assert rows[0].auth_start_at.minute == 0
+    assert rows[0].auth_end_at == datetime(2026, 12, 30, 16, 0)
+
+    result = import_users_from_excel(payload)
+    assert result.created == 1
+    assert get_user_by_openid(rows[0].openid) is not None
+
+
+def test_user_import_template_headers_are_parseable(investment_env):
+    from business.investment.export_service import export_users_import_template_xlsx
+    from business.investment.user_service import parse_users_excel
+
+    rows = parse_users_excel(export_users_import_template_xlsx())
+
+    assert len(rows) == 1
+    assert rows[0].openid.startswith("pending-mobile-13800000000-")
+    assert rows[0].allowed_services == "全部"
+
+
+def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user, get_user_by_openid
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUsersImportHandler
+
+    create_user("existing-import", name="Old", allowed_services=[ServiceType.RATE])
+    payload = _xlsx_bytes(
+        [
+            "openid",
+            "name",
+            "institution",
+            "mobile",
+            "enabled",
+            "allowed_services",
+            "auth_start_at",
+            "auth_end_at",
+            "remark",
+        ],
+        [
+            ["existing-import", "Existing New", "Inst A", "13800000000", "启用", "全部", "", "2026-12-31", "updated"],
+            ["new-import", "New User", "Inst B", "13900000000", "启用", "利率", "", "2026-12-31", "created"],
+        ],
+    )
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    monkeypatch.setattr(
+        web_channel.web.webapi,
+        "rawinput",
+        lambda **_kwargs: {"file": SimpleNamespace(filename="customers.xlsx", value=payload), "commit": "false"},
+    )
+
+    parsed = json.loads(InvestmentUsersImportHandler().POST())
+
+    assert parsed["status"] == "success"
+    assert parsed["committed"] is False
+    assert parsed["parsed"] == 2
+    assert parsed["new_users"] == 1
+    assert parsed["created"] == 0
+    assert parsed["updated"] == 0
+    assert [row["openid"] for row in parsed["preview"]] == ["existing-import", "new-import"]
+    assert get_user_by_openid("existing-import").name == "Old"
+    assert get_user_by_openid("new-import") is None
+
+    monkeypatch.setattr(
+        web_channel.web.webapi,
+        "rawinput",
+        lambda **_kwargs: {"file": SimpleNamespace(filename="customers.xlsx", value=payload), "commit": "true"},
+    )
+    committed = json.loads(InvestmentUsersImportHandler().POST())
+
+    assert committed["status"] == "success"
+    assert committed["committed"] is True
+    assert committed["parsed"] == 2
+    assert committed["new_users"] == 1
+    assert committed["created"] == 1
+    assert committed["updated"] == 1
+    assert get_user_by_openid("existing-import").name == "Existing New"
+    assert get_user_by_openid("new-import").name == "New User"
 
 
 def test_records_save_failure_success_and_order(investment_env):

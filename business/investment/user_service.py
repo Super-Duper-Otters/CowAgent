@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, or_, insert, select, update
 
 from .constants import ErrorCode, ServiceType, normalize_service, user_message
 from .db import connect, row_to_dict
@@ -48,6 +48,7 @@ class ImportUserRow:
     auth_start_at: datetime | None = None
     auth_end_at: datetime | None = None
     remark: str = ""
+    openid_generated: bool = False
 
 
 @dataclass
@@ -105,6 +106,31 @@ def _parse_datetime(value: Any) -> datetime | None:
     except ValueError:
         return None
     return datetime(1899, 12, 30) + timedelta(days=serial)
+
+
+def _beijing_start_to_utc_naive(day_text: str) -> datetime:
+    text = str(day_text).strip().replace("/", "-")
+    day = datetime.strptime(text[:10], "%Y-%m-%d").date()
+    return datetime.combine(day, datetime.min.time()) - timedelta(hours=8)
+
+
+def _beijing_today_start_utc_naive() -> datetime:
+    beijing_now = datetime.now(UTC) + timedelta(hours=8)
+    return datetime.combine(beijing_now.date(), datetime.min.time()) - timedelta(hours=8)
+
+
+def _parse_beijing_date_start(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _beijing_start_to_utc_naive(value.date().isoformat())
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.replace("/", "-")
+    if len(normalized) >= 10 and normalized[4:5] == "-" and normalized[7:8] == "-":
+        return _beijing_start_to_utc_naive(normalized)
+    return _parse_datetime(text)
 
 
 def _parse_enabled(value: Any) -> bool:
@@ -201,8 +227,36 @@ def _xlsx_rows(content: bytes) -> list[list[str]]:
     return rows
 
 
+_IMPORT_HEADER_ALIASES = {
+    "openid": "openid",
+    "open id": "openid",
+    "姓名": "name",
+    "客户姓名": "name",
+    "name": "name",
+    "机构": "institution",
+    "institution": "institution",
+    "手机号": "mobile",
+    "手机": "mobile",
+    "mobile": "mobile",
+    "状态": "enabled",
+    "enabled": "enabled",
+    "服务权限": "allowed_services",
+    "服务": "allowed_services",
+    "allowed_services": "allowed_services",
+    "授权开始": "auth_start_at",
+    "授权开始日期": "auth_start_at",
+    "auth_start_at": "auth_start_at",
+    "授权结束": "auth_end_at",
+    "授权结束日期": "auth_end_at",
+    "auth_end_at": "auth_end_at",
+    "备注": "remark",
+    "remark": "remark",
+}
+
+
 def _normalize_header(value: str) -> str:
-    return value.strip().lower()
+    normalized = value.strip().lower()
+    return _IMPORT_HEADER_ALIASES.get(normalized, normalized)
 
 
 def _cell(row: list[str], indexes: dict[str, int], key: str) -> str:
@@ -210,6 +264,11 @@ def _cell(row: list[str], indexes: dict[str, int], key: str) -> str:
     if index is None or index >= len(row):
         return ""
     return row[index].strip()
+
+
+def _generated_pending_openid(mobile: str, row_number: int) -> str:
+    digits = "".join(char for char in str(mobile) if char.isdigit()) or "unknown"
+    return f"pending-mobile-{digits}-{row_number}"
 
 
 
@@ -299,13 +358,55 @@ def disable_user(openid: str) -> None:
     update_user(openid, enabled=False)
 
 
-def list_users(enabled: bool | None = None, openid: str | None = None) -> list[User]:
-    stmt = select(investment_users)
+def enable_user(openid: str) -> None:
+    update_user(openid, enabled=True)
+
+
+def _user_conditions(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None) -> list:
+    conditions = []
     if enabled is not None:
-        stmt = stmt.where(investment_users.c.enabled == (1 if enabled else 0))
+        conditions.append(investment_users.c.enabled == (1 if enabled else 0))
     if openid:
-        stmt = stmt.where(investment_users.c.openid.like(f"%{openid}%"))
+        conditions.append(investment_users.c.openid.like(f"%{openid}%"))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                investment_users.c.openid.like(pattern),
+                investment_users.c.name.like(pattern),
+                investment_users.c.institution.like(pattern),
+                investment_users.c.mobile.like(pattern),
+            )
+        )
+    return conditions
+
+
+def count_users(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None) -> int:
+    stmt = select(func.count()).select_from(investment_users)
+    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    with connect() as conn:
+        return int(conn.execute(stmt).scalar_one() or 0)
+
+
+def list_users(
+    enabled: bool | None = None,
+    openid: str | None = None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+) -> list[User]:
+    stmt = select(investment_users)
+    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword)
+    if conditions:
+        stmt = stmt.where(*conditions)
     stmt = stmt.order_by(investment_users.c.id.desc())
+    if page is not None and page_size is not None:
+        page = max(1, int(page or 1))
+        page_size = max(1, int(page_size or 1))
+        stmt = stmt.limit(page_size).offset((page - 1) * page_size)
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()
     return [user for row in rows if (user := _row_to_user(row))]
@@ -379,25 +480,37 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
 
     headers = [_normalize_header(value) for value in rows[0]]
     indexes = {header: index for index, header in enumerate(headers) if header}
-    if "openid" not in indexes:
-        raise ValueError("Excel missing required field: openid")
+    missing_headers = [key for key in ("mobile", "allowed_services", "auth_end_at") if key not in indexes]
+    if missing_headers:
+        raise ValueError(f"Excel missing required field: {', '.join(missing_headers)}")
 
     parsed_rows: list[ImportUserRow] = []
     for row_number, row in enumerate(rows[1:], start=2):
         openid = _cell(row, indexes, "openid")
-        if not openid:
-            raise ValueError(f"Excel row {row_number} missing required field: openid")
+        mobile = _cell(row, indexes, "mobile")
+        allowed_services = _cell(row, indexes, "allowed_services")
+        auth_end_at = _cell(row, indexes, "auth_end_at")
+        if not mobile:
+            raise ValueError(f"Excel row {row_number} missing required field: mobile")
+        if not allowed_services:
+            raise ValueError(f"Excel row {row_number} missing required field: allowed_services")
+        if not auth_end_at:
+            raise ValueError(f"Excel row {row_number} missing required field: auth_end_at")
+        openid_generated = not bool(openid)
+        if openid_generated:
+            openid = _generated_pending_openid(mobile, row_number)
         parsed_rows.append(
             ImportUserRow(
                 openid=openid,
                 name=_cell(row, indexes, "name"),
                 institution=_cell(row, indexes, "institution"),
-                mobile=_cell(row, indexes, "mobile"),
+                mobile=mobile,
                 enabled=_parse_enabled(_cell(row, indexes, "enabled")),
-                allowed_services=_cell(row, indexes, "allowed_services") or "全部",
-                auth_start_at=_parse_datetime(_cell(row, indexes, "auth_start_at")),
-                auth_end_at=_parse_datetime(_cell(row, indexes, "auth_end_at")),
+                allowed_services=allowed_services,
+                auth_start_at=_parse_beijing_date_start(_cell(row, indexes, "auth_start_at")) or _beijing_today_start_utc_naive(),
+                auth_end_at=_parse_beijing_date_start(auth_end_at),
                 remark=_cell(row, indexes, "remark"),
+                openid_generated=openid_generated,
             )
         )
     return parsed_rows

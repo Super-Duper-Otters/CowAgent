@@ -183,6 +183,16 @@ def _investment_admin_payload(admin):
     }
 
 
+def _record_investment_operation(action: str, target_type: str, target_id: str = "", *, admin=None, detail=None):
+    try:
+        from business.investment.audit_service import record_operation_audit
+
+        operator = getattr(admin, "username", "") if admin is not None else ""
+        record_operation_audit(action, target_type, target_id, operator=operator, detail=detail or {})
+    except Exception as audit_error:
+        logger.warning(f"[Investment] operation audit failed: {audit_error}")
+
+
 def _get_upload_dir() -> str:
     from common.utils import expand_path
     ws_root = expand_path(conf().get("agent_workspace", "~/cow"))
@@ -924,8 +934,10 @@ class WebChannel(ChatChannel):
             '/api/investment/admin-users/(.*)/status/(enable|disable)', 'InvestmentAdminUserStatusHandler',
             '/api/investment/admin-users/(.*)/password', 'InvestmentAdminUserPasswordHandler',
             '/api/investment/admin-users', 'InvestmentAdminUsersHandler',
+            '/api/investment/users/import-template.xlsx', 'InvestmentUsersImportTemplateHandler',
             '/api/investment/users/import', 'InvestmentUsersImportHandler',
             '/api/investment/users', 'InvestmentUsersHandler',
+            '/api/investment/users/(.*)/status/(enable|disable)', 'InvestmentUserStatusHandler',
             '/api/investment/users/(.*)/disable', 'InvestmentUserDisableHandler',
             '/api/investment/daily-content', 'InvestmentDailyContentHandler',
             '/api/investment/daily-content/(.*)/generate', 'InvestmentDailyContentGenerateHandler',
@@ -2698,18 +2710,27 @@ class InvestmentAdminUsersHandler:
     def GET(self):
         _require_investment_permission("admin_users.read")
         try:
-            from business.investment.auth_service import list_admin_users
+            from business.investment.auth_service import count_admin_users, list_admin_users
+
+            params = web.input(keyword='', page='1', page_size='20')
+            page, page_size = _investment_safe_pagination(params, 20)
+            keyword = getattr(params, "keyword", "") or None
+            total = count_admin_users(keyword=keyword)
 
             return _investment_json_response({
                 "status": "success",
-                "users": [_investment_admin_user_payload(admin) for admin in list_admin_users()],
+                "users": [
+                    _investment_admin_user_payload(admin)
+                    for admin in list_admin_users(keyword=keyword, page=page, page_size=page_size)
+                ],
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] admin users GET error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_investment_permission("admin_users.write")
+        admin = _require_investment_permission("admin_users.write")
         try:
             from business.investment.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
 
@@ -2717,20 +2738,35 @@ class InvestmentAdminUsersHandler:
             username = str(body.get("username", "")).strip()
             if not username:
                 return _investment_json_response({"status": "error", "message": "username required"})
-            role = str(body.get("role", "") or "readonly").strip()
+            role = str(body.get("role", "") or "content_operator").strip()
             password = str(body.get("password", "") or "")
             enabled = body.get("enabled")
             existing = get_admin_user(username)
             if existing:
                 update_admin_user(username, role=role or existing.role, enabled=bool(enabled) if enabled is not None else None)
                 if password:
+                    _require_investment_permission("admin_users.reset_password")
                     reset_admin_password(username, password)
                 action = "updated"
+                _record_investment_operation(
+                    "admin_user.update",
+                    "admin_user",
+                    username,
+                    admin=admin,
+                    detail={"role": role or existing.role, "enabled": enabled},
+                )
             else:
                 if not password:
                     return _investment_json_response({"status": "error", "message": "password required"})
-                create_admin_user(username, password, role=role or "readonly", enabled=bool(enabled) if enabled is not None else True)
+                create_admin_user(username, password, role=role or "content_operator", enabled=bool(enabled) if enabled is not None else True)
                 action = "created"
+                _record_investment_operation(
+                    "admin_user.create",
+                    "admin_user",
+                    username,
+                    admin=admin,
+                    detail={"role": role or "content_operator", "enabled": bool(enabled) if enabled is not None else True},
+                )
             return _investment_json_response({"status": "success", "action": action})
         except Exception as e:
             logger.error(f"[Investment] admin users POST error: {e}")
@@ -2739,11 +2775,18 @@ class InvestmentAdminUsersHandler:
 
 class InvestmentAdminUserStatusHandler:
     def POST(self, username, action):
-        _require_investment_permission("admin_users.write")
+        admin = _require_investment_permission("admin_users.write")
         try:
             from business.investment.auth_service import update_admin_user
 
             update_admin_user(username, enabled=(action == "enable"))
+            _record_investment_operation(
+                f"admin_user.{action}",
+                "admin_user",
+                username,
+                admin=admin,
+                detail={"enabled": action == "enable"},
+            )
             return _investment_json_response({"status": "success"})
         except Exception as e:
             logger.error(f"[Investment] admin user status error: {e}")
@@ -2752,7 +2795,7 @@ class InvestmentAdminUserStatusHandler:
 
 class InvestmentAdminUserPasswordHandler:
     def POST(self, username):
-        _require_investment_permission("admin_users.write")
+        admin = _require_investment_permission("admin_users.reset_password")
         try:
             from business.investment.auth_service import reset_admin_password
 
@@ -2761,6 +2804,7 @@ class InvestmentAdminUserPasswordHandler:
             if not password:
                 return _investment_json_response({"status": "error", "message": "password required"})
             reset_admin_password(username, password)
+            _record_investment_operation("admin_user.reset_password", "admin_user", username, admin=admin)
             return _investment_json_response({"status": "success"})
         except Exception as e:
             logger.error(f"[Investment] admin user password reset error: {e}")
@@ -2806,7 +2850,7 @@ class InvestmentRequestRecordsExportHandler:
 
 class InvestmentUsersExportHandler:
     def GET(self):
-        _require_investment_permission("users.read")
+        admin = _require_investment_permission("customers.export")
         try:
             from business.investment.export_service import export_users_xlsx
 
@@ -2814,6 +2858,7 @@ class InvestmentUsersExportHandler:
             enabled = None
             if params.enabled != "":
                 enabled = _investment_bool(params.enabled)
+            _record_investment_operation("customer.export", "customer", admin=admin, detail={"enabled": enabled})
             return _investment_xlsx_response(export_users_xlsx(enabled=enabled), "investment-users.xlsx")
         except Exception as e:
             logger.error(f"[Investment] users export error: {e}")
@@ -2822,15 +2867,26 @@ class InvestmentUsersExportHandler:
 
 class InvestmentUsersHandler:
     def GET(self):
-        _require_investment_permission("users.read")
+        _require_investment_permission("customers.read")
         try:
-            from business.investment.user_service import list_users
+            from business.investment.user_service import count_users, list_users
 
-            params = web.input(openid='', enabled='')
+            params = web.input(openid='', enabled='', keyword='', page='1', page_size='20')
+            page, page_size = _investment_safe_pagination(params, 20)
             enabled = None
-            if params.enabled != "":
-                enabled = params.enabled in ("1", "true", "True", "yes")
-            users = list_users(enabled=enabled, openid=params.openid or None)
+            enabled_value = getattr(params, "enabled", "")
+            if enabled_value != "":
+                enabled = enabled_value in ("1", "true", "True", "yes")
+            openid = getattr(params, "openid", "") or None
+            keyword = getattr(params, "keyword", "") or None
+            total = count_users(enabled=enabled, openid=openid, keyword=keyword)
+            users = list_users(
+                enabled=enabled,
+                openid=openid,
+                keyword=keyword,
+                page=page,
+                page_size=page_size,
+            )
             return _investment_json_response({
                 "status": "success",
                 "users": [
@@ -2848,13 +2904,14 @@ class InvestmentUsersHandler:
                     }
                     for user in users
                 ],
+                "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] users GET error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_investment_permission("users.write")
+        admin = _require_investment_permission("customers.write")
         try:
             from business.investment.user_service import create_user, update_user, get_user_by_openid
 
@@ -2878,44 +2935,108 @@ class InvestmentUsersHandler:
             else:
                 create_user(openid, **values)
                 action = "created"
+            _record_investment_operation(
+                f"customer.{action[:-1] if action.endswith('d') else action}",
+                "customer",
+                openid,
+                admin=admin,
+                detail={key: value for key, value in values.items() if key != "allowed_services"} | {"allowed_services": values["allowed_services"]},
+            )
             return _investment_json_response({"status": "success", "action": action})
         except Exception as e:
             logger.error(f"[Investment] users POST error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 
-class InvestmentUserDisableHandler:
-    def POST(self, openid):
-        _require_investment_permission("users.write")
+class InvestmentUserStatusHandler:
+    def POST(self, openid, action):
+        admin = _require_investment_permission("customers.enable")
         try:
-            from business.investment.user_service import disable_user
+            from business.investment.user_service import disable_user, enable_user, get_user_by_openid
 
-            disable_user(openid)
+            if get_user_by_openid(openid) is None:
+                return _investment_json_response({"status": "error", "message": "user not found"})
+            if action == "enable":
+                enable_user(openid)
+            else:
+                disable_user(openid)
+            _record_investment_operation(f"customer.{action}", "customer", openid, admin=admin)
             return _investment_json_response({"status": "success"})
         except Exception as e:
-            logger.error(f"[Investment] user disable error: {e}")
+            logger.error(f"[Investment] user status error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUserDisableHandler:
+    def POST(self, openid):
+        return InvestmentUserStatusHandler().POST(openid, "disable")
 
 
 class InvestmentUsersImportHandler:
     def POST(self):
-        _require_investment_permission("users.write")
+        admin = _require_investment_permission("customers.import")
         try:
-            from business.investment.user_service import import_users_from_excel
+            from business.investment.user_service import get_user_by_openid, import_users, parse_users_excel
 
             params = _raw_web_input()
             file_obj = params.get("file")
             if file_obj is None:
                 return _investment_json_response({"status": "error", "message": "file required"})
-            result = import_users_from_excel(_read_uploaded_file_bytes(file_obj))
+            rows = parse_users_excel(_read_uploaded_file_bytes(file_obj))
+            commit = str(params.get("commit", "")).strip().lower() in {"1", "true", "yes", "commit"}
+            new_users = sum(1 for row in rows if row.openid_generated or get_user_by_openid(row.openid) is None)
+            result = import_users(rows) if commit else None
+            created = result.created if result else 0
+            updated = result.updated if result else 0
+            if commit:
+                _record_investment_operation(
+                    "customer.import",
+                    "customer",
+                    admin=admin,
+                    detail={"parsed": len(rows), "new_users": new_users, "created": created, "updated": updated},
+                )
             return _investment_json_response({
                 "status": "success",
-                "created": result.created,
-                "updated": result.updated,
+                "committed": commit,
+                "parsed": len(rows),
+                "new_users": new_users,
+                "created": created,
+                "updated": updated,
+                "preview": [_investment_import_user_preview(row) for row in rows[:10]],
             })
         except Exception as e:
             logger.error(f"[Investment] users import error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUsersImportTemplateHandler:
+    def GET(self):
+        _require_investment_permission("customers.import")
+        try:
+            from business.investment.export_service import export_users_import_template_xlsx
+
+            return _investment_xlsx_response(export_users_import_template_xlsx(), "investment-users-import-template.xlsx")
+        except Exception as e:
+            logger.error(f"[Investment] users import template error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+def _investment_import_user_preview(row):
+    def _date_text(value):
+        return value.isoformat(timespec="seconds") if value else ""
+
+    return {
+        "openid": row.openid,
+        "name": row.name,
+        "institution": row.institution,
+        "mobile": row.mobile,
+        "enabled": row.enabled,
+        "allowed_services": row.allowed_services,
+        "auth_start_at": _date_text(row.auth_start_at),
+        "auth_end_at": _date_text(row.auth_end_at),
+        "remark": row.remark,
+        "openid_generated": row.openid_generated,
+    }
 
 
 class InvestmentDailyContentHandler:
@@ -2963,7 +3084,7 @@ class InvestmentDailyContentHandler:
             return _investment_json_response({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_investment_permission("content.write")
+        _require_investment_permission("content.upload")
         try:
             from business.investment.constants import normalize_service
             from business.investment.daily_content import create_content_draft, save_source_file, update_generation_success
@@ -3053,7 +3174,7 @@ class InvestmentDailyContentGenerateHandler:
 
 class InvestmentDailyContentEffectiveHandler:
     def POST(self, content_id):
-        _require_investment_permission("content.effective")
+        _require_investment_permission("content.publish")
         try:
             from business.investment.daily_content import set_content_effective
 
@@ -3072,7 +3193,7 @@ class InvestmentDailyContentEffectiveHandler:
 
 class InvestmentOperationAuditsHandler:
     def GET(self):
-        _require_investment_permission("records.read")
+        _require_investment_permission("audits.read")
         try:
             from business.investment.audit_service import list_operation_audits_page
 

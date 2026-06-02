@@ -1217,6 +1217,129 @@
     color: #f8fafc;
     background: rgba(255,255,255,0.1);
 }
+.investment-user-page {
+    display: grid;
+    gap: 14px;
+}
+.investment-user-toolbar {
+    display: block;
+    margin-bottom: 14px;
+}
+.investment-user-toolbar .investment-panel-title {
+    margin-bottom: 4px;
+}
+.investment-user-toolbar-heading {
+    max-width: 520px;
+}
+.investment-user-actionbar {
+    display: grid;
+    grid-template-columns: minmax(420px, max-content) minmax(520px, 1fr);
+    align-items: end;
+    gap: 14px;
+    margin: 0 0 18px;
+    padding: 14px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+.dark .investment-user-actionbar {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+.investment-user-toolbar-grid {
+    display: grid;
+    grid-template-columns: minmax(420px, max-content) minmax(520px, 1fr);
+    align-items: end;
+    gap: 14px;
+}
+.investment-toolbar-section {
+    min-width: 0;
+}
+.investment-toolbar-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: flex-start;
+    gap: 8px;
+}
+.investment-toolbar-group.primary {
+    justify-content: flex-start;
+}
+.investment-toolbar-section.export {
+    justify-content: flex-end;
+}
+.investment-user-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.investment-search-field {
+    width: 296px;
+    min-width: 240px;
+}
+.investment-status-field {
+    width: 240px;
+    min-width: 180px;
+}
+.investment-file-compact {
+    display: none;
+}
+.investment-file-trigger {
+    min-width: 132px;
+}
+.investment-toolbar-feedback {
+    min-height: 20px;
+    margin: -4px 0 10px;
+}
+.investment-user-pagination {
+    margin-top: 12px;
+}
+.investment-import-dialog {
+    display: grid;
+    gap: 14px;
+}
+.investment-import-template {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+.dark .investment-import-template {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+}
+.investment-import-sample .investment-table-wrap {
+    margin: 0;
+}
+.investment-import-result {
+    min-height: 24px;
+}
+.investment-import-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+}
+.investment-import-preview {
+    margin-top: 8px;
+}
+@media (max-width: 1200px) {
+    .investment-user-actionbar,
+    .investment-user-toolbar-grid {
+        grid-template-columns: 1fr;
+    }
+    .investment-toolbar-section.export {
+        justify-content: flex-start;
+    }
+}
+
 .investment-workbench {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -2859,6 +2982,38 @@
     }
     .investment-panel-heading {
         flex-direction: column;
+    }
+    .investment-user-toolbar {
+        margin-bottom: 12px;
+    }
+    .investment-user-actionbar,
+    .investment-user-toolbar-grid,
+    .investment-toolbar-group {
+        grid-template-columns: 1fr;
+        justify-content: flex-start;
+    }
+    .investment-user-actionbar {
+        padding: 12px;
+    }
+    .investment-toolbar-section {
+        width: 100%;
+    }
+    .investment-toolbar-section.export {
+        justify-content: flex-start;
+    }
+    .investment-import-template {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .investment-user-toolbar-actions {
+        justify-content: flex-start;
+    }
+    .investment-search-field,
+    .investment-status-field,
+    .investment-file-trigger {
+        max-width: none;
+        min-width: 0;
+        width: 100%;
     }
     .investment-panel-actions {
         justify-content: flex-start;

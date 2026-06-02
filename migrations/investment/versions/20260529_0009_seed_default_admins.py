@@ -37,9 +37,9 @@ def upgrade() -> None:
     now = _now()
     accounts = [
         ("admin", "admin"),
-        ("poster1", "poster"),
-        ("poster2", "poster"),
-        ("poster3", "poster"),
+        ("poster1", "content_operator"),
+        ("poster2", "content_operator"),
+        ("poster3", "content_operator"),
     ]
     for username, role in accounts:
         exists = bind.execute(sa.select(table.c.username).where(table.c.username == username)).scalar_one_or_none()

@@ -102,7 +102,7 @@ def test_investment_operations_show_unified_feedback_toasts():
 
     assert "function showInvestmentToast(" in js
     assert "showInvestmentToast('用户已保存')" in js
-    assert "showInvestmentToast('用户已停用')" in js
+    assert "showInvestmentToast(action === 'enable' ? '用户已启用' : '用户已停用')" in js
     assert "showInvestmentToast('已启动生成')" in js
     assert "showInvestmentToast('已设为生效')" in js
     assert ".investment-toast-container" in css
@@ -185,8 +185,8 @@ def test_investment_skill_actions_are_moved_into_edit_dialog():
 def test_investment_user_and_skill_edit_buttons_call_write_apis():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    assert "disableInvestmentUser('${encodeURIComponent(user.openid)}')" in js
-    assert "await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/disable`, {method: 'POST'})" in js
+    assert "setInvestmentUserStatus('${encodeURIComponent(user.openid)}'" in js
+    assert "await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/status/${action}`, {method: 'POST'})" in js
     assert "saveInvestmentUser('invest-user-modal')" in js
     assert "await investmentFetchJson('/api/investment/users', {" in js
     assert "openInvestmentSkillDialog('${escapeHtml(skillKey)}')" in js
@@ -206,6 +206,106 @@ def test_investment_users_page_splits_customers_and_admin_staff():
     assert "/api/investment/admin-users/${encodeURIComponent(username)}/password" in js
     assert "investmentCan('admin_users.read')" in js
     assert "investmentButtonIfCan('admin_users.write'" in js
+    assert "investmentButtonIfCan('admin_users.reset_password'" in js
+    assert "content_operator" in js
+    assert "role_uploader" not in js
+    assert "role_poster" not in js
+
+
+def test_investment_users_page_is_list_first_with_dialog_forms():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    customer_body = _js_function_body(js, "renderInvestmentCustomerUsers")
+    admin_body = _js_function_body(js, "renderInvestmentAdminUsers")
+
+    assert "investment-user-page" in customer_body
+    assert "investment-user-toolbar" in customer_body
+    assert "openInvestmentUserDialog()" in customer_body
+    assert "invest-user-openid" not in customer_body
+    assert "用户维护" not in customer_body
+
+    assert "investment-user-page" in admin_body
+    assert "investment-user-toolbar" in admin_body
+    assert "openInvestmentAdminUserDialog()" in admin_body
+    assert "invest-admin-username" not in admin_body
+    assert "后台人员维护" not in admin_body
+
+    assert "function openInvestmentAdminUserDialog(" in js
+    assert "showInvestmentModal('后台人员信息'" in js
+    assert ".investment-user-page" in css
+    assert ".investment-user-toolbar" in css
+
+
+def test_investment_users_toolbar_is_grouped_and_paginated():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    assert "investmentUserState" in js
+    assert "pagination:" in js
+    assert "customers: {page: 1, page_size: 20" in js
+    assert "renderInvestmentUserPagination('customers'" in js
+    assert "function changeInvestmentUserPage(" in js
+    assert "onclick=\"changeInvestmentUserPage('${panel}'" in js
+    assert "applyInvestmentCustomerSearch()" in js
+    assert "applyInvestmentAdminSearch()" in js
+    assert "investment-user-toolbar-grid" in js
+    assert "investment-toolbar-group primary" in js
+
+    assert ".investment-user-toolbar-grid" in css
+    assert ".investment-toolbar-group" in css
+    assert ".investment-user-pagination" in css
+
+
+def test_investment_customer_toolbar_has_separate_action_bar():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    body = _js_function_body(js, "renderInvestmentCustomerUsers")
+
+    assert "investment-user-toolbar-heading" in body
+    assert "investment-user-actionbar" in body
+    assert "investment-toolbar-section search" in body
+    assert "investment-toolbar-section export" in body
+    assert body.index("investment-user-toolbar-heading") < body.index("investment-user-actionbar")
+
+    assert ".investment-user-actionbar" in css
+    assert ".investment-toolbar-section" in css
+    assert ".investment-toolbar-section.export" in css
+
+
+def test_investment_customer_import_uses_dialog_with_template_and_result():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    body = _js_function_body(js, "renderInvestmentCustomerUsers")
+    import_body = _js_function_body(js, "openInvestmentUsersImportDialog")
+
+    assert "openInvestmentUsersImportDialog()" in body
+    assert "invest-users-import-file" not in body
+    assert "showInvestmentModal('导入客户名单'" in import_body
+    assert "存在用户名单示例模板" in import_body
+    assert "/api/investment/users/import-template.xlsx" in import_body
+    assert "invest-users-import-result" in import_body
+    assert "parseInvestmentUsersImport()" in import_body
+    assert "confirmInvestmentUsersImport()" in js
+    assert "解析文件" in import_body
+    assert "确认导入" in js
+    assert "commit" in js
+    assert "解析中" in js
+    assert "new_users" in js
+    assert "function renderInvestmentImportResult(data, committed = false)" in js
+    assert "renderInvestmentImportResult(data, false)" in js
+    assert "renderInvestmentImportResult(data, true)" in js
+    assert "window.openInvestmentUsersImportDialog = openInvestmentUsersImportDialog" in js
+
+
+def test_investment_customer_render_uses_response_rows_with_response_pagination():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    body = _js_function_body(js, "renderInvestmentCustomerUsers")
+
+    users_pos = body.index("const users = data.users || [];")
+    pagination_pos = body.index("investmentUserApplyPagination('customers', data.pagination);")
+    table_pos = body.index("${renderInvestmentUsersTable(users)}")
+    assert users_pos < pagination_pos < table_pos
+    assert "${renderInvestmentUserPagination('customers', data.pagination)}" in body
 
 
 def test_investment_config_no_longer_embeds_skill_manager():
@@ -241,9 +341,12 @@ def test_investment_console_hides_actions_by_admin_role():
     assert "function investmentCan(" in js
     assert "async function loadInvestmentAdminSession(" in js
     assert "/api/investment/auth/me" in js
-    assert "investmentButtonIfCan('users.write'" in js
-    assert "investmentButtonIfCan('content.write'" in js
-    assert "investmentButtonIfCan('records.read', 'fa-clock-rotate-left', '操作流水'" in js
+    assert "investmentButtonIfCan('customers.write'" in js
+    assert "investmentButtonIfCan('customers.enable'" in js
+    assert "investmentButtonIfCan('customers.import'" in js
+    assert "investmentButtonIfCan('customers.export'" in js
+    assert "investmentButtonIfCan('content.upload'" in js
+    assert "investmentButtonIfCan('audits.read', 'fa-clock-rotate-left', '操作流水'" in js
     assert "investmentIconButtonIfCan('cache.write'" in js
     assert "investmentCanView(" in js
 
@@ -556,6 +659,41 @@ def test_investment_records_times_are_formatted_as_beijing_time():
     assert "investmentFormatBeijingTime(record.created_at)" in request_body
     assert "investmentFormatBeijingTime(entry.updated_at)" in cache_body
     assert "investmentFormatBeijingTime(audit.created_at)" in audit_body
+
+
+def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    stock_stats_body = _js_function_body(js, "investmentStockStats")
+    stock_rows_body = _js_function_body(js, "renderInvestmentStockRows")
+    users_body = _js_function_body(js, "renderInvestmentUsersTable")
+    user_dialog_body = _js_function_body(js, "openInvestmentUserDialog")
+    fill_user_body = _js_function_body(js, "fillInvestmentUserForm")
+    save_user_body = _js_function_body(js, "saveInvestmentUser")
+    import_result_body = _js_function_body(js, "renderInvestmentImportResult")
+    current_content_body = _js_function_body(js, "renderInvestmentCurrentEffective")
+    content_table_body = _js_function_body(js, "renderInvestmentContentTable")
+    content_detail_body = _js_function_body(js, "showInvestmentContentDetail")
+    content_audits_body = _js_function_body(js, "renderInvestmentOperationAudits")
+    skill_row_body = _js_function_body(js, "renderInvestmentSkillConfigRow")
+
+    assert "investmentFormatBeijingTime(stats.latest_updated_at || '')" in stock_stats_body
+    assert "investmentFormatBeijingTime(stock.updated_at || '')" in stock_rows_body
+    assert "investmentFormatBeijingTime(user.auth_end_at || '')" in users_body
+    assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in user_dialog_body
+    assert "investmentUtcToBeijingDatetimeLocal(user.auth_end_at || '')" in user_dialog_body
+    assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in fill_user_body
+    assert "investmentUtcToBeijingDatetimeLocal(user.auth_end_at || '')" in fill_user_body
+    assert "investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-start`).value)" in save_user_body
+    assert "investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-end`).value)" in save_user_body
+    assert "investmentFormatBeijingTime(row.auth_end_at || '')" in import_result_body
+    assert "investmentFormatBeijingTime(record?.effective_at)" in current_content_body
+    assert "investmentFormatBeijingTime(record.created_at)" in content_table_body
+    assert "investmentFormatBeijingTime(record.created_at)" in content_detail_body
+    assert "investmentFormatBeijingTime(record.effective_at)" in content_detail_body
+    assert "investmentFormatBeijingTime(record.archived_at)" in content_detail_body
+    assert "investmentFormatBeijingTime(audit.created_at)" in content_audits_body
+    assert "investmentFormatBeijingTime(active.uploaded_at)" in skill_row_body
 
 
 def test_investment_records_tabs_use_independent_loaders_and_filters():

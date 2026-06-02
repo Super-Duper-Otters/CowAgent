@@ -7,7 +7,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import func, or_, insert, select, update
 
 from .db import connect, row_to_dict
 from .schema import investment_admin_sessions, investment_admin_users
@@ -17,25 +17,26 @@ HASH_ITERATIONS = 260_000
 SESSION_DAYS = 30
 
 ROLE_PERMISSIONS = {
-    "admin": {"*"},
-    "uploader": {
+    "admin": {
+        "*",
+        "customers.read",
+        "customers.write",
+        "customers.enable",
+        "customers.import",
+        "customers.export",
+        "admin_users.read",
+        "admin_users.write",
+        "admin_users.reset_password",
         "content.read",
+        "content.upload",
         "content.write",
         "content.generate",
+        "content.publish",
         "content.effective",
-        "records.read",
-    },
-    "poster": {
-        "content.read",
-        "content.write",
-        "content.generate",
-        "content.effective",
-        "stocks.read",
-        "stocks.write",
-    },
-    "technical_admin": {
+        "content.delete",
         "records.read",
         "records.export",
+        "audits.read",
         "cache.read",
         "cache.write",
         "config.read",
@@ -46,15 +47,22 @@ ROLE_PERMISSIONS = {
         "skills.read",
         "skills.write",
     },
-    "readonly": {
+    "content_operator": {
         "content.read",
-        "records.read",
-        "cache.read",
-        "config.read",
-        "health.read",
-        "stocks.read",
-        "skills.read",
+        "content.upload",
+        "content.write",
+        "content.generate",
+        "content.publish",
+        "content.effective",
     },
+}
+
+ROLE_ALIASES = {
+    "uploader": "content_operator",
+    "poster": "content_operator",
+    "operator": "content_operator",
+    "technical_admin": "admin",
+    "readonly": "content_operator",
 }
 
 
@@ -121,18 +129,35 @@ def _row_to_admin(row) -> AdminUser | None:
     return AdminUser(
         id=int(item["id"]),
         username=item["username"],
-        role=item["role"],
+        role=normalize_role(item["role"]),
         enabled=bool(item["enabled"]),
         last_login_at=item.get("last_login_at") or "",
     )
 
 
-def count_admin_users() -> int:
+def _admin_user_conditions(keyword: str | None = None) -> list:
+    keyword_text = str(keyword or "").strip()
+    if not keyword_text:
+        return []
+    pattern = f"%{keyword_text}%"
+    return [
+        or_(
+            investment_admin_users.c.username.ilike(pattern),
+            investment_admin_users.c.role.ilike(pattern),
+        )
+    ]
+
+
+def count_admin_users(keyword: str | None = None) -> int:
+    stmt = select(func.count()).select_from(investment_admin_users)
+    conditions = _admin_user_conditions(keyword)
+    if conditions:
+        stmt = stmt.where(*conditions)
     with connect() as conn:
-        return int(conn.execute(select(func.count()).select_from(investment_admin_users)).scalar_one())
+        return int(conn.execute(stmt).scalar_one())
 
 
-def create_admin_user(username: str, password: str, *, role: str = "readonly", enabled: bool = True) -> int:
+def create_admin_user(username: str, password: str, *, role: str = "content_operator", enabled: bool = True) -> int:
     role = normalize_role(role)
     now = _now()
     with connect() as conn:
@@ -152,9 +177,18 @@ def create_admin_user(username: str, password: str, *, role: str = "readonly", e
     return int(row_to_dict(row)["id"])
 
 
-def list_admin_users() -> list[AdminUser]:
+def list_admin_users(keyword: str | None = None, page: int | None = None, page_size: int | None = None) -> list[AdminUser]:
+    stmt = select(investment_admin_users)
+    conditions = _admin_user_conditions(keyword)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.order_by(investment_admin_users.c.username.asc())
+    if page is not None and page_size is not None:
+        page = max(1, int(page or 1))
+        page_size = max(1, int(page_size or 1))
+        stmt = stmt.limit(page_size).offset((page - 1) * page_size)
     with connect() as conn:
-        rows = conn.execute(select(investment_admin_users).order_by(investment_admin_users.c.username.asc())).fetchall()
+        rows = conn.execute(stmt).fetchall()
     return [admin for row in rows if (admin := _row_to_admin(row))]
 
 
@@ -162,6 +196,30 @@ def get_admin_user(username: str) -> AdminUser | None:
     with connect() as conn:
         row = conn.execute(select(investment_admin_users).where(investment_admin_users.c.username == username)).fetchone()
     return _row_to_admin(row)
+
+
+def _enabled_admin_count(conn, *, exclude_username: str = "") -> int:
+    stmt = select(func.count()).select_from(investment_admin_users).where(
+        investment_admin_users.c.enabled == 1,
+        investment_admin_users.c.role == "admin",
+    )
+    if exclude_username:
+        stmt = stmt.where(investment_admin_users.c.username != exclude_username)
+    return int(conn.execute(stmt).scalar_one() or 0)
+
+
+def _assert_can_change_admin(conn, username: str, values: dict) -> None:
+    row = conn.execute(select(investment_admin_users).where(investment_admin_users.c.username == username)).fetchone()
+    if row is None:
+        raise ValueError(f"admin user not found: {username}")
+    item = row_to_dict(row)
+    current_role = normalize_role(item["role"])
+    current_enabled = bool(item["enabled"])
+    next_role = values.get("role", current_role)
+    next_enabled = bool(values.get("enabled", 1 if current_enabled else 0))
+    if current_role == "admin" and current_enabled and (next_role != "admin" or not next_enabled):
+        if _enabled_admin_count(conn, exclude_username=username) == 0:
+            raise ValueError("cannot disable or demote the last enabled admin")
 
 
 def update_admin_user(username: str, *, role: str | None = None, enabled: bool | None = None) -> None:
@@ -174,11 +232,15 @@ def update_admin_user(username: str, *, role: str | None = None, enabled: bool |
         return
     values["updated_at"] = _now()
     with connect() as conn:
+        _assert_can_change_admin(conn, username, values)
         conn.execute(update(investment_admin_users).where(investment_admin_users.c.username == username).values(**values))
 
 
 def reset_admin_password(username: str, password: str) -> None:
     with connect() as conn:
+        row = conn.execute(select(investment_admin_users.c.id).where(investment_admin_users.c.username == username)).fetchone()
+        if row is None:
+            raise ValueError(f"admin user not found: {username}")
         conn.execute(
             update(investment_admin_users)
             .where(investment_admin_users.c.username == username)
@@ -246,6 +308,7 @@ def get_admin_session(token: str | None) -> AdminUser | None:
 
 def normalize_role(role: str) -> str:
     value = str(role or "").strip()
+    value = ROLE_ALIASES.get(value, value)
     if value not in ROLE_PERMISSIONS:
         raise ValueError(f"unsupported admin role: {role}")
     return value

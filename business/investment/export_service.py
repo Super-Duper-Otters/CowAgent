@@ -33,6 +33,10 @@ REQUEST_HEADERS = [
 ]
 
 USER_HEADERS = ["OpenID", "姓名", "机构", "手机号", "状态", "服务权限", "授权开始", "授权结束", "备注"]
+USER_IMPORT_HEADERS = ["手机号", "服务权限", "授权结束日期", "OpenID", "姓名", "机构", "状态", "授权开始日期", "备注"]
+USER_IMPORT_TEMPLATE_ROWS = [
+    ["13800000000", "全部", "2026-12-31", "", "张三", "示例机构", "启用", "", "示例客户"],
+]
 
 
 def month_range(year: int, month: int) -> tuple[str, str]:
@@ -175,6 +179,10 @@ def export_users_xlsx(enabled: bool | None = None) -> bytes:
         for item in rows
     ]
     return _workbook_bytes(USER_HEADERS, export_rows, "Users")
+
+
+def export_users_import_template_xlsx() -> bytes:
+    return _workbook_bytes(USER_IMPORT_HEADERS, USER_IMPORT_TEMPLATE_ROWS, "ImportTemplate")
 
 
 def _load_output_files(value: str | None) -> list[str]:
