@@ -1866,7 +1866,7 @@ async function renderInvestmentRecordsLegacy() {
                     <div class="investment-panel-heading">
                         <div class="investment-panel-title"><i class="fas fa-database"></i><span>技术分析缓存</span></div>
                         <div class="investment-panel-actions">
-                            ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日技术分析', 'clearInvestmentCacheByDate()')}
+                            ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日技术分析', 'clearInvestmentTechnicalAnalysisCacheByDate()')}
                         </div>
                     </div>
                     ${renderInvestmentCacheTable(caches.entries || [])}
@@ -2057,7 +2057,7 @@ function renderInvestmentCacheTableLegacy(entries) {
 
 async function invalidateInvestmentCache(encodedKey) {
     try {
-        await investmentFetchJson(`/api/investment/cache/${encodedKey}/invalidate`, {method: 'POST', body: JSON.stringify({operator: 'web-console'})});
+        await investmentFetchJson(`/api/investment/cache/${encodedKey}/invalidate`, {method: 'POST'});
         if (currentView === 'invest-content') {
             await loadInvestmentGeneratedContent();
             return;
@@ -2068,14 +2068,14 @@ async function invalidateInvestmentCache(encodedKey) {
     }
 }
 
-async function clearInvestmentCacheByDate() {
+async function clearInvestmentTechnicalAnalysisCacheByDate() {
     const today = investmentTodayDate();
     const marketDate = prompt('清理技术分析缓存日期', today);
     if (!marketDate) return;
     try {
         await investmentFetchJson('/api/investment/cache/clear', {
             method: 'POST',
-            body: JSON.stringify({service_type: 'technical_analysis', market_date: marketDate, operator: 'web-console'}),
+            body: JSON.stringify({service_type: 'technical_analysis', market_date: marketDate}),
         });
         await renderInvestmentRecords();
     } catch (error) {
@@ -2638,7 +2638,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                         <input id="investment-content-filter-keyword" type="search" value="${escapeHtml(keyword)}" placeholder="类型/标的/文件" onkeydown="if(event.key === 'Enter') applyInvestmentCacheDate()">
                     </label>
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
-                    ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日', 'clearInvestmentCacheByDate()')}
+                    ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日', 'clearInvestmentGeneratedContentCacheByDate()')}
                 </div>
             </div>
             ${body}
@@ -2751,14 +2751,14 @@ async function backInvestmentCacheCategoryMenu() {
     await loadInvestmentGeneratedContent();
 }
 
-async function clearInvestmentCacheByDate() {
+async function clearInvestmentGeneratedContentCacheByDate() {
     const today = investmentCacheMarketDate() || investmentTodayDate();
     const marketDate = prompt('清理生成内容日期', today);
     if (!marketDate) return;
     try {
         await investmentFetchJson('/api/investment/cache/clear', {
             method: 'POST',
-            body: JSON.stringify({market_date: marketDate, operator: 'web-console'}),
+            body: JSON.stringify({market_date: marketDate}),
         });
         await loadInvestmentGeneratedContent();
     } catch (error) {
@@ -3163,7 +3163,7 @@ async function saveInvestmentSkillSettings(skillKey) {
     await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/settings`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({operator: 'web-console'}),
+        body: JSON.stringify({}),
     });
 }
 
@@ -3185,7 +3185,6 @@ async function uploadInvestmentSkill(skillKey, fileInput = null) {
     }
     const form = new FormData();
     form.append('file', input.files[0]);
-    form.append('operator', 'web-console');
     if (result) result.textContent = '上传中...';
     try {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/upload`, {method: 'POST', body: form});
@@ -3204,7 +3203,6 @@ async function uploadInvestmentSkillPackage() {
     if (!input || !input.files.length) return;
     const form = new FormData();
     form.append('file', input.files[0]);
-    form.append('operator', 'web-console');
     await investmentFetchJson('/api/investment/skills/packages/upload', {method: 'POST', body: form});
     await loadInvestmentSkillVersions();
 }
@@ -3214,8 +3212,6 @@ async function activateInvestmentSkillVersion(skillKey, selectedVersion) {
     try {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(selectedVersion)}/activate`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({operator: 'web-console'}),
         });
         showInvestmentToast('Skill 版本已生效');
         await loadInvestmentSkillVersions();
@@ -3233,8 +3229,6 @@ async function deleteInvestmentSkillVersion(skillKey, versionId) {
     try {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/delete`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({operator: 'web-console'}),
         });
         showInvestmentToast('Skill 版本已删除');
         await loadInvestmentSkillVersions();
@@ -3363,8 +3357,6 @@ async function saveInvestmentConfigKey(key, type) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 configs: {[key]: investmentConfigValue(key, type)},
-                operator_role: 'admin',
-                operator: 'web-console',
             }),
         });
         if (button) button.classList.add('hidden');
@@ -3389,7 +3381,7 @@ async function saveInvestmentConfig() {
     await investmentFetchJson('/api/investment/config', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({configs, operator_role: 'admin', operator: 'web-console'}),
+        body: JSON.stringify({configs}),
     });
     document.getElementById('invest-config-save-result').textContent = '配置已保存';
     await renderInvestmentConfig();
@@ -3527,7 +3519,8 @@ window.backInvestmentCacheCategoryMenu = backInvestmentCacheCategoryMenu;
 window.showInvestmentContentDetail = showInvestmentContentDetail;
 window.showInvestmentRequestDetail = showInvestmentRequestDetail;
 window.invalidateInvestmentCache = invalidateInvestmentCache;
-window.clearInvestmentCacheByDate = clearInvestmentCacheByDate;
+window.clearInvestmentTechnicalAnalysisCacheByDate = clearInvestmentTechnicalAnalysisCacheByDate;
+window.clearInvestmentGeneratedContentCacheByDate = clearInvestmentGeneratedContentCacheByDate;
 window.hideInvestmentDetail = hideInvestmentDetail;
 window.hideInvestmentModal = hideInvestmentModal;
 window.saveInvestmentConfig = saveInvestmentConfig;
