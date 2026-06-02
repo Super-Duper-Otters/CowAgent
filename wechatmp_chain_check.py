@@ -28,6 +28,7 @@ DEFAULT_TECHNICAL_ANALYSIS_QUERY = "天娱数科 技术分析"
 DEFAULT_CONVERTIBLE_BOND_QUERY = "转债"
 SMOKE_UNMATCHED_QUERY = "技术分析"
 TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+CPOLAR_URL_RE = re.compile(r"https?://[a-z0-9][a-z0-9.-]*\.cpolar\.(?:cn|top)")
 TUNNEL_REGISTERED_MARKERS = (
     "Registered tunnel connection",
     "Connection registered",
@@ -86,9 +87,13 @@ def resolve_wx_target(args: argparse.Namespace, config: dict[str, Any], root: Pa
     if args.base_url:
         return WxTarget(wx_url=normalize_wx_url(args.base_url), source="base-url")
 
+    cpolar = discover_cpolar_base_url(root)
+    if cpolar:
+        return WxTarget(wx_url=normalize_wx_url(cpolar), source="cpolar")
+
     tunnel = discover_tunnel_base_url(root)
     if not tunnel:
-        raise RuntimeError("no trycloudflare URL found in logs; pass --base-url or --local")
+        raise RuntimeError("no cpolar or trycloudflare URL found in logs; pass --base-url or --local")
     return WxTarget(wx_url=normalize_wx_url(tunnel), source="cloudflare")
 
 
@@ -189,9 +194,43 @@ def discover_tunnel_base_url(root: Path) -> str | None:
     return candidates[-1][2]
 
 
+def discover_cpolar_base_url(root: Path) -> str | None:
+    candidates: list[tuple[int, float, int, str]] = []
+    log_files = list((root / "logs").glob("cpolar*.log"))
+    cpolar_logs = Path.home() / ".cpolar" / "logs"
+    if cpolar_logs.exists():
+        log_files += list(cpolar_logs.glob("cpolar*.log*"))
+    for file_path in log_files:
+        if not file_path.exists() or not file_path.is_file():
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        mtime = file_path.stat().st_mtime
+        for index, match in enumerate(CPOLAR_URL_RE.findall(content)):
+            url = match.rstrip("/")
+            https_rank = 1 if url.startswith("https://") else 0
+            candidates.append((https_rank, mtime, index, url))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return candidates[-1][3]
+
+
 def extract_latest_tunnel_url(text: str) -> str | None:
     matches = TUNNEL_URL_RE.findall(text or "")
     return matches[-1].rstrip("/") if matches else None
+
+
+def extract_latest_cpolar_url(text: str) -> str | None:
+    matches = [match.rstrip("/") for match in CPOLAR_URL_RE.findall(text or "")]
+    if not matches:
+        return None
+    for match in reversed(matches):
+        if match.startswith("https://"):
+            return match
+    return matches[-1]
 
 
 def cloudflared_registered(text: str) -> bool:
@@ -490,10 +529,14 @@ def check_smoke_unmatched_post(
     except Exception as exc:
         return CheckResult("POST smoke unmatched prompt", False, f"{type(exc).__name__}: {exc}")
 
-    ok = response.status_code == 200 and reply.msg_type == "text" and reply.content.startswith("请输入以下格式之一")
+    is_format_prompt = reply.msg_type == "text" and reply.content.startswith("请输入以下格式之一")
+    is_authorization_prompt = reply.msg_type == "text" and reply.content.startswith("您暂未开通该服务")
+    ok = response.status_code == 200 and (is_format_prompt or is_authorization_prompt)
     detail = f"status={response.status_code}, msg_type={reply.msg_type}, content={reply.content[:80]!r}"
-    if ok:
+    if is_format_prompt:
         detail += ", passive_text_prompt"
+    if is_authorization_prompt:
+        detail += ", active_authorization_prompt"
     return CheckResult("POST smoke unmatched prompt", ok, detail)
 
 
@@ -911,7 +954,7 @@ def check_ta_message(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Check WeChat MP backend, tunnel, media upload, and message reply chains.")
-    parser.add_argument("--base-url", help="Tunnel base URL or full /wx URL. Defaults to latest trycloudflare URL from logs.")
+    parser.add_argument("--base-url", help="Tunnel base URL or full /wx URL. Defaults to latest cpolar URL from logs, then trycloudflare.")
     parser.add_argument("--local", action="store_true", help="Use local http://127.0.0.1:<wechatmp_port>/wx instead of tunnel discovery.")
     parser.add_argument("--openid", help="OpenID to simulate. Defaults to latest enabled investment user.")
     parser.add_argument("--to-user", default="gh_test", help="Developer account id used as ToUserName in simulated incoming XML.")
@@ -920,7 +963,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ta-query", default=DEFAULT_TECHNICAL_ANALYSIS_QUERY, help="Technical-analysis command to test.")
     parser.add_argument("--timeout", type=int, default=25, help="HTTP request timeout in seconds.")
     parser.add_argument("--wait-timeout", type=int, default=120, help="Wait timeout for DB/log async checks.")
-    parser.add_argument("--smoke", action="store_true", help="Run minimal Cloudflare /wx GET plus safe passive prompt POST only.")
+    parser.add_argument("--smoke", action="store_true", help="Run minimal tunnel /wx GET plus safe passive prompt POST only.")
     parser.add_argument("--full", action="store_true", help="Run full local business generation checks for rate, convertible bond, and technical analysis.")
     parser.add_argument("--no-auto-repair", action="store_true", help="Do not recreate the Cloudflare quick tunnel if smoke GET verification fails.")
     parser.add_argument("--wechat-api", action="store_true", help="Also test WeChat temporary media upload. Does not send messages.")

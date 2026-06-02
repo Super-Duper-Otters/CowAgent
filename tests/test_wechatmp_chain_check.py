@@ -81,9 +81,48 @@ def test_extract_tunnel_url_returns_last_quick_tunnel_url():
     assert mod.extract_latest_tunnel_url(text) == "https://new-name.trycloudflare.com"
 
 
+def test_extract_cpolar_url_prefers_latest_https_public_url():
+    mod = _load_script_module()
+    text = """
+    time="2026-06-01T16:41:52+08:00" msg="NewTunnel" Url":"http://756611d.r17.cpolar.top"
+    time="2026-06-01T16:41:53+08:00" msg="NewTunnel" Url":"https://756611d.r17.cpolar.top"
+    time="2026-06-01T16:43:04+08:00" msg="RespStartTunnel" PublicUrl":"https://4c883b4d.r9.cpolar.cn"
+    """
+
+    assert mod.extract_latest_cpolar_url(text) == "https://4c883b4d.r9.cpolar.cn"
+
+
+def test_default_target_prefers_latest_cpolar_tunnel(monkeypatch, tmp_path):
+    mod = _load_script_module()
+    args = mod.build_arg_parser().parse_args([])
+    monkeypatch.setattr(mod, "discover_cpolar_base_url", lambda _root: "https://cpolar.example.cn")
+    monkeypatch.setattr(mod, "discover_tunnel_base_url", lambda _root: "https://default.trycloudflare.com")
+
+    target = mod.resolve_wx_target(args, {"wechatmp_port": 8080}, tmp_path)
+
+    assert target.source == "cpolar"
+    assert target.wx_url == "https://cpolar.example.cn/wx"
+
+
+def test_discover_cpolar_base_url_prefers_https_over_later_http(monkeypatch, tmp_path):
+    mod = _load_script_module()
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "cpolar.log").write_text(
+        """
+        time="2026-06-01T16:41:53+08:00" msg="NewTunnel" Url":"https://secure.r9.cpolar.cn"
+        time="2026-06-01T16:43:04+08:00" msg="RespStartTunnel" PublicUrl":"http://plain.r9.cpolar.cn"
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mod.Path, "home", lambda: tmp_path / "home")
+
+    assert mod.discover_cpolar_base_url(tmp_path) == "https://secure.r9.cpolar.cn"
+
+
 def test_default_target_resolves_to_latest_cloudflare_tunnel(monkeypatch, tmp_path):
     mod = _load_script_module()
     args = mod.build_arg_parser().parse_args([])
+    monkeypatch.setattr(mod, "discover_cpolar_base_url", lambda _root: None)
     monkeypatch.setattr(mod, "discover_tunnel_base_url", lambda _root: "https://default.trycloudflare.com")
 
     target = mod.resolve_wx_target(args, {"wechatmp_port": 8080}, tmp_path)
@@ -214,6 +253,34 @@ def test_smoke_unmatched_post_accepts_passive_format_prompt(monkeypatch):
 
     assert result.ok is True
     assert "passive_text_prompt" in result.detail
+
+
+def test_smoke_unmatched_post_accepts_active_authorization_prompt(monkeypatch):
+    mod = _load_script_module()
+
+    class FakeResponse:
+        status_code = 200
+        text = "<xml/>"
+
+    monkeypatch.setattr(
+        mod,
+        "post_wechat_text",
+        lambda *_args, **_kwargs: (
+            FakeResponse(),
+            mod.ParsedReply(is_xml=True, msg_type="text", content="您暂未开通该服务，请联系管理员开通。"),
+        ),
+    )
+
+    result = mod.check_smoke_unmatched_post(
+        object(),
+        wx_url="https://example.cpolar.cn/wx",
+        token="token",
+        to_user="gh_test",
+        timeout_sec=10,
+    )
+
+    assert result.ok is True
+    assert "active_authorization_prompt" in result.detail
 
 
 def test_smoke_repairs_cloudflare_tunnel_after_failed_check(monkeypatch, tmp_path):
