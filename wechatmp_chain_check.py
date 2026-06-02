@@ -1,4 +1,16 @@
 # encoding:utf-8
+# Agent Quickstart (for future Codex/AI agents):
+# 1. First check the reachable /wx entry:
+#    py wechatmp_chain_check.py --smoke --json
+# 2. If the public tunnel fails, isolate the app from the tunnel:
+#    py wechatmp_chain_check.py --local --smoke --json
+# 3. If the user has a public IP/domain and no tunnel:
+#    py wechatmp_chain_check.py --base-url https://your-domain.example --smoke --json
+# 4. To validate image generation plus WeChat media_id upload without sending a chat message:
+#    py wechatmp_chain_check.py --wechat-api --json
+# 5. Treat "WeChat temporary media upload" as the key image-delivery signal.
+#    Only use --send-kf-image when the user explicitly wants a real customer-service image sent.
+# 6. Do not run live tunnel checks in parallel; free tunnels can reset or time out under bursts.
 from __future__ import annotations
 
 import argparse
@@ -33,6 +45,33 @@ TUNNEL_REGISTERED_MARKERS = (
     "Registered tunnel connection",
     "Connection registered",
 )
+AGENT_QUICKSTART_HELP = """\
+Agent Quickstart:
+  1. Safe public-entry smoke test:
+     py wechatmp_chain_check.py --smoke --json
+
+  2. If the public entry fails, isolate local app health from tunnel health:
+     py wechatmp_chain_check.py --local --smoke --json
+
+  3. Public IP/domain without a tunnel:
+     py wechatmp_chain_check.py --base-url https://your-domain.example --smoke --json
+
+  4. Image flow without sending a real chat message:
+     py wechatmp_chain_check.py --wechat-api --json
+     Required signal: "WeChat temporary media upload" is ok and returns media_id.
+
+  5. Direct webhook simulation:
+     py wechatmp_chain_check.py --base-url https://your-domain.example --post-webhook --json
+     In active mode this can trigger customer-service sending; use only when intended.
+
+Result reading:
+  - configuration.target shows local/base-url/cpolar/cloudflare.
+  - tunnel GET /wx signature verification proves WeChat URL verification can reach /wx.
+  - POST smoke unmatched prompt proves XML POST reaches the app.
+  - WeChat temporary media upload proves the generated PNG can become a WeChat media_id.
+  - --send-kf-image sends a real customer-service image; do not use it for passive checks.
+  - Do not run live tunnel checks in parallel; cpolar/free tunnels can reset or time out under bursts.
+"""
 
 
 @dataclass
@@ -953,7 +992,11 @@ def check_ta_message(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Check WeChat MP backend, tunnel, media upload, and message reply chains.")
+    parser = argparse.ArgumentParser(
+        description="Check WeChat MP backend, tunnel, media upload, and message reply chains.",
+        epilog=AGENT_QUICKSTART_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--base-url", help="Tunnel base URL or full /wx URL. Defaults to latest cpolar URL from logs, then trycloudflare.")
     parser.add_argument("--local", action="store_true", help="Use local http://127.0.0.1:<wechatmp_port>/wx instead of tunnel discovery.")
     parser.add_argument("--openid", help="OpenID to simulate. Defaults to latest enabled investment user.")

@@ -81,6 +81,19 @@ def test_extract_tunnel_url_returns_last_quick_tunnel_url():
     assert mod.extract_latest_tunnel_url(text) == "https://new-name.trycloudflare.com"
 
 
+def test_help_includes_agent_quickstart_examples():
+    mod = _load_script_module()
+
+    help_text = mod.build_arg_parser().format_help()
+
+    assert "Agent Quickstart" in help_text
+    assert "py wechatmp_chain_check.py --smoke --json" in help_text
+    assert "py wechatmp_chain_check.py --local --smoke --json" in help_text
+    assert "py wechatmp_chain_check.py --base-url https://your-domain.example --smoke --json" in help_text
+    assert "WeChat temporary media upload" in help_text
+    assert "Do not run live tunnel checks in parallel" in help_text
+
+
 def test_extract_cpolar_url_prefers_latest_https_public_url():
     mod = _load_script_module()
     text = """
