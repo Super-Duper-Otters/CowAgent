@@ -68,6 +68,15 @@ class ContentRecord:
     output_image: str = ""
     error_message: str = ""
     operator: str = ""
+    created_by_admin_id: int | None = None
+    created_by_username: str = ""
+    created_by_role: str = ""
+    updated_by_admin_id: int | None = None
+    updated_by_username: str = ""
+    updated_by_role: str = ""
+    published_by_admin_id: int | None = None
+    published_by_username: str = ""
+    published_by_role: str = ""
     created_at: str = ""
     effective_at: str | None = None
     effective_date: str = ""
@@ -568,6 +577,7 @@ def record_output_file(
     *,
     artifact_role: str = "",
     version_tag: str = "",
+    owner_type: str = "request",
 ) -> None:
     from .artifact_service import record_artifact
 
@@ -578,6 +588,7 @@ def record_output_file(
         service_type,
         file_type=file_type,
         version_tag=version_tag,
+        owner_type=owner_type,
     )
 
 
@@ -595,6 +606,15 @@ def _row_to_content(row) -> ContentRecord:
         output_image=item["output_image"] or "",
         error_message=item["error_message"] or "",
         operator=item["operator"] or "",
+        created_by_admin_id=item.get("created_by_admin_id"),
+        created_by_username=item.get("created_by_username") or "",
+        created_by_role=item.get("created_by_role") or "",
+        updated_by_admin_id=item.get("updated_by_admin_id"),
+        updated_by_username=item.get("updated_by_username") or "",
+        updated_by_role=item.get("updated_by_role") or "",
+        published_by_admin_id=item.get("published_by_admin_id"),
+        published_by_username=item.get("published_by_username") or "",
+        published_by_role=item.get("published_by_role") or "",
         created_at=created_at,
         effective_at=item["effective_at"],
         effective_date=item.get("effective_date") or "",

@@ -55,14 +55,10 @@ ROLE_PERMISSIONS = {
         "content.publish",
         "content.effective",
     },
-}
-
-ROLE_ALIASES = {
-    "uploader": "content_operator",
-    "poster": "content_operator",
-    "operator": "content_operator",
-    "technical_admin": "admin",
-    "readonly": "content_operator",
+    "technical_operator": {
+        "config.read",
+        "config.write",
+    },
 }
 
 
@@ -308,7 +304,6 @@ def get_admin_session(token: str | None) -> AdminUser | None:
 
 def normalize_role(role: str) -> str:
     value = str(role or "").strip()
-    value = ROLE_ALIASES.get(value, value)
     if value not in ROLE_PERMISSIONS:
         raise ValueError(f"unsupported admin role: {role}")
     return value

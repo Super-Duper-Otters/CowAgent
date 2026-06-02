@@ -18,6 +18,7 @@ const I18N = {
         menu_memory: '记忆', menu_knowledge: '知识', menu_channels: '通道', menu_tasks: '定时',
         menu_logs: '日志',
         menu_invest_users: '用户管理', menu_invest_rate: '利率内容', menu_invest_cb: '转债内容',
+        menu_invest_content: '内容',
         menu_invest_records: '业务记录', menu_invest_skills: '投资Skill', menu_invest_config: '系统配置', menu_invest_health: '健康检查',
         knowledge_title: '知识库', knowledge_desc: '浏览和探索你的知识库',
         knowledge_tab_docs: '文档', knowledge_tab_graph: '图谱',
@@ -103,6 +104,7 @@ const I18N = {
         auth_logout: '退出登录',
         role_admin: '管理员',
         role_content_operator: '内容运营',
+        role_technical_operator: '技术运营',
         today: '今天', yesterday: '昨天', earlier: '更早',
         delete_session_confirm: '确认删除该会话？所有消息将被清除。',
         delete_session_title: '删除会话',
@@ -125,6 +127,7 @@ const I18N = {
         menu_memory: 'Memory', menu_knowledge: 'Knowledge', menu_channels: 'Channels', menu_tasks: 'Tasks',
         menu_logs: 'Logs',
         menu_invest_users: 'Users', menu_invest_rate: 'Rates', menu_invest_cb: 'Convertible Bonds',
+        menu_invest_content: 'Content',
         menu_invest_records: 'Records', menu_invest_skills: 'Investment Skills', menu_invest_config: 'Investment Config', menu_invest_health: 'Health',
         knowledge_title: 'Knowledge', knowledge_desc: 'Browse and explore your knowledge base',
         knowledge_tab_docs: 'Documents', knowledge_tab_graph: 'Graph',
@@ -210,6 +213,7 @@ const I18N = {
         auth_logout: 'Logout',
         role_admin: 'Admin',
         role_content_operator: 'Content Operator',
+        role_technical_operator: 'Technical Operator',
         today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier',
         delete_session_confirm: 'Delete this session? All messages will be removed.',
         delete_session_title: 'Delete Session',
@@ -347,6 +351,7 @@ const VIEW_META = {
     'invest-users':   { group: 'nav_investment', page: 'menu_invest_users' },
     'invest-rate':    { group: 'nav_investment', page: 'menu_invest_rate' },
     'invest-cb':      { group: 'nav_investment', page: 'menu_invest_cb' },
+    'invest-content': { group: 'nav_investment', page: 'menu_invest_content' },
     'invest-records': { group: 'nav_investment', page: 'menu_invest_records' },
     'invest-skills':  { group: 'nav_investment', page: 'menu_invest_skills' },
     'invest-config':  { group: 'nav_investment', page: 'menu_invest_config' },
@@ -406,6 +411,7 @@ async function loadInvestmentView(viewId) {
     if (viewId === 'invest-users') return renderInvestmentUsers();
     if (viewId === 'invest-rate') return renderInvestmentContent('rate');
     if (viewId === 'invest-cb') return renderInvestmentContent('convertible_bond');
+    if (viewId === 'invest-content') return renderInvestmentGeneratedContent();
     if (viewId === 'invest-records') return renderInvestmentRecords();
     if (viewId === 'invest-skills') return renderInvestmentSkills();
     if (viewId === 'invest-config') return renderInvestmentConfig();
@@ -437,6 +443,7 @@ let investmentContentPollTimer = null;
 let currentInvestmentAdmin = null;
 let currentConsoleAuthenticated = false;
 let currentInvestmentUserPanel = 'customers';
+let currentInvestmentConfigPanel = 'stock-data';
 let investmentUserState = {
     filters: {
         customers: {keyword: '', page: '1', page_size: '20'},
@@ -480,6 +487,7 @@ const INVEST_VIEW_PERMISSIONS = {
     'invest-users': ['customers.read', 'admin_users.read'],
     'invest-rate': 'content.read',
     'invest-cb': 'content.read',
+    'invest-content': 'cache.read',
     'invest-records': 'records.read',
     'invest-skills': 'skills.read',
     'invest-config': ['config.read', 'stocks.read'],
@@ -913,31 +921,43 @@ function investmentStockStats(stats = {}) {
         </div>`;
 }
 
-function investmentStockTools(stats = {}) {
+function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, canReadStocks = true) {
     return `
-        <section class="investment-panel full">
-            <div class="investment-panel-title"><i class="fas fa-chart-line"></i><span>股票字典维护</span></div>
+        <section class="investment-panel investment-config-section investment-workbench-full investment-stock-data-card">
+            <div class="investment-panel-heading">
+                <div>
+                    <div class="investment-panel-title"><i class="fas fa-chart-line"></i><span>股票数据</span></div>
+                    <div class="investment-subtitle">维护股票字典数据源，刷新基础股票字典，并用股票名称查询验证解析结果。</div>
+                </div>
+            </div>
+            ${canReadConfig ? `
+                <div class="investment-stock-source-config">
+                    ${renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])}
+                </div>` : ''}
             ${investmentStockStats(stats)}
-            <div class="investment-inline-form investment-stock-actions">
-                <label class="investment-field investment-source-field">
-                    <span>刷新来源</span>
-                    <select id="invest-stock-refresh-source">
-                        <option value="auto">auto</option>
-                        <option value="akshare">akshare</option>
-                        <option value="tushare">tushare</option>
-                    </select>
-                </label>
-                ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
-            </div>
-            <div class="investment-inline-form investment-stock-actions">
-                <label class="investment-field investment-stock-query-field">
-                    <span>股票名查询测试</span>
-                    <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛">
-                </label>
-                ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
-            </div>
-            <div id="invest-stock-action-result" class="investment-muted"></div>
-            <div id="invest-stock-query-result" class="investment-table-wrap"></div>
+            ${canReadStocks ? `
+                <div class="investment-config-toolbar investment-stock-toolbar">
+                    <div class="investment-config-tool investment-stock-refresh-tool">
+                        <label class="investment-field investment-source-field">
+                            <span>刷新来源</span>
+                            <select id="invest-stock-refresh-source">
+                                <option value="auto">auto</option>
+                                <option value="akshare">akshare</option>
+                                <option value="tushare">tushare</option>
+                            </select>
+                        </label>
+                        ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+                    </div>
+                    <div class="investment-config-tool investment-stock-query-tool">
+                        <label class="investment-field investment-stock-query-field">
+                            <span>股票名查询测试</span>
+                            <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛">
+                        </label>
+                        ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+                    </div>
+                </div>
+                <div id="invest-stock-action-result" class="investment-muted"></div>
+                <div id="invest-stock-query-result" class="investment-table-wrap"></div>` : ''}
         </section>`;
 }
 
@@ -1138,7 +1158,7 @@ async function renderInvestmentAdminUsers() {
                     <div class="investment-user-toolbar">
                         <div>
                             <div class="investment-panel-title"><i class="fas fa-users-gear"></i><span>后台人员列表</span></div>
-                            <div class="investment-subtitle">后台人员可登录后台 Web，角色只保留管理员和内容运营。</div>
+                            <div class="investment-subtitle">后台人员可登录后台 Web，角色分为管理员、内容运营和技术运营。</div>
                         </div>
                         <div class="investment-user-toolbar-grid">
                             <div class="investment-toolbar-group primary">
@@ -1158,7 +1178,7 @@ async function renderInvestmentAdminUsers() {
 }
 
 function investmentAdminRoleOptions(selected) {
-    return ['admin', 'content_operator']
+    return ['admin', 'content_operator', 'technical_operator']
         .map(role => `<option value="${role}" ${role === selected ? 'selected' : ''}>${escapeHtml(investmentAdminRoleLabel(role))}</option>`)
         .join('');
 }
@@ -2038,6 +2058,10 @@ function renderInvestmentCacheTableLegacy(entries) {
 async function invalidateInvestmentCache(encodedKey) {
     try {
         await investmentFetchJson(`/api/investment/cache/${encodedKey}/invalidate`, {method: 'POST', body: JSON.stringify({operator: 'web-console'})});
+        if (currentView === 'invest-content') {
+            await loadInvestmentGeneratedContent();
+            return;
+        }
         await renderInvestmentRecords();
     } catch (error) {
         showInvestmentToast(`缓存失效失败：${String(error.message || error)}`, 'error');
@@ -2163,6 +2187,51 @@ function investmentCacheMarketDate() {
     return investmentRecordsState.filters.cache?.market_date || document.getElementById('investment-records-filter-market_date')?.value || '';
 }
 
+function investmentCacheKeyword() {
+    return investmentRecordsState.filters.cache?.keyword || document.getElementById('investment-content-filter-keyword')?.value || '';
+}
+
+async function renderInvestmentGeneratedContent() {
+    const element = investmentContentEl('invest-content-content');
+    if (!element) return;
+    element.innerHTML = `
+        <div class="investment-records-workspace investment-content-workspace">
+            <section class="investment-records-topbar">
+                <div>
+                    <div class="investment-panel-title"><i class="fas fa-images"></i><span>内容</span></div>
+                    <div class="investment-subtitle">集中查看生成后的图片、文档和缓存产物；业务记录中仍保留缩略图用于快捷查看。</div>
+                </div>
+            </section>
+            <section class="investment-records-board">
+                <div class="investment-records-main">
+                    <div class="investment-records-list" id="investment-content-list"></div>
+                    <aside class="investment-records-drawer" id="investment-records-drawer">
+                        <div class="investment-records-drawer-empty">
+                            <i class="fas fa-circle-info"></i>
+                            <span>选择内容查看详情</span>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+        </div>`;
+    await loadInvestmentGeneratedContent();
+}
+
+async function loadInvestmentGeneratedContent() {
+    const list = document.getElementById('investment-content-list');
+    if (list) investmentLoading(list);
+    try {
+        const query = investmentRecordsQueryParams('cache');
+        const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
+        investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
+        investmentRecordsApplyPagination('cache', data.pagination);
+        if (list) list.innerHTML = `${renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination('cache')}`;
+        closeInvestmentRecordDrawer();
+    } catch (error) {
+        investmentError(list, error);
+    }
+}
+
 function renderInvestmentRecordsShell() {
     return `
         <div class="investment-records-workspace">
@@ -2176,7 +2245,6 @@ function renderInvestmentRecordsShell() {
                 <div class="investment-records-tabs">
                     ${renderInvestmentRecordsTabButton('requests', '公众号请求', 'fa-message')}
                     ${renderInvestmentRecordsTabButton('contents', '后台生成', 'fa-gears')}
-                    ${investmentCan('cache.read') ? renderInvestmentRecordsTabButton('cache', '生成内容', 'fa-calendar-check') : ''}
                     ${renderInvestmentRecordsTabButton('audits', '操作流水', 'fa-clock-rotate-left')}
                 </div>
                 <div class="investment-records-filters" id="investment-records-filters">${renderInvestmentRecordsFilters(investmentRecordsState.tab)}</div>
@@ -2337,10 +2405,10 @@ function renderInvestmentRecordsFilters(tab) {
 }
 
 async function switchInvestmentRecordsTab(tab) {
+    if (!['requests', 'contents', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     investmentRecordsState.filters[tab] = investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab);
     investmentRecordsState.selected = null;
-    if (tab === 'cache') investmentRecordsState.cacheCategory = '';
     const root = investmentContentEl('invest-records-content');
     if (root) root.innerHTML = renderInvestmentRecordsShell();
     await loadInvestmentRecordsTab(tab);
@@ -2355,7 +2423,6 @@ async function applyInvestmentRecordsFilters() {
 async function resetInvestmentRecordsFilters() {
     const tab = investmentRecordsState.tab;
     investmentRecordsState.filters[tab] = investmentRecordsDefaultFilters(tab);
-    if (tab === 'cache') investmentRecordsState.cacheCategory = '';
     const filters = document.getElementById('investment-records-filters');
     if (filters) filters.innerHTML = renderInvestmentRecordsFilters(tab);
     await loadInvestmentRecordsTab(tab);
@@ -2417,6 +2484,10 @@ async function changeInvestmentRecordsPage(tab, page) {
         ...(investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab)),
         page: String(nextPage),
     };
+    if (tab === 'cache' && currentView === 'invest-content') {
+        await loadInvestmentGeneratedContent();
+        return;
+    }
     await loadInvestmentRecordsTab(tab);
 }
 
@@ -2426,10 +2497,15 @@ async function changeInvestmentRecordsPageSize(tab, pageSize) {
         page: '1',
         page_size: String(pageSize || investmentRecordsDefaultPageSize(tab)),
     };
+    if (tab === 'cache' && currentView === 'invest-content') {
+        await loadInvestmentGeneratedContent();
+        return;
+    }
     await loadInvestmentRecordsTab(tab);
 }
 
 async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
+    if (!['requests', 'contents', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     const currentPagination = investmentRecordsState.pagination[tab] || {};
     const list = document.getElementById('investment-records-list');
@@ -2450,12 +2526,6 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
             investmentRecordsState.data.contents = data.records || [];
             investmentRecordsApplyPagination('contents', data.pagination);
             html = `${renderInvestmentContentRecordsTable(investmentRecordsState.data.contents)}${renderInvestmentRecordsPagination(tab)}`;
-        } else if (tab === 'cache') {
-            const query = investmentRecordsQueryParams('cache');
-            const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
-            investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
-            investmentRecordsApplyPagination('cache', data.pagination);
-            html = `${renderInvestmentRecordsCacheTab(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination(tab)}`;
         } else {
             const data = await investmentFetchJson(`/api/investment/audits?${investmentRecordsQueryParams('audits').toString()}`);
             investmentRecordsState.data.audits = data.audits || [];
@@ -2473,6 +2543,9 @@ async function renderInvestmentRecords(options = {}) {
     const element = investmentContentEl('invest-records-content');
     if (!element) return;
     if (options.tab) investmentRecordsState.tab = options.tab;
+    if (!['requests', 'contents', 'audits'].includes(investmentRecordsState.tab)) {
+        investmentRecordsState.tab = 'requests';
+    }
     element.innerHTML = renderInvestmentRecordsShell();
     await loadInvestmentRecordsTab(investmentRecordsState.tab);
 }
@@ -2532,7 +2605,20 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
     const marketDates = cacheData.market_dates || [];
     const selectedDate = investmentCacheMarketDate() || (marketDates || [])[0] || investmentTodayDate();
-    const dateEntries = values.filter(entry => !selectedDate || (entry.market_date || '') === selectedDate);
+    const keyword = investmentCacheKeyword().trim().toLowerCase();
+    const keywordEntries = keyword ? values.filter(entry => {
+        const haystack = [
+            investmentServiceLabel(entry.service_type),
+            entry.service_type,
+            entry.normalized_target,
+            entry.market_date,
+            entry.status,
+            entry.cache_key,
+            ...(Array.isArray(entry.output_files) ? entry.output_files : []),
+        ].join(' ').toLowerCase();
+        return haystack.includes(keyword);
+    }) : values;
+    const dateEntries = keywordEntries.filter(entry => !selectedDate || (entry.market_date || '') === selectedDate);
     const categories = ['technical_analysis', 'rate', 'convertible_bond'];
     const selectedCategory = categories.includes(investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
     const body = selectedCategory
@@ -2546,6 +2632,10 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                     <label class="investment-field compact">
                         <span>生成日期</span>
                         <input id="investment-records-filter-market_date" data-investment-records-filter="market_date" type="date" value="${escapeHtml(selectedDate || '')}">
+                    </label>
+                    <label class="investment-field compact keyword">
+                        <span>关键词</span>
+                        <input id="investment-content-filter-keyword" type="search" value="${escapeHtml(keyword)}" placeholder="类型/标的/文件" onkeydown="if(event.key === 'Enter') applyInvestmentCacheDate()">
                     </label>
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
                     ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日', 'clearInvestmentCacheByDate()')}
@@ -2636,28 +2726,29 @@ async function selectInvestmentCacheDate(date) {
     investmentRecordsState.filters.cache.market_date = date;
     investmentRecordsState.filters.cache.page = '1';
     investmentRecordsState.cacheCategory = '';
-    await loadInvestmentRecordsTab('cache');
+    await loadInvestmentGeneratedContent();
 }
 
 async function applyInvestmentCacheDate() {
     investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || investmentTodayDate();
+    investmentRecordsState.filters.cache.keyword = document.getElementById('investment-content-filter-keyword')?.value || '';
     investmentRecordsState.filters.cache.page = '1';
     investmentRecordsState.cacheCategory = '';
-    await loadInvestmentRecordsTab('cache');
+    await loadInvestmentGeneratedContent();
 }
 
 async function selectInvestmentCacheCategory(serviceType) {
     investmentRecordsState.cacheCategory = serviceType;
     investmentRecordsState.filters.cache.service_type = serviceType;
     investmentRecordsState.filters.cache.page = '1';
-    await loadInvestmentRecordsTab('cache');
+    await loadInvestmentGeneratedContent();
 }
 
 async function backInvestmentCacheCategoryMenu() {
     investmentRecordsState.cacheCategory = '';
     delete investmentRecordsState.filters.cache.service_type;
     investmentRecordsState.filters.cache.page = '1';
-    await loadInvestmentRecordsTab('cache');
+    await loadInvestmentGeneratedContent();
 }
 
 async function clearInvestmentCacheByDate() {
@@ -2669,7 +2760,7 @@ async function clearInvestmentCacheByDate() {
             method: 'POST',
             body: JSON.stringify({market_date: marketDate, operator: 'web-console'}),
         });
-        await loadInvestmentRecordsTab('cache');
+        await loadInvestmentGeneratedContent();
     } catch (error) {
         showInvestmentToast(`生成内容清理失败：${String(error.message || error)}`, 'error');
     }
@@ -2854,27 +2945,97 @@ async function renderInvestmentConfig() {
             canReadConfig ? investmentFetchJson('/api/investment/config') : Promise.resolve({configs: {}}),
             canReadStocks ? investmentFetchJson('/api/investment/stocks?limit=5') : Promise.resolve({stats: {}}),
         ]);
-        const configs = data.configs || {};
-        const groups = canReadConfig ? INVEST_CONFIG_GROUPS.map(group => renderInvestmentConfigGroup(group, configs)).join('') : '';
-        const replyTextGroups = canReadConfig ? renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs) : '';
-        element.innerHTML = `
-            <div class="investment-workbench">
-                <section class="investment-panel investment-workbench-full">
-                    <div class="investment-panel-heading">
-                        <div>
-                            <div class="investment-panel-title"><i class="fas fa-shield-halved"></i><span>系统配置</span></div>
-                            <div class="investment-subtitle">配置项修改后会在当前项旁显示保存按钮，长 prompt 独立展示，避免误改其他配置。</div>
-                        </div>
-                    </div>
-                    <div id="invest-config-save-result" class="investment-muted"></div>
-                </section>
-                ${groups}
-                ${replyTextGroups}
-                ${canReadStocks ? investmentStockTools(stockData.stats || {}) : ''}
-            </div>`;
+        element.innerHTML = renderInvestmentConfigShell(data, stockData);
     } catch (error) {
         investmentError(element, error);
     }
+}
+
+function investmentConfigTabDefinitions(canReadConfig, canReadStocks) {
+    return [
+        {key: 'stock-data', label: '股票数据', icon: 'fa-chart-line', visible: canReadConfig || canReadStocks},
+        {key: 'reply-texts', label: '公众号回复词', icon: 'fa-comments', visible: canReadConfig},
+        {key: 'generation', label: '业务生成配置', icon: 'fa-wand-magic-sparkles', visible: canReadConfig},
+        {key: 'web-chat', label: '后台 Web 对话', icon: 'fa-message', visible: canReadConfig},
+    ].filter(tab => tab.visible);
+}
+
+function renderInvestmentConfigShell(data = {}, stockData = {}) {
+    const canReadConfig = investmentCan('config.read');
+    const canReadStocks = investmentCan('stocks.read');
+    const configs = data.configs || {};
+    const tabs = investmentConfigTabDefinitions(canReadConfig, canReadStocks);
+    if (!tabs.some(tab => tab.key === currentInvestmentConfigPanel)) {
+        currentInvestmentConfigPanel = tabs[0]?.key || 'stock-data';
+    }
+    const panelHtml = renderInvestmentConfigPanel(currentInvestmentConfigPanel, data, stockData, configs, canReadConfig, canReadStocks);
+    return `
+        <div class="investment-config-page investment-settings-page">
+            <section class="investment-panel investment-workbench-full">
+                <div class="investment-panel-heading">
+                    <div>
+                        <div class="investment-panel-title"><i class="fas fa-shield-halved"></i><span>系统配置</span></div>
+                        <div class="investment-subtitle">配置项修改后会在当前项旁显示保存按钮，长 prompt 独立展示，避免误改其他配置。</div>
+                    </div>
+                </div>
+                <div id="invest-config-save-result" class="investment-muted"></div>
+            </section>
+            <div class="investment-tabs investment-config-tabs">
+                ${tabs.map(tab => `
+                    <button class="investment-tab ${currentInvestmentConfigPanel === tab.key ? 'active' : ''}" onclick="switchInvestmentConfigPanel('${escapeHtml(tab.key)}')">
+                        <i class="fas ${escapeHtml(tab.icon)}"></i><span>${escapeHtml(tab.label)}</span>
+                    </button>`).join('')}
+            </div>
+            <div id="investment-config-panel-content">${panelHtml}</div>
+        </div>`;
+}
+
+function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadConfig, canReadStocks) {
+    if (panel === 'reply-texts') {
+        return canReadConfig ? renderInvestmentConfigReplyTextsPanel(data, configs) : '<div class="investment-empty">暂无配置权限</div>';
+    }
+    if (panel === 'generation') {
+        return canReadConfig ? renderInvestmentConfigGenerationPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
+    }
+    if (panel === 'web-chat') {
+        return canReadConfig ? renderInvestmentConfigWebChatPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
+    }
+    return renderInvestmentConfigStockDataPanel(configs, stockData, canReadConfig, canReadStocks);
+}
+
+function renderInvestmentConfigStockDataPanel(configs, stockData, canReadConfig, canReadStocks) {
+    return `
+        <div class="investment-workbench investment-config-panel investment-settings-panel investment-stock-data-panel">
+            ${investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)}
+        </div>`;
+}
+
+function renderInvestmentConfigReplyTextsPanel(data, configs) {
+    return `
+        <div class="investment-workbench investment-config-panel investment-settings-panel">
+            ${renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)}
+        </div>`;
+}
+
+function renderInvestmentConfigGenerationPanel(configs) {
+    return `
+        <div class="investment-workbench investment-config-panel investment-settings-panel">
+            ${renderInvestmentConfigGroupByTitle('技术分析参数', configs, {sectionClass: 'investment-config-section'})}
+            ${renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})}
+            ${renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})}
+        </div>`;
+}
+
+function renderInvestmentConfigWebChatPanel(configs) {
+    return `
+        <div class="investment-workbench investment-config-panel investment-settings-panel">
+            ${renderInvestmentConfigGroupByTitle('后台Web对话', configs, {sectionClass: 'investment-config-section investment-workbench-full'})}
+        </div>`;
+}
+
+function switchInvestmentConfigPanel(panel) {
+    currentInvestmentConfigPanel = ['stock-data', 'reply-texts', 'generation', 'web-chat'].includes(panel) ? panel : 'stock-data';
+    renderInvestmentConfig();
 }
 
 async function renderInvestmentSkills() {
@@ -3082,15 +3243,21 @@ async function deleteInvestmentSkillVersion(skillKey, versionId) {
     }
 }
 
-function renderInvestmentConfigGroup(group, configs) {
+function renderInvestmentConfigGroup(group, configs, options = {}) {
     const hasTextarea = group.keys.some(([, , type]) => type === 'textarea');
+    const sectionClass = options.sectionClass || '';
     return `
-        <section class="investment-panel ${hasTextarea ? 'investment-workbench-full' : ''}">
+        <section class="investment-panel ${sectionClass} ${hasTextarea ? 'investment-workbench-full' : ''}">
             <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>${escapeHtml(group.title)}</span></div>
             <div class="investment-grid ${hasTextarea ? 'cols-1' : 'cols-2'}">
                 ${group.keys.map(([key, label, type]) => renderInvestmentConfigField(key, label, type, configs[key])).join('')}
             </div>
         </section>`;
+}
+
+function renderInvestmentConfigGroupByTitle(title, configs, options = {}) {
+    const group = INVEST_CONFIG_GROUPS.find(item => item.title === title);
+    return group ? renderInvestmentConfigGroup(group, configs, options) : '';
 }
 
 function renderInvestmentReplyConfigGroups(replyTexts, configs) {
@@ -3121,7 +3288,7 @@ function renderInvestmentReplyConfigField(key, definition, value = '') {
     const description = definition.description || '';
     return `
         <div>
-            ${renderInvestmentConfigField(key, label, 'textarea', value)}
+            ${renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})}
             ${description ? `<div class="investment-config-description">${escapeHtml(description)}</div>` : ''}
         </div>`;
 }
@@ -3141,17 +3308,18 @@ function investmentCanEditConfig(key) {
     return investmentCan('config.write');
 }
 
-function renderInvestmentConfigField(key, label, type, value = '') {
+function renderInvestmentConfigField(key, label, type, value = '', options = {}) {
     const id = investmentConfigElementId(key);
     const eventName = type === 'checkbox' ? 'onchange' : 'oninput';
     const canEdit = investmentCanEditConfig(key);
+    const showSaveButton = options.showSaveButton === true;
     const keyArg = investmentJsString(key);
     const typeArg = investmentJsString(type);
     const safeId = escapeHtml(id);
     const safeLabel = escapeHtml(label);
     const saveHandler = escapeHtml(`saveInvestmentConfigKey(${keyArg}, ${typeArg})`);
     const dirtyHandler = escapeHtml(`markInvestmentConfigDirty(${keyArg})`);
-    const saveButton = canEdit ? `<button id="${safeId}-save" class="investment-btn investment-config-save hidden" type="button" onclick="${saveHandler}"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
+    const saveButton = canEdit ? `<button id="${safeId}-save" class="investment-btn investment-config-save${showSaveButton ? '' : ' hidden'}" type="button" onclick="${saveHandler}"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
     const status = `<span id="${safeId}-status" class="investment-config-status"></span>`;
     const fieldClass = type === 'textarea' ? 'investment-config-field textarea-config' : 'investment-config-field';
     let control = '';
@@ -3363,6 +3531,7 @@ window.clearInvestmentCacheByDate = clearInvestmentCacheByDate;
 window.hideInvestmentDetail = hideInvestmentDetail;
 window.hideInvestmentModal = hideInvestmentModal;
 window.saveInvestmentConfig = saveInvestmentConfig;
+window.switchInvestmentConfigPanel = switchInvestmentConfigPanel;
 window.markInvestmentConfigDirty = markInvestmentConfigDirty;
 window.saveInvestmentConfigKey = saveInvestmentConfigKey;
 window.loadInvestmentSkillVersions = loadInvestmentSkillVersions;

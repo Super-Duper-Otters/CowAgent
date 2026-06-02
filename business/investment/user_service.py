@@ -61,6 +61,15 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
+def _admin_actor_values(actor: Any | None, *, prefix: str) -> dict[str, Any]:
+    if actor is None:
+        return {}
+    return {
+        f"{prefix}_by_admin_id": getattr(actor, "id", None),
+        f"{prefix}_by_username": str(getattr(actor, "username", "") or ""),
+    }
+
+
 def _to_iso(value: datetime | str | None) -> str | None:
     if value is None or value == "":
         return None
@@ -301,6 +310,7 @@ def create_user(
     auth_start_at: datetime | str | None = None,
     auth_end_at: datetime | str | None = None,
     remark: str = "",
+    actor: Any | None = None,
 ) -> int:
     now = _now()
     values = {
@@ -316,6 +326,8 @@ def create_user(
         "created_at": now,
         "updated_at": now,
     }
+    values.update(_admin_actor_values(actor, prefix="created"))
+    values.update(_admin_actor_values(actor, prefix="updated"))
     with connect() as conn:
         result = conn.execute(insert(investment_users).values(**values))
         if result.inserted_primary_key:
@@ -334,7 +346,7 @@ def get_user_by_openid(openid: str) -> User | None:
     return _row_to_user(row)
 
 
-def update_user(openid: str, **fields) -> None:
+def update_user(openid: str, actor: Any | None = None, **fields) -> None:
     allowed = {"name", "institution", "mobile", "enabled", "allowed_services", "auth_start_at", "auth_end_at", "remark"}
     values = {}
     for key, value in fields.items():
@@ -350,16 +362,31 @@ def update_user(openid: str, **fields) -> None:
     if not values:
         return
     values["updated_at"] = _now()
+    values.update(_admin_actor_values(actor, prefix="updated"))
     with connect() as conn:
         conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
 
 
-def disable_user(openid: str) -> None:
-    update_user(openid, enabled=False)
+def disable_user(openid: str, *, actor: Any | None = None) -> None:
+    update_user(openid, actor=actor, enabled=False)
 
 
-def enable_user(openid: str) -> None:
-    update_user(openid, enabled=True)
+def enable_user(openid: str, *, actor: Any | None = None) -> None:
+    update_user(openid, actor=actor, enabled=True)
+
+
+def delete_user(openid: str, *, actor: Any | None = None, reason: str = "") -> None:
+    now = _now()
+    values = {
+        "enabled": 0,
+        "deleted_at": now,
+        "delete_reason": reason,
+        "updated_at": now,
+    }
+    values.update(_admin_actor_values(actor, prefix="deleted"))
+    values.update(_admin_actor_values(actor, prefix="updated"))
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
 
 
 def _user_conditions(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None) -> list:

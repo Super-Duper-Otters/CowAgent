@@ -33,6 +33,48 @@ def test_investment_schema_declares_all_tables():
         "investment_operation_audits",
     }.issubset(metadata.tables)
 
+    assert {
+        "created_by_admin_id",
+        "created_by_username",
+        "updated_by_admin_id",
+        "updated_by_username",
+        "deleted_at",
+        "deleted_by_admin_id",
+        "deleted_by_username",
+        "delete_reason",
+    }.issubset(metadata.tables["investment_users"].columns.keys())
+    assert {
+        "created_by_admin_id",
+        "created_by_username",
+        "created_by_role",
+        "updated_by_admin_id",
+        "updated_by_username",
+        "updated_by_role",
+        "published_by_admin_id",
+        "published_by_username",
+        "published_by_role",
+    }.issubset(metadata.tables["investment_daily_contents"].columns.keys())
+    assert {
+        "operator_admin_id",
+        "operator_username",
+        "operator_role",
+        "operation_category",
+        "result_status",
+        "error_code",
+        "error_message",
+        "elapsed_ms",
+        "before_state",
+        "after_state",
+        "request_ip",
+        "user_agent",
+    }.issubset(metadata.tables["investment_operation_audits"].columns.keys())
+    assert {
+        "updated_by_admin_id",
+        "updated_by_username",
+        "updated_by_role",
+    }.issubset(metadata.tables["investment_configs"].columns.keys())
+    assert "owner_type" in metadata.tables["investment_output_files"].columns
+
 
 def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(investment_env):
     from business.investment.auth_service import (
@@ -53,7 +95,6 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert verify_password("wrong-pass", password_hash) is False
 
     user_id = create_admin_user("operator-a", "secret-pass", role="content_operator")
-    legacy_id = create_admin_user("legacy-poster-a", "poster-pass", role="poster")
     assert authenticate_admin("operator-a", "wrong-pass") is None
     admin = authenticate_admin("operator-a", "secret-pass")
     assert admin is not None
@@ -74,12 +115,28 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
     assert require_permission(session, "audits.read").allowed is False
     assert require_permission(session, "config.write").allowed is False
 
-    legacy = authenticate_admin("legacy-poster-a", "poster-pass")
-    assert legacy is not None
-    assert legacy.id == legacy_id
-    assert legacy.role == "content_operator"
-    assert require_permission(legacy, "content.publish").allowed is True
-    assert require_permission(legacy, "customers.write").allowed is False
+    with pytest.raises(ValueError, match="unsupported admin role"):
+        create_admin_user("legacy-poster-a", "poster-pass", role="poster")
+    with pytest.raises(ValueError, match="unsupported admin role"):
+        create_admin_user("legacy-tech-a", "tech-pass", role="technical_admin")
+
+
+def test_technical_operator_only_has_config_permissions(investment_env):
+    from business.investment.auth_service import authenticate_admin, create_admin_user, require_permission
+
+    create_admin_user("tech-ops-a", "tech-pass", role="technical_operator")
+
+    admin = authenticate_admin("tech-ops-a", "tech-pass")
+    assert admin is not None
+    assert admin.role == "technical_operator"
+    assert require_permission(admin, "config.read").allowed is True
+    assert require_permission(admin, "config.write").allowed is True
+    assert require_permission(admin, "customers.read").allowed is False
+    assert require_permission(admin, "admin_users.read").allowed is False
+    assert require_permission(admin, "content.read").allowed is False
+    assert require_permission(admin, "skills.read").allowed is False
+    assert require_permission(admin, "stocks.read").allowed is False
+    assert require_permission(admin, "health.read").allowed is False
 
 
 def test_investment_migrations_seed_default_admin_and_posters(investment_env):
@@ -161,7 +218,7 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
 
     create_admin_user("admin-a", "admin-pass", role="admin")
     create_admin_user("operator-a", "operator-pass", role="content_operator")
-    create_admin_user("tech-a", "tech-pass", role="technical_admin")
+    create_admin_user("tech-a", "tech-pass", role="technical_operator")
     admin_token = create_admin_session(authenticate_admin("admin-a", "admin-pass"))
     operator_token = create_admin_session(authenticate_admin("operator-a", "operator-pass"))
     tech_token = create_admin_session(authenticate_admin("tech-a", "tech-pass"))
@@ -191,21 +248,6 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     assert created["action"] == "created"
 
     use_token(tech_token)
-    health_calls = []
-    monkeypatch.setattr(
-        "business.investment.health.run_health_checks",
-        lambda run_smoke=False: health_calls.append(run_smoke)
-        or [SimpleNamespace(name="database", ok=True, detail="ok", level="ok")],
-    )
-    health = json.loads(InvestmentHealthHandler().GET())
-    assert health["status"] == "success"
-    assert health_calls == [False]
-    monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace(smoke="1"))
-    full_health = json.loads(InvestmentHealthHandler().POST())
-    assert full_health["status"] == "success"
-    assert full_health["level"] == "ok"
-    assert health_calls == [False, True]
-
     monkeypatch.setattr(
         web_channel.web,
         "data",
@@ -213,6 +255,11 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     )
     config = json.loads(InvestmentConfigHandler().POST())
     assert config["status"] == "success"
+    with pytest.raises(web_channel.web.HTTPError) as tech_health_error:
+        InvestmentHealthHandler().GET()
+    tech_health_denied = json.loads(tech_health_error.value.data)
+    assert tech_health_denied["status"] == "error"
+    assert tech_health_denied["permission"] == "health.read"
 
     use_token(operator_token)
     with pytest.raises(web_channel.web.HTTPError) as poster_config_error:
@@ -238,12 +285,12 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     monkeypatch.setattr(
         web_channel.web,
         "data",
-        lambda: json.dumps({"username": "ops-web", "password": "ops-pass", "role": "poster"}).encode("utf-8"),
+        lambda: json.dumps({"username": "ops-web", "password": "ops-pass", "role": "technical_operator"}).encode("utf-8"),
     )
     created_admin = json.loads(InvestmentAdminUsersHandler().POST())
     assert created_admin["status"] == "success"
     assert created_admin["action"] == "created"
-    assert authenticate_admin("ops-web", "ops-pass").role == "content_operator"
+    assert authenticate_admin("ops-web", "ops-pass").role == "technical_operator"
 
     monkeypatch.setattr(
         web_channel.web,
@@ -708,6 +755,8 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
     assert "ts-1234567890abcdef" not in safe_log_value("tushare.token", "ts-1234567890abcdef")
     assert mask_sensitive_value("abc") == "***"
     assert can_modify_config("tushare.token", "uploader") is False
+    assert can_modify_config("tushare.token", "content_operator") is False
+    assert can_modify_config("tushare.token", "technical_operator") is True
     assert can_modify_config("tushare.token", "admin") is True
 
 
@@ -732,11 +781,11 @@ def test_web_open_chat_config_is_admin_only(investment_env):
     from business.investment.config_service import can_modify_config, get_config, save_config
 
     assert get_config("router.enable_web_open_chat", False) is False
-    assert can_modify_config("router.enable_web_open_chat", "technical_admin") is False
+    assert can_modify_config("router.enable_web_open_chat", "technical_operator") is False
     assert can_modify_config("router.enable_web_open_chat", "admin") is True
 
     with pytest.raises(PermissionError):
-        save_config("router.enable_web_open_chat", True, operator_role="technical_admin")
+        save_config("router.enable_web_open_chat", True, operator_role="technical_operator")
 
     save_config("router.enable_web_open_chat", True, operator_role="admin")
     assert get_config("router.enable_web_open_chat") is True
@@ -1139,6 +1188,58 @@ def test_web_customer_search_enable_and_audits_use_customer_permissions(investme
     assert audits[0].operator == "audit-admin"
 
 
+def test_web_customer_create_audit_binds_session_admin_not_body_operator(investment_env, monkeypatch):
+    from business.investment.audit_service import list_operation_audits
+    from business.investment.auth_service import authenticate_admin
+    from business.investment.db import connect
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUsersHandler
+
+    _login_default_investment_admin(monkeypatch, username="session-admin")
+    admin = authenticate_admin("session-admin", "password")
+    assert admin is not None
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({
+            "openid": "actor-openid",
+            "name": "Actor Customer",
+            "allowed_services": ["全部"],
+            "operator": "spoofed-operator",
+        }).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentUsersHandler().POST())
+
+    assert payload["status"] == "success"
+    audit = list_operation_audits(limit=1, target_type="customer", target_id="actor-openid")[0]
+    assert audit.operator == "session-admin"
+    assert audit.operator_admin_id == admin.id
+    assert audit.operator_username == "session-admin"
+    assert audit.operator_role == "admin"
+    assert audit.operation_category == "customer"
+    assert audit.result_status == "success"
+    assert audit.error_code == ""
+    assert audit.error_message == ""
+    assert audit.before_state == {}
+    assert audit.after_state["openid"] == "actor-openid"
+    assert audit.after_state["name"] == "Actor Customer"
+    with connect() as conn:
+        row = conn.execute(
+            text(
+                "select created_by_admin_id, created_by_username, updated_by_admin_id, updated_by_username "
+                "from investment_users where openid = 'actor-openid'"
+            )
+        ).fetchone()
+    assert row is not None
+    assert row.created_by_admin_id == admin.id
+    assert row.created_by_username == "session-admin"
+    assert row.updated_by_admin_id == admin.id
+    assert row.updated_by_username == "session-admin"
+
+
 def test_web_user_management_apis_support_keyword_and_pagination(investment_env, monkeypatch):
     from business.investment.auth_service import create_admin_user
     from business.investment.constants import ServiceType
@@ -1462,6 +1563,77 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_en
     assert payload["result"] == {"akshare": {"error": "ak failed"}, "tushare": {"count": 4}}
 
 
+def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(investment_env):
+    from business.investment.db import connect
+    from business.investment.record_cleanup import cleanup_useless_business_records
+    from business.investment.schema import (
+        investment_admin_sessions,
+        investment_configs,
+        investment_request_records,
+        investment_stock_symbols,
+    )
+
+    with connect() as conn:
+        conn.execute(
+            investment_configs.insert(),
+            {
+                "config_key": "runtime.pg.test.cleanup",
+                "config_value": "temp",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "updated_by": "pytest",
+            },
+        )
+        conn.execute(
+            investment_stock_symbols.insert(),
+            {
+                "code": "000000.SZ",
+                "name": "测试股票",
+                "market": "SZ",
+                "source": "runtime-test",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+        conn.execute(
+            investment_admin_sessions.insert(),
+            {
+                "session_id": "expired-session",
+                "user_id": 1,
+                "token_hash": "expired-token-hash",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "expires_at": "2026-01-02T00:00:00+00:00",
+            },
+        )
+        conn.execute(
+            investment_request_records.insert(),
+            {
+                "request_id": "old-unmatched-cleanup",
+                "openid": "cleanup-openid",
+                "raw_input": "nonsense",
+                "service_type": "unmatched",
+                "status": "failed",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+
+    dry_run = cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=True)
+    assert dry_run["runtime_test_configs"] == 1
+    assert dry_run["runtime_test_stocks"] == 1
+    assert dry_run["expired_admin_sessions"] == 1
+    assert dry_run["old_exception_requests"] == 1
+
+    with connect() as conn:
+        assert conn.execute(text("select count(*) from investment_configs where config_key = 'runtime.pg.test.cleanup'")).scalar_one() == 1
+
+    executed = cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=False)
+    assert executed == dry_run
+    with connect() as conn:
+        assert conn.execute(text("select count(*) from investment_configs where config_key = 'runtime.pg.test.cleanup'")).scalar_one() == 0
+        assert conn.execute(text("select count(*) from investment_stock_symbols where source = 'runtime-test'")).scalar_one() == 0
+        assert conn.execute(text("select count(*) from investment_admin_sessions where session_id = 'expired-session'")).scalar_one() == 0
+        assert conn.execute(text("select count(*) from investment_request_records where request_id = 'old-unmatched-cleanup'")).scalar_one() == 0
+
+
 def test_web_daily_content_generate_marks_generating_before_background_task(investment_env, monkeypatch):
     from business.investment.constants import ServiceType, Status
     from business.investment.daily_content import create_rate_content_draft
@@ -1496,6 +1668,58 @@ def test_web_daily_content_generate_marks_generating_before_background_task(inve
     assert payload["generation_status"] == "started"
     assert get_content_record(content_id).service_type == ServiceType.RATE
     assert get_content_record(content_id).status == Status.GENERATING
+
+
+def test_web_daily_content_create_binds_session_admin_not_body_operator(investment_env, monkeypatch):
+    from business.investment.audit_service import list_operation_audits
+    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.investment.db import connect
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentDailyContentHandler
+
+    create_admin_user("content-session", "content-pass", role="content_operator")
+    admin = authenticate_admin("content-session", "content-pass")
+    assert admin is not None
+    token = create_admin_session(admin)
+    monkeypatch.setattr(web_channel.web, "cookies", lambda: {"cow_investment_session": token})
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({
+            "service_type": "rate",
+            "source_text": "content source",
+            "operator": "spoofed-content-operator",
+        }).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentDailyContentHandler().POST())
+
+    assert payload["status"] == "success"
+    content_id = payload["content_id"]
+    with connect() as conn:
+        row = conn.execute(
+            text(
+                "select operator, created_by_admin_id, created_by_username, created_by_role, "
+                "updated_by_admin_id, updated_by_username, updated_by_role "
+                "from investment_daily_contents where content_id = :content_id"
+            ),
+            {"content_id": content_id},
+        ).fetchone()
+    assert row is not None
+    assert row.operator == "content-session"
+    assert row.created_by_admin_id == admin.id
+    assert row.created_by_username == "content-session"
+    assert row.created_by_role == "content_operator"
+    assert row.updated_by_admin_id == admin.id
+    assert row.updated_by_username == "content-session"
+    assert row.updated_by_role == "content_operator"
+    audit = list_operation_audits(limit=1, target_type="daily_content", target_id=content_id)[0]
+    assert audit.action == "content.create"
+    assert audit.operator == "content-session"
+    assert audit.operator_admin_id == admin.id
+    assert audit.operation_category == "content"
 
 
 def test_web_daily_content_get_returns_current_effective_content(investment_env, tmp_path, monkeypatch):
@@ -1796,6 +2020,38 @@ def test_operation_audits_page_returns_total_and_filter_pagination(investment_en
     assert [audit.audit_id for audit in audits] == [audit_ids[2], audit_ids[1]]
     assert [audit["audit_id"] for audit in payload["audits"]] == [audit_ids[2], audit_ids[1]]
     assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+
+
+def test_operation_audit_records_admin_actor_fields(investment_env):
+    from business.investment.audit_service import AdminActor, list_operation_audits, record_operation_audit
+
+    audit_id = record_operation_audit(
+        "customer.update",
+        "customer",
+        "openid-actor",
+        actor=AdminActor(admin_id=42, username="actor-admin", role="admin"),
+        detail={"changed": ["mobile"]},
+        result_status="failed",
+        error_code="VALIDATION_ERROR",
+        error_message="mobile invalid",
+        elapsed_ms=123,
+        before_state={"mobile": "13800138000"},
+        after_state={"mobile": "bad-mobile"},
+    )
+
+    audit = list_operation_audits(limit=1, target_type="customer", target_id="openid-actor")[0]
+    assert audit.audit_id == audit_id
+    assert audit.operator == "actor-admin"
+    assert audit.operator_admin_id == 42
+    assert audit.operator_username == "actor-admin"
+    assert audit.operator_role == "admin"
+    assert audit.operation_category == "customer"
+    assert audit.result_status == "failed"
+    assert audit.error_code == "VALIDATION_ERROR"
+    assert audit.error_message == "mobile invalid"
+    assert audit.elapsed_ms == 123
+    assert audit.before_state == {"mobile": "13800138000"}
+    assert audit.after_state == {"mobile": "bad-mobile"}
 
 
 def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
@@ -6740,7 +6996,8 @@ def test_tushare_token_config_permission_is_sensitive(investment_env):
 
     assert can_modify_config("tushare.token", "uploader") is False
     assert can_modify_config("tushare.token", "operator") is False
-    assert can_modify_config("tushare.token", "technical_admin") is True
+    assert can_modify_config("tushare.token", "technical_admin") is False
+    assert can_modify_config("tushare.token", "technical_operator") is True
 
     with pytest.raises(PermissionError):
         save_config("tushare.token", "blocked-token", operator_role="operator")
@@ -7018,13 +7275,14 @@ def test_daily_content_operation_audits_track_create_generate_effective_and_arch
     audits = list_operation_audits(limit=20)
     actions = [audit.action for audit in audits]
 
-    assert "create" in actions
-    assert "generate" in actions
-    assert "effective" in actions
-    assert "archive" in actions
-    effective = next(audit for audit in audits if audit.action == "effective" and audit.target_id == second)
+    assert "content.create" in actions
+    assert "content.generate" in actions
+    assert "content.publish" in actions
+    assert "content.archive" in actions
+    effective = next(audit for audit in audits if audit.action == "content.publish" and audit.target_id == second)
     assert effective.operator == "operator-b"
     assert effective.target_type == "daily_content"
+    assert effective.operation_category == "content"
     assert effective.detail["service_type"] == ServiceType.RATE
 
 

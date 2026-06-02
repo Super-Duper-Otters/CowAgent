@@ -183,12 +183,57 @@ def _investment_admin_payload(admin):
     }
 
 
-def _record_investment_operation(action: str, target_type: str, target_id: str = "", *, admin=None, detail=None):
+def _investment_customer_snapshot(user):
+    if user is None:
+        return {}
+    return {
+        "openid": user.openid,
+        "name": user.name,
+        "institution": user.institution,
+        "mobile": user.mobile,
+        "enabled": user.enabled,
+        "allowed_services": [str(item) for item in (user.allowed_services or [])],
+        "auth_start_at": user.auth_start_at.isoformat() if user.auth_start_at else "",
+        "auth_end_at": user.auth_end_at.isoformat() if user.auth_end_at else "",
+        "remark": user.remark,
+    }
+
+
+def _record_investment_operation(
+    action: str,
+    target_type: str,
+    target_id: str = "",
+    *,
+    admin=None,
+    detail=None,
+    result_status: str = "success",
+    error_code: str = "",
+    error_message: str = "",
+    elapsed_ms: int | None = None,
+    before_state=None,
+    after_state=None,
+):
     try:
-        from business.investment.audit_service import record_operation_audit
+        from business.investment.audit_service import actor_from_admin, record_operation_audit
 
         operator = getattr(admin, "username", "") if admin is not None else ""
-        record_operation_audit(action, target_type, target_id, operator=operator, detail=detail or {})
+        env = getattr(web.ctx, "env", {}) or {}
+        record_operation_audit(
+            action,
+            target_type,
+            target_id,
+            operator=operator,
+            actor=actor_from_admin(admin),
+            result_status=result_status,
+            error_code=error_code,
+            error_message=error_message,
+            elapsed_ms=elapsed_ms,
+            before_state=before_state or {},
+            after_state=after_state or {},
+            request_ip=str(getattr(web.ctx, "ip", "") or ""),
+            user_agent=str(env.get("HTTP_USER_AGENT", "") or ""),
+            detail=detail or {},
+        )
     except Exception as audit_error:
         logger.warning(f"[Investment] operation audit failed: {audit_error}")
 
@@ -2509,6 +2554,9 @@ class AssetsHandler:
             else:
                 # 默认为二进制流
                 web.header('Content-Type', 'application/octet-stream')
+            if file_path in ('js/console.js', 'css/console.css'):
+                web.header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                web.header('Pragma', 'no-cache')
 
             # 读取并返回文件内容
             with open(full_path, 'rb') as f:
@@ -2813,7 +2861,7 @@ class InvestmentAdminUserPasswordHandler:
 
 class InvestmentRequestRecordsExportHandler:
     def GET(self):
-        _require_investment_permission("records.export")
+        admin = _require_investment_permission("records.export")
         try:
             from business.investment.export_service import export_request_records_xlsx
 
@@ -2841,6 +2889,19 @@ class InvestmentRequestRecordsExportHandler:
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
                 customer=getattr(params, "customer", "") or "",
+            )
+            _record_investment_operation(
+                "request_record.export",
+                "investment_request_record",
+                admin=admin,
+                detail={
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "service_type": params.service_type or "",
+                    "status": getattr(params, "status", "") or "",
+                    "keyword": getattr(params, "keyword", "") or "",
+                    "customer": getattr(params, "customer", "") or "",
+                },
             )
             return _investment_xlsx_response(data, "investment-requests.xlsx")
         except Exception as e:
@@ -2929,17 +2990,22 @@ class InvestmentUsersHandler:
                 "auth_end_at": body.get("auth_end_at") or None,
                 "remark": body.get("remark", ""),
             }
-            if get_user_by_openid(openid):
-                update_user(openid, **values)
+            before_user = get_user_by_openid(openid)
+            before_state = _investment_customer_snapshot(before_user)
+            if before_user:
+                update_user(openid, actor=admin, **values)
                 action = "updated"
             else:
-                create_user(openid, **values)
+                create_user(openid, actor=admin, **values)
                 action = "created"
+            after_state = _investment_customer_snapshot(get_user_by_openid(openid))
             _record_investment_operation(
                 f"customer.{action[:-1] if action.endswith('d') else action}",
                 "customer",
                 openid,
                 admin=admin,
+                before_state=before_state,
+                after_state=after_state,
                 detail={key: value for key, value in values.items() if key != "allowed_services"} | {"allowed_services": values["allowed_services"]},
             )
             return _investment_json_response({"status": "success", "action": action})
@@ -2954,13 +3020,23 @@ class InvestmentUserStatusHandler:
         try:
             from business.investment.user_service import disable_user, enable_user, get_user_by_openid
 
-            if get_user_by_openid(openid) is None:
+            before_user = get_user_by_openid(openid)
+            if before_user is None:
                 return _investment_json_response({"status": "error", "message": "user not found"})
+            before_state = _investment_customer_snapshot(before_user)
             if action == "enable":
-                enable_user(openid)
+                enable_user(openid, actor=admin)
             else:
-                disable_user(openid)
-            _record_investment_operation(f"customer.{action}", "customer", openid, admin=admin)
+                disable_user(openid, actor=admin)
+            after_state = _investment_customer_snapshot(get_user_by_openid(openid))
+            _record_investment_operation(
+                f"customer.{action}",
+                "customer",
+                openid,
+                admin=admin,
+                before_state=before_state,
+                after_state=after_state,
+            )
             return _investment_json_response({"status": "success"})
         except Exception as e:
             logger.error(f"[Investment] user status error: {e}")
@@ -3084,7 +3160,7 @@ class InvestmentDailyContentHandler:
             return _investment_json_response({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_investment_permission("content.upload")
+        admin = _require_investment_permission("content.upload")
         try:
             from business.investment.constants import normalize_service
             from business.investment.daily_content import create_content_draft, save_source_file, update_generation_success
@@ -3123,9 +3199,10 @@ class InvestmentDailyContentHandler:
                 service_type,
                 source_files=source_files,
                 source_text=source_text,
-                operator=body.get("operator", ""),
+                operator=admin.username,
                 effective_date=body.get("effective_date") or None,
                 direct_output_mode=_investment_bool(body.get("direct_output_mode")),
+                actor=admin,
             )
             if body.get("generated_text") or body.get("output_image"):
                 update_generation_success(content_id, body.get("generated_text", ""), body.get("output_image", ""))
@@ -3137,11 +3214,11 @@ class InvestmentDailyContentHandler:
 
 class InvestmentDailyContentGenerateHandler:
     def POST(self, content_id):
-        _require_investment_permission("content.generate")
+        admin = _require_investment_permission("content.generate")
         try:
             from business.investment.daily_content import generate_content, mark_generation_started, update_generation_failure
 
-            result = mark_generation_started(content_id)
+            result = mark_generation_started(content_id, actor=admin)
             if result.success:
                 def run_generation_task():
                     try:
@@ -3174,7 +3251,7 @@ class InvestmentDailyContentGenerateHandler:
 
 class InvestmentDailyContentEffectiveHandler:
     def POST(self, content_id):
-        _require_investment_permission("content.publish")
+        admin = _require_investment_permission("content.publish")
         try:
             from business.investment.daily_content import set_content_effective
 
@@ -3183,7 +3260,8 @@ class InvestmentDailyContentEffectiveHandler:
                 content_id,
                 body.get("output_image") or None,
                 effective_date=body.get("effective_date") or None,
-                operator=body.get("operator", ""),
+                operator=admin.username,
+                actor=admin,
             )
             return _investment_json_response({"status": "success"})
         except Exception as e:
@@ -3366,18 +3444,16 @@ class InvestmentCacheHandler:
 
 class InvestmentCacheEntryInvalidateHandler:
     def POST(self, cache_key):
-        _require_investment_permission("cache.write")
+        admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.audit_service import record_operation_audit
             from business.investment.cache_service import invalidate_cache_entry
 
-            body = _investment_json_body()
             invalidated = invalidate_cache_entry(cache_key)
-            record_operation_audit(
+            _record_investment_operation(
                 "cache.invalidate",
                 "investment_cache_entry",
                 target_id=cache_key,
-                operator=body.get("operator", "web-console"),
+                admin=admin,
                 detail={"invalidated": invalidated},
             )
             return _investment_json_response({"status": "success", "invalidated": invalidated})
@@ -3388,9 +3464,8 @@ class InvestmentCacheEntryInvalidateHandler:
 
 class InvestmentCacheClearHandler:
     def POST(self):
-        _require_investment_permission("cache.write")
+        admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.audit_service import record_operation_audit
             from business.investment.cache_service import clear_cache_entries
             from business.investment.constants import ServiceType, normalize_service
 
@@ -3400,10 +3475,10 @@ class InvestmentCacheClearHandler:
                 service_type = None
             market_date = str(body.get("market_date") or "").strip()
             removed = clear_cache_entries(service_type=service_type, market_date=market_date)
-            record_operation_audit(
+            _record_investment_operation(
                 "cache.clear",
                 "investment_cache_entry",
-                operator=body.get("operator", "web-console"),
+                admin=admin,
                 detail={"service_type": str(service_type) if service_type else "", "market_date": market_date, "removed": removed},
             )
             return _investment_json_response({"status": "success", "removed": removed})
@@ -3438,12 +3513,13 @@ class InvestmentConfigHandler:
             save_configs(
                 body.get("configs", {}),
                 operator_role=admin.role,
-                operator=body.get("operator", "") or admin.username,
+                operator=admin.username,
+                actor=admin,
             )
-            record_operation_audit(
+            _record_investment_operation(
                 "config.update",
                 "investment_config",
-                operator=body.get("operator", "") or admin.username,
+                admin=admin,
                 detail={"keys": sorted((body.get("configs", {}) or {}).keys())},
             )
             return _investment_json_response({"status": "success"})
@@ -3469,7 +3545,7 @@ class InvestmentSkillVersionsHandler:
 
 class InvestmentSkillSettingsHandler:
     def POST(self, skill_key):
-        _require_investment_permission("skills.write")
+        admin = _require_investment_permission("skills.write")
         try:
             from business.investment.config_service import save_config
             from business.investment.skill_registry import get_skill_definition
@@ -3477,14 +3553,14 @@ class InvestmentSkillSettingsHandler:
 
             definition = get_skill_definition(skill_key)
             body = _investment_json_body()
-            operator = body.get("operator", "web-console")
 
             if "enabled" in body:
                 save_config(
                     definition.enabled_config_key,
                     bool(body.get("enabled")),
-                    operator_role="admin",
-                    operator=operator,
+                    operator_role=admin.role,
+                    operator=admin.username,
+                    actor=admin,
                 )
 
             if "triggers" in body:
@@ -3497,10 +3573,18 @@ class InvestmentSkillSettingsHandler:
                 save_config(
                     definition.triggers_config_key,
                     triggers,
-                    operator_role="admin",
-                    operator=operator,
+                    operator_role=admin.role,
+                    operator=admin.username,
+                    actor=admin,
                 )
 
+            _record_investment_operation(
+                "skill.settings.update",
+                "investment_skill",
+                skill_key,
+                admin=admin,
+                detail={"keys": [key for key in ("enabled", "triggers") if key in body]},
+            )
             return _investment_json_response({"status": "success", "skills": list_all_skills()})
         except Exception as e:
             logger.error(f"[Investment] skill settings error: {e}")
@@ -3509,7 +3593,7 @@ class InvestmentSkillSettingsHandler:
 
 class InvestmentSkillPackageUploadHandler:
     def POST(self):
-        _require_investment_permission("skills.write")
+        admin = _require_investment_permission("skills.write")
         try:
             from business.investment.skill_versions import list_all_skills, save_package_upload
 
@@ -3521,8 +3605,9 @@ class InvestmentSkillPackageUploadHandler:
             uploaded = save_package_upload(
                 os.path.basename(filename),
                 _read_uploaded_file_bytes(file_obj),
-                operator=params.get("operator", "web-console"),
+                operator=admin.username,
             )
+            _record_investment_operation("skill.upload", "investment_skill", uploaded.get("skill_key", ""), admin=admin, detail={"filename": os.path.basename(filename), "package": True})
             return _investment_json_response({
                 "status": "success",
                 "uploaded": uploaded,
@@ -3535,7 +3620,7 @@ class InvestmentSkillPackageUploadHandler:
 
 class InvestmentSkillUploadHandler:
     def POST(self, skill_key):
-        _require_investment_permission("skills.write")
+        admin = _require_investment_permission("skills.write")
         try:
             from business.investment.skill_versions import list_all_skills, save_upload
 
@@ -3548,8 +3633,9 @@ class InvestmentSkillUploadHandler:
                 skill_key,
                 os.path.basename(filename),
                 _read_uploaded_file_bytes(file_obj),
-                operator=params.get("operator", "web-console"),
+                operator=admin.username,
             )
+            _record_investment_operation("skill.upload", "investment_skill", skill_key, admin=admin, detail={"filename": os.path.basename(filename), "version_id": version.get("version_id", "")})
             return _investment_json_response({
                 "status": "success",
                 "version": version,
@@ -3562,12 +3648,12 @@ class InvestmentSkillUploadHandler:
 
 class InvestmentSkillActivateHandler:
     def POST(self, skill_key, version_id):
-        _require_investment_permission("skills.write")
+        admin = _require_investment_permission("skills.write")
         try:
             from business.investment.skill_versions import activate_version, list_all_skills
 
-            body = _investment_json_body()
-            version = activate_version(skill_key, version_id, operator=body.get("operator", "web-console"))
+            version = activate_version(skill_key, version_id, operator=admin.username)
+            _record_investment_operation("skill.activate", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
             return _investment_json_response({
                 "status": "success",
                 "version": version,
@@ -3580,12 +3666,12 @@ class InvestmentSkillActivateHandler:
 
 class InvestmentSkillDeleteHandler:
     def POST(self, skill_key, version_id):
-        _require_investment_permission("skills.write")
+        admin = _require_investment_permission("skills.write")
         try:
             from business.investment.skill_versions import delete_version, list_all_skills
 
-            body = _investment_json_body()
-            deleted = delete_version(skill_key, version_id, operator=body.get("operator", "web-console"))
+            deleted = delete_version(skill_key, version_id, operator=admin.username)
+            _record_investment_operation("skill.delete", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
             return _investment_json_response({
                 "status": "success",
                 "deleted": deleted,
@@ -3616,7 +3702,7 @@ class InvestmentStocksHandler:
 
 class InvestmentStocksRefreshHandler:
     def POST(self):
-        _require_investment_permission("stocks.write")
+        admin = _require_investment_permission("stocks.write")
         try:
             from business.investment import stock_resolver
 
@@ -3630,6 +3716,7 @@ class InvestmentStocksRefreshHandler:
                 result = {"tushare": {"count": stock_resolver.refresh_from_tushare()}}
             else:
                 return _investment_json_response({"status": "error", "message": f"unsupported source: {source}"})
+            _record_investment_operation("stock.refresh", "investment_stock_symbol", admin=admin, detail={"source": source, "result": result})
             return _investment_json_response({
                 "status": "success",
                 "result": result,

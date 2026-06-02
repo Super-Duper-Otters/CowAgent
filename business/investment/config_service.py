@@ -119,11 +119,9 @@ def can_modify_config(key: str, operator_role: str) -> bool:
         return False
     if key in ADMIN_ONLY_CONFIG_KEYS:
         return operator_role == "admin"
-    if operator_role in ("admin", "technical_admin"):
+    if operator_role in ("admin", "technical_operator"):
         return True
-    if is_sensitive_key(key):
-        return False
-    return operator_role in ("uploader", "operator")
+    return False
 
 
 def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
@@ -153,6 +151,7 @@ def save_config(
     *,
     operator_role: str = "admin",
     operator: str = "",
+    actor: Any | None = None,
     sync_project: bool = False,
 ) -> None:
     _validate_investment_config_keys((key,))
@@ -172,8 +171,21 @@ def save_config(
             fallback_value = conf().get(fallback_key)
             if fallback_value is not None and value == mask_sensitive_value(fallback_value):
                 return
+    actor_id = getattr(actor, "id", None) if actor is not None else None
+    actor_username = str(getattr(actor, "username", "") or "") if actor is not None else ""
+    actor_role = str(getattr(actor, "role", "") or "") if actor is not None else ""
+    updated_by = actor_username or operator
     with connect() as conn:
-        upsert_config(conn, key, _serialize(value), _now(), operator)
+        upsert_config(
+            conn,
+            key,
+            _serialize(value),
+            _now(),
+            updated_by,
+            updated_by_admin_id=actor_id,
+            updated_by_username=updated_by,
+            updated_by_role=actor_role or operator_role,
+        )
 
 
 def get_configs(keys: list[str], *, masked: bool = False) -> dict[str, Any]:
@@ -185,6 +197,7 @@ def save_configs(
     *,
     operator_role: str = "admin",
     operator: str = "",
+    actor: Any | None = None,
     sync_project: bool = False,
 ) -> None:
     _validate_investment_config_keys(tuple(values.keys()))
@@ -194,5 +207,6 @@ def save_configs(
             value,
             operator_role=operator_role,
             operator=operator,
+            actor=actor,
             sync_project=sync_project,
         )

@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from sqlalchemy import insert, select, update
 
-from .audit_service import record_operation_audit
+from .audit_service import AdminActor, actor_from_admin, record_operation_audit
 from .config_service import sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, Status, user_message
 from .db import connect, row_to_dict
@@ -47,6 +47,31 @@ Renderer = Callable[[ServiceType, str], Any]
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _actor_identity(actor: Any | None, fallback_operator: str = ""):
+    audit_actor = actor_from_admin(actor)
+    operator = audit_actor.username if audit_actor is not None and audit_actor.username else fallback_operator
+    return operator, audit_actor
+
+
+def _content_actor_values(actor: Any | None, *, prefix: str) -> dict[str, Any]:
+    if actor is None:
+        return {}
+    return {
+        f"{prefix}_by_admin_id": getattr(actor, "id", None),
+        f"{prefix}_by_username": str(getattr(actor, "username", "") or ""),
+        f"{prefix}_by_role": str(getattr(actor, "role", "") or ""),
+    }
+
+
+def _actor_from_content_item(item: dict[str, Any]) -> AdminActor | None:
+    admin_id = item.get("updated_by_admin_id") or item.get("created_by_admin_id")
+    username = item.get("updated_by_username") or item.get("created_by_username") or item.get("operator") or ""
+    role = item.get("updated_by_role") or item.get("created_by_role") or ""
+    if admin_id is None and not username and not role:
+        return None
+    return AdminActor(admin_id=admin_id, username=username, role=role)
 
 
 def _today() -> str:
@@ -111,12 +136,17 @@ def create_content_draft(
     operator: str = "",
     effective_date: str | None = None,
     direct_output_mode: bool = False,
+    actor: Any | None = None,
 ) -> str:
     service_type = _ensure_content_service_type(service_type)
     normalized_effective_date = _normalize_effective_date(effective_date)
     direct_output_mode = bool(direct_output_mode and service_type == ServiceType.RATE)
     content_id = str(uuid.uuid4())
     now = _now()
+    operator, audit_actor = _actor_identity(actor, operator)
+    actor_values = {}
+    actor_values.update(_content_actor_values(actor, prefix="created"))
+    actor_values.update(_content_actor_values(actor, prefix="updated"))
     with connect() as conn:
         version_row = conn.execute(
             select(investment_daily_contents.c.content_version)
@@ -141,13 +171,15 @@ def create_content_draft(
                 direct_output_mode=1 if direct_output_mode else 0,
                 created_at=now,
                 updated_at=now,
+                **actor_values,
             )
         )
     record_operation_audit(
-        "create",
+        "content.create",
         "daily_content",
         content_id,
         operator=operator,
+        actor=audit_actor,
         detail={
             "service_type": str(service_type),
             "effective_date": normalized_effective_date,
@@ -165,6 +197,7 @@ def create_rate_content_draft(
     operator: str = "",
     effective_date: str | None = None,
     direct_output_mode: bool = False,
+    actor: Any | None = None,
 ) -> str:
     return create_content_draft(
         ServiceType.RATE,
@@ -173,6 +206,7 @@ def create_rate_content_draft(
         operator=operator,
         effective_date=effective_date,
         direct_output_mode=direct_output_mode,
+        actor=actor,
     )
 
 
@@ -182,6 +216,7 @@ def create_convertible_bond_content_draft(
     source_text: str = "",
     operator: str = "",
     effective_date: str | None = None,
+    actor: Any | None = None,
 ) -> str:
     return create_content_draft(
         ServiceType.CONVERTIBLE_BOND,
@@ -190,6 +225,7 @@ def create_convertible_bond_content_draft(
         operator=operator,
         effective_date=effective_date,
         direct_output_mode=False,
+        actor=actor,
     )
 
 
@@ -207,16 +243,18 @@ def update_content_source(content_id: str, *, source_files: list[str] | None = N
         )
 
 
-def _mark_generation_started(content_id: str) -> None:
+def _mark_generation_started(content_id: str, *, actor: Any | None = None) -> None:
+    values = {"status": str(Status.GENERATING), "error_message": "", "updated_at": _now()}
+    values.update(_content_actor_values(actor, prefix="updated"))
     with connect() as conn:
         conn.execute(
             update(investment_daily_contents)
             .where(investment_daily_contents.c.content_id == content_id)
-            .values(status=str(Status.GENERATING), error_message="", updated_at=_now())
+            .values(**values)
         )
 
 
-def mark_generation_started(content_id: str) -> DailyContentResult:
+def mark_generation_started(content_id: str, *, actor: Any | None = None) -> DailyContentResult:
     with connect() as conn:
         row = conn.execute(
             select(investment_daily_contents.c.service_type).where(investment_daily_contents.c.content_id == content_id)
@@ -225,13 +263,14 @@ def mark_generation_started(content_id: str) -> DailyContentResult:
         return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.SYSTEM_ERROR, user_prompt=user_message(ErrorCode.SYSTEM_ERROR), detail="content not found")
     service_type = ServiceType(row_to_dict(row)["service_type"])
     _ensure_content_service_type(service_type)
-    _mark_generation_started(content_id)
+    _mark_generation_started(content_id, actor=actor)
     return DailyContentResult(True, content_id=content_id)
 
 
 def update_generation_success(content_id: str, generated_text: str, output_image: str) -> None:
     service_type: ServiceType | None = None
     operator = ""
+    audit_actor = None
     with connect() as conn:
         conn.execute(
             update(investment_daily_contents)
@@ -245,14 +284,13 @@ def update_generation_success(content_id: str, generated_text: str, output_image
             )
         )
         row = conn.execute(
-            select(investment_daily_contents.c.service_type, investment_daily_contents.c.operator).where(
-                investment_daily_contents.c.content_id == content_id
-            )
+            select(investment_daily_contents).where(investment_daily_contents.c.content_id == content_id)
         ).fetchone()
         item = row_to_dict(row)
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
         operator = item.get("operator") or ""
+        audit_actor = _actor_from_content_item(item)
     if output_image and service_type is not None:
         record_output_file(
             content_id,
@@ -261,12 +299,14 @@ def update_generation_success(content_id: str, generated_text: str, output_image
             service_type,
             artifact_role="output_image",
             version_tag=_output_image_version(service_type),
+            owner_type="content",
         )
     record_operation_audit(
-        "generate",
+        "content.generate",
         "daily_content",
         content_id,
         operator=operator,
+        actor=audit_actor,
         detail={"service_type": str(service_type) if service_type else "", "output_image": output_image},
     )
 
@@ -274,21 +314,25 @@ def update_generation_success(content_id: str, generated_text: str, output_image
 def update_generation_failure(content_id: str, detail: str) -> None:
     safe_detail = sanitize_sensitive_text(detail)
     operator = ""
+    audit_actor = None
     with connect() as conn:
         row = conn.execute(
-            select(investment_daily_contents.c.operator).where(investment_daily_contents.c.content_id == content_id)
+            select(investment_daily_contents).where(investment_daily_contents.c.content_id == content_id)
         ).fetchone()
-        operator = row_to_dict(row).get("operator") or ""
+        item = row_to_dict(row)
+        operator = item.get("operator") or ""
+        audit_actor = _actor_from_content_item(item)
         conn.execute(
             update(investment_daily_contents)
             .where(investment_daily_contents.c.content_id == content_id)
             .values(status=str(Status.GENERATE_FAILED), error_message=safe_detail, updated_at=_now())
         )
     record_operation_audit(
-        "generate",
+        "content.generate",
         "daily_content",
         content_id,
         operator=operator,
+        actor=audit_actor,
         detail={"success": False, "detail": safe_detail},
     )
 
@@ -386,8 +430,13 @@ def set_content_effective(
     *,
     effective_date: str | None = None,
     operator: str = "",
+    actor: Any | None = None,
 ) -> None:
     archived_ids: list[str] = []
+    operator, audit_actor = _actor_identity(actor, operator)
+    publish_values = {}
+    publish_values.update(_content_actor_values(actor, prefix="updated"))
+    publish_values.update(_content_actor_values(actor, prefix="published"))
     with connect() as conn:
         row = conn.execute(
             select(
@@ -435,6 +484,7 @@ def set_content_effective(
                 archived_at=None,
                 updated_at=now,
                 operator=operator,
+                **publish_values,
             )
         )
     if final_image:
@@ -446,20 +496,23 @@ def set_content_effective(
             final_service_type,
             artifact_role="output_image",
             version_tag=_output_image_version(final_service_type),
+            owner_type="content",
         )
     for archived_id in archived_ids:
         record_operation_audit(
-            "archive",
+            "content.archive",
             "daily_content",
             archived_id,
             operator=operator,
+            actor=audit_actor,
             detail={"service_type": service_type, "effective_date": normalized_effective_date, "replaced_by": content_id},
         )
     record_operation_audit(
-        "effective",
+        "content.publish",
         "daily_content",
         content_id,
         operator=operator,
+        actor=audit_actor,
         detail={"service_type": service_type, "effective_date": normalized_effective_date, "output_image": final_image},
     )
 

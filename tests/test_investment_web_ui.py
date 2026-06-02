@@ -8,6 +8,7 @@ CONSOLE_JS = ROOT / "channel" / "web" / "static" / "js" / "console.js"
 CONSOLE_CSS = ROOT / "channel" / "web" / "static" / "css" / "console.css"
 LOGIN_HTML = ROOT / "channel" / "web" / "login.html"
 CHAT_HTML = ROOT / "channel" / "web" / "chat.html"
+WEB_CHANNEL = ROOT / "channel" / "web" / "web_channel.py"
 
 
 def _js_function_body(js: str, name: str) -> str:
@@ -35,6 +36,49 @@ def test_investment_tables_are_bounded_and_have_sticky_headers():
     assert "position: sticky;" in css
 
 
+def test_investment_table_like_views_use_wide_containers():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+
+    users_start = html.index('id="view-invest-users"')
+    users_end = html.index('id="view-invest-rate"')
+    users_body = html[users_start:users_end]
+    rate_start = html.index('id="view-invest-rate"')
+    rate_end = html.index('id="view-invest-cb"')
+    rate_body = html[rate_start:rate_end]
+    cb_start = html.index('id="view-invest-cb"')
+    cb_end = html.index('id="view-invest-content"')
+    cb_body = html[cb_start:cb_end]
+    content_start = html.index('id="view-invest-content"')
+    content_end = html.index('id="view-invest-records"')
+    content_body = html[content_start:content_end]
+    records_start = html.index('id="view-invest-records"')
+    records_end = html.index('id="view-invest-config"')
+    records_body = html[records_start:records_end]
+
+    assert "w-full max-w-[1600px] mx-auto" in users_body
+    assert "w-full max-w-[1600px] mx-auto" in rate_body
+    assert "w-full max-w-[1600px] mx-auto" in cb_body
+    assert "w-full max-w-[1600px] mx-auto" in content_body
+    assert "w-full max-w-[1600px] mx-auto" in records_body
+    assert "max-w-6xl mx-auto" not in users_body
+    assert "max-w-6xl mx-auto" not in rate_body
+    assert "max-w-6xl mx-auto" not in cb_body
+    assert "max-w-6xl mx-auto" not in content_body
+    assert "max-w-6xl mx-auto" not in records_body
+
+
+def test_investment_content_is_a_top_level_view():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert 'data-view="invest-content"' in html
+    assert 'id="view-invest-content"' in html
+    assert 'id="invest-content-content"' in html
+    assert "'invest-content':" in js
+    assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
+    assert "'invest-content': 'cache.read'" in js
+
+
 def test_backend_login_page_matches_console_auth_flow():
     html = LOGIN_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
@@ -45,6 +89,17 @@ def test_backend_login_page_matches_console_auth_flow():
     assert "URLSearchParams(window.location.search)" in html
     assert "redirectToLogin(" in js
     assert "next=${encodeURIComponent(nextPath)}" in js
+
+
+def test_console_js_and_css_assets_are_not_browser_cached():
+    source = WEB_CHANNEL.read_text(encoding="utf-8")
+    assets_start = source.index("class AssetsHandler:")
+    assets_end = source.index("class KnowledgeListHandler:")
+    assets_body = source[assets_start:assets_end]
+
+    assert "file_path in ('js/console.js', 'css/console.css')" in assets_body
+    assert "web.header('Cache-Control', 'no-cache, no-store, must-revalidate')" in assets_body
+    assert "web.header('Pragma', 'no-cache')" in assets_body
 
 
 def test_chat_console_exposes_current_admin_and_logout():
@@ -208,6 +263,7 @@ def test_investment_users_page_splits_customers_and_admin_staff():
     assert "investmentButtonIfCan('admin_users.write'" in js
     assert "investmentButtonIfCan('admin_users.reset_password'" in js
     assert "content_operator" in js
+    assert "technical_operator" in js
     assert "role_uploader" not in js
     assert "role_poster" not in js
 
@@ -364,15 +420,114 @@ def test_investment_config_page_loads_sections_by_permission():
     assert "const canReadStocks = investmentCan('stocks.read');" in js
     assert "canReadConfig ? investmentFetchJson('/api/investment/config')" in js
     assert "canReadStocks ? investmentFetchJson('/api/investment/stocks?limit=5')" in js
-    assert "${canReadStocks ? investmentStockTools(stockData.stats || {}) : ''}" in js
+    assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in js
+
+
+def test_investment_layout_separates_table_settings_and_card_styles():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    shell_body = _js_function_body(js, "renderInvestmentConfigShell")
+    stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
+
+    assert "investment-settings-page" in shell_body
+    assert "investment-settings-panel" in stock_panel_body
+    assert ".investment-workbench > .investment-table-panel" in css
+    assert ".investment-workbench > .investment-table-panel {\n    grid-column: 1 / -1;" in css
+    assert ".investment-workbench > .investment-panel {\n    grid-column: span 6;" in css
+    assert "box-shadow: 0 8px 30px -6px rgba(15, 23, 42, 0.10)" in css
+    assert "padding: 20px;" in css
+    assert ".investment-settings-page .investment-panel" in css
+
+
+def test_investment_config_page_uses_task_based_tabs():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    config_body = _js_function_body(js, "renderInvestmentConfig")
+    shell_body = _js_function_body(js, "renderInvestmentConfigShell")
+    stock_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
+    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
+
+    assert "let currentInvestmentConfigPanel = 'stock-data';" in js
+    assert "function switchInvestmentConfigPanel(" in js
+    assert "renderInvestmentConfigShell(data, stockData)" in config_body
+    assert "investment-tabs investment-config-tabs" in shell_body
+    assert "function investmentConfigTabDefinitions(" in js
+    assert "key: 'stock-data'" in js
+    assert "key: 'reply-texts'" in js
+    assert "key: 'generation'" in js
+    assert "key: 'web-chat'" in js
+    assert "switchInvestmentConfigPanel('${escapeHtml(tab.key)}')" in shell_body
+    assert "股票数据" in js
+    assert "公众号回复词" in js
+    assert "业务生成配置" in js
+    assert "后台 Web 对话" in js
+
+    assert "renderInvestmentConfigGroupByTitle('股票字典'" not in stock_body
+    assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in stock_body
+    assert "renderInvestmentConfigGroupByTitle('技术分析参数', configs, {sectionClass: 'investment-config-section'})" in generation_body
+    assert "renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})" in generation_body
+    assert "renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})" in generation_body
+    assert ".investment-config-page" in css
+    assert ".investment-config-tabs" in css
+    assert "flex-wrap: wrap;" in css
+
+
+def test_investment_config_subpages_use_aligned_section_layouts():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    stock_body = _js_function_body(js, "investmentStockTools")
+    stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
+    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
+    web_chat_body = _js_function_body(js, "renderInvestmentConfigWebChatPanel")
+
+    assert "investment-config-panel" in stock_panel_body
+    assert "investment-stock-data-panel" in stock_panel_body
+    assert "investment-config-section" in stock_body
+    assert "investment-config-panel" in generation_body
+    assert "investment-config-section" in generation_body
+    assert "investment-config-panel" in web_chat_body
+    assert "investment-config-section" in web_chat_body
+
+    assert "investment-config-toolbar investment-stock-toolbar" in stock_body
+    assert "investment-config-tool" in stock_body
+    assert "investment-stock-refresh-tool" in stock_body
+    assert "investment-stock-query-tool" in stock_body
+    assert stock_body.count("investment-inline-form investment-stock-actions") == 0
+    assert "investment-panel-heading" in stock_body
+    assert "investment-subtitle" in stock_body
+
+    assert ".investment-config-panel" in css
+    assert ".investment-config-section" in css
+    assert ".investment-config-toolbar" in css
+    assert ".investment-config-tool" in css
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in css
+    assert "align-items: end;" in css
+    assert "align-self: end;" in css
+
+
+def test_investment_stock_data_page_combines_dictionary_config_and_tools():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
+    stock_tools_body = _js_function_body(js, "investmentStockTools")
+
+    assert "renderInvestmentConfigGroupByTitle('股票字典'" not in stock_panel_body
+    assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in stock_panel_body
+    assert "investment-stock-data-panel" in stock_panel_body
+    assert "investment-stock-data-card" in stock_tools_body
+    assert "renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])" in stock_tools_body
+    assert "股票数据" in stock_tools_body
+    assert "股票字典维护" not in stock_tools_body
 
 
 def test_investment_config_page_renders_reply_text_section():
     js = CONSOLE_JS.read_text(encoding="utf-8")
-    config_body = _js_function_body(js, "renderInvestmentConfig")
+    reply_panel_body = _js_function_body(js, "renderInvestmentConfigReplyTextsPanel")
     groups_body = _js_function_body(js, "renderInvestmentReplyConfigGroups")
 
-    assert "renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)" in config_body
+    assert "renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)" in reply_panel_body
     assert "const groups = replyTexts.groups || [];" in groups_body
     assert "const definitions = replyTexts.definitions || {};" in groups_body
     assert "group.keys || []" in groups_body
@@ -389,7 +544,7 @@ def test_investment_reply_config_fields_show_descriptions_and_use_textareas():
 
     assert "function renderInvestmentReplyConfigField(" in js
     assert "investment-config-description" in js
-    assert "renderInvestmentConfigField(key, label, 'textarea', value)" in reply_field_body
+    assert "renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})" in reply_field_body
     assert "escapeHtml(description)" in reply_field_body
     assert "escapeHtml(label)" in config_field_body
     assert "investmentJsString(key)" in config_field_body
@@ -400,12 +555,22 @@ def test_investment_reply_config_fields_show_descriptions_and_use_textareas():
     assert ".investment-config-description" in css
 
 
-def test_investment_records_ui_respects_cache_and_export_permissions():
+def test_investment_reply_config_fields_show_save_button_by_default():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    reply_field_body = _js_function_body(js, "renderInvestmentReplyConfigField")
+    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
+
+    assert "renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})" in reply_field_body
+    assert "const showSaveButton = options.showSaveButton === true;" in config_field_body
+    assert "investment-config-save${showSaveButton ? '' : ' hidden'}" in config_field_body
+
+
+def test_investment_content_and_records_ui_respect_cache_and_export_permissions():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    assert "renderInvestmentRecordsTabButton('cache'" in js
+    assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
     assert "/api/investment/cache" in js
-    assert "renderInvestmentRecordsCacheTab(" in js
+    assert "async function loadInvestmentGeneratedContent()" in js
     assert "investmentButtonIfCan('records.export', 'fa-download'" in js
     assert "investmentButtonIfCan('records.export', 'fa-calendar-days'" in js
     assert "investmentButtonIfCan('records.export', 'fa-chart-pie'" in js
@@ -486,7 +651,7 @@ def test_investment_cache_empty_date_falls_back_to_today_before_loading():
 
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
     assert "?.value || investmentTodayDate()" in apply_body
-    assert "await loadInvestmentRecordsTab('cache')" in apply_body
+    assert "await loadInvestmentGeneratedContent()" in apply_body
 
 
 def test_investment_records_page_uses_tab_workspace_and_drawer():
@@ -544,7 +709,7 @@ def test_investment_records_page_uses_human_filters_customer_display_and_compact
     assert "field('operator', '操作人')" in js
 
 
-def test_investment_cache_uses_date_grouped_three_category_view():
+def test_investment_content_page_uses_date_grouped_category_view():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "function renderInvestmentDailyGeneratedContent(" in js
@@ -554,6 +719,7 @@ def test_investment_cache_uses_date_grouped_three_category_view():
     assert "technical_analysis" in js
     assert "rate" in js
     assert "convertible_bond" in js
+    assert "async function renderInvestmentGeneratedContent(" in js
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     cache_home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
     assert "investment-generated-content-home" in cache_home_body
@@ -563,11 +729,13 @@ def test_investment_cache_uses_date_grouped_three_category_view():
     assert "investment-records-date-list" not in js
 
 
-def test_investment_generated_content_tab_avoids_duplicate_date_controls_and_wide_three_column_lists():
+def test_investment_generated_content_page_avoids_duplicate_date_controls_and_wide_three_column_lists():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
-    assert "renderInvestmentRecordsTabButton('cache', '生成内容'" in js
+    records_shell = _js_function_body(js, "renderInvestmentRecordsShell")
+    assert "生成内容" not in records_shell
+    assert "renderInvestmentRecordsTabButton('cache'" not in records_shell
     assert "当日生成" not in js
     assert "当日有关生成内容" not in js
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
@@ -575,6 +743,10 @@ def test_investment_generated_content_tab_avoids_duplicate_date_controls_and_wid
     assert "investment-generated-content-datebar" in cache_body
     assert "investment-cache-category-grid" not in cache_body
     assert '<span>生成日期</span>' in cache_body
+    assert "investment-content-filter-keyword" in cache_body
+    assert "investmentCacheKeyword()" in cache_body
+    assert "entry.normalized_target" in cache_body
+    assert "entry.output_files" in cache_body
     assert "investment-generated-content-detail" in css
     assert "investment-generated-content-entries" in css
     assert ".investment-generated-content-home {\n    display: grid;" in css
@@ -704,9 +876,10 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     assert "function investmentRecordsFilterValue(" in js
     assert "function loadInvestmentRecordsTab(" in js
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
+    content_load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     assert "/api/investment/records/requests" in load_body
     assert "/api/investment/records/contents" in load_body
-    assert "/api/investment/cache" in load_body
+    assert "/api/investment/cache" in content_load_body
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
 
@@ -773,10 +946,10 @@ def test_investment_cache_category_selection_uses_server_side_filtering():
 
     assert "investmentRecordsState.filters.cache.service_type = serviceType" in select_body
     assert "investmentRecordsState.filters.cache.page = '1'" in select_body
-    assert "await loadInvestmentRecordsTab('cache')" in select_body
+    assert "await loadInvestmentGeneratedContent()" in select_body
     assert "delete investmentRecordsState.filters.cache.service_type" in back_body
     assert "investmentRecordsState.filters.cache.page = '1'" in back_body
-    assert "await loadInvestmentRecordsTab('cache')" in back_body
+    assert "await loadInvestmentGeneratedContent()" in back_body
 
 
 def test_investment_content_and_cache_date_filters_are_exposed():

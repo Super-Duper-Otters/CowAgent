@@ -66,7 +66,17 @@ def row_to_dict(row) -> dict:
     return dict(row._mapping)
 
 
-def upsert_config(conn, key: str, value: str, updated_at: str, updated_by: str) -> None:
+def upsert_config(
+    conn,
+    key: str,
+    value: str,
+    updated_at: str,
+    updated_by: str,
+    *,
+    updated_by_admin_id: int | None = None,
+    updated_by_username: str = "",
+    updated_by_role: str = "",
+) -> None:
     from .schema import investment_configs
 
     table = investment_configs
@@ -80,6 +90,9 @@ def upsert_config(conn, key: str, value: str, updated_at: str, updated_by: str) 
         config_value=value,
         updated_at=updated_at,
         updated_by=updated_by,
+        updated_by_admin_id=updated_by_admin_id,
+        updated_by_username=updated_by_username or updated_by,
+        updated_by_role=updated_by_role,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=[table.c.config_key],
@@ -87,6 +100,9 @@ def upsert_config(conn, key: str, value: str, updated_at: str, updated_by: str) 
             "config_value": stmt.excluded.config_value,
             "updated_at": stmt.excluded.updated_at,
             "updated_by": stmt.excluded.updated_by,
+            "updated_by_admin_id": stmt.excluded.updated_by_admin_id,
+            "updated_by_username": stmt.excluded.updated_by_username,
+            "updated_by_role": stmt.excluded.updated_by_role,
         },
     )
     conn.execute(stmt)

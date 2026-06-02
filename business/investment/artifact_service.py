@@ -40,11 +40,13 @@ def record_artifact(
     *,
     file_type: str | None = None,
     version_tag: str = "",
+    owner_type: str = "request",
 ) -> None:
     with connect() as conn:
         conn.execute(
             insert(investment_output_files).values(
                 owner_id=owner_id,
+                owner_type=owner_type,
                 file_path=file_path,
                 file_type=file_type or _file_type(file_path),
                 service_type=str(service_type),
