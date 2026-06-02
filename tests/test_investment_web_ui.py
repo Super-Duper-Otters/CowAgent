@@ -264,6 +264,39 @@ def test_investment_config_page_loads_sections_by_permission():
     assert "${canReadStocks ? investmentStockTools(stockData.stats || {}) : ''}" in js
 
 
+def test_investment_config_page_renders_reply_text_section():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    config_body = _js_function_body(js, "renderInvestmentConfig")
+    groups_body = _js_function_body(js, "renderInvestmentReplyConfigGroups")
+
+    assert "renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)" in config_body
+    assert "const groups = replyTexts.groups || [];" in groups_body
+    assert "const definitions = replyTexts.definitions || {};" in groups_body
+    assert "group.keys || []" in groups_body
+    assert "renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key])" in groups_body
+    assert "公众号回复词" in js
+    assert "INVEST_REPLY_CONFIG_REFERENCE_KEYS" not in js
+
+
+def test_investment_reply_config_fields_show_descriptions_and_use_textareas():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    reply_field_body = _js_function_body(js, "renderInvestmentReplyConfigField")
+    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
+
+    assert "function renderInvestmentReplyConfigField(" in js
+    assert "investment-config-description" in js
+    assert "renderInvestmentConfigField(key, label, 'textarea', value)" in reply_field_body
+    assert "escapeHtml(description)" in reply_field_body
+    assert "escapeHtml(label)" in config_field_body
+    assert "investmentJsString(key)" in config_field_body
+    assert "const saveHandler = escapeHtml(`saveInvestmentConfigKey(${keyArg}, ${typeArg})`);" in config_field_body
+    assert "const dirtyHandler = escapeHtml(`markInvestmentConfigDirty(${keyArg})`);" in config_field_body
+    assert "saveInvestmentConfigKey(${keyArg}, ${typeArg})" in config_field_body
+    assert "markInvestmentConfigDirty(${keyArg})" in config_field_body
+    assert ".investment-config-description" in css
+
+
 def test_investment_records_ui_respects_cache_and_export_permissions():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 

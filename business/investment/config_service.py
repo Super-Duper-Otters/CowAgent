@@ -34,6 +34,13 @@ CONFIG_FALLBACK_KEYS = {
     "prompt.convertible_bond": "investment_prompt_cb",
 }
 
+try:
+    from .reply_config import reply_config_fallback_keys
+
+    CONFIG_FALLBACK_KEYS.update(reply_config_fallback_keys())
+except Exception:
+    pass
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
@@ -128,6 +135,13 @@ def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
     if value is None:
         fallback_key = CONFIG_FALLBACK_KEYS.get(key, key)
         value = conf().get(fallback_key, default)
+        if value is None and key.startswith("reply."):
+            try:
+                from .reply_config import default_reply_text
+
+                value = default_reply_text(key, default)
+            except Exception:
+                value = default
     if masked and is_sensitive_key(key):
         return mask_sensitive_value(value)
     return value if value is not None else default

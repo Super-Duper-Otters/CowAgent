@@ -1,8 +1,12 @@
 # encoding:utf-8
+import os
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from business.investment.constants import ServiceType
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +21,41 @@ def _default_investment_user_access(monkeypatch):
 def _isolate_investment_record_writes(monkeypatch):
     monkeypatch.setattr("business.investment.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
     monkeypatch.setattr("business.investment.records.fail_request_record", lambda *args, **_kwargs: None)
+
+
+@pytest.fixture()
+def investment_env(tmp_path, monkeypatch):
+    from business.investment import db, storage
+
+    base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
+    schema_name = f"cowagent_test_{uuid4().hex}"
+    url = make_url(base_url)
+    schema_url = url.set(
+        query={
+            **dict(url.query),
+            "options": f"-csearch_path={schema_name}",
+        },
+    ).render_as_string(hide_password=False)
+
+    admin_engine = create_engine(base_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(text(f'create schema "{schema_name}"'))
+
+    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
+    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
+
+    db.reset_engine_for_tests()
+    storage._MIGRATED_DATABASE_URL = None
+    storage.initialize_storage()
+    try:
+        yield tmp_path
+    finally:
+        db.reset_engine_for_tests()
+        storage._MIGRATED_DATABASE_URL = None
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
+        admin_engine.dispose()
 
 
 def _reset_wechatmp_singleton(wechatmp_channel):
@@ -854,6 +893,44 @@ def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
     assert response == "已收到，正在运行「天娱数科」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。"
     assert "日期" not in response
     assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
+
+
+def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_env, monkeypatch):
+    from business.investment.config_service import save_config
+    from channel.wechatmp import passive_reply
+
+    save_config("reply.wechatmp.technical_ack", "配置提示：{} 生成中，回复1。", operator_role="admin")
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
+
+    assert passive_reply._investment_ack_text("天娱数科 技术分析") == "配置提示：天娱数科 生成中，回复1。"
+
+
+def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, monkeypatch):
+    from business.investment.config_service import save_config
+    from channel.wechatmp import passive_reply
+
+    save_config("reply.wechatmp.technical_cache_hit", "缓存好了：{}，回复1取图。", operator_role="admin")
+    monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: True, raising=False)
+
+    assert passive_reply._investment_ack_text("天娱数科 技术分析") == "缓存好了：天娱数科，回复1取图。"
+
+
+def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_config(investment_env):
+    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from channel.wechatmp import passive_reply
+
+    assert passive_reply._unmatched_prompt() == DEFAULT_UNMATCHED_PROMPT
+
+
+def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(investment_env):
+    from business.investment.config_service import save_config
+    from channel.wechatmp import passive_reply
+
+    save_config("reply.wechatmp.running_technical_analysis", "{} 还在跑。", operator_role="admin")
+    save_config("reply.wechatmp.pending_technical_analysis", "{} 已完成，回1取，回0弃。", operator_role="admin")
+
+    assert passive_reply._running_technical_analysis_text("农业银行") == "农业银行 还在跑。"
+    assert passive_reply._pending_result_prompt("农业银行 技术分析") == "农业银行 已完成，回1取，回0弃。"
 
 
 def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(monkeypatch):

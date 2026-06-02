@@ -2650,6 +2650,7 @@ async function renderInvestmentConfig() {
         ]);
         const configs = data.configs || {};
         const groups = canReadConfig ? INVEST_CONFIG_GROUPS.map(group => renderInvestmentConfigGroup(group, configs)).join('') : '';
+        const replyTextGroups = canReadConfig ? renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs) : '';
         element.innerHTML = `
             <div class="investment-workbench">
                 <section class="investment-panel investment-workbench-full">
@@ -2662,6 +2663,7 @@ async function renderInvestmentConfig() {
                     <div id="invest-config-save-result" class="investment-muted"></div>
                 </section>
                 ${groups}
+                ${replyTextGroups}
                 ${canReadStocks ? investmentStockTools(stockData.stats || {}) : ''}
             </div>`;
     } catch (error) {
@@ -2878,15 +2880,52 @@ function renderInvestmentConfigGroup(group, configs) {
     const hasTextarea = group.keys.some(([, , type]) => type === 'textarea');
     return `
         <section class="investment-panel ${hasTextarea ? 'investment-workbench-full' : ''}">
-            <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>${group.title}</span></div>
+            <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>${escapeHtml(group.title)}</span></div>
             <div class="investment-grid ${hasTextarea ? 'cols-1' : 'cols-2'}">
                 ${group.keys.map(([key, label, type]) => renderInvestmentConfigField(key, label, type, configs[key])).join('')}
             </div>
         </section>`;
 }
 
+function renderInvestmentReplyConfigGroups(replyTexts, configs) {
+    const groups = replyTexts.groups || [];
+    const definitions = replyTexts.definitions || {};
+    if (!groups.length) return '';
+    const renderedGroups = groups.map(group => `
+        <section class="investment-panel investment-workbench-full">
+            <div class="investment-panel-title"><i class="fas fa-message"></i><span>${escapeHtml(group.title || '公众号回复词')}</span></div>
+            <div class="investment-grid cols-1">
+                ${(group.keys || []).map(key => renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key])).join('')}
+            </div>
+        </section>`).join('');
+    return `
+        <section class="investment-panel investment-workbench-full">
+            <div class="investment-panel-heading">
+                <div>
+                    <div class="investment-panel-title"><i class="fas fa-comments"></i><span>公众号回复词</span></div>
+                    <div class="investment-subtitle">这些文案会直接展示给公众号客户。带 {} 的文案请保留占位符，系统会自动替换股票或状态名称。</div>
+                </div>
+            </div>
+        </section>
+        ${renderedGroups}`;
+}
+
+function renderInvestmentReplyConfigField(key, definition, value = '') {
+    const label = definition.label || key;
+    const description = definition.description || '';
+    return `
+        <div>
+            ${renderInvestmentConfigField(key, label, 'textarea', value)}
+            ${description ? `<div class="investment-config-description">${escapeHtml(description)}</div>` : ''}
+        </div>`;
+}
+
 function investmentConfigElementId(key) {
-    return `invest-config-${key.replaceAll('.', '-')}`;
+    return `invest-config-${String(key || '').replaceAll('.', '-')}`;
+}
+
+function investmentJsString(value) {
+    return JSON.stringify(String(value || ''));
 }
 
 function investmentCanEditConfig(key) {
@@ -2900,17 +2939,23 @@ function renderInvestmentConfigField(key, label, type, value = '') {
     const id = investmentConfigElementId(key);
     const eventName = type === 'checkbox' ? 'onchange' : 'oninput';
     const canEdit = investmentCanEditConfig(key);
-    const saveButton = canEdit ? `<button id="${id}-save" class="investment-btn investment-config-save hidden" type="button" onclick="saveInvestmentConfigKey('${key}', '${type}')"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
-    const status = `<span id="${id}-status" class="investment-config-status"></span>`;
+    const keyArg = investmentJsString(key);
+    const typeArg = investmentJsString(type);
+    const safeId = escapeHtml(id);
+    const safeLabel = escapeHtml(label);
+    const saveHandler = escapeHtml(`saveInvestmentConfigKey(${keyArg}, ${typeArg})`);
+    const dirtyHandler = escapeHtml(`markInvestmentConfigDirty(${keyArg})`);
+    const saveButton = canEdit ? `<button id="${safeId}-save" class="investment-btn investment-config-save hidden" type="button" onclick="${saveHandler}"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
+    const status = `<span id="${safeId}-status" class="investment-config-status"></span>`;
     const fieldClass = type === 'textarea' ? 'investment-config-field textarea-config' : 'investment-config-field';
     let control = '';
     if (type === 'textarea') {
-        control = `<label class="investment-field textarea"><span>${label}</span><textarea id="${id}" rows="4" ${canEdit ? `${eventName}="markInvestmentConfigDirty('${key}')"` : 'disabled'}>${escapeHtml(value || '')}</textarea></label>`;
+        control = `<label class="investment-field textarea"><span>${safeLabel}</span><textarea id="${safeId}" rows="4" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}>${escapeHtml(value || '')}</textarea></label>`;
     } else if (type === 'checkbox') {
         const checked = value === true || value === 'true' || value === '1' ? 'checked' : '';
-        control = `<label class="investment-check"><input id="${id}" type="checkbox" ${checked} ${canEdit ? `${eventName}="markInvestmentConfigDirty('${key}')"` : 'disabled'}><span>${label}</span></label>`;
+        control = `<label class="investment-check"><input id="${safeId}" type="checkbox" ${checked} ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}><span>${safeLabel}</span></label>`;
     } else {
-        control = `<label class="investment-field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value || '')}" ${canEdit ? `${eventName}="markInvestmentConfigDirty('${key}')"` : 'disabled'}></label>`;
+        control = `<label class="investment-field"><span>${safeLabel}</span><input id="${safeId}" type="${type}" value="${escapeHtml(value || '')}" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}></label>`;
     }
     return `
         <div class="${fieldClass}" data-config-key="${escapeHtml(key)}">

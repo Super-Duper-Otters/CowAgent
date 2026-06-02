@@ -2795,6 +2795,15 @@
 .investment-config-field.textarea-config .investment-config-actions {
     justify-content: flex-end;
 }
+.investment-config-description {
+    margin: -6px 0 10px;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.dark .investment-config-description {
+    color: #94a3b8;
+}
 .investment-config-status {
     color: #64748b;
     font-size: 12px;

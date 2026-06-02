@@ -3296,10 +3296,12 @@ class InvestmentConfigHandler:
         _require_investment_permission("config.read")
         try:
             from business.investment.config_service import CONFIG_FALLBACK_KEYS, get_configs
+            from business.investment.reply_config import reply_text_config_metadata
 
             return _investment_json_response({
                 "status": "success",
                 "configs": get_configs(list(CONFIG_FALLBACK_KEYS.keys()), masked=True),
+                "reply_texts": reply_text_config_metadata(),
             })
         except Exception as e:
             logger.error(f"[Investment] config GET error: {e}")

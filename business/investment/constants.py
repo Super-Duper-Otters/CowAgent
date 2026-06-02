@@ -71,6 +71,19 @@ USER_MESSAGES = {
     ErrorCode.SYSTEM_ERROR: "系统暂时繁忙，请稍后重试。",
 }
 
+USER_MESSAGE_CONFIG_KEYS = {
+    ErrorCode.UNAUTHORIZED: "reply.investment.unauthorized",
+    ErrorCode.USER_DISABLED: "reply.investment.user_disabled",
+    ErrorCode.AUTH_EXPIRED: "reply.investment.auth_expired",
+    ErrorCode.INPUT_ERROR: "reply.investment.input_error",
+    ErrorCode.STOCK_NOT_FOUND: "reply.investment.stock_not_found",
+    ErrorCode.STOCK_AMBIGUOUS: "reply.investment.stock_ambiguous",
+    ErrorCode.TECHNICAL_ANALYSIS_FAILED: "reply.investment.technical_analysis_failed",
+    ErrorCode.IMAGE_GENERATION_FAILED: "reply.investment.image_generation_failed",
+    ErrorCode.NO_CONTENT: "reply.investment.no_content",
+    ErrorCode.SYSTEM_ERROR: "reply.investment.system_error",
+}
+
 
 def normalize_service(value: str | ServiceType) -> ServiceType:
     if isinstance(value, ServiceType):
@@ -80,4 +93,11 @@ def normalize_service(value: str | ServiceType) -> ServiceType:
 
 
 def user_message(error_code: ErrorCode) -> str:
-    return USER_MESSAGES.get(error_code, USER_MESSAGES[ErrorCode.SYSTEM_ERROR])
+    default = USER_MESSAGES.get(error_code, USER_MESSAGES[ErrorCode.SYSTEM_ERROR])
+    key = USER_MESSAGE_CONFIG_KEYS.get(error_code, USER_MESSAGE_CONFIG_KEYS[ErrorCode.SYSTEM_ERROR])
+    try:
+        from .reply_config import get_reply_text
+
+        return get_reply_text(key, default)
+    except Exception:
+        return default

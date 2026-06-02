@@ -5,7 +5,6 @@ import time
 import web
 from wechatpy import parse_message
 from wechatpy.replies import ImageReply, VideoReply, VoiceReply, create_reply
-import textwrap
 from bridge.context import *
 from bridge.reply import *
 from channel.wechatmp.common import *
@@ -16,12 +15,17 @@ from common.utils import split_string_by_utf8_length
 from config import conf, subscribe_msg
 
 
-IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
-PASSIVE_TECHNICAL_ACK_TEXT = "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。"
-PASSIVE_TECHNICAL_CACHE_HIT_TEXT = "已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。"
-CANCEL_PENDING_RESULT_TEXT = "已放弃本次技术分析结果。"
-RUNNING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。"
-PENDING_TECHNICAL_ANALYSIS_TEXT = "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。"
+IMMEDIATE_ACK_KEY = "reply.wechatmp.immediate_ack"
+PASSIVE_TECHNICAL_ACK_KEY = "reply.wechatmp.technical_ack"
+PASSIVE_TECHNICAL_CACHE_HIT_KEY = "reply.wechatmp.technical_cache_hit"
+CANCEL_PENDING_RESULT_KEY = "reply.wechatmp.cancel_pending_result"
+RUNNING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.running_technical_analysis"
+PENDING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.pending_technical_analysis"
+THINKING_TIMEOUT_KEY = "reply.wechatmp.thinking_timeout"
+UNMATCHED_KEY = "reply.wechatmp.unmatched"
+CHAT_PREFIX_HINT_KEY = "reply.wechatmp.chat_prefix_hint"
+DEFAULT_CHAT_HINT_KEY = "reply.wechatmp.default_chat_hint"
+UNKNOWN_ERROR_KEY = "reply.wechatmp.unknown_error"
 RUNNING_STALE_SECONDS = 15 * 60
 PERMISSION_DENIED_RECORD_TTL_SECONDS = 15 * 60
 _permission_denied_record_keys = {}
@@ -81,13 +85,47 @@ def _technical_analysis_cache_hit(content: str) -> bool:
         return False
 
 
+def _reply_text(key: str, default: str = "") -> str:
+    try:
+        from business.investment.reply_config import get_reply_text
+
+        return get_reply_text(key, default)
+    except Exception:
+        return default
+
+
+def _reply_format(key: str, *args, default: str = "") -> str:
+    try:
+        from business.investment.reply_config import format_reply_text
+
+        return format_reply_text(key, *args, default=default)
+    except Exception:
+        return default.format(*args) if args else default
+
+
+def _running_technical_analysis_text(title: str) -> str:
+    return _reply_format(
+        RUNNING_TECHNICAL_ANALYSIS_KEY,
+        title,
+        default="「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。",
+    )
+
+
 def _investment_ack_text(content: str) -> str:
     route = _investment_route(content)
     if _is_technical_analysis_route(route):
         if _technical_analysis_cache_hit(content):
-            return PASSIVE_TECHNICAL_CACHE_HIT_TEXT.format(_technical_analysis_target(content))
-        return PASSIVE_TECHNICAL_ACK_TEXT.format(_technical_analysis_target(content))
-    return IMMEDIATE_ACK_TEXT
+            return _reply_format(
+                PASSIVE_TECHNICAL_CACHE_HIT_KEY,
+                _technical_analysis_target(content),
+                default="已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。",
+            )
+        return _reply_format(
+            PASSIVE_TECHNICAL_ACK_KEY,
+            _technical_analysis_target(content),
+            default="已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。",
+        )
+    return _reply_text(IMMEDIATE_ACK_KEY, "收到，正在运行，请稍候。")
 
 
 def _investment_permission_prompt(openid: str, content: str, dedupe_key: str = "") -> str:
@@ -227,7 +265,11 @@ def _pop_pending_command(cache, receiver):
 def _pending_result_prompt(title):
     route = _investment_route(title or "")
     if _is_technical_analysis_route(route) or str(title or "").strip().endswith("技术分析"):
-        return PENDING_TECHNICAL_ANALYSIS_TEXT.format(_technical_analysis_target(title or ""))
+        return _reply_format(
+            PENDING_TECHNICAL_ANALYSIS_KEY,
+            _technical_analysis_target(title or ""),
+            default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。",
+        )
     prefix = title or ""
     return "{}结果已生成完成，是否需要返回？无需则回复 0，需要则回复 1。".format(prefix)
 
@@ -330,12 +372,27 @@ def _cleanup_stale_running(channel, receiver=None):
 
 
 def _unmatched_prompt():
+    default_prompt = "请输入以下格式之一："
     try:
         from business.investment.router import DEFAULT_UNMATCHED_PROMPT
 
-        return DEFAULT_UNMATCHED_PROMPT
-    except Exception:
-        return "请输入以下格式之一："
+        default_prompt = DEFAULT_UNMATCHED_PROMPT
+    except Exception as exc:
+        logger.debug("[wechatmp] unmatched prompt default import failed: {}".format(exc))
+
+    reply_text = _reply_text(UNMATCHED_KEY, default_prompt)
+    if reply_text != "请输入以下格式之一：" or default_prompt == reply_text:
+        return reply_text
+
+    try:
+        from business.investment.config_service import get_config
+
+        configured = get_config(UNMATCHED_KEY, None)
+        if configured is not None and str(configured) != "":
+            return reply_text
+    except Exception as exc:
+        logger.debug("[wechatmp] unmatched prompt config check failed: {}".format(exc))
+    return default_prompt
 
 
 def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type="", request_id=""):
@@ -525,7 +582,7 @@ class Query:
                         if pending_command:
                             content = pending_command
                         else:
-                            replyPost = create_reply(CANCEL_PENDING_RESULT_TEXT, msg)
+                            replyPost = create_reply(_reply_text(CANCEL_PENDING_RESULT_KEY, "已放弃本次技术分析结果。"), msg)
                             return encrypt_func(replyPost.render())
                     else:
                         _set_pending_command(channel.cache_dict, from_user, content)
@@ -535,7 +592,7 @@ class Query:
                 if content == "1" and from_user in channel.running:
                     technical_title = _get_running_technical_title(channel, from_user)
                     if technical_title:
-                        replyPost = create_reply(RUNNING_TECHNICAL_ANALYSIS_TEXT.format(technical_title), msg)
+                        replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
                         return encrypt_func(replyPost.render())
 
                 # New request
@@ -572,24 +629,17 @@ class Query:
                         trigger_prefix = conf().get("single_chat_prefix", [""])[0]
                         if trigger_prefix or not supported:
                             if trigger_prefix:
-                                reply_text = textwrap.dedent(
-                                    f"""\
-                                    请输入'{trigger_prefix}'接你想说的话跟我说话。
-                                    例如:
-                                    {trigger_prefix}你好，很高兴见到你。"""
+                                reply_text = _reply_format(
+                                    CHAT_PREFIX_HINT_KEY,
+                                    trigger_prefix,
+                                    trigger_prefix,
+                                    default="请输入'{}'接你想说的话跟我说话。\n例如:\n{}你好，很高兴见到你。",
                                 )
                             else:
-                                reply_text = textwrap.dedent(
-                                    """\
-                                    你好，很高兴见到你。
-                                    请跟我说话吧。"""
-                                )
+                                reply_text = _reply_text(DEFAULT_CHAT_HINT_KEY, "你好，很高兴见到你。\n请跟我说话吧。")
                         else:
                             logger.error(f"[wechatmp] unknown error")
-                            reply_text = textwrap.dedent(
-                                """\
-                                未知错误，请稍后再试"""
-                            )
+                            reply_text = _reply_text(UNKNOWN_ERROR_KEY, "未知错误，请稍后再试")
 
                         replyPost = create_reply(reply_text, msg)
                         return encrypt_func(replyPost.render())
@@ -622,7 +672,7 @@ class Query:
                         return "success"
                     else:  # request_cnt == 3:
                         # return timeout message
-                        reply_text = "【正在思考中，回复任意文字尝试获取回复】"
+                        reply_text = _reply_text(THINKING_TIMEOUT_KEY, "【正在思考中，回复任意文字尝试获取回复】")
                         replyPost = create_reply(reply_text, msg)
                         return encrypt_func(replyPost.render())
 

@@ -679,6 +679,23 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
     assert can_modify_config("tushare.token", "admin") is True
 
 
+def test_investment_user_message_uses_reply_config_defaults(investment_env):
+    from business.investment.constants import ErrorCode, user_message
+
+    assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+
+
+def test_investment_user_message_can_be_overridden_from_database(investment_env):
+    from business.investment.config_service import save_config
+    from business.investment.constants import ErrorCode, user_message
+
+    save_config("reply.investment.unauthorized", "请联系客户经理开通权限。", operator_role="admin", operator="pytest")
+
+    assert user_message(ErrorCode.UNAUTHORIZED) == "请联系客户经理开通权限。"
+    assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+
+
 def test_web_open_chat_config_is_admin_only(investment_env):
     from business.investment.config_service import can_modify_config, get_config, save_config
 
@@ -1189,6 +1206,30 @@ def test_web_investment_config_returns_masked_tushare_token(investment_env, monk
     assert payload["status"] == "success"
     assert payload["configs"]["tushare.token"] == "ts-w**********7890"
     assert "ts-web-secret-1234567890" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_web_investment_config_returns_reply_text_metadata(investment_env, monkeypatch):
+    from channel.web.web_channel import InvestmentConfigHandler
+
+    payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().GET)
+
+    assert payload["status"] == "success"
+    assert "reply_texts" in payload
+    assert any(group["title"] == "公众号处理状态" for group in payload["reply_texts"]["groups"])
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_ack"]["label"] == "技术分析开始生成提示"
+    assert "reply.wechatmp.technical_ack" in payload["configs"]
+    assert payload["configs"]["reply.wechatmp.technical_ack"].startswith("已收到，正在运行")
+
+
+def test_web_investment_config_saves_reply_text_values(investment_env, monkeypatch):
+    from business.investment.config_service import get_config
+    from channel.web.web_channel import InvestmentConfigHandler
+
+    body = {"configs": {"reply.wechatmp.immediate_ack": "已收到，请稍候。"}}
+    payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().POST, body=body)
+
+    assert payload["status"] == "success"
+    assert get_config("reply.wechatmp.immediate_ack") == "已收到，请稍候。"
 
 
 def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_keys(investment_env, monkeypatch):
