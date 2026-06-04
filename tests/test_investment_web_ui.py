@@ -34,20 +34,83 @@ def test_investment_tables_are_bounded_and_have_sticky_headers():
     assert "max-height: min(560px, calc(100vh - 320px));" in css
     assert ".investment-table-scroll .investment-table th" in css
     assert "position: sticky;" in css
+    assert ".investment-table-wrap::after" in css
+    assert ".investment-table tbody tr:hover td" in css
+    assert ".investment-table td.investment-row-actions" in css
+    assert "position: sticky;" in css
+    assert "@media (max-width: 640px)" in css
+
+
+def test_investment_table_wrappers_expose_scroll_regions():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    table_wrap_body = _js_function_body(js, "investmentTableWrap")
+    record_shell_body = _js_function_body(js, "investmentRecordTableShell")
+
+    assert 'role="region"' in table_wrap_body
+    assert 'aria-label="' in table_wrap_body
+    assert 'data-scroll-hint="左右滑动查看完整表格"' in table_wrap_body
+    assert 'investmentTableWrap(tableHtml, true, \'业务记录表格\')' in record_shell_body
+
+
+def test_investment_selects_reuse_cowagent_dropdown_ui():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    dropdown_body = _js_function_body(js, "investmentDropdown")
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    skill_row_body = _js_function_body(js, "renderInvestmentSkillConfigRow")
+
+    assert "cfg-dropdown-selected" in dropdown_body
+    assert "cfg-dropdown-menu" in dropdown_body
+    assert "cfg-dropdown-item" in dropdown_body
+    assert "data-investment-dropdown" in dropdown_body
+    assert "handleInvestmentDropdownClick" in js
+    click_body = _js_function_body(js, "handleInvestmentDropdownClick")
+    assert "classList.toggle('open', willOpen)" in click_body
+    assert "resetInvestmentDropdownMenu(item)" in click_body
+    assert "positionInvestmentDropdownMenu(dropdown)" in click_body
+    assert "dataset.value" in click_body
+    assert "input.value = value" in click_body
+    assert "stopImmediatePropagation()" in click_body
+    assert "function positionInvestmentDropdownMenu(" in js
+    position_body = _js_function_body(js, "positionInvestmentDropdownMenu")
+    assert "getBoundingClientRect()" in position_body
+    assert "position = 'fixed'" in position_body
+    assert "zIndex = '9999'" in position_body
+    assert "spaceAbove > spaceBelow" in position_body
+    assert "querySelector('.cfg-dropdown-selected')" in position_body
+    assert "minWidth = `${menuWidth}px`" in position_body
+    assert "maxWidth = `${menuWidth}px`" in position_body
+    assert "initInvestmentDropdowns" in js
+    init_body = _js_function_body(js, "initInvestmentDropdowns")
+    assert "root.matches('.cfg-dropdown[data-investment-dropdown]')" in init_body
+    assert "initDropdown(" not in init_body
+    assert "data-investment-dropdown-options" not in dropdown_body
+    assert "investmentDropdown(`investment-records-filter-${key}`" in filters_body
+    assert "<select" not in filters_body
+    assert "investmentDropdown(`invest-skill-version-${escapeHtml(skillKey)}`" in skill_row_body
+    assert "<select" not in skill_row_body
+    assert ".investment-cow-dropdown" in css
+    assert ".investment-cow-dropdown .cfg-dropdown-menu" in css
+    assert "min-width: 0;" in css
+
+
+def test_investment_date_inputs_have_visible_calendar_controls():
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    assert "input[type=\"date\"]" in css
+    assert "::-webkit-calendar-picker-indicator" in css
+    assert "color-scheme: dark;" in css
 
 
 def test_investment_table_like_views_use_wide_containers():
     html = CHAT_HTML.read_text(encoding="utf-8")
 
     users_start = html.index('id="view-invest-users"')
-    users_end = html.index('id="view-invest-rate"')
+    users_end = html.index('id="view-invest-daily-content"')
     users_body = html[users_start:users_end]
-    rate_start = html.index('id="view-invest-rate"')
-    rate_end = html.index('id="view-invest-cb"')
-    rate_body = html[rate_start:rate_end]
-    cb_start = html.index('id="view-invest-cb"')
-    cb_end = html.index('id="view-invest-content"')
-    cb_body = html[cb_start:cb_end]
+    daily_start = html.index('id="view-invest-daily-content"')
+    daily_end = html.index('id="view-invest-content"')
+    daily_body = html[daily_start:daily_end]
     content_start = html.index('id="view-invest-content"')
     content_end = html.index('id="view-invest-records"')
     content_body = html[content_start:content_end]
@@ -56,13 +119,11 @@ def test_investment_table_like_views_use_wide_containers():
     records_body = html[records_start:records_end]
 
     assert "w-full max-w-[1600px] mx-auto" in users_body
-    assert "w-full max-w-[1600px] mx-auto" in rate_body
-    assert "w-full max-w-[1600px] mx-auto" in cb_body
+    assert "w-full max-w-[1600px] mx-auto" in daily_body
     assert "w-full max-w-[1600px] mx-auto" in content_body
     assert "w-full max-w-[1600px] mx-auto" in records_body
     assert "max-w-6xl mx-auto" not in users_body
-    assert "max-w-6xl mx-auto" not in rate_body
-    assert "max-w-6xl mx-auto" not in cb_body
+    assert "max-w-6xl mx-auto" not in daily_body
     assert "max-w-6xl mx-auto" not in content_body
     assert "max-w-6xl mx-auto" not in records_body
 
@@ -77,6 +138,38 @@ def test_investment_content_is_a_top_level_view():
     assert "'invest-content':" in js
     assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
     assert "'invest-content': 'cache.read'" in js
+
+
+def test_rate_and_convertible_bond_content_are_merged_under_investment_content_page():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    sidebar_start = html.index("<!-- Investment Group -->")
+    sidebar_end = html.index("</div>\n                </div>", sidebar_start)
+    sidebar_body = html[sidebar_start:sidebar_end]
+    daily_view_start = html.index('id="view-invest-daily-content"')
+    daily_view_end = html.index('id="view-invest-content"')
+    daily_view_body = html[daily_view_start:daily_view_end]
+    daily_render_body = _js_function_body(js, "renderInvestmentDailyContent")
+
+    assert 'data-view="invest-daily-content"' in sidebar_body
+    assert "<span>投资内容</span>" in sidebar_body
+    assert 'data-view="invest-rate"' not in sidebar_body
+    assert 'data-view="invest-cb"' not in sidebar_body
+    assert 'id="view-invest-rate"' not in html
+    assert 'id="view-invest-cb"' not in html
+
+    assert '<h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资内容</h2>' in daily_view_body
+    assert 'id="invest-daily-content-content"' in daily_view_body
+    assert "let currentInvestmentContentPanel = 'rate';" in js
+    assert "function switchInvestmentContentPanel(" in js
+    assert "async function renderInvestmentDailyContent(" in js
+    assert "if (viewId === 'invest-daily-content') return renderInvestmentDailyContent();" in js
+    assert "'invest-daily-content': 'content.read'" in js
+    assert "investment-tab" in daily_render_body
+    assert "利率内容" in daily_render_body
+    assert "转债内容" in daily_render_body
+    assert "renderInvestmentContent(currentInvestmentContentPanel)" in daily_render_body
 
 
 def test_backend_login_page_matches_console_auth_flow():
@@ -293,6 +386,61 @@ def test_investment_users_page_is_list_first_with_dialog_forms():
     assert ".investment-user-toolbar" in css
 
 
+def test_investment_boolean_controls_use_green_switches():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    html = CHAT_HTML.read_text(encoding="utf-8")
+
+    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
+    service_checks_body = _js_function_body(js, "investmentUserServiceChecks")
+    channel_fields_body = _js_function_body(js, "buildChannelFieldsHtml")
+
+    assert "function investmentSwitch(" in js
+    assert "class=\"investment-switch" in js
+    assert "investment-switch-track" in js
+    assert "investmentSwitch('启用', 'invest-admin-enabled'" in js
+    assert "investmentSwitch('启用', 'invest-user-modal-enabled'" in js
+    assert "investmentSwitch('直接上传最终 PNG', 'invest-content-direct-output-mode'" in js
+    assert "investmentSwitch(label, id, checked" in config_field_body
+    assert "investmentSwitch(label, `${prefix}-service-${index}`" in service_checks_body
+    assert "investmentSwitch('', inputId, Boolean(f.value)" in channel_fields_body
+    assert "class=\"investment-check" not in js
+    assert "<label><input" not in js
+    assert '<label class="investment-switch">' in html
+    assert '<input id="cfg-enable-thinking" type="checkbox">' in html
+    assert "log-filter-switch" in html
+    assert "peer-checked" not in html
+
+    assert ".investment-switch" in css
+    assert ".investment-switch-track" in css
+    assert ".investment-switch-thumb" in css
+    assert ".log-filter-switch" in css
+    assert ".investment-switch input[type=\"checkbox\"]:checked + .investment-switch-track" in css
+    assert "background: #35A85B;" in css
+
+
+def test_investment_user_service_switches_normalize_all_selection():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    table_body = _js_function_body(js, "renderInvestmentUsersTable")
+    service_checks_body = _js_function_body(js, "investmentUserServiceChecks")
+    toggle_body = _js_function_body(js, "handleInvestmentUserServiceToggle")
+    save_user_body = _js_function_body(js, "saveInvestmentUser")
+
+    assert "const INVEST_CUSTOMER_SERVICE_OPTIONS" in js
+    assert "function investmentNormalizeCustomerServices(" in js
+    assert "function investmentExpandCustomerServicesForUi(" in js
+    assert "function handleInvestmentUserServiceToggle(" in js
+    assert "investmentExpandCustomerServicesForUi(user.allowed_services || ['all'])" in service_checks_body
+    assert "data-service-value=\"${escapeHtml(value)}\"" in service_checks_body
+    assert "['all', '全部']" in js
+    assert "onchange=\"handleInvestmentUserServiceToggle" in service_checks_body
+    assert "businessItems.forEach(item => { item.checked = true; })" in toggle_body
+    assert "if (allItem && !businessItems.every(item => item.checked)) allItem.checked = false;" in toggle_body
+    assert "investmentNormalizeCustomerServices(selectedServices)" in save_user_body
+    assert "investmentCustomerServicesDisplay(user.allowed_services || [])" in table_body
+    assert "join(', ')" not in table_body
+
+
 def test_investment_users_toolbar_is_grouped_and_paginated():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
@@ -315,34 +463,121 @@ def test_investment_users_toolbar_is_grouped_and_paginated():
 
 def test_investment_customer_toolbar_has_separate_action_bar():
     js = CONSOLE_JS.read_text(encoding="utf-8")
-    css = CONSOLE_CSS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentCustomerUsers")
 
     assert "investment-user-toolbar-heading" in body
     assert "investment-user-actionbar" in body
     assert "investment-toolbar-section search" in body
-    assert "investment-toolbar-section export" in body
+    assert "investment-toolbar-section actions" in body
+    assert "invest-users-keyword" in body
+    assert "invest-users-keyword-field" in body
+    assert "keyword_field" in body
+    assert "['all', '全部']" in body
+    assert "['openid', 'OpenID']" in body
+    assert "['name', '姓名']" in body
+    assert "['institution', '机构']" in body
+    assert "['mobile', '手机号']" in body
+    assert "['service', '服务']" in body
+    assert "invest-users-export-enabled" not in body
+    assert "openInvestmentCustomerExportDialog()" in body
+    assert "openInvestmentUsersImportDialog()" in body
+    assert "clearInvestmentCustomerSearch()" in body
+    assert "清除搜索" in body
+    assert body.index("applyInvestmentCustomerSearch()") < body.index("clearInvestmentCustomerSearch()")
+    assert body.index("openInvestmentUserDialog()") < body.index("openInvestmentUsersImportDialog()")
+    assert body.index("openInvestmentUsersImportDialog()") < body.index("openInvestmentCustomerExportDialog()")
     assert body.index("investment-user-toolbar-heading") < body.index("investment-user-actionbar")
+    assert "keyword_field: 'all'" in js
+    assert "keyword_field: document.getElementById('invest-users-keyword-field')?.value || 'all'" in js
+    clear_body = _js_function_body(js, "clearInvestmentCustomerSearch")
+    assert "keyword: ''" in clear_body
+    assert "keyword_field: 'all'" in clear_body
+    assert "page: '1'" in clear_body
+    assert "renderInvestmentCustomerUsers()" in clear_body
+    assert "window.clearInvestmentCustomerSearch = clearInvestmentCustomerSearch" in js
 
-    assert ".investment-user-actionbar" in css
-    assert ".investment-toolbar-section" in css
-    assert ".investment-toolbar-section.export" in css
+
+def test_investment_admin_toolbar_and_table_spacing_are_polished():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    body = _js_function_body(js, "renderInvestmentAdminUsers")
+
+    assert "investment-user-toolbar-heading" in body
+    assert "investment-user-actionbar" in body
+    assert "investment-toolbar-section search" in body
+    assert "investment-toolbar-section actions" in body
+    assert body.index("investment-toolbar-section search") < body.index("investment-toolbar-section actions")
+    assert "openInvestmentAdminUserDialog()" in body
+
+    assert "investment-user-toolbar-grid" in js
+    assert "grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto]" in js
+    assert "investment-toolbar-section" in js
+    assert "investment-toolbar-group" in js
+    assert "investment-user-pagination" in js
+    assert "gap-3" in js
+    assert "mt-4" in js
+    assert "min-h-10" in js
+    assert "bg-primary-500" in js
+    assert "new Set([...tokens, ...mapped])" in js
+    assert "replace(/<th\\b" in js
+    assert "replace(/<td\\b" in js
+    assert "replace(/<th(?![^>]*class=)" not in js
+
+    assert ".investment-table-wrap::before" in css
+    assert "content: none;" in css
+    assert ".investment-btn.primary" in css
+    assert "background: #35A85B;" in css
+    assert "width: 100%;" in css
+    assert "table-layout: fixed;" in css
+    assert ".investment-table-wrap {\n    overflow: hidden;\n    border: 1px solid #e2e8f0;\n    border-radius: 8px;\n    background: #f8fafc;" in css
+    assert "border-collapse: separate;" in css
+    assert ".investment-table thead,\n.investment-table thead tr {\n    background: #f8fafc;" in css
+    assert ".investment-table thead tr:first-child th:first-child" in css
+    assert ".investment-table thead tr:first-child th:last-child" in css
+    assert ".investment-user-page .investment-table th" in css
+    assert "position: static !important;" in css
+    assert ".investment-user-page .investment-table thead,\n.investment-user-page .investment-table thead tr,\n.investment-user-page .investment-table thead th" in css
+    assert ".investment-user-page .investment-table > tbody:first-child > tr:first-child > *" in css
+    assert ".investment-user-page .investment-table > tbody:first-child > tr:first-child > *:first-child" in css
+    assert ".investment-user-page .investment-table > tbody:first-child > tr:first-child > *:last-child" in css
+    assert ".investment-user-page .investment-table-scroll" in css
+    assert "max-height: min(560px, calc(100vh - 360px));" in css
+    assert "overflow: auto;" in css
+    assert ".investment-user-page .investment-table th,\n.investment-user-page .investment-table td" in css
+    assert "text-overflow: ellipsis;" in css
+    assert "white-space: nowrap;" in css
+    assert ".investment-user-page .investment-table th:first-child,\n.investment-user-page .investment-table td:first-child" in css
+    assert "width: 24%;" in css
+    assert ".investment-table-wrap > .investment-table:first-child" in css
+
+    customer_table_body = _js_function_body(js, "renderInvestmentUsersTable")
+    admin_table_body = _js_function_body(js, "renderInvestmentAdminUsersTable")
+    assert "function investmentMiddleEllipsis(" in js
+    assert "function investmentFormatBeijingDate(" in js
+    assert '<td title="${escapeHtml(user.openid)}">${escapeHtml(investmentMiddleEllipsis(user.openid, 10, 8))}</td>' in customer_table_body
+    assert "investmentFormatBeijingDate(user.auth_end_at || '')" in customer_table_body
+    assert "investmentFormatBeijingTime(user.auth_end_at || '')" not in customer_table_body
+    assert '<td title="${escapeHtml(user.username || \'\')}">${escapeHtml(user.username || \'\')}</td>' in admin_table_body
 
 
 def test_investment_customer_import_uses_dialog_with_template_and_result():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentCustomerUsers")
+    user_dialog_body = _js_function_body(js, "openInvestmentUserDialog")
     import_body = _js_function_body(js, "openInvestmentUsersImportDialog")
+    import_section_body = _js_function_body(js, "renderInvestmentUserImportSection")
 
     assert "openInvestmentUsersImportDialog()" in body
+    assert "renderInvestmentUserImportSection()" not in user_dialog_body
     assert "invest-users-import-file" not in body
-    assert "showInvestmentModal('导入客户名单'" in import_body
-    assert "存在用户名单示例模板" in import_body
-    assert "/api/investment/users/import-template.xlsx" in import_body
-    assert "invest-users-import-result" in import_body
-    assert "parseInvestmentUsersImport()" in import_body
+    assert "批量导入客户" in import_body
+    assert "renderInvestmentUserImportSection()" in import_body
+    assert "存在用户名单示例模板" in import_section_body
+    assert "/api/investment/users/import-template.xlsx" in import_section_body
+    assert "invest-users-import-result" in import_section_body
+    assert "parseInvestmentUsersImport()" in import_section_body
     assert "confirmInvestmentUsersImport()" in js
-    assert "解析文件" in import_body
+    assert "解析文件" in import_section_body
     assert "确认导入" in js
     assert "commit" in js
     assert "解析中" in js
@@ -351,6 +586,21 @@ def test_investment_customer_import_uses_dialog_with_template_and_result():
     assert "renderInvestmentImportResult(data, false)" in js
     assert "renderInvestmentImportResult(data, true)" in js
     assert "window.openInvestmentUsersImportDialog = openInvestmentUsersImportDialog" in js
+
+
+def test_investment_customer_export_uses_dedicated_dialog():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    toolbar_body = _js_function_body(js, "renderInvestmentCustomerUsers")
+    export_body = _js_function_body(js, "openInvestmentCustomerExportDialog")
+    download_body = _js_function_body(js, "downloadInvestmentUsersExport")
+    legacy_body = _js_function_body(js, "exportInvestmentUsers")
+
+    assert "openInvestmentCustomerExportDialog()" in toolbar_body
+    assert "showInvestmentModal('导出客户名单'" in export_body
+    assert "invest-users-export-enabled" in export_body
+    assert "downloadInvestmentUsersExport()" in export_body
+    assert "investmentDownload('/api/investment/export/users.xlsx'" in download_body
+    assert "openInvestmentCustomerExportDialog()" in legacy_body
 
 
 def test_investment_customer_render_uses_response_rows_with_response_pagination():
@@ -386,8 +636,179 @@ def test_daily_content_ui_exposes_effective_date_direct_png_and_audits():
     assert "renderInvestmentContentHistoryGroups(" in js
     assert "renderInvestmentOperationAudits(" in js
     assert "/api/investment/audits" in js
-    assert ".investment-date-group" in css
     assert ".investment-audit-list" in css
+
+
+def test_daily_content_layout_places_current_and_upload_side_by_side_above_history():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    content_body = _js_function_body(js, "renderInvestmentContent")
+    current_body = _js_function_body(js, "renderInvestmentCurrentEffective")
+    upload_body = _js_function_body(js, "renderInvestmentContentUploadPanel")
+    history_body = _js_function_body(js, "renderInvestmentContentHistoryGroups")
+
+    assert "investment-daily-content-page" in content_body
+    assert "investment-workbench investment-daily-content-workbench" not in content_body
+    assert "investment-daily-content-workbench" not in content_body
+    assert "investment-content-top-panel" in content_body
+    assert "investment-content-top" in content_body
+    assert "investment-content-history-panel" in content_body
+    assert "investment-content-history-body" in content_body
+    assert "investment-history-header" in content_body
+    assert "investment-history-heading-row" in content_body
+    assert "investment-history-filterbar" in content_body
+    assert "investment-history-date-field" in content_body
+    assert "investment-date-control" in js
+    assert "fa-calendar-days" in js
+    assert "investment-date-picker-button" in js
+    assert "investmentRenderDateControl(historyDateId" in content_body
+    assert "clearInvestmentContentHistoryDate" not in js
+    assert "onchange=\"refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})\"" in content_body
+    assert "placeholder: '选择日期'" in content_body
+    assert "当前日期：" not in content_body
+    assert "展示全部历史内容" not in content_body
+    assert "function investmentRenderDateControl(" in js
+    assert "function investmentToggleDatePicker(" in js
+    assert "function investmentRenderDatePickerPanel(" in js
+    assert "function investmentSelectDate(" in js
+    assert "showPicker" not in js
+    assert 'type="date"' not in js
+    assert "investment-daily-current-panel" in current_body
+    assert "investment-daily-upload-panel" in upload_body
+    assert "investment-panel investment-current-panel" not in current_body
+    assert "investment-panel investment-upload-panel" not in upload_body
+    assert "renderInvestmentCurrentEffective(data.current_effective, serviceType)" in content_body
+    assert "renderInvestmentContentUploadPanel(serviceType)" in content_body
+    assert content_body.index("investment-content-top-panel") < content_body.index("investment-content-history-panel")
+    assert content_body.index("renderInvestmentCurrentEffective") < content_body.index("renderInvestmentContentUploadPanel")
+    assert content_body.index("renderInvestmentContentUploadPanel") < content_body.index("investment-content-history-panel")
+    assert "investmentTableWrap" in history_body
+    assert "investment-history-table" in history_body
+    assert "investment-history-output-preview" in history_body
+    assert "const groups = new Map()" not in history_body
+    assert "investment-date-group" not in history_body
+    assert "content-history-current-date" in history_body
+    assert "<th>ID</th><th>服务</th><th>版本</th><th>状态</th><th>模式</th><th>操作人</th><th>生成时间</th><th>原始资料</th><th>生成内容</th><th>输出</th><th>产物</th><th>动作</th>" in history_body
+    assert "investment-history-card" not in history_body
+    assert "investmentTextButton('刷新'" in history_body
+    assert "investmentTextButtonIfCan('content.generate', '生成'" in history_body
+    assert "investmentTextButtonIfCan('content.publish', '设为生效'" in history_body
+    assert "investmentTextButton('详情'" in history_body
+    assert "investmentIconButton(" not in history_body
+    assert "investmentIconButtonIfCan(" not in history_body
+    assert "record.operator || '-'" not in history_body
+    assert "investmentFormatBeijingTime(record.created_at) || '-'" not in history_body
+    assert "const warningText = record.status_warning || record.error_message || '';" in history_body
+    assert "const warning = warningText ? investmentCompactText(warningText, 80) : '';" in history_body
+    assert "investmentCompactText(record.status_warning || record.error_message || '', 80)" not in history_body
+    assert "investmentHistoryHoverText(record.source_text, 24)" in history_body
+    assert "investmentHistoryHoverText(record.generated_text, 24)" in history_body
+    assert "function investmentHistoryHoverText(value, max = 24)" in js
+    assert "data-tooltip=\"${escapeHtml(text)}\"" in js
+    assert "const outputArtifactPaths = Array.isArray(record.output_artifacts)" in history_body
+    assert "const artifactPaths = record.output_image ? [record.output_image, ...outputArtifactPaths.filter(path => path !== record.output_image)] : outputArtifactPaths;" in history_body
+    assert "const artifactCount = artifactPaths.length;" in history_body
+    assert "investmentFileLinks(artifactPaths)" in history_body
+    assert "record.source_text" in history_body
+    assert "record.generated_text" in history_body
+    assert "record.output_artifacts" in history_body
+
+    assert ".investment-daily-content-page" in css
+    assert "display: flex;" in css
+    assert "flex-direction: column;" in css
+    assert ".investment-content-top-panel" in css
+    assert ".investment-content-top" in css
+    assert "grid-template-columns: minmax(420px, 7fr) minmax(360px, 5fr);" in css
+    assert "align-items: stretch;" in css
+    assert ".investment-content-top-panel .investment-daily-current-panel,\n.investment-content-top-panel .investment-daily-upload-panel" in css
+    assert ".investment-content-top > .investment-daily-current-panel,\n.investment-content-top > .investment-daily-upload-panel" in css
+    assert "box-shadow: none;" in css
+    assert "background: transparent;" in css
+    assert ".investment-content-history-panel" in css
+    assert ".investment-content-history-body" in css
+    assert ".investment-content-history-body > .investment-table-scroll" in css
+    assert "--investment-history-header-height: 42px;" in css
+    assert "--investment-history-row-height: 74px;" in css
+    assert "height: calc(var(--investment-history-header-height) + var(--investment-history-row-height) * 6);" in css
+    assert "max-height: calc(var(--investment-history-header-height) + var(--investment-history-row-height) * 6);" in css
+    assert ".investment-history-header" in css
+    assert ".investment-history-heading-row" in css
+    assert ".investment-history-filterbar" in css
+    assert ".investment-history-date-field" in css
+    assert ".investment-date-control" in css
+    assert ".investment-date-control:focus-within" in css
+    assert ".investment-date-value-button" in css
+    assert ".investment-date-picker-button" in css
+    assert ".investment-date-picker-button:hover" in css
+    assert ".investment-date-popover" in css
+    assert ".investment-date-day.selected" in css
+    assert ".investment-date-picker-foot" in css
+    assert ".investment-history-table" in css
+    assert ".investment-history-output-preview" in css
+    assert "min-width: 1280px;" in css
+    assert ".investment-history-cell-summary" in css
+    assert "max-width: 360px;" in css
+    assert "white-space: pre-wrap;" in css
+    assert ".investment-history-table th:nth-child(12)," in css
+    assert "width: 260px;" in css
+    assert "width: 56px;" in css
+    assert "height: 56px;" in css
+    assert "min-height: 0;" in css
+    assert "max-height: 100%;" in css
+    assert ".investment-history-table .investment-row-actions" in css
+    assert "flex-wrap: nowrap;" in css
+    assert ".investment-text-action" in css
+    assert "white-space: nowrap;" in css
+    assert ".investment-history-card" not in css
+    assert ".investment-history-main" not in css
+    assert ".investment-history-preview" not in css
+    assert ".investment-history-text" not in css
+    assert "height: auto;" in css
+    assert "display: flex;" in css
+    assert "flex-direction: column;" in css
+    assert "grid-column: 1 / 2;" not in css
+    assert "grid-column: 2 / 3;" not in css
+    assert ".investment-daily-content-page .investment-current-body" in css
+    assert ".investment-current-preview .investment-preview" in css
+    assert "width: 100%;" in css
+    assert "height: 100%;" in css
+    assert "max-height: min(560px, 58vh);" in css
+    assert "object-fit: contain;" in css
+    assert ".investment-daily-content-page .investment-current-meta" in css
+    assert "grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));" in css
+    assert ".investment-daily-content-page .investment-current-meta strong" in css
+    assert ".investment-daily-content-page .investment-current-meta .investment-detail-link" in css
+    assert "overflow: hidden;" in css
+    assert "text-overflow: ellipsis;" in css
+    assert "white-space: nowrap;" in css
+    assert ".investment-daily-content-page .investment-daily-upload-panel .investment-grid.cols-2" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
+    assert ".investment-daily-content-page .investment-daily-upload-panel .investment-actions" in css
+    assert "display: grid;" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
+    assert ".investment-daily-content-page .investment-daily-upload-panel .investment-btn" in css
+    assert "white-space: normal;" in css
+
+
+def test_daily_content_upload_operator_is_current_admin_without_input_field():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    upload_body = _js_function_body(js, "renderInvestmentContentUploadPanel")
+    create_body = _js_function_body(js, "createInvestmentContent")
+
+    assert "function investmentCurrentAdminUsername(" in js
+    assert 'id="invest-content-operator"' not in upload_body
+    assert "readonly" not in upload_body
+    assert "<span>操作人</span>" not in upload_body
+    assert "form.append('operator', investmentCurrentAdminUsername());" in create_body
+    assert "document.getElementById('invest-content-operator').value || 'admin'" not in create_body
+
+
+def test_daily_content_effective_action_refreshes_current_preview():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    effective_body = _js_function_body(js, "effectiveInvestmentContent")
+
+    assert "await renderInvestmentContent(targetServiceType, {effective_date: investmentContentHistoryEffectiveDate(targetServiceType)})" in effective_body
+    assert "await refreshInvestmentContentRecords(targetServiceType);" not in effective_body
 
 
 def test_investment_console_hides_actions_by_admin_role():
@@ -616,7 +1037,8 @@ def test_investment_request_export_exposes_unauthorized_and_customer_filter():
 
     assert "unauthorized_request: '无权限请求'" in js
     assert "['unauthorized_request', '无权限请求']" in filters_body
-    assert '<option value="unauthorized_request">无权限请求</option>' in panel_body
+    assert "investmentDropdown('invest-export-service-type'" in panel_body
+    assert "['unauthorized_request', '无权限请求']" in panel_body
     assert "id=\"invest-export-customer\"" in panel_body
     assert "OpenID/手机号" in panel_body
     assert "function investmentExportCustomer()" in js
@@ -637,11 +1059,11 @@ def test_investment_records_default_to_beijing_today_filters():
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
 
     assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
-    assert "cache: {page: '1', page_size: '120', market_date: investmentTodayDate()}" in state_body
+    assert "cache: {page: '1', page_size: '120', market_date: ''}" in state_body
     assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
     assert "start_date: investmentTodayDate()" in default_body
     assert "end_date: investmentTodayDate()" in default_body
-    assert "market_date: investmentTodayDate()" in default_body
+    assert "market_date: ''" in default_body
     assert "data.market_dates[0]" not in load_body
     assert "timeZone: 'Asia/Shanghai'" in _js_function_body(js, "investmentTodayDate")
 
@@ -650,7 +1072,7 @@ def test_investment_cache_empty_date_falls_back_to_today_before_loading():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
-    assert "?.value || investmentTodayDate()" in apply_body
+    assert "?.value || ''" in apply_body
     assert "await loadInvestmentGeneratedContent()" in apply_body
 
 
@@ -722,11 +1144,75 @@ def test_investment_content_page_uses_date_grouped_category_view():
     assert "async function renderInvestmentGeneratedContent(" in js
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     cache_home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
+    category_cards_body = _js_function_body(js, "renderInvestmentGeneratedCategoryCards")
     assert "investment-generated-content-home" in cache_home_body
-    assert "investment-generated-content-entry" in cache_home_body
+    assert "investment-generated-content-entry" in category_cards_body
     assert "['technical_analysis', 'rate', 'convertible_bond']" in cache_body
     assert "investment-records-cache-layout" not in js
     assert "investment-records-date-list" not in js
+
+
+def test_investment_content_page_defaults_to_history_overview():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
+    home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
+    load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
+    apply_body = _js_function_body(js, "applyInvestmentCacheDate")
+
+    assert "cache: {page: '1', page_size: '120', market_date: ''}" in js
+    assert "const selectedDate = investmentCacheMarketDate();" in cache_body
+    assert "const visibleEntries = selectedDate ? keywordEntries.filter" in cache_body
+    assert "renderInvestmentGeneratedContentHome(categories, visibleEntries)" in cache_body
+    assert "investment-generated-category-overview" in home_body
+    assert "renderInvestmentGeneratedCategoryCards(categories, entries)" in home_body
+    assert "renderInvestmentGeneratedCategoryCards(categories, entriesForDate)" in home_body
+    assert "investment-generated-date-section" in home_body
+    assert "investmentGroupCacheEntriesByDate(entries)" in home_body
+    assert "暂无历史内容" not in home_body
+    assert "全部历史" in cache_body
+    assert "investmentRenderDateControl('investment-records-filter-market_date'" in cache_body
+    assert "placeholder: '全部历史'" in cache_body
+    assert "investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || '';" in apply_body
+    assert "query.delete('market_date')" in load_body
+
+
+def test_investment_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
+    cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
+    home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
+    category_body = _js_function_body(js, "renderInvestmentCacheCategory")
+
+    assert "investment-content-workspace" in render_body
+    assert "investment-records-topbar" not in render_body
+    assert "集中查看生成后的图片、文档和缓存产物" not in render_body
+    assert "investment-content-list" in render_body
+    assert "investment-generated-content-title" in cache_body
+    assert "investment-generated-history-empty" not in home_body
+    assert "暂无历史内容" not in home_body
+    assert "investment-generated-history-empty" in category_body
+    assert "暂无历史内容" in category_body
+    assert ".investment-content-workspace .investment-records-board" in css
+    assert ".investment-content-workspace .investment-records-list" in css
+    assert "height: auto;" in css
+    assert "max-height: none;" in css
+    assert ".investment-generated-content-datebar" in css
+    assert "min-height: 48px;" in css
+    assert ".investment-generated-content-title" in css
+    assert ".investment-generated-history-empty" in css
+
+
+def test_daily_content_history_panel_does_not_overlap_top_cards():
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    assert ".investment-daily-content-page {\n    display: flex;" in css
+    assert ".investment-content-top-panel" in css
+    assert ".investment-daily-content-page > .investment-content-history-panel" in css
+    assert "width: 100%;" in css
+    assert "position: relative;" in css
+    assert "z-index: 0;" in css
+
 
 
 def test_investment_generated_content_page_avoids_duplicate_date_controls_and_wide_three_column_lists():
@@ -851,7 +1337,7 @@ def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
 
     assert "investmentFormatBeijingTime(stats.latest_updated_at || '')" in stock_stats_body
     assert "investmentFormatBeijingTime(stock.updated_at || '')" in stock_rows_body
-    assert "investmentFormatBeijingTime(user.auth_end_at || '')" in users_body
+    assert "investmentFormatBeijingDate(user.auth_end_at || '')" in users_body
     assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in user_dialog_body
     assert "investmentUtcToBeijingDatetimeLocal(user.auth_end_at || '')" in user_dialog_body
     assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in fill_user_body
@@ -892,7 +1378,7 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     state_body = js[state_start:state_end]
     assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
     assert "contents: {page: '1', page_size: '80'}" in state_body
-    assert "cache: {page: '1', page_size: '120', market_date: investmentTodayDate()}" in state_body
+    assert "cache: {page: '1', page_size: '120', market_date: ''}" in state_body
     assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
 
     switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
@@ -974,13 +1460,15 @@ def test_investment_content_history_date_filters_are_scoped_by_service_type():
     refresh_records_body = _js_function_body(js, "refreshInvestmentContentRecords")
 
     assert "const historyDateId = investmentContentHistoryEffectiveDateId(serviceType);" in js
-    assert 'id="${historyDateId}"' in js
+    assert "investmentRenderDateControl(historyDateId" in render_content_body
     assert "function investmentContentHistoryEffectiveDateId(serviceType)" in js
     assert "return `invest-content-history-effective-date-${normalizedServiceType}`;" in js
-    assert "document.getElementById(investmentContentHistoryEffectiveDateId(serviceType))" in js
+    assert "document.getElementById(historyDateId)" in js
     assert "document.getElementById('invest-content-history-effective-date')" not in js
     assert "investmentContentHistoryEffectiveDateId(serviceType)" in effective_date_body
-    assert "document.getElementById(investmentContentHistoryEffectiveDateId(serviceType))" in effective_date_body
+    assert "document.getElementById(historyDateId)" in effective_date_body
+    assert "investmentTodayDate()" in effective_date_body
+    assert "query.set('effective_date', effectiveDate || investmentTodayDate());" in js
     assert "investmentContentHistoryEffectiveDate()" not in render_content_body
     assert "investmentContentHistoryEffectiveDate(serviceType)" in render_content_body
     assert "investmentContentHistoryEffectiveDate()" not in refresh_records_body

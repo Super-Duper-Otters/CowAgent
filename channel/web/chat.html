@@ -42,7 +42,7 @@
         }
     }
     </script>
-    <link rel="stylesheet" href="assets/css/console.css">
+    <link rel="stylesheet" href="assets/css/console.css?v=investment-ui-20260603-content-history-redesign">
     <!-- Apply theme/lang before first paint to avoid flash of unstyled content.
          This runs synchronously in <head> so the correct class is on <html>
          before any CSS or body rendering occurs. -->
@@ -184,11 +184,8 @@
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-users">
                             <i class="fas fa-users item-icon text-xs w-5 text-center"></i><span>用户管理</span>
                         </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-rate">
-                            <i class="fas fa-chart-line item-icon text-xs w-5 text-center"></i><span>利率内容</span>
-                        </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-cb">
-                            <i class="fas fa-scale-balanced item-icon text-xs w-5 text-center"></i><span>转债内容</span>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-daily-content">
+                            <i class="fas fa-chart-line item-icon text-xs w-5 text-center"></i><span>投资内容</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-content">
                             <i class="fas fa-images item-icon text-xs w-5 text-center"></i><span>内容</span>
@@ -619,11 +616,9 @@
                                                 <span data-i18n="config_enable_thinking">Deep Thinking</span>
                                                 <span class="cfg-tip" data-tip-key="config_enable_thinking_hint"><i class="fas fa-circle-question"></i></span>
                                             </label>
-                                            <label class="relative inline-flex items-center cursor-pointer">
-                                                <input id="cfg-enable-thinking" type="checkbox" class="sr-only peer">
-                                                <div class="w-9 h-5 bg-slate-200 dark:bg-slate-700 peer-checked:bg-primary-400 rounded-full
-                                                            after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white
-                                                            after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                                            <label class="investment-switch">
+                                                <input id="cfg-enable-thinking" type="checkbox">
+                                                <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
                                             </label>
                                         </div>
                                         <div class="flex items-center justify-end gap-3 pt-1">
@@ -950,20 +945,11 @@
                     </div>
                 </div>
 
-                <div id="view-invest-rate" class="view">
+                <div id="view-invest-daily-content" class="view">
                     <div class="flex-1 overflow-y-auto p-6">
                         <div class="w-full max-w-[1600px] mx-auto">
-                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">利率内容</h2>
-                            <div id="invest-rate-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-invest-cb" class="view">
-                    <div class="flex-1 overflow-y-auto p-6">
-                        <div class="w-full max-w-[1600px] mx-auto">
-                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">转债内容</h2>
-                            <div id="invest-cb-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资内容</h2>
+                            <div id="invest-daily-content-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
                         </div>
                     </div>
                 </div>
@@ -1036,25 +1022,30 @@
                                     <span class="text-xs text-slate-400 ml-2 font-mono">run.log</span>
                                     <div class="flex-1"></div>
                                     <div class="flex items-center gap-3 mr-2">
-                                        <label class="flex items-center gap-1 cursor-pointer select-none">
+                                        <label class="investment-switch log-filter-switch">
                                             <input type="checkbox" class="log-filter-cb" data-level="debug" checked>
-                                            <span class="text-xs text-slate-400">DEBUG</span>
+                                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                                            <span class="investment-switch-label text-xs text-slate-400">DEBUG</span>
                                         </label>
-                                        <label class="flex items-center gap-1 cursor-pointer select-none">
+                                        <label class="investment-switch log-filter-switch">
                                             <input type="checkbox" class="log-filter-cb" data-level="info" checked>
-                                            <span class="text-xs text-blue-400">INFO</span>
+                                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                                            <span class="investment-switch-label text-xs text-blue-400">INFO</span>
                                         </label>
-                                        <label class="flex items-center gap-1 cursor-pointer select-none">
+                                        <label class="investment-switch log-filter-switch">
                                             <input type="checkbox" class="log-filter-cb" data-level="warning" checked>
-                                            <span class="text-xs text-yellow-400">WARNING</span>
+                                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                                            <span class="investment-switch-label text-xs text-yellow-400">WARNING</span>
                                         </label>
-                                        <label class="flex items-center gap-1 cursor-pointer select-none">
+                                        <label class="investment-switch log-filter-switch">
                                             <input type="checkbox" class="log-filter-cb" data-level="error" checked>
-                                            <span class="text-xs text-red-400">ERROR</span>
+                                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                                            <span class="investment-switch-label text-xs text-red-400">ERROR</span>
                                         </label>
-                                        <label class="flex items-center gap-1 cursor-pointer select-none">
+                                        <label class="investment-switch log-filter-switch">
                                             <input type="checkbox" class="log-filter-cb" data-level="critical" checked>
-                                            <span class="text-xs text-white font-bold">CRITICAL</span>
+                                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                                            <span class="investment-switch-label text-xs text-white font-bold">CRITICAL</span>
                                         </label>
                                     </div>
                                     <div class="flex items-center gap-1.5">
@@ -1100,6 +1091,6 @@
         </div>
     </div>
 
-    <script defer src="assets/js/console.js"></script>
+    <script defer src="assets/js/console.js?v=investment-ui-20260603-content-history-redesign"></script>
 </body>
 </html>

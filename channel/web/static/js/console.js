@@ -17,7 +17,7 @@ const I18N = {
         menu_chat: '对话', menu_config: '配置', menu_skills: '技能',
         menu_memory: '记忆', menu_knowledge: '知识', menu_channels: '通道', menu_tasks: '定时',
         menu_logs: '日志',
-        menu_invest_users: '用户管理', menu_invest_rate: '利率内容', menu_invest_cb: '转债内容',
+        menu_invest_users: '用户管理', menu_invest_daily_content: '投资内容',
         menu_invest_content: '内容',
         menu_invest_records: '业务记录', menu_invest_skills: '投资Skill', menu_invest_config: '系统配置', menu_invest_health: '健康检查',
         knowledge_title: '知识库', knowledge_desc: '浏览和探索你的知识库',
@@ -126,7 +126,7 @@ const I18N = {
         menu_chat: 'Chat', menu_config: 'Config', menu_skills: 'Skills',
         menu_memory: 'Memory', menu_knowledge: 'Knowledge', menu_channels: 'Channels', menu_tasks: 'Tasks',
         menu_logs: 'Logs',
-        menu_invest_users: 'Users', menu_invest_rate: 'Rates', menu_invest_cb: 'Convertible Bonds',
+        menu_invest_users: 'Users', menu_invest_daily_content: 'Investment Content',
         menu_invest_content: 'Content',
         menu_invest_records: 'Records', menu_invest_skills: 'Investment Skills', menu_invest_config: 'Investment Config', menu_invest_health: 'Health',
         knowledge_title: 'Knowledge', knowledge_desc: 'Browse and explore your knowledge base',
@@ -349,8 +349,7 @@ const VIEW_META = {
     channels: { group: 'nav_manage',  page: 'menu_channels' },
     tasks:    { group: 'nav_manage',  page: 'menu_tasks' },
     'invest-users':   { group: 'nav_investment', page: 'menu_invest_users' },
-    'invest-rate':    { group: 'nav_investment', page: 'menu_invest_rate' },
-    'invest-cb':      { group: 'nav_investment', page: 'menu_invest_cb' },
+    'invest-daily-content': { group: 'nav_investment', page: 'menu_invest_daily_content' },
     'invest-content': { group: 'nav_investment', page: 'menu_invest_content' },
     'invest-records': { group: 'nav_investment', page: 'menu_invest_records' },
     'invest-skills':  { group: 'nav_investment', page: 'menu_invest_skills' },
@@ -363,7 +362,7 @@ let currentView = 'chat';
 
 function navigateTo(viewId) {
     if (!VIEW_META[viewId]) return;
-    if (viewId !== 'invest-rate' && viewId !== 'invest-cb') {
+    if (viewId !== 'invest-daily-content') {
         stopInvestmentContentPolling();
     }
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -409,8 +408,7 @@ async function loadInvestmentView(viewId) {
         return;
     }
     if (viewId === 'invest-users') return renderInvestmentUsers();
-    if (viewId === 'invest-rate') return renderInvestmentContent('rate');
-    if (viewId === 'invest-cb') return renderInvestmentContent('convertible_bond');
+    if (viewId === 'invest-daily-content') return renderInvestmentDailyContent();
     if (viewId === 'invest-content') return renderInvestmentGeneratedContent();
     if (viewId === 'invest-records') return renderInvestmentRecords();
     if (viewId === 'invest-skills') return renderInvestmentSkills();
@@ -426,6 +424,13 @@ const INVEST_SERVICE_LABELS = {
     all: '全部',
     unmatched: '未命中',
 };
+
+const INVEST_CUSTOMER_SERVICE_OPTIONS = [
+    ['all', '全部'],
+    ['technical_analysis', '技术分析'],
+    ['rate', '利率'],
+    ['convertible_bond', '转债'],
+];
 
 const INVEST_STATUS_LABELS = {
     success: '成功',
@@ -443,10 +448,11 @@ let investmentContentPollTimer = null;
 let currentInvestmentAdmin = null;
 let currentConsoleAuthenticated = false;
 let currentInvestmentUserPanel = 'customers';
+let currentInvestmentContentPanel = 'rate';
 let currentInvestmentConfigPanel = 'stock-data';
 let investmentUserState = {
     filters: {
-        customers: {keyword: '', page: '1', page_size: '20'},
+        customers: {keyword: '', keyword_field: 'all', page: '1', page_size: '20'},
         admins: {keyword: '', page: '1', page_size: '20'},
     },
     pagination: {
@@ -466,7 +472,7 @@ let investmentRecordsState = {
     filters: {
         requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
         contents: {page: '1', page_size: '80'},
-        cache: {page: '1', page_size: '120', market_date: investmentTodayDate()},
+        cache: {page: '1', page_size: '120', market_date: ''},
         audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
     },
     pagination: {
@@ -485,8 +491,7 @@ let investmentRecordsState = {
 
 const INVEST_VIEW_PERMISSIONS = {
     'invest-users': ['customers.read', 'admin_users.read'],
-    'invest-rate': 'content.read',
-    'invest-cb': 'content.read',
+    'invest-daily-content': 'content.read',
     'invest-content': 'cache.read',
     'invest-records': 'records.read',
     'invest-skills': 'skills.read',
@@ -506,6 +511,10 @@ function investmentCanView(viewId) {
         return permissions.some(permission => investmentCan(permission));
     }
     return investmentCan(permissions);
+}
+
+function investmentCurrentAdminUsername() {
+    return currentInvestmentAdmin?.username || 'admin';
 }
 
 async function loadInvestmentAdminSession() {
@@ -577,6 +586,245 @@ function investmentContentEl(id) {
     return document.getElementById(id);
 }
 
+const INVEST_TW = {
+    panel: 'bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-6 shadow-sm min-w-0',
+    panelHeading: 'flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4',
+    panelActions: 'flex flex-wrap items-center justify-start sm:justify-end gap-2',
+    panelTitle: 'flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 [&_i]:text-primary-500',
+    subtitle: 'text-xs leading-relaxed text-slate-500 dark:text-slate-400',
+    field: 'flex flex-col gap-1.5 text-xs text-slate-500 dark:text-slate-400 min-w-0 [&_input:not([type=checkbox])]:min-h-10 [&_input:not([type=checkbox])]:w-full [&_input:not([type=checkbox])]:rounded-lg [&_input:not([type=checkbox])]:border [&_input:not([type=checkbox])]:border-slate-300 [&_input:not([type=checkbox])]:bg-white [&_input:not([type=checkbox])]:px-3 [&_input:not([type=checkbox])]:py-2 [&_input:not([type=checkbox])]:text-sm [&_input:not([type=checkbox])]:text-slate-700 [&_input:not([type=checkbox])]:outline-none [&_input:not([type=checkbox])]:transition-colors [&_input:not([type=checkbox])]:focus:border-primary-500 dark:[&_input:not([type=checkbox])]:border-white/10 dark:[&_input:not([type=checkbox])]:bg-white/5 dark:[&_input:not([type=checkbox])]:text-slate-200 [&_textarea]:w-full [&_textarea]:min-h-[92px] [&_textarea]:rounded-lg [&_textarea]:border [&_textarea]:border-slate-300 [&_textarea]:bg-white [&_textarea]:px-3 [&_textarea]:py-2 [&_textarea]:text-sm [&_textarea]:text-slate-700 [&_textarea]:outline-none [&_textarea]:transition-colors [&_textarea]:focus:border-primary-500 dark:[&_textarea]:border-white/10 dark:[&_textarea]:bg-white/5 dark:[&_textarea]:text-slate-200',
+    input: 'min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition-colors focus:border-primary-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-200',
+    check: 'inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300',
+    button: 'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10',
+    buttonPrimary: 'border-primary-500 bg-primary-500 text-white hover:border-primary-600 hover:bg-primary-600 dark:border-primary-500 dark:bg-primary-500 dark:text-white',
+    buttonDanger: 'border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10',
+    iconButton: 'w-8 min-w-8 px-0',
+    tabs: 'mb-3 inline-flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5',
+    tab: 'inline-flex min-h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-slate-500 transition-colors hover:bg-white hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-200',
+    tabActive: 'bg-white text-slate-900 shadow-sm dark:bg-white/10 dark:text-white',
+    tableWrap: 'w-full min-w-0 overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-white/10 dark:bg-[#1A1A1A]',
+    table: 'w-full min-w-[720px] table-fixed text-sm',
+    th: 'sticky top-0 z-[1] border-b border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-[#202020] dark:text-slate-400',
+    td: 'border-b border-slate-100 bg-white px-3 py-2 align-middle text-sm text-slate-700 dark:border-white/5 dark:bg-[#1A1A1A] dark:text-slate-300',
+    empty: 'flex min-h-24 items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400',
+    muted: 'flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400',
+    mutedInline: 'text-xs text-slate-400 dark:text-slate-500',
+    alertError: 'rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
+    badge: 'inline-flex min-h-6 items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 whitespace-nowrap dark:bg-white/10 dark:text-slate-300',
+    badgeOk: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    badgeFail: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+    badgeWarning: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+    link: 'inline-flex max-w-full overflow-wrap-anywhere text-sm text-primary-600 hover:underline dark:text-primary-400',
+    compactText: 'block max-w-[260px] truncate',
+    pre: 'max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-300',
+};
+
+function investmentTokenToTailwind(token, tokens) {
+    if (token === 'hidden') return 'hidden';
+    if (['export', 'keyword', 'direct-output-check'].includes(token)) return '';
+    if (token === 'search') return tokens.includes('investment-toolbar-section') ? 'justify-start' : '';
+    if (token === 'actions') return tokens.includes('investment-toolbar-section') ? 'justify-start lg:justify-end' : '';
+    if (token === 'textarea') return tokens.includes('investment-field') ? '[&_textarea]:min-h-32' : '';
+    if (token === 'textarea-config') return 'sm:grid-cols-1';
+    if (token === 'active') {
+        if (tokens.includes('investment-tab') || tokens.includes('investment-records-tab') || tokens.includes('investment-request-export-mode')) {
+            return INVEST_TW.tabActive;
+        }
+        return token;
+    }
+    if (['ok', 'success'].includes(token)) return tokens.includes('investment-health-summary') ? 'text-emerald-600 dark:text-emerald-300' : INVEST_TW.badgeOk;
+    if (['fail', 'error'].includes(token)) {
+        if (tokens.includes('investment-alert')) return '';
+        return tokens.includes('investment-health-summary') ? 'text-rose-600 dark:text-rose-300' : INVEST_TW.badgeFail;
+    }
+    if (['warning', 'pending'].includes(token)) return tokens.includes('investment-health-summary') ? 'text-amber-600 dark:text-amber-300' : INVEST_TW.badgeWarning;
+    if (token === 'primary') return tokens.includes('investment-btn') || tokens.includes('investment-request-export-mode') ? INVEST_TW.buttonPrimary : '';
+    if (token === 'danger') return tokens.includes('investment-btn') || tokens.includes('investment-request-export-mode') ? INVEST_TW.buttonDanger : '';
+    if (token === 'secondary') return '';
+    if (token === 'compact') {
+        if (tokens.includes('investment-btn')) return 'min-h-7 px-2 py-1 text-xs';
+        if (tokens.includes('investment-field')) return '[&_input:not([type=checkbox])]:py-1.5';
+        return '';
+    }
+    if (token === 'full') return 'col-span-full';
+    if (token === 'cols-1') return tokens.includes('investment-grid') ? 'grid-cols-1' : '';
+    if (token === 'cols-2') return tokens.includes('investment-grid') ? 'grid-cols-1 md:grid-cols-2' : '';
+    if (token === 'cols-3') return tokens.includes('investment-grid') ? 'grid-cols-1 md:grid-cols-3' : '';
+    if (token === 'lines-1') return 'truncate';
+    if (token === 'lines-2') return 'line-clamp-2';
+
+    const map = {
+        'investment-layout': 'grid grid-cols-1 lg:grid-cols-2 gap-4 items-start',
+        'investment-workbench': 'grid grid-cols-1 lg:grid-cols-12 gap-4',
+        'investment-workbench-full': 'lg:col-span-12',
+        'investment-panel': INVEST_TW.panel + ' lg:col-span-6',
+        'investment-table-panel': INVEST_TW.panel + ' lg:col-span-12',
+        'investment-panel-heading': INVEST_TW.panelHeading,
+        'investment-panel-actions': INVEST_TW.panelActions,
+        'investment-panel-title': INVEST_TW.panelTitle,
+        'investment-subtitle': INVEST_TW.subtitle,
+        'investment-tabs': INVEST_TW.tabs,
+        'investment-config-tabs': 'w-full',
+        'investment-tab': INVEST_TW.tab,
+        'investment-records-tabs': INVEST_TW.tabs + ' w-full overflow-x-auto',
+        'investment-records-tab': INVEST_TW.tab,
+        'investment-request-export-mode': INVEST_TW.button,
+        'investment-config-page': 'grid gap-3',
+        'investment-config-panel': 'items-start',
+        'investment-settings-panel': '',
+        'investment-stock-data-panel': '',
+        'investment-config-section': '',
+        'investment-field': INVEST_TW.field,
+        'investment-check': INVEST_TW.check,
+        'investment-service-row': 'mt-3 flex flex-wrap items-center gap-3',
+        'investment-actions': 'mt-3 flex flex-wrap items-center gap-2',
+        'investment-btn': INVEST_TW.button,
+        'investment-icon-btn': INVEST_TW.iconButton,
+        'investment-table-wrap': INVEST_TW.tableWrap,
+        'investment-table-scroll': 'overflow-x-auto',
+        'investment-table': INVEST_TW.table,
+        'investment-row-actions': 'whitespace-nowrap [&_.fa]:text-xs',
+        'investment-empty': INVEST_TW.empty,
+        'investment-alert': INVEST_TW.alertError,
+        'investment-muted': INVEST_TW.muted,
+        'investment-muted-inline': INVEST_TW.mutedInline,
+        'investment-badge': INVEST_TW.badge,
+        'investment-detail-link': INVEST_TW.link,
+        'investment-compact-text': INVEST_TW.compactText,
+        'investment-record-clamp': 'block max-w-[280px] overflow-hidden text-ellipsis',
+        'investment-mono': 'font-mono',
+        'investment-grid': 'grid gap-3',
+        'investment-stat-grid': 'grid grid-cols-1 md:grid-cols-4 gap-3 mb-3',
+        'investment-stat': 'rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-white/10 dark:bg-white/5 [&_span]:block [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400 [&_strong]:mt-1 [&_strong]:block [&_strong]:font-semibold [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200',
+        'investment-user-page': 'grid gap-4',
+        'investment-user-toolbar': 'mb-4',
+        'investment-user-toolbar-heading': 'max-w-xl',
+        'investment-user-actionbar': 'mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5',
+        'investment-user-toolbar-grid': 'grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end',
+        'investment-toolbar-section': 'flex min-w-0 flex-wrap items-end gap-2',
+        'investment-toolbar-group': 'flex flex-wrap items-end gap-2',
+        'investment-user-pagination': 'mt-4 flex flex-col gap-3 rounded-lg border-t border-slate-100 pt-4 dark:border-white/10',
+        'investment-search-type-field': 'w-full sm:w-36',
+        'investment-search-field': 'w-full sm:w-[370px]',
+        'investment-status-field': 'w-full sm:w-60',
+        'investment-config-toolbar': 'mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3 items-end',
+        'investment-config-tool': 'grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2 items-end',
+        'investment-stock-source-config': 'mb-3 max-w-xl',
+        'investment-source-field': 'w-40',
+        'investment-stock-query-field': 'min-w-0 sm:min-w-80',
+        'investment-import-dialog': 'grid gap-4',
+        'investment-user-import-section': 'mt-4 border-t border-slate-200 pt-4 dark:border-white/10',
+        'investment-import-template': 'flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5',
+        'investment-import-sample': '',
+        'investment-import-result': 'min-h-6 text-sm text-slate-500 dark:text-slate-400',
+        'investment-import-summary': 'flex flex-wrap items-center gap-2 py-2 text-sm text-slate-600 dark:text-slate-300',
+        'investment-import-preview': 'mt-2',
+        'investment-current-panel': 'lg:col-span-7',
+        'investment-upload-panel': 'lg:col-span-5',
+        'investment-current-body': 'grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.65fr)] gap-4',
+        'investment-current-preview': 'flex min-h-60 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/5',
+        'investment-current-meta': 'grid content-start gap-2 [&>div]:rounded-lg [&>div]:border [&>div]:border-slate-200 [&>div]:bg-slate-50 [&>div]:p-3 dark:[&>div]:border-white/10 dark:[&>div]:bg-white/5 [&_span]:mb-1 [&_span]:block [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400 [&_strong]:block [&_strong]:break-words [&_strong]:text-sm [&_strong]:font-semibold [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200',
+        'investment-current-empty': 'flex min-h-60 w-full items-center justify-center text-sm text-slate-500 dark:text-slate-400',
+        'investment-preview': 'h-20 w-20 rounded-lg border border-slate-200 bg-slate-50 object-contain dark:border-white/10 dark:bg-white/5',
+        'investment-preview-placeholder': 'inline-flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-center text-xs text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400',
+        'investment-file-chip': 'inline-flex h-20 w-20 flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2 text-center text-xs text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400',
+        'investment-image-flow': 'inline-flex min-w-56 items-center gap-2',
+        'investment-file-stack': 'inline-flex min-w-0 items-center gap-1.5',
+        'investment-flow-arrow': 'font-semibold text-primary-500',
+        'investment-date-group': 'grid gap-2 mb-4',
+        'investment-date-group-title': 'flex items-center justify-between gap-3 text-sm font-semibold text-slate-600 dark:text-slate-300 [&_span:last-child]:text-xs [&_span:last-child]:font-normal [&_span:last-child]:text-slate-400',
+        'investment-detail-panel': 'mt-4 rounded-lg border border-sky-200 bg-sky-50 p-4 dark:border-sky-400/20 dark:bg-sky-500/10',
+        'investment-detail-grid': 'grid grid-cols-1 md:grid-cols-3 gap-2 [&>div]:rounded-lg [&>div]:border [&>div]:border-slate-200 [&>div]:bg-slate-50 [&>div]:p-3 dark:[&>div]:border-white/10 dark:[&>div]:bg-white/5 [&_span]:mb-1 [&_span]:block [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400 [&_strong]:block [&_strong]:break-words [&_strong]:text-sm [&_strong]:font-semibold [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200',
+        'investment-detail-block': 'mt-3 [&>span]:mb-1 [&>span]:block [&>span]:text-xs [&>span]:text-slate-500 dark:[&>span]:text-slate-400',
+        'investment-detail-links': 'flex flex-wrap gap-2',
+        'investment-records-workspace': 'grid gap-3',
+        'investment-records-topbar': INVEST_TW.panel,
+        'investment-records-summary': 'grid grid-cols-1 md:grid-cols-4 gap-3',
+        'investment-records-stat': 'rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5 [&_span]:block [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400 [&_strong]:mt-1 [&_strong]:block [&_strong]:text-lg [&_strong]:font-semibold [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200',
+        'investment-records-board': 'grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5',
+        'investment-records-filters': 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-records-filter-grid': 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3',
+        'investment-records-filter-actions': 'flex flex-wrap items-center justify-start xl:justify-end gap-2',
+        'investment-request-export-panel': 'grid gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-request-export-heading': 'flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3',
+        'investment-request-export-modes': 'flex flex-wrap gap-2',
+        'investment-request-export-fields': 'flex flex-wrap items-end gap-3',
+        'investment-request-export-note': 'text-sm text-slate-500 dark:text-slate-400',
+        'investment-request-export-action': 'ml-auto',
+        'investment-records-main': 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] gap-3 items-start',
+        'investment-records-list': 'min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-records-drawer': 'min-w-0 rounded-lg border border-slate-200 bg-white dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-records-drawer-empty': 'flex min-h-40 flex-col items-center justify-center gap-2 text-sm text-slate-400 dark:text-slate-500',
+        'investment-records-drawer-header': 'flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-white/10 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-slate-800 dark:[&_h3]:text-slate-100 [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400',
+        'investment-records-drawer-body': 'grid gap-4 p-4',
+        'investment-records-drawer-section': 'grid gap-2 [&_h4]:text-xs [&_h4]:font-semibold [&_h4]:uppercase [&_h4]:text-slate-500 dark:[&_h4]:text-slate-400',
+        'investment-records-pagination': 'flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5',
+        'investment-records-pagination-summary': 'flex flex-wrap gap-3 text-xs text-slate-500 dark:text-slate-400',
+        'investment-records-pagination-actions': 'flex flex-wrap items-center gap-2',
+        'investment-records-page-size': 'flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400',
+        'investment-records-table-shell': 'h-full overflow-auto rounded-lg bg-white dark:bg-[#1A1A1A]',
+        'investment-generated-content-home': 'grid grid-cols-1 md:grid-cols-3 gap-3',
+        'investment-generated-content-entry': 'flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 text-left transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-[#1A1A1A] dark:hover:bg-white/5',
+        'investment-generated-entry-icon': 'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-500 dark:bg-primary-500/10',
+        'investment-generated-entry-main': 'min-w-0 flex-1 [&_strong]:block [&_strong]:text-sm [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200 [&_span]:block [&_span]:truncate [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400',
+        'investment-generated-entry-meta': 'hidden text-right text-xs text-slate-400 dark:text-slate-500 lg:grid',
+        'investment-generated-content-detail': 'grid gap-3',
+        'investment-generated-content-detail-header': 'flex flex-col sm:flex-row sm:items-center gap-3',
+        'investment-generated-content-detail-title': 'flex items-center gap-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-slate-700 dark:[&_h3]:text-slate-200',
+        'investment-generated-content-detail-count': INVEST_TW.badge,
+        'investment-generated-content-entries': 'overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-generated-content-header': 'hidden grid-cols-[1fr_110px_90px_160px_110px_90px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400 lg:grid',
+        'investment-generated-content-row': 'grid grid-cols-1 lg:grid-cols-[1fr_90px] border-b border-slate-100 last:border-b-0 dark:border-white/5',
+        'investment-generated-content-row-main': 'grid grid-cols-1 gap-2 px-3 py-3 text-left text-sm text-slate-700 dark:text-slate-300 lg:grid-cols-[1fr_110px_90px_160px_110px]',
+        'investment-generated-target': 'font-medium text-slate-700 dark:text-slate-200',
+        'investment-cache-category': 'grid gap-2',
+        'investment-cache-category-grid': 'grid grid-cols-1 md:grid-cols-3 gap-3',
+        'investment-cache-date-group': 'grid gap-3',
+        'investment-config-field': 'grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] items-end gap-2',
+        'investment-config-actions': 'flex min-h-8 items-center gap-2',
+        'investment-config-description': 'mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400',
+        'investment-config-status': 'text-xs text-slate-500 dark:text-slate-400',
+        'investment-skill-version-list': 'mt-2',
+        'investment-skill-config-actions': 'whitespace-nowrap',
+        'investment-wide': 'min-w-56 break-words',
+        'investment-health-summary': 'flex items-center gap-2 text-sm font-semibold',
+    };
+    return map[token] || (token.startsWith('investment-') ? '' : token);
+}
+
+function investmentTailwindHtml(html) {
+    if (typeof html !== 'string' || !html.includes('investment-')) return html;
+    let output = html.replace(/class="([^"]*investment-[^"]*)"/g, (_, classValue) => {
+        const tokens = classValue.split(/\s+/).filter(Boolean);
+        const mapped = tokens.flatMap(token => investmentTokenToTailwind(token, tokens).split(/\s+/).filter(Boolean));
+        return `class="${Array.from(new Set([...tokens, ...mapped])).join(' ')}"`;
+    });
+    output = output
+        .replace(/<th\b(?![^>]*class=)([^>]*)>/g, `<th class="${INVEST_TW.th}"$1>`)
+        .replace(/<th\b class="([^"]*)"/g, `<th class="$1 ${INVEST_TW.th}"`)
+        .replace(/<td\b(?![^>]*class=)([^>]*)>/g, `<td class="${INVEST_TW.td}"$1>`)
+        .replace(/<td\b class="([^"]*)"/g, `<td class="$1 ${INVEST_TW.td}"`)
+        .replace(/<pre(?![^>]*class=)([^>]*)>/g, `<pre class="${INVEST_TW.pre}"$1>`)
+        .replace(/<input(?![^>]*type="hidden")(?![^>]*type="checkbox")(?![^>]*class=)([^>]*)>/g, `<input class="${INVEST_TW.input}"$1>`)
+        .replace(/<textarea(?![^>]*class=)([^>]*)>/g, `<textarea class="${INVEST_TW.input} min-h-24"$1>`);
+    return output.replace(/\sclass=""/g, '');
+}
+
+const _nativeInnerHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+const _nativeOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+Object.defineProperty(Element.prototype, 'innerHTML', {
+    get: _nativeInnerHTML.get,
+    set(value) {
+        _nativeInnerHTML.set.call(this, investmentTailwindHtml(value));
+    },
+});
+Object.defineProperty(Element.prototype, 'outerHTML', {
+    get: _nativeOuterHTML.get,
+    set(value) {
+        _nativeOuterHTML.set.call(this, investmentTailwindHtml(value));
+    },
+});
+
 function investmentLoading(element) {
     if (element) {
         element.innerHTML = '<div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载中...</span></div>';
@@ -593,12 +841,180 @@ function investmentServiceLabel(value) {
     return INVEST_SERVICE_LABELS[value] || value || '-';
 }
 
+function investmentNormalizeCustomerServices(values = []) {
+    const labelsToValues = Object.fromEntries(INVEST_CUSTOMER_SERVICE_OPTIONS.map(([value, label]) => [label, value]));
+    const selected = Array.from(new Set((values || [])
+        .map(value => labelsToValues[value] || value)
+        .filter(Boolean)));
+    if (!selected.length || selected.includes('all')) return ['all'];
+    const businessValues = INVEST_CUSTOMER_SERVICE_OPTIONS
+        .map(([value]) => value)
+        .filter(value => value !== 'all');
+    if (businessValues.length && businessValues.every(value => selected.includes(value))) {
+        return ['all'];
+    }
+    return businessValues.filter(value => selected.includes(value));
+}
+
+function investmentExpandCustomerServicesForUi(values = []) {
+    const normalized = investmentNormalizeCustomerServices(values);
+    if (!normalized.includes('all')) return normalized;
+    return INVEST_CUSTOMER_SERVICE_OPTIONS.map(([value]) => value);
+}
+
+function investmentCustomerServicesDisplay(values = []) {
+    return investmentNormalizeCustomerServices(values).map(investmentServiceLabel).join(', ');
+}
+
 function investmentStatusLabel(value) {
     return INVEST_STATUS_LABELS[value] || value || '-';
 }
 
 function investmentSelected(current, value) {
     return String(current ?? '') === String(value ?? '') ? 'selected' : '';
+}
+
+function investmentDropdown(id, options = [], selectedValue = '', attrs = '', onChange = '') {
+    const normalized = options.map(item => {
+        if (Array.isArray(item)) return {value: String(item[0] ?? ''), label: String(item[1] ?? '')};
+        return {value: String(item.value ?? ''), label: String(item.label ?? item.value ?? '')};
+    });
+    const selected = normalized.find(item => String(item.value) === String(selectedValue)) || normalized[0] || {value: '', label: '--'};
+    const safeId = escapeHtml(id);
+    const changeAttr = onChange ? ` data-investment-dropdown-onchange="${escapeHtml(onChange)}"` : '';
+    const items = normalized.map(item => {
+        const active = String(item.value) === String(selected.value) ? ' active' : '';
+        return `<div class="cfg-dropdown-item${active}" data-value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</div>`;
+    }).join('');
+    return `<input type="hidden" id="${safeId}" ${attrs} value="${escapeHtml(selected.value)}">
+        <div class="cfg-dropdown investment-cow-dropdown" tabindex="0" data-investment-dropdown="${safeId}"${changeAttr}>
+            <div class="cfg-dropdown-selected">
+                <span class="cfg-dropdown-text">${escapeHtml(selected.label)}</span>
+                <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+            </div>
+            <div class="cfg-dropdown-menu">${items}</div>
+        </div>`;
+}
+
+function resetInvestmentDropdownMenu(dropdown) {
+    const menu = dropdown?.querySelector?.('.cfg-dropdown-menu');
+    if (!menu) return;
+    ['position', 'left', 'top', 'right', 'bottom', 'width', 'minWidth', 'maxWidth', 'maxHeight', 'zIndex'].forEach(prop => {
+        menu.style[prop] = '';
+    });
+}
+
+function positionInvestmentDropdownMenu(dropdown) {
+    const menu = dropdown?.querySelector?.('.cfg-dropdown-menu');
+    if (!menu) return;
+    const selected = dropdown.querySelector('.cfg-dropdown-selected');
+    const rect = (selected || dropdown).getBoundingClientRect();
+    const gap = 4;
+    const viewportPadding = 12;
+    const menuWidth = Math.max(120, Math.min(rect.width, window.innerWidth - viewportPadding * 2));
+    const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+    const spaceAbove = rect.top - gap - viewportPadding;
+    const opensUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+    const available = Math.max(120, Math.min(240, opensUp ? spaceAbove : spaceBelow));
+    const desiredHeight = Math.min(menu.scrollHeight || 240, available);
+    const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - menuWidth - viewportPadding);
+    const top = opensUp
+        ? Math.max(viewportPadding, rect.top - gap - desiredHeight)
+        : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - desiredHeight);
+    menu.style.position = 'fixed';
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.right = 'auto';
+    menu.style.bottom = 'auto';
+    menu.style.width = `${menuWidth}px`;
+    menu.style.minWidth = `${menuWidth}px`;
+    menu.style.maxWidth = `${menuWidth}px`;
+    menu.style.maxHeight = `${available}px`;
+    menu.style.zIndex = '9999';
+}
+
+function handleInvestmentDropdownClick(event) {
+    const selected = event.target.closest('.cfg-dropdown[data-investment-dropdown] .cfg-dropdown-selected');
+    if (selected) {
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        const dropdown = selected.closest('.cfg-dropdown[data-investment-dropdown]');
+        document.querySelectorAll('.cfg-dropdown.open').forEach(item => {
+            if (item !== dropdown) {
+                item.classList.remove('open');
+                resetInvestmentDropdownMenu(item);
+            }
+        });
+        const willOpen = !dropdown.classList.contains('open');
+        dropdown.classList.toggle('open', willOpen);
+        if (willOpen) positionInvestmentDropdownMenu(dropdown);
+        else resetInvestmentDropdownMenu(dropdown);
+        return;
+    }
+    const option = event.target.closest('.cfg-dropdown[data-investment-dropdown] .cfg-dropdown-item');
+    if (!option) return;
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    const dropdown = option.closest('.cfg-dropdown[data-investment-dropdown]');
+    const input = document.getElementById(dropdown.dataset.investmentDropdown || '');
+    if (!input) return;
+    const value = option.dataset.value || '';
+    input.value = value;
+    const text = dropdown.querySelector('.cfg-dropdown-text');
+    if (text) text.textContent = option.textContent || '';
+    dropdown.querySelectorAll('.cfg-dropdown-item').forEach(item => item.classList.remove('active'));
+    option.classList.add('active');
+    dropdown.classList.remove('open');
+    resetInvestmentDropdownMenu(dropdown);
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+    const onChange = dropdown.dataset.investmentDropdownOnchange || '';
+    if (onChange) new Function('value', onChange)(value);
+}
+
+document.addEventListener('click', handleInvestmentDropdownClick);
+
+function initInvestmentDropdowns(root = document) {
+    if (!root || !root.querySelectorAll) return;
+    const dropdowns = [];
+    if (root.matches && root.matches('.cfg-dropdown[data-investment-dropdown]')) dropdowns.push(root);
+    root.querySelectorAll('.cfg-dropdown[data-investment-dropdown]').forEach(el => dropdowns.push(el));
+    dropdowns.forEach(el => {
+        if (el.dataset.investmentDropdownReady === '1') return;
+        const input = document.getElementById(el.dataset.investmentDropdown || '');
+        if (!input) return;
+        const items = Array.from(el.querySelectorAll('.cfg-dropdown-item'));
+        const selected = items.find(item => String(item.dataset.value || '') === String(input.value || '')) || items[0];
+        if (selected) {
+            items.forEach(item => item.classList.toggle('active', item === selected));
+            const text = el.querySelector('.cfg-dropdown-text');
+            if (text) text.textContent = selected.textContent || '';
+            input.value = selected.dataset.value || '';
+        }
+        el.dataset.investmentDropdownReady = '1';
+    });
+}
+
+let investmentDropdownObserverStarted = false;
+function startInvestmentDropdownObserver() {
+    if (investmentDropdownObserverStarted || !document.body) return;
+    investmentDropdownObserverStarted = true;
+    initInvestmentDropdowns(document);
+    if (typeof MutationObserver === 'undefined') return;
+    const observer = new MutationObserver(records => {
+        records.forEach(record => {
+            record.addedNodes.forEach(node => {
+                if (node.nodeType === 1) initInvestmentDropdowns(node);
+            });
+        });
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startInvestmentDropdownObserver);
+} else {
+    startInvestmentDropdownObserver();
 }
 
 function investmentImageUrl(path) {
@@ -645,6 +1061,18 @@ function investmentFormatBeijingTime(value) {
         return acc;
     }, {});
     return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function investmentFormatBeijingDate(value) {
+    const formatted = investmentFormatBeijingTime(value);
+    return formatted ? formatted.slice(0, 10) : '';
+}
+
+function investmentMiddleEllipsis(value, head = 10, tail = 8) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (text.length <= head + tail + 1) return text;
+    return `${text.slice(0, head)}...${text.slice(-tail)}`;
 }
 
 function investmentPadDatePart(value) {
@@ -695,8 +1123,152 @@ function investmentTodayDate() {
     return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+function investmentDateParts(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return {year: Number(match[1]), month: Number(match[2]), day: Number(match[3])};
+}
+
+function investmentFormatDateValue(year, month, day) {
+    return `${year}-${investmentPadDatePart(month)}-${investmentPadDatePart(day)}`;
+}
+
+function investmentMonthLabel(year, month) {
+    return new Intl.DateTimeFormat('zh-CN', {year: 'numeric', month: 'long'}).format(new Date(year, month - 1, 1));
+}
+
+function investmentDatePickerInitialMonth(value) {
+    const parsed = investmentDateParts(value) || investmentDateParts(investmentTodayDate());
+    return {year: parsed.year, month: parsed.month};
+}
+
+function investmentDatePickerInput(id) {
+    return document.getElementById(id);
+}
+
+function investmentDatePickerLabel(id) {
+    return document.getElementById(`${id}-date-label`);
+}
+
+function investmentDatePickerPanel(id) {
+    return document.getElementById(`${id}-date-panel`);
+}
+
+function investmentRenderDateControl(id, value = '', options = {}) {
+    const placeholder = options.placeholder || '选择日期';
+    const attrs = options.attrs || '';
+    const safeId = escapeHtml(id);
+    const safeValue = escapeHtml(value || '');
+    const label = value ? escapeHtml(value) : escapeHtml(placeholder);
+    return `<div class="investment-date-control" data-investment-date-control="${safeId}">
+        <input id="${safeId}" type="hidden" value="${safeValue}" ${attrs}>
+        <button class="investment-date-value-button ${value ? '' : 'empty'}" type="button" onclick="investmentToggleDatePicker('${safeId}')" aria-haspopup="dialog" aria-expanded="false" data-placeholder="${escapeHtml(placeholder)}">
+            <span id="${safeId}-date-label">${label}</span>
+        </button>
+        <button class="investment-date-picker-button" type="button" onclick="investmentToggleDatePicker('${safeId}')" title="选择日期" aria-label="选择日期"><i class="fas fa-calendar-days"></i></button>
+        <div id="${safeId}-date-panel" class="investment-date-popover hidden"></div>
+    </div>`;
+}
+
+function investmentRenderDatePickerPanel(id, year, month) {
+    const input = investmentDatePickerInput(id);
+    const selected = investmentDateParts(input?.value || '');
+    const today = investmentDateParts(investmentTodayDate());
+    const first = new Date(year, month - 1, 1);
+    const start = new Date(year, month - 1, 1 - first.getDay());
+    const dayCells = [];
+    for (let index = 0; index < 42; index += 1) {
+        const current = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+        const currentYear = current.getFullYear();
+        const currentMonth = current.getMonth() + 1;
+        const currentDay = current.getDate();
+        const value = investmentFormatDateValue(currentYear, currentMonth, currentDay);
+        const outside = currentMonth !== month;
+        const isSelected = selected && selected.year === currentYear && selected.month === currentMonth && selected.day === currentDay;
+        const isToday = today && today.year === currentYear && today.month === currentMonth && today.day === currentDay;
+        dayCells.push(`<button class="investment-date-day ${outside ? 'outside' : ''} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}" type="button" onclick="investmentSelectDate('${id}', '${value}')">${currentDay}</button>`);
+    }
+    return `<div class="investment-date-picker" data-year="${year}" data-month="${month}">
+        <div class="investment-date-picker-head">
+            <button type="button" class="investment-date-nav" onclick="investmentMoveDatePickerMonth('${id}', -1)" aria-label="上个月"><i class="fas fa-chevron-left"></i></button>
+            <strong>${escapeHtml(investmentMonthLabel(year, month))}</strong>
+            <button type="button" class="investment-date-nav" onclick="investmentMoveDatePickerMonth('${id}', 1)" aria-label="下个月"><i class="fas fa-chevron-right"></i></button>
+        </div>
+        <div class="investment-date-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+        <div class="investment-date-days">${dayCells.join('')}</div>
+        <div class="investment-date-picker-foot">
+            <button type="button" onclick="investmentClearDatePicker('${id}')">清除</button>
+            <button type="button" onclick="investmentSelectDate('${id}', investmentTodayDate())">今天</button>
+        </div>
+    </div>`;
+}
+
+function investmentCloseDatePickers(exceptId = '') {
+    document.querySelectorAll('.investment-date-popover').forEach(panel => {
+        if (exceptId && panel.id === `${exceptId}-date-panel`) return;
+        panel.classList.add('hidden');
+    });
+}
+
+function investmentToggleDatePicker(id) {
+    const panel = investmentDatePickerPanel(id);
+    const input = investmentDatePickerInput(id);
+    if (!panel || !input) return;
+    const shouldOpen = panel.classList.contains('hidden');
+    investmentCloseDatePickers(id);
+    if (!shouldOpen) {
+        panel.classList.add('hidden');
+        return;
+    }
+    const month = investmentDatePickerInitialMonth(input.value);
+    panel.innerHTML = investmentRenderDatePickerPanel(id, month.year, month.month);
+    panel.classList.remove('hidden');
+}
+
+function investmentMoveDatePickerMonth(id, delta) {
+    const panel = investmentDatePickerPanel(id);
+    if (!panel) return;
+    const picker = panel.querySelector('.investment-date-picker');
+    const year = Number(picker?.dataset.year || investmentDatePickerInitialMonth('').year);
+    const month = Number(picker?.dataset.month || investmentDatePickerInitialMonth('').month);
+    const next = new Date(year, month - 1 + Number(delta || 0), 1);
+    panel.innerHTML = investmentRenderDatePickerPanel(id, next.getFullYear(), next.getMonth() + 1);
+}
+
+function investmentSetDatePickerValue(id, value) {
+    const input = investmentDatePickerInput(id);
+    const label = investmentDatePickerLabel(id);
+    if (!input || !label) return;
+    input.value = value || '';
+    const button = label.closest('.investment-date-value-button');
+    label.textContent = value || button?.dataset.placeholder || '选择日期';
+    button?.classList.toggle('empty', !value);
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+}
+
+function investmentSelectDate(id, value) {
+    investmentSetDatePickerValue(id, value);
+    investmentCloseDatePickers();
+}
+
+function investmentClearDatePicker(id) {
+    investmentSetDatePickerValue(id, '');
+    investmentCloseDatePickers();
+}
+
+document.addEventListener('click', event => {
+    if (event.target.closest('.investment-date-control')) return;
+    investmentCloseDatePickers();
+});
+
 function investmentCompactText(value, max = 60) {
     return `<span class="investment-compact-text" title="${escapeHtml(String(value || ''))}">${escapeHtml(investmentTruncate(value, max))}</span>`;
+}
+
+function investmentHistoryHoverText(value, max = 24) {
+    const rawText = String(value || '').trim();
+    const text = rawText || '无';
+    return `<span class="investment-history-cell-summary" data-tooltip="${escapeHtml(text)}" title="${escapeHtml(text)}">${escapeHtml(investmentTruncate(text, max))}</span>`;
 }
 
 function investmentFileLinks(files = []) {
@@ -732,7 +1304,7 @@ function investmentRecordFileSummary(files = [], emptyText = '无文件') {
 }
 
 function investmentRecordTableShell(tableHtml) {
-    return `<div class="investment-records-table-shell">${tableHtml}</div>`;
+    return `<div class="investment-records-table-shell">${investmentTableWrap(tableHtml, true, '业务记录表格')}</div>`;
 }
 
 function investmentArtifactTable(artifacts = []) {
@@ -838,21 +1410,30 @@ function investmentIconButtonIfCan(permission, icon, label, onclick, variant = '
     return investmentIconButton(icon, label, onclick, variant);
 }
 
+function investmentTextButton(label, onclick, variant = 'secondary') {
+    return `<button class="investment-btn investment-text-action ${variant}" onclick="${onclick}"><span>${label}</span></button>`;
+}
+
+function investmentTextButtonIfCan(permission, label, onclick, variant = 'secondary') {
+    if (!investmentCan(permission)) return '';
+    return investmentTextButton(label, onclick, variant);
+}
+
 function showInvestmentModal(title, bodyHtml) {
     let overlay = document.getElementById('investment-modal-overlay');
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'investment-modal-overlay';
-        overlay.className = 'investment-modal-overlay hidden';
+        overlay.className = 'investment-modal-overlay fixed inset-0 z-[120] hidden items-center justify-center bg-slate-950/60 p-6';
         overlay.innerHTML = `
-            <div class="investment-modal" role="dialog" aria-modal="true" aria-labelledby="investment-modal-title">
-                <div class="investment-modal-header">
-                    <strong id="investment-modal-title"></strong>
-                    <button class="investment-detail-close investment-modal-close" type="button" onclick="hideInvestmentModal()" aria-label="关闭">
+            <div class="investment-modal flex max-h-[calc(100vh-48px)] w-[min(920px,100%)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#1A1A1A]" role="dialog" aria-modal="true" aria-labelledby="investment-modal-title">
+                <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 text-slate-800 dark:border-white/10 dark:text-slate-100">
+                    <strong id="investment-modal-title" class="text-sm font-semibold"></strong>
+                    <button class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-200" type="button" onclick="hideInvestmentModal()" aria-label="关闭">
                         <i class="fas fa-xmark"></i>
                     </button>
                 </div>
-                <div id="investment-modal-body" class="investment-modal-body"></div>
+                <div id="investment-modal-body" class="investment-modal-body overflow-auto p-4"></div>
             </div>`;
         overlay.addEventListener('click', event => {
             if (event.target === overlay) hideInvestmentModal();
@@ -862,12 +1443,14 @@ function showInvestmentModal(title, bodyHtml) {
     document.getElementById('investment-modal-title').textContent = title || '';
     document.getElementById('investment-modal-body').innerHTML = bodyHtml || '';
     overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
 }
 
 function hideInvestmentModal() {
     const overlay = document.getElementById('investment-modal-overlay');
     if (!overlay) return;
     overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
     const body = document.getElementById('investment-modal-body');
     if (body) body.innerHTML = '';
 }
@@ -881,16 +1464,18 @@ function showInvestmentToast(message, variant = 'success') {
     if (!container) {
         container = document.createElement('div');
         container.id = 'investment-toast-container';
-        container.className = 'investment-toast-container';
+        container.className = 'fixed right-4 top-4 z-[140] grid w-[min(360px,calc(100vw-32px))] gap-2 pointer-events-none';
         document.body.appendChild(container);
     }
     const toast = document.createElement('div');
-    toast.className = `investment-toast ${variant}`;
+    toast.className = variant === 'error'
+        ? 'pointer-events-auto flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-relaxed text-rose-700 shadow-lg transition-all duration-200 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300'
+        : 'pointer-events-auto flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-relaxed text-emerald-700 shadow-lg transition-all duration-200 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300';
     const icon = variant === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-check';
     toast.innerHTML = `<i class="fas ${icon}"></i><span>${escapeHtml(message)}</span>`;
     container.appendChild(toast);
     setTimeout(() => {
-        toast.classList.add('leaving');
+        toast.classList.add('opacity-0', '-translate-y-1');
         setTimeout(() => toast.remove(), 180);
     }, 2600);
 }
@@ -901,14 +1486,26 @@ function investmentField(label, id, value = '', type = 'text') {
     }
     if (type === 'checkbox') {
         const checked = value === true || value === 'true' || value === '1' ? 'checked' : '';
-        return `<label class="investment-check"><input id="${id}" type="checkbox" ${checked}><span>${label}</span></label>`;
+        return investmentSwitch(label, id, Boolean(checked));
     }
     return `<label class="investment-field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value || '')}"></label>`;
 }
 
-function investmentTableWrap(tableHtml, scroll = true) {
+function investmentSwitch(label, id, checked = false, options = {}) {
+    const safeId = escapeHtml(id || '');
+    const safeLabel = escapeHtml(label || '');
+    const className = options.className ? ` ${escapeHtml(options.className)}` : '';
+    const inputClass = options.inputClass ? ` class="${escapeHtml(options.inputClass)}"` : '';
+    const value = options.value !== undefined ? ` value="${escapeHtml(options.value)}"` : '';
+    const attrs = options.attrs ? ` ${options.attrs}` : '';
+    const checkedAttr = checked ? ' checked' : '';
+    const idAttr = safeId ? ` id="${safeId}"` : '';
+    return `<label class="investment-switch${className}"><input${idAttr} type="checkbox"${inputClass}${value}${checkedAttr}${attrs}><span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span><span class="investment-switch-label">${safeLabel}</span></label>`;
+}
+
+function investmentTableWrap(tableHtml, scroll = true, label = '数据表格') {
     const scrollClass = scroll ? ' investment-table-scroll' : '';
-    return `<div class="investment-table-wrap${scrollClass}">${tableHtml}</div>`;
+    return `<div class="investment-table-wrap${scrollClass}" role="region" aria-label="${escapeHtml(label)}" data-scroll-hint="左右滑动查看完整表格">${tableHtml}</div>`;
 }
 
 function investmentStockStats(stats = {}) {
@@ -940,11 +1537,7 @@ function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, c
                     <div class="investment-config-tool investment-stock-refresh-tool">
                         <label class="investment-field investment-source-field">
                             <span>刷新来源</span>
-                            <select id="invest-stock-refresh-source">
-                                <option value="auto">auto</option>
-                                <option value="akshare">akshare</option>
-                                <option value="tushare">tushare</option>
-                            </select>
+                            ${investmentDropdown('invest-stock-refresh-source', [['auto', 'auto'], ['akshare', 'akshare'], ['tushare', 'tushare']], 'auto')}
                         </label>
                         ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
                     </div>
@@ -1021,6 +1614,17 @@ function applyInvestmentCustomerSearch() {
     investmentUserState.filters.customers = {
         ...investmentUserState.filters.customers,
         keyword: document.getElementById('invest-users-keyword')?.value || '',
+        keyword_field: document.getElementById('invest-users-keyword-field')?.value || 'all',
+        page: '1',
+    };
+    renderInvestmentCustomerUsers();
+}
+
+function clearInvestmentCustomerSearch() {
+    investmentUserState.filters.customers = {
+        ...investmentUserState.filters.customers,
+        keyword: '',
+        keyword_field: 'all',
         page: '1',
     };
     renderInvestmentCustomerUsers();
@@ -1096,21 +1700,18 @@ async function renderInvestmentCustomerUsers() {
                     </div>
                     <div class="investment-user-actionbar investment-user-toolbar-grid">
                         <div class="investment-toolbar-section search investment-toolbar-group primary">
-                            <label class="investment-field compact investment-search-field"><span>关键字</span><input id="invest-users-keyword" type="text" value="${escapeHtml(filters.keyword || '')}" placeholder="OpenID / 姓名 / 机构 / 手机号"></label>
-                            ${investmentButton('fa-magnifying-glass', '查询', 'applyInvestmentCustomerSearch()', 'primary')}
-                            ${investmentButtonIfCan('customers.write', 'fa-user-plus', '新增客户', 'openInvestmentUserDialog()', 'primary')}
-                        </div>
-                        <div class="investment-toolbar-section export investment-toolbar-group">
-                            <label class="investment-field compact investment-status-field">
-                                <span>导出状态</span>
-                                <select id="invest-users-export-enabled">
-                                    <option value="">全部</option>
-                                    <option value="true">启用</option>
-                                    <option value="false">停用</option>
-                                </select>
+                            <label class="investment-field investment-search-type-field">
+                                <span>分类</span>
+                                ${investmentDropdown('invest-users-keyword-field', [['all', '全部'], ['openid', 'OpenID'], ['name', '姓名'], ['institution', '机构'], ['mobile', '手机号'], ['service', '服务']], filters.keyword_field || 'all', 'name="keyword_field"')}
                             </label>
-                            ${investmentButtonIfCan('customers.import', 'fa-upload', '导入', 'openInvestmentUsersImportDialog()')}
-                            ${investmentButtonIfCan('customers.export', 'fa-download', '导出', 'exportInvestmentUsers()')}
+                            <label class="investment-field investment-search-field"><span>关键字</span><input id="invest-users-keyword" type="text" value="${escapeHtml(filters.keyword || '')}" placeholder="OpenID / 姓名 / 机构 / 手机号 / 服务"></label>
+                            ${investmentButton('fa-magnifying-glass', '查询', 'applyInvestmentCustomerSearch()', 'primary')}
+                            ${investmentButton('fa-rotate-left', '清除搜索', 'clearInvestmentCustomerSearch()')}
+                        </div>
+                        <div class="investment-toolbar-section actions investment-toolbar-group">
+                            ${investmentButtonIfCan('customers.write', 'fa-user-plus', '新增客户', 'openInvestmentUserDialog()', 'primary')}
+                            ${investmentButtonIfCan('customers.import', 'fa-file-import', '批量导入客户', 'openInvestmentUsersImportDialog()', 'primary')}
+                            ${investmentButtonIfCan('customers.export', 'fa-download', '导出', 'openInvestmentCustomerExportDialog()', 'primary')}
                         </div>
                     </div>
                     ${renderInvestmentUsersTable(users)}
@@ -1126,13 +1727,13 @@ function renderInvestmentUsersTable(users) {
     if (!users.length) return '<div class="investment-empty">暂无用户</div>';
     const rows = users.map(user => `
         <tr>
-            <td>${escapeHtml(user.openid)}</td>
+            <td title="${escapeHtml(user.openid)}">${escapeHtml(investmentMiddleEllipsis(user.openid, 10, 8))}</td>
             <td>${escapeHtml(user.name || '')}</td>
             <td>${escapeHtml(user.institution || '')}</td>
             <td>${escapeHtml(user.mobile || '')}</td>
-            <td>${escapeHtml((user.allowed_services || []).map(investmentServiceLabel).join(', '))}</td>
+            <td>${escapeHtml(investmentCustomerServicesDisplay(user.allowed_services || []))}</td>
             <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
-            <td>${escapeHtml(investmentFormatBeijingTime(user.auth_end_at || '') || '-')}</td>
+            <td>${escapeHtml(investmentFormatBeijingDate(user.auth_end_at || '') || '-')}</td>
             <td class="investment-row-actions">
                 ${investmentButtonIfCan('customers.write', 'fa-pen', '编辑', `openInvestmentUserDialog('${encodeURIComponent(JSON.stringify(user))}')`)}
                 ${investmentButtonIfCan('customers.enable', user.enabled ? 'fa-ban' : 'fa-check', user.enabled ? '停用' : '启用', `setInvestmentUserStatus('${encodeURIComponent(user.openid)}', '${user.enabled ? 'disable' : 'enable'}')`, user.enabled ? 'danger' : 'secondary')}
@@ -1156,16 +1757,18 @@ async function renderInvestmentAdminUsers() {
             <div class="investment-user-page">
                 <section class="investment-table-panel full">
                     <div class="investment-user-toolbar">
-                        <div>
+                        <div class="investment-user-toolbar-heading">
                             <div class="investment-panel-title"><i class="fas fa-users-gear"></i><span>后台人员列表</span></div>
                             <div class="investment-subtitle">后台人员可登录后台 Web，角色分为管理员、内容运营和技术运营。</div>
                         </div>
-                        <div class="investment-user-toolbar-grid">
-                            <div class="investment-toolbar-group primary">
-                                <label class="investment-field compact investment-search-field"><span>关键字</span><input id="invest-admin-users-keyword" type="text" value="${escapeHtml(filters.keyword || '')}" placeholder="账号 / 角色"></label>
+                    </div>
+                    <div class="investment-user-actionbar investment-user-toolbar-grid">
+                        <div class="investment-toolbar-section search investment-toolbar-group primary">
+                            <label class="investment-field investment-search-field"><span>关键字</span><input id="invest-admin-users-keyword" type="text" value="${escapeHtml(filters.keyword || '')}" placeholder="账号 / 角色"></label>
                                 ${investmentButton('fa-magnifying-glass', '查询', 'applyInvestmentAdminSearch()', 'primary')}
-                                ${investmentButtonIfCan('admin_users.write', 'fa-user-plus', '新增后台人员', 'openInvestmentAdminUserDialog()', 'primary')}
-                            </div>
+                        </div>
+                        <div class="investment-toolbar-section actions investment-toolbar-group">
+                            ${investmentButtonIfCan('admin_users.write', 'fa-user-plus', '新增后台人员', 'openInvestmentAdminUserDialog()', 'primary')}
                         </div>
                     </div>
                     ${renderInvestmentAdminUsersTable(users)}
@@ -1187,7 +1790,7 @@ function renderInvestmentAdminUsersTable(users) {
     if (!users.length) return '<div class="investment-empty">暂无后台人员</div>';
     const rows = users.map(user => `
         <tr>
-            <td>${escapeHtml(user.username || '')}</td>
+            <td title="${escapeHtml(user.username || '')}">${escapeHtml(user.username || '')}</td>
             <td>${escapeHtml(investmentAdminRoleLabel(user.role || ''))}</td>
             <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
             <td>${escapeHtml(investmentFormatBeijingTime(user.last_login_at || '') || '-')}</td>
@@ -1211,9 +1814,13 @@ function openInvestmentAdminUserDialog(encoded = '') {
             ${investmentField(user.username ? '新密码（留空不修改）' : '初始密码', 'invest-admin-password', '', 'password')}
             <label class="investment-field">
                 <span>角色</span>
-                <select id="invest-admin-role">${investmentAdminRoleOptions(user.role || 'content_operator')}</select>
+                ${investmentDropdown('invest-admin-role', [
+                    ['admin', investmentAdminRoleLabel('admin')],
+                    ['content_operator', investmentAdminRoleLabel('content_operator')],
+                    ['technical_operator', investmentAdminRoleLabel('technical_operator')],
+                ], user.role || 'content_operator')}
             </label>
-            <label class="investment-check investment-direct-output-check"><input id="invest-admin-enabled" type="checkbox" ${user.enabled === false ? '' : 'checked'}><span>启用</span></label>
+            ${investmentSwitch('启用', 'invest-admin-enabled', user.enabled !== false, {className: 'investment-direct-output-check'})}
         </div>
         <div class="investment-actions investment-modal-actions">
             ${investmentButtonIfCan('admin_users.write', 'fa-floppy-disk', '保存后台人员', 'saveInvestmentAdminUser()', 'primary')}
@@ -1296,12 +1903,62 @@ function resetInvestmentUserForm() {
 }
 
 function investmentUserServiceChecks(prefix, user = {}) {
-    const services = new Set((user.allowed_services || ['全部']).map(investmentServiceLabel));
-    const options = ['全部', '技术分析', '利率', '转债'];
-    return options.map((option, index) => {
-        const checked = services.has(option) || (!user.openid && index === 0) ? 'checked' : '';
-        return `<label><input type="checkbox" class="${prefix}-service" value="${option}" ${checked}> ${option}</label>`;
+    const services = investmentExpandCustomerServicesForUi(user.allowed_services || ['all']);
+    return INVEST_CUSTOMER_SERVICE_OPTIONS.map(([value, label], index) => {
+        const checked = services.includes(value);
+        return investmentSwitch(label, `${prefix}-service-${index}`, checked, {
+            inputClass: `${prefix}-service`,
+            value,
+            attrs: `data-service-value="${escapeHtml(value)}" onchange="handleInvestmentUserServiceToggle('${escapeHtml(prefix)}', '${escapeHtml(value)}')"`,
+        });
     }).join('');
+}
+
+function handleInvestmentUserServiceToggle(prefix, value) {
+    const items = Array.from(document.querySelectorAll(`.${prefix}-service`));
+    const allItem = items.find(item => item.dataset.serviceValue === 'all');
+    const businessItems = items.filter(item => item.dataset.serviceValue !== 'all');
+    if (value === 'all') {
+        if (allItem?.checked) {
+            businessItems.forEach(item => { item.checked = true; });
+        } else {
+            businessItems.forEach(item => { item.checked = false; });
+        }
+        return;
+    }
+    if (allItem && !businessItems.every(item => item.checked)) allItem.checked = false;
+    if (businessItems.length && businessItems.every(item => item.checked)) {
+        if (allItem) allItem.checked = true;
+    }
+}
+
+function renderInvestmentUserImportSection() {
+    return `
+        <section class="investment-import-dialog investment-user-import-section">
+            <section class="investment-import-template">
+                <div>
+                    <div class="investment-panel-title"><i class="fas fa-table"></i><span>存在用户名单示例模板</span></div>
+                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权结束日期。OpenID 可空，系统会生成待绑定用户。</div>
+                </div>
+                <a class="investment-btn" href="/api/investment/users/import-template.xlsx" target="_blank" download>
+                    <i class="fas fa-download"></i><span>下载模板</span>
+                </a>
+            </section>
+            <div class="investment-import-sample">
+                <table class="investment-table compact">
+                    <thead><tr><th>手机号</th><th>服务权限</th><th>授权结束日期</th><th>OpenID</th><th>姓名</th></tr></thead>
+                    <tbody><tr><td>13800000000</td><td>全部</td><td>2026-12-31</td><td>可空</td><td>张三</td></tr></tbody>
+                </table>
+            </div>
+            <label class="investment-field">
+                <span>批量导入客户</span>
+                <input id="invest-users-import-file" type="file" accept=".xlsx,.xls">
+            </label>
+            <div class="investment-actions investment-modal-actions">
+                ${investmentButtonIfCan('customers.import', 'fa-magnifying-glass-chart', '解析文件', 'parseInvestmentUsersImport()', 'primary')}
+            </div>
+            <div id="invest-users-import-result" class="investment-import-result"></div>
+        </section>`;
 }
 
 function openInvestmentUserDialog(encoded = '') {
@@ -1317,7 +1974,7 @@ function openInvestmentUserDialog(encoded = '') {
         </div>
         <div class="investment-service-row">
             ${investmentUserServiceChecks('invest-user-modal', user)}
-            <label><input id="invest-user-modal-enabled" type="checkbox" ${user.enabled === false ? '' : 'checked'}> 启用</label>
+            ${investmentSwitch('启用', 'invest-user-modal-enabled', user.enabled !== false)}
         </div>
         ${investmentField('备注', 'invest-user-modal-remark', user.remark || '', 'textarea')}
         <div class="investment-actions investment-modal-actions">
@@ -1349,14 +2006,15 @@ function fillInvestmentUserForm(encoded) {
 
 async function saveInvestmentUser(prefix = 'invest-user') {
     const serviceClass = prefix === 'invest-user-modal' ? '.invest-user-modal-service:checked' : '.invest-user-service:checked';
-    const services = Array.from(document.querySelectorAll(serviceClass)).map(item => item.value);
+    const selectedServices = Array.from(document.querySelectorAll(serviceClass)).map(item => item.value);
+    const services = investmentNormalizeCustomerServices(selectedServices);
     const body = {
         openid: document.getElementById(`${prefix}-openid`).value.trim(),
         name: document.getElementById(`${prefix}-name`).value.trim(),
         institution: document.getElementById(`${prefix}-institution`).value.trim(),
         mobile: document.getElementById(`${prefix}-mobile`).value.trim(),
         enabled: document.getElementById(`${prefix}-enabled`).checked,
-        allowed_services: services.length ? services : ['全部'],
+        allowed_services: services,
         auth_start_at: investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-start`).value),
         auth_end_at: investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-end`).value),
         remark: document.getElementById(`${prefix}-remark`).value.trim(),
@@ -1393,34 +2051,7 @@ async function disableInvestmentUser(encodedOpenid) {
 function openInvestmentUsersImportDialog() {
     investmentPendingUserImportFile = null;
     investmentPendingUserImportParsed = false;
-    const body = `
-        <div class="investment-import-dialog">
-            <section class="investment-import-template">
-                <div>
-                    <div class="investment-panel-title"><i class="fas fa-table"></i><span>存在用户名单示例模板</span></div>
-                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权结束日期。OpenID 可空，系统会生成待绑定用户。</div>
-                </div>
-                <a class="investment-btn" href="/api/investment/users/import-template.xlsx" target="_blank" download>
-                    <i class="fas fa-download"></i><span>下载模板</span>
-                </a>
-            </section>
-            <div class="investment-import-sample">
-                <table class="investment-table compact">
-                    <thead><tr><th>手机号</th><th>服务权限</th><th>授权结束日期</th><th>OpenID</th><th>姓名</th></tr></thead>
-                    <tbody><tr><td>13800000000</td><td>全部</td><td>2026-12-31</td><td>可空</td><td>张三</td></tr></tbody>
-                </table>
-            </div>
-            <label class="investment-field">
-                <span>Excel 文件</span>
-                <input id="invest-users-import-file" type="file" accept=".xlsx,.xls">
-            </label>
-            <div class="investment-actions investment-modal-actions">
-                ${investmentButtonIfCan('customers.import', 'fa-magnifying-glass-chart', '解析文件', 'parseInvestmentUsersImport()', 'primary')}
-                ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
-            </div>
-            <div id="invest-users-import-result" class="investment-import-result"></div>
-        </div>`;
-    showInvestmentModal('导入客户名单', body);
+    showInvestmentModal('批量导入客户', renderInvestmentUserImportSection());
 }
 
 function renderInvestmentImportResult(data, committed = false) {
@@ -1503,14 +2134,58 @@ async function importInvestmentUsers() {
     return confirmInvestmentUsersImport();
 }
 
-function exportInvestmentUsers() {
+function openInvestmentCustomerExportDialog() {
+    const body = `
+        <div class="investment-grid cols-1">
+            <label class="investment-field">
+                <span>导出状态</span>
+                ${investmentDropdown('invest-users-export-enabled', [['', '全部'], ['true', '启用'], ['false', '停用']], '')}
+            </label>
+        </div>
+        <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('customers.export', 'fa-download', '导出客户', 'downloadInvestmentUsersExport()', 'primary')}
+            ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
+        </div>`;
+    showInvestmentModal('导出客户名单', body);
+}
+
+function downloadInvestmentUsersExport() {
     const enabled = document.getElementById('invest-users-export-enabled')?.value || '';
     investmentDownload('/api/investment/export/users.xlsx', {enabled});
 }
 
+function exportInvestmentUsers() {
+    openInvestmentCustomerExportDialog();
+}
+
+async function renderInvestmentDailyContent() {
+    const element = investmentContentEl('invest-daily-content-content');
+    if (!element) return;
+    element.innerHTML = `
+        <div class="investment-tabs">
+            <button class="investment-tab ${currentInvestmentContentPanel === 'rate' ? 'active' : ''}" onclick="switchInvestmentContentPanel('rate')">
+                <i class="fas fa-chart-line"></i><span>利率内容</span>
+            </button>
+            <button class="investment-tab ${currentInvestmentContentPanel === 'convertible_bond' ? 'active' : ''}" onclick="switchInvestmentContentPanel('convertible_bond')">
+                <i class="fas fa-scale-balanced"></i><span>转债内容</span>
+            </button>
+        </div>
+        <div id="invest-daily-content-panel" class="grid gap-3"></div>`;
+    return renderInvestmentContent(currentInvestmentContentPanel);
+}
+
+function switchInvestmentContentPanel(panel) {
+    currentInvestmentContentPanel = panel === 'convertible_bond' ? 'convertible_bond' : 'rate';
+    stopInvestmentContentPolling();
+    renderInvestmentDailyContent();
+}
+
+function currentInvestmentContentServiceType() {
+    return currentInvestmentContentPanel === 'convertible_bond' ? 'convertible_bond' : 'rate';
+}
+
 async function renderInvestmentContent(serviceType, options = {}) {
-    const elementId = serviceType === 'rate' ? 'invest-rate-content' : 'invest-cb-content';
-    const element = investmentContentEl(elementId);
+    const element = investmentContentEl('invest-daily-content-panel') || investmentContentEl('invest-daily-content-content');
     investmentLoading(element);
     try {
         const effectiveDate = options.effective_date ?? investmentContentHistoryEffectiveDate(serviceType);
@@ -1520,23 +2195,35 @@ async function renderInvestmentContent(serviceType, options = {}) {
         const isCb = serviceType === 'convertible_bond';
         const historyDateId = investmentContentHistoryEffectiveDateId(serviceType);
         element.innerHTML = `
-            <div class="investment-workbench">
-                ${renderInvestmentCurrentEffective(data.current_effective, serviceType)}
-                ${renderInvestmentContentUploadPanel(serviceType)}
-                <section class="investment-table-panel investment-workbench-full">
-                    <div class="investment-panel-heading">
-                        <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容历史' : '利率内容历史'}</span></div>
-                        <div class="investment-panel-actions">
-                            <label class="investment-field compact">
+            <div class="investment-daily-content-page">
+                <section class="investment-panel investment-content-top-panel">
+                    <div class="investment-content-top">
+                        ${renderInvestmentCurrentEffective(data.current_effective, serviceType)}
+                        ${renderInvestmentContentUploadPanel(serviceType)}
+                    </div>
+                </section>
+                <section class="investment-panel investment-content-history-panel">
+                    <div class="investment-history-header">
+                        <div class="investment-history-heading-row">
+                            <div>
+                                <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容历史' : '利率内容历史'}</span></div>
+                            </div>
+                            <span class="investment-muted-inline">${records.length} 条记录</span>
+                        </div>
+                        <div class="investment-history-filterbar">
+                            <label class="investment-field compact investment-history-date-field">
                                 <span>日期</span>
-                                <input id="${historyDateId}" type="date" value="${escapeHtml(effectiveDate || '')}">
+                                ${investmentRenderDateControl(historyDateId, effectiveDate || '', {
+                                    placeholder: '选择日期',
+                                    attrs: `onchange="refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})"`,
+                                })}
                             </label>
                             ${investmentButtonIfCan('audits.read', 'fa-clock-rotate-left', '操作流水', 'renderInvestmentOperationAudits()')}
                             ${investmentButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})`)}
                         </div>
                     </div>
-                    <div id="invest-content-records-table">${renderInvestmentContentHistoryGroups(records)}</div>
-                    <div id="invest-content-detail" class="investment-detail-panel hidden"></div>
+                    <div id="invest-content-records-table" class="investment-content-history-body">${renderInvestmentContentHistoryGroups(records)}</div>
+                    <div id="invest-content-detail" data-investment-detail-panel class="investment-detail-panel hidden"></div>
                 </section>
             </div>`;
         const result = document.getElementById('invest-content-action-result');
@@ -1554,12 +2241,12 @@ function investmentContentHistoryEffectiveDateId(serviceType) {
 
 function investmentContentHistoryEffectiveDate(serviceType) {
     const historyDateId = investmentContentHistoryEffectiveDateId(serviceType);
-    return document.getElementById(investmentContentHistoryEffectiveDateId(serviceType))?.value || '';
+    return document.getElementById(historyDateId)?.value || investmentTodayDate();
 }
 
-function investmentContentHistoryQuery(serviceType, effectiveDate = '') {
+function investmentContentHistoryQuery(serviceType, effectiveDate = investmentTodayDate()) {
     const query = new URLSearchParams({service_type: serviceType});
-    if (effectiveDate) query.set('effective_date', effectiveDate);
+    query.set('effective_date', effectiveDate || investmentTodayDate());
     return query;
 }
 
@@ -1569,7 +2256,7 @@ function renderInvestmentCurrentEffective(record, serviceType) {
     const subtitle = isCb ? '公众号用户输入“转债”时会收到这张图' : '公众号用户输入“利率”时会收到这张图';
     const image = record?.output_image ? renderInvestmentFilePreview(record.output_image, title) : '<div class="investment-current-empty">暂无生效图片</div>';
     return `
-        <section class="investment-panel investment-current-panel">
+        <section class="investment-daily-current-panel">
             <div class="investment-panel-heading">
                 <div>
                     <div class="investment-panel-title"><i class="fas ${isCb ? 'fa-scale-balanced' : 'fa-chart-line'}"></i><span>${title}</span></div>
@@ -1593,7 +2280,7 @@ function renderInvestmentCurrentEffective(record, serviceType) {
 function renderInvestmentContentUploadPanel(serviceType) {
     const isCb = serviceType === 'convertible_bond';
     return `
-        <section class="investment-panel investment-upload-panel">
+        <section class="investment-daily-upload-panel">
             <div class="investment-panel-title"><i class="fas fa-upload"></i><span>${isCb ? '上传转债资料' : '上传利率资料'}</span></div>
             <input type="hidden" id="invest-content-service" value="${serviceType}">
             <div class="investment-grid cols-2">
@@ -1602,9 +2289,8 @@ function renderInvestmentContentUploadPanel(serviceType) {
             </div>
             <div class="investment-grid cols-2">
                 <label class="investment-field"><span>资料文件</span><input id="invest-content-files" type="file" multiple></label>
-                <label class="investment-field"><span>操作人</span><input id="invest-content-operator" type="text" value="admin"></label>
-                <label class="investment-field"><span>生效日期</span><input id="invest-content-effective-date" type="date" value="${investmentTodayDate()}"></label>
-                ${!isCb ? `<label class="investment-check investment-direct-output-check"><input id="invest-content-direct-output-mode" type="checkbox"><span>直接上传最终 PNG</span></label>` : ''}
+                <label class="investment-field"><span>生效日期</span>${investmentRenderDateControl('invest-content-effective-date', investmentTodayDate(), {placeholder: '选择生效日期'})}</label>
+                ${!isCb ? investmentSwitch('直接上传最终 PNG', 'invest-content-direct-output-mode', false, {className: 'investment-direct-output-check'}) : ''}
             </div>
             <div class="investment-actions">
                 ${investmentButtonIfCan('content.upload', 'fa-file-circle-plus', '保存草稿', 'createInvestmentContent(false)', 'primary')}
@@ -1630,7 +2316,7 @@ async function refreshInvestmentContentAction(serviceType) {
         await renderInvestmentRecords();
         return;
     }
-    serviceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
+    serviceType = serviceType || currentInvestmentContentServiceType();
     await refreshInvestmentContentRecords(serviceType, {effective_date: investmentContentHistoryEffectiveDate(serviceType)});
 }
 
@@ -1661,21 +2347,44 @@ function renderInvestmentImageFlow(record) {
 
 function renderInvestmentContentHistoryGroups(records) {
     if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
-    const groups = new Map();
-    records.forEach(record => {
-        const key = record.effective_date || '未设置日期';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(record);
-    });
-    return Array.from(groups.entries()).map(([dateKey, items]) => `
-        <div class="investment-date-group">
-            <div class="investment-date-group-title">
-                <span>${escapeHtml(dateKey)}</span>
-                <span>${items.length} 个版本</span>
-            </div>
-            ${renderInvestmentContentTable(items)}
-        </div>
-    `).join('');
+    return investmentTableWrap(`<table class="investment-table investment-history-table">
+                <thead><tr><th>ID</th><th>服务</th><th>版本</th><th>状态</th><th>模式</th><th>操作人</th><th>生成时间</th><th>原始资料</th><th>生成内容</th><th>输出</th><th>产物</th><th>动作</th></tr></thead>
+                <tbody>${records.map(record => {
+                    const serviceType = record.service_type || '';
+                    const canGenerate = record.status !== 'generating';
+                    const actionServiceType = escapeHtml(serviceType);
+                    const outputArtifactPaths = Array.isArray(record.output_artifacts) ? record.output_artifacts.map(item => item.file_path).filter(Boolean) : [];
+                    const artifactPaths = record.output_image ? [record.output_image, ...outputArtifactPaths.filter(path => path !== record.output_image)] : outputArtifactPaths;
+                    const artifactCount = artifactPaths.length;
+                    const warningText = record.status_warning || record.error_message || '';
+                    const warning = warningText ? investmentCompactText(warningText, 80) : '';
+                    return `<tr>
+                        <td class="investment-mono">${escapeHtml((record.content_id || '').slice(0, 8))}</td>
+                        <td>${investmentServiceLabel(record.service_type)}</td>
+                        <td>v${escapeHtml(record.content_version || 1)}</td>
+                        <td>
+                            <span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span>
+                            ${warning ? `<div class="investment-history-warning">${warning}</div>` : ''}
+                        </td>
+                        <td>${record.direct_output_mode ? '<span class="investment-badge ok">直传 PNG</span>' : '<span class="investment-muted-inline">AI+渲染</span>'}</td>
+                        <td>${escapeHtml(record.operator || '')}</td>
+                        <td>${escapeHtml(investmentFormatBeijingTime(record.created_at) || '')}</td>
+                        <td>${investmentHistoryHoverText(record.source_text, 24)}</td>
+                        <td>${investmentHistoryHoverText(record.generated_text, 24)}</td>
+                        <td><div class="investment-history-output-preview">${record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<div class="investment-preview-placeholder">未生成</div>'}</div></td>
+                        <td>
+                            <span class="investment-muted-inline">${artifactCount} 个</span>
+                            ${artifactPaths.length ? investmentFileLinks(artifactPaths) : ''}
+                        </td>
+                        <td class="investment-row-actions">
+                            ${investmentTextButton('刷新', `refreshInvestmentContentAction('${actionServiceType}')`)}
+                            ${canGenerate ? investmentTextButtonIfCan('content.generate', '生成', `generateInvestmentContent('${record.content_id}', '${actionServiceType}')`) : ''}
+                            ${record.output_image ? investmentTextButtonIfCan('content.publish', '设为生效', `effectiveInvestmentContent('${record.content_id}', '${actionServiceType}')`, 'primary') : ''}
+                            ${investmentTextButton('详情', `showInvestmentContentDetail('${investmentEncodedRecord(record)}')`)}
+                        </td>
+                    </tr>`;
+                }).join('')}</tbody>
+            </table>`, 'content-history-current-date');
 }
 
 function renderInvestmentContentTable(records) {
@@ -1755,7 +2464,7 @@ async function createInvestmentContent(generateAfterCreate) {
     form.append('source_text', document.getElementById('invest-content-source-text').value);
     const joke = document.getElementById('invest-content-joke-text');
     if (joke) form.append('joke_text', joke.value);
-    form.append('operator', document.getElementById('invest-content-operator').value || 'admin');
+    form.append('operator', investmentCurrentAdminUsername());
     const effectiveDate = document.getElementById('invest-content-effective-date');
     if (effectiveDate) form.append('effective_date', effectiveDate.value || investmentTodayDate());
     const directOutput = document.getElementById('invest-content-direct-output-mode');
@@ -1783,7 +2492,7 @@ async function createInvestmentContent(generateAfterCreate) {
 }
 
 async function generateInvestmentContent(contentId, serviceType = '') {
-    const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
+    const targetServiceType = serviceType || currentInvestmentContentServiceType();
     try {
         await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(contentId)}/generate`, {method: 'POST'});
         showInvestmentToast('已启动生成');
@@ -1799,7 +2508,7 @@ async function generateInvestmentContent(contentId, serviceType = '') {
 }
 
 async function effectiveInvestmentContent(contentId, serviceType = '') {
-    const targetServiceType = serviceType || (currentView === 'invest-cb' ? 'convertible_bond' : 'rate');
+    const targetServiceType = serviceType || currentInvestmentContentServiceType();
     const effectiveDate = window.prompt('生效日期（YYYY-MM-DD）', investmentTodayDate());
     if (effectiveDate === null) return;
     try {
@@ -1812,7 +2521,7 @@ async function effectiveInvestmentContent(contentId, serviceType = '') {
         if (currentView === 'invest-records') {
             await renderInvestmentRecords();
         } else {
-            await refreshInvestmentContentRecords(targetServiceType);
+            await renderInvestmentContent(targetServiceType, {effective_date: investmentContentHistoryEffectiveDate(targetServiceType)});
         }
     } catch (error) {
         showInvestmentToast(`设置生效失败：${String(error.message || error)}`, 'error');
@@ -1888,12 +2597,7 @@ async function renderInvestmentRecordsLegacy() {
                         ${investmentField('结束日期', 'invest-export-end-date', '', 'date')}
                         <label class="investment-field">
                             <span>服务类型</span>
-                            <select id="invest-export-service-type">
-                                <option value="">全部</option>
-                                <option value="technical_analysis">技术分析</option>
-                                <option value="rate">利率</option>
-                                <option value="convertible_bond">转债</option>
-                            </select>
+                            ${investmentDropdown('invest-export-service-type', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债']], '')}
                         </label>
                     </div>
                     <div class="investment-actions">
@@ -1909,12 +2613,7 @@ async function renderInvestmentRecordsLegacy() {
                         </label>
                         <label class="investment-field">
                             <span>季度</span>
-                            <select id="invest-export-quarter">
-                                <option value="1">Q1</option>
-                                <option value="2">Q2</option>
-                                <option value="3">Q3</option>
-                                <option value="4">Q4</option>
-                            </select>
+                            ${investmentDropdown('invest-export-quarter', [['1', 'Q1'], ['2', 'Q2'], ['3', 'Q3'], ['4', 'Q4']], '1')}
                         </label>
                         ${investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()')}
                     </div>
@@ -1926,11 +2625,11 @@ async function renderInvestmentRecordsLegacy() {
                 <section class="investment-table-panel full">
                     <div class="investment-panel-title"><i class="fas fa-gears"></i><span>后台生成记录</span></div>
                     ${renderInvestmentContentTable(contents.records || [])}
-                    <div id="invest-content-detail" class="investment-detail-panel hidden"></div>
+                    <div id="invest-content-detail" data-investment-detail-panel class="investment-detail-panel hidden"></div>
                 </section>
                 ${cacheSection}
                 <section class="investment-panel investment-workbench-full">
-                    <div id="invest-record-detail" class="investment-detail-panel hidden"></div>
+                    <div id="invest-record-detail" data-investment-detail-panel class="investment-detail-panel hidden"></div>
                 </section>
             </div>`;
     } catch (error) {
@@ -1949,7 +2648,7 @@ function investmentExportCustomer() {
 function changeInvestmentRequestExportMode(mode) {
     const allowed = ['current', 'full', 'range', 'month', 'quarter'];
     investmentRecordsState.exportMode = allowed.includes(mode) ? mode : 'current';
-    const panel = document.querySelector('.investment-request-export-panel');
+    const panel = document.querySelector('[data-investment-request-export-panel]');
     if (panel) panel.outerHTML = renderInvestmentRequestExportPanel();
 }
 
@@ -2157,7 +2856,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
     }
     if (tab === 'cache') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), market_date: investmentTodayDate()};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), market_date: ''};
     }
     if (tab === 'audits') {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
@@ -2196,12 +2895,6 @@ async function renderInvestmentGeneratedContent() {
     if (!element) return;
     element.innerHTML = `
         <div class="investment-records-workspace investment-content-workspace">
-            <section class="investment-records-topbar">
-                <div>
-                    <div class="investment-panel-title"><i class="fas fa-images"></i><span>内容</span></div>
-                    <div class="investment-subtitle">集中查看生成后的图片、文档和缓存产物；业务记录中仍保留缩略图用于快捷查看。</div>
-                </div>
-            </section>
             <section class="investment-records-board">
                 <div class="investment-records-main">
                     <div class="investment-records-list" id="investment-content-list"></div>
@@ -2222,6 +2915,7 @@ async function loadInvestmentGeneratedContent() {
     if (list) investmentLoading(list);
     try {
         const query = investmentRecordsQueryParams('cache');
+        if (!investmentCacheMarketDate()) query.delete('market_date');
         const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
         investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
         investmentRecordsApplyPagination('cache', data.pagination);
@@ -2267,13 +2961,7 @@ function renderInvestmentRequestExportPanel() {
     const serviceField = `
         <label class="investment-field">
             <span>服务</span>
-            <select id="invest-export-service-type">
-                <option value="">全部</option>
-                <option value="technical_analysis">技术分析</option>
-                <option value="rate">利率</option>
-                <option value="convertible_bond">转债</option>
-                <option value="unauthorized_request">无权限请求</option>
-            </select>
+            ${investmentDropdown('invest-export-service-type', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']], '')}
         </label>`;
     const customerField = '<label class="investment-field"><span>OpenID/手机号</span><input id="invest-export-customer" type="text" value=""></label>';
     const fieldsByMode = {
@@ -2297,7 +2985,7 @@ function renderInvestmentRequestExportPanel() {
             <label class="investment-field"><span>年度</span><input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${new Date().getFullYear()}"></label>
             <label class="investment-field">
                 <span>季度</span>
-                <select id="invest-export-quarter"><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select>
+                ${investmentDropdown('invest-export-quarter', [['1', 'Q1'], ['2', 'Q2'], ['3', 'Q3'], ['4', 'Q4']], '1')}
             </label>
             ${customerField}
             ${serviceField}`,
@@ -2310,7 +2998,7 @@ function renderInvestmentRequestExportPanel() {
         quarter: investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()', 'primary'),
     };
     return `
-        <section class="investment-request-export-panel">
+        <section data-investment-request-export-panel class="investment-request-export-panel">
             <div class="investment-request-export-heading">
                 <div class="investment-panel-title"><i class="fas fa-file-export"></i><span>公众号请求导出</span></div>
                 <div class="investment-request-export-modes">
@@ -2357,14 +3045,14 @@ function renderInvestmentRecordsFilters(tab) {
     const field = (key, label, type = 'text') => `
         <label class="investment-field">
             <span>${label}</span>
-            <input id="investment-records-filter-${key}" data-investment-records-filter="${key}" type="${type}" value="${escapeHtml(filters[key] || '')}">
+            ${type === 'date'
+                ? investmentRenderDateControl(`investment-records-filter-${key}`, filters[key] || '', {placeholder: '选择日期', attrs: `data-investment-records-filter="${key}"`})
+                : `<input id="investment-records-filter-${key}" data-investment-records-filter="${key}" type="${type}" value="${escapeHtml(filters[key] || '')}">`}
         </label>`;
     const select = (key, label, options) => `
         <label class="investment-field">
             <span>${label}</span>
-            <select id="investment-records-filter-${key}" data-investment-records-filter="${key}">
-                ${options.map(([value, text]) => `<option value="${escapeHtml(value)}" ${investmentSelected(filters[key], value)}>${escapeHtml(text)}</option>`).join('')}
-            </select>
+            ${investmentDropdown(`investment-records-filter-${key}`, options, filters[key] || '', `data-investment-records-filter="${key}"`)}
         </label>`;
     let controls = '';
     if (tab === 'requests') {
@@ -2464,9 +3152,7 @@ function renderInvestmentRecordsPagination(tab) {
                 <button class="investment-btn compact" onclick="changeInvestmentRecordsPage('${tab}', ${page + 1})" ${page >= totalPages ? 'disabled' : ''}><span>下一页</span><i class="fas fa-chevron-right"></i></button>
                 <label class="investment-records-page-size">
                     <span>每页</span>
-                    <select onchange="changeInvestmentRecordsPageSize('${tab}', this.value)">
-                        ${pageSizes.map(size => `<option value="${size}" ${investmentSelected(pageSize, String(size))}>${size}</option>`).join('')}
-                    </select>
+                    ${investmentDropdown(`investment-records-page-size-${tab}`, pageSizes.map(size => [String(size), String(size)]), pageSize, '', `changeInvestmentRecordsPageSize('${tab}', value)`)}
                 </label>
             </div>
         </div>`;
@@ -2604,7 +3290,7 @@ function renderInvestmentRecordsCacheTab(cacheData = {}) {
 function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
     const marketDates = cacheData.market_dates || [];
-    const selectedDate = investmentCacheMarketDate() || (marketDates || [])[0] || investmentTodayDate();
+    const selectedDate = investmentCacheMarketDate();
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const keywordEntries = keyword ? values.filter(entry => {
         const haystack = [
@@ -2618,20 +3304,23 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
         ].join(' ').toLowerCase();
         return haystack.includes(keyword);
     }) : values;
-    const dateEntries = keywordEntries.filter(entry => !selectedDate || (entry.market_date || '') === selectedDate);
+    const visibleEntries = selectedDate ? keywordEntries.filter(entry => (entry.market_date || '') === selectedDate) : keywordEntries;
     const categories = ['technical_analysis', 'rate', 'convertible_bond'];
     const selectedCategory = categories.includes(investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
     const body = selectedCategory
-        ? renderInvestmentGeneratedContentCategoryDetail(selectedCategory, dateEntries.filter(entry => entry.service_type === selectedCategory))
-        : renderInvestmentGeneratedContentHome(categories, dateEntries);
+        ? renderInvestmentGeneratedContentCategoryDetail(selectedCategory, visibleEntries.filter(entry => entry.service_type === selectedCategory))
+        : renderInvestmentGeneratedContentHome(categories, visibleEntries);
     return `
         <div class="investment-generated-content">
             <div class="investment-generated-content-datebar">
-                <div><h3>生成内容</h3></div>
+                <div class="investment-generated-content-title">
+                    <h3>生成内容</h3>
+                    <span>${selectedDate ? escapeHtml(selectedDate) : '全部历史'}</span>
+                </div>
                 <div class="investment-generated-content-date-actions">
                     <label class="investment-field compact">
                         <span>生成日期</span>
-                        <input id="investment-records-filter-market_date" data-investment-records-filter="market_date" type="date" value="${escapeHtml(selectedDate || '')}">
+                        ${investmentRenderDateControl('investment-records-filter-market_date', selectedDate || '', {placeholder: '全部历史', attrs: 'data-investment-records-filter="market_date"'})}
                     </label>
                     <label class="investment-field compact keyword">
                         <span>关键词</span>
@@ -2645,7 +3334,59 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
         </div>`;
 }
 
-function renderInvestmentGeneratedContentHome(categories, dateEntries) {
+function renderInvestmentGeneratedContentHome(categories, entries) {
+    const grouped = investmentGroupCacheEntriesByDate(entries);
+    const history = grouped.length ? grouped.map(([dateKey, entriesForDate]) => `
+            <section class="investment-generated-date-section">
+                <div class="investment-generated-date-heading">
+                    <strong>${escapeHtml(dateKey)}</strong>
+                    <span>${entriesForDate.length} 条内容</span>
+                </div>
+                <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entriesForDate)}</div>
+            </section>`).join('') : '';
+    return `
+        <section class="investment-generated-category-overview">
+            <div class="investment-generated-date-heading">
+                <strong>内容分类</strong>
+                <span>技术分析 / 利率 / 转债</span>
+            </div>
+            <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entries)}</div>
+        </section>
+        ${history}`;
+}
+
+function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
+    return categories.map(serviceType => {
+        const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
+        const active = entries.filter(entry => entry.status === 'active').length;
+        const hitCount = entries.reduce((sum, entry) => sum + Number(entry.hit_count || 0), 0);
+        const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
+        return `
+            <button class="investment-generated-content-entry" onclick="selectInvestmentCacheCategory('${serviceType}')">
+                <div class="investment-generated-entry-icon"><i class="fas ${serviceType === 'technical_analysis' ? 'fa-chart-line' : serviceType === 'rate' ? 'fa-percent' : 'fa-file-invoice-dollar'}"></i></div>
+                <div class="investment-generated-entry-main">
+                    <strong>${investmentServiceLabel(serviceType)}</strong>
+                    <span>${entries.length ? `${entries.length} 条内容 / ${active} 条有效` : '暂无内容'}</span>
+                </div>
+                <div class="investment-generated-entry-meta">
+                    <span>${hitCount} 次命中</span>
+                    <span>${escapeHtml(investmentFormatBeijingTime(latest) || '未更新')}</span>
+                </div>
+            </button>`;
+    }).join('');
+}
+
+function investmentGroupCacheEntriesByDate(entries = []) {
+    const groups = new Map();
+    (Array.isArray(entries) ? entries : []).forEach(entry => {
+        const key = entry.market_date || '未设置日期';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(entry);
+    });
+    return Array.from(groups.entries()).sort(([left], [right]) => String(right).localeCompare(String(left)));
+}
+
+function renderInvestmentGeneratedContentHomeLegacy(categories, dateEntries) {
     const cards = categories.map(serviceType => {
         const entries = dateEntries.filter(entry => entry.service_type === serviceType);
         const active = entries.filter(entry => entry.status === 'active').length;
@@ -2684,7 +3425,7 @@ function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
 function renderInvestmentCacheCategory(serviceType, entries) {
     return `
         <div class="investment-cache-category">
-            ${entries.length ? renderInvestmentCacheCompactRows(entries) : '<div class="investment-empty compact">暂无当日内容</div>'}
+            ${entries.length ? renderInvestmentCacheCompactRows(entries) : '<div class="investment-history-empty investment-generated-history-empty">暂无历史内容</div>'}
         </div>`;
 }
 
@@ -2730,7 +3471,7 @@ async function selectInvestmentCacheDate(date) {
 }
 
 async function applyInvestmentCacheDate() {
-    investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || investmentTodayDate();
+    investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || '';
     investmentRecordsState.filters.cache.keyword = document.getElementById('investment-content-filter-keyword')?.value || '';
     investmentRecordsState.filters.cache.page = '1';
     investmentRecordsState.cacheCategory = '';
@@ -2928,7 +3669,7 @@ function hideInvestmentDetail(button) {
         hideInvestmentModal();
         return;
     }
-    const panel = button.closest('.investment-detail-panel');
+    const panel = button.closest('[data-investment-detail-panel]');
     if (panel) {
         panel.classList.add('hidden');
         panel.innerHTML = '';
@@ -3095,11 +3836,10 @@ function renderInvestmentSkillConfigRow(skill, versions = []) {
     const skillKey = skill.skill_key || '';
     const active = versions.find(version => version.active) || versions[0] || {};
     const source = active.source === 'builtin' ? '内置' : '上传';
-    const versionOptions = versions.map(version => {
-        const label = `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`;
-        const selected = version.version_id === active.version_id ? 'selected' : '';
-        return `<option value="${escapeHtml(version.version_id || '')}" ${selected}>${escapeHtml(label)}</option>`;
-    }).join('');
+    const versionOptions = versions.map(version => [
+        version.version_id || '',
+        `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`,
+    ]);
     return `<tr data-skill-key="${escapeHtml(skillKey)}">
         <td>
             <strong>${escapeHtml(skill.label || skillKey)}</strong>
@@ -3107,9 +3847,7 @@ function renderInvestmentSkillConfigRow(skill, versions = []) {
         </td>
         <td><span class="investment-badge ${active.active ? 'ok' : 'fail'}">${active.active ? '生效中' : '未生效'}</span></td>
         <td>
-            <select id="invest-skill-version-${escapeHtml(skillKey)}" class="investment-skill-version-select">
-                ${versionOptions}
-            </select>
+            ${investmentDropdown(`invest-skill-version-${escapeHtml(skillKey)}`, versionOptions, active.version_id || '', '', '')}
         </td>
         <td>${escapeHtml(source)}</td>
         <td>${investmentCompactText(active.original_filename || '', 34)}</td>
@@ -3126,14 +3864,14 @@ function investmentSkillDialogItem(label, body) {
 
 function renderInvestmentSkillDialogBody(skill, versions = []) {
     const skillKey = skill.skill_key || currentInvestmentSkillDialogKey;
-    const versionOptions = versions.map(version => {
-        const label = `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`;
-        const selected = version.active ? 'selected' : '';
-        return `<option value="${escapeHtml(version.version_id || '')}" ${selected}>${escapeHtml(label)}</option>`;
-    }).join('');
+    const active = versions.find(version => version.active) || versions[0] || {};
+    const versionOptions = versions.map(version => [
+        version.version_id || '',
+        `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`,
+    ]);
     return `
         ${investmentSkillDialogItem('Skill', `<strong>${escapeHtml(skill.label || skillKey)}</strong><div class="investment-muted">${escapeHtml(skillKey)}</div>`)}
-        ${investmentSkillDialogItem('版本', `<select id="invest-skill-dialog-version" class="investment-skill-version-select">${versionOptions}</select>`)}
+        ${investmentSkillDialogItem('版本', investmentDropdown('invest-skill-dialog-version', versionOptions, active.version_id || '', '', ''))}
         ${investmentSkillDialogItem('上传', `<input id="invest-skill-dialog-file" type="file" accept=".py,.zip">`)}
         <div class="investment-actions investment-modal-actions">
             ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存', `saveInvestmentSkillDialog('${escapeHtml(skillKey)}')`, 'primary')}
@@ -3320,8 +4058,8 @@ function renderInvestmentConfigField(key, label, type, value = '', options = {})
     if (type === 'textarea') {
         control = `<label class="investment-field textarea"><span>${safeLabel}</span><textarea id="${safeId}" rows="4" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}>${escapeHtml(value || '')}</textarea></label>`;
     } else if (type === 'checkbox') {
-        const checked = value === true || value === 'true' || value === '1' ? 'checked' : '';
-        control = `<label class="investment-check"><input id="${safeId}" type="checkbox" ${checked} ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}><span>${safeLabel}</span></label>`;
+        const checked = value === true || value === 'true' || value === '1';
+        control = investmentSwitch(label, id, checked, {attrs: canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'});
     } else {
         control = `<label class="investment-field"><span>${safeLabel}</span><input id="${safeId}" type="${type}" value="${escapeHtml(value || '')}" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}></label>`;
     }
@@ -3483,11 +4221,16 @@ window.editInvestmentUser = editInvestmentUser;
 window.openInvestmentUserDialog = openInvestmentUserDialog;
 window.openInvestmentAdminUserDialog = openInvestmentAdminUserDialog;
 window.openInvestmentUsersImportDialog = openInvestmentUsersImportDialog;
+window.openInvestmentCustomerExportDialog = openInvestmentCustomerExportDialog;
+window.downloadInvestmentUsersExport = downloadInvestmentUsersExport;
+window.exportInvestmentUsers = exportInvestmentUsers;
 window.parseInvestmentUsersImport = parseInvestmentUsersImport;
 window.confirmInvestmentUsersImport = confirmInvestmentUsersImport;
 window.applyInvestmentCustomerSearch = applyInvestmentCustomerSearch;
+window.clearInvestmentCustomerSearch = clearInvestmentCustomerSearch;
 window.applyInvestmentAdminSearch = applyInvestmentAdminSearch;
 window.changeInvestmentUserPage = changeInvestmentUserPage;
+window.handleInvestmentUserServiceToggle = handleInvestmentUserServiceToggle;
 window.saveInvestmentUser = saveInvestmentUser;
 window.setInvestmentUserStatus = setInvestmentUserStatus;
 window.disableInvestmentUser = disableInvestmentUser;
@@ -3498,6 +4241,7 @@ window.effectiveInvestmentContent = effectiveInvestmentContent;
 window.renderInvestmentOperationAudits = renderInvestmentOperationAudits;
 window.refreshInvestmentContentAction = refreshInvestmentContentAction;
 window.runInvestmentFullHealthCheck = runInvestmentFullHealthCheck;
+window.switchInvestmentContentPanel = switchInvestmentContentPanel;
 window.renderInvestmentRecords = renderInvestmentRecords;
 window.switchInvestmentRecordsTab = switchInvestmentRecordsTab;
 window.applyInvestmentRecordsFilters = applyInvestmentRecordsFilters;
@@ -6437,13 +7181,9 @@ function buildChannelFieldsHtml(chName, fields) {
         const inputId = `ch-${chName}-${f.key}`;
         let inputHtml = '';
         if (f.type === 'bool') {
-            const checked = f.value ? 'checked' : '';
-            inputHtml = `<label class="relative inline-flex items-center cursor-pointer">
-                <input id="${inputId}" type="checkbox" ${checked} class="sr-only peer" data-field="${f.key}" data-ch="${chName}">
-                <div class="w-9 h-5 bg-slate-200 dark:bg-slate-700 peer-checked:bg-primary-400 rounded-full
-                            after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white
-                            after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>`;
+            inputHtml = investmentSwitch('', inputId, Boolean(f.value), {
+                attrs: `data-field="${escapeHtml(f.key)}" data-ch="${escapeHtml(chName)}"`,
+            });
         } else if (f.type === 'secret') {
             inputHtml = `<input id="${inputId}" type="text" value="${escapeHtml(String(f.value || ''))}"
                 data-field="${f.key}" data-ch="${chName}" data-masked="${f.value ? '1' : ''}"
