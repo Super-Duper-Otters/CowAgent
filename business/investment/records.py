@@ -260,12 +260,15 @@ def succeed_request_record(
     warning: str = "",
 ) -> None:
     service_type: ServiceType | None = None
+    stored_output_files = list(output_files or [])
+    stored_artifact_roles = dict(artifact_roles or {})
+    stored_artifact_versions = dict(artifact_versions or {})
     values: dict[str, object] = {
         "status": str(Status.SUCCESS),
         "error_code": None,
         "user_prompt": "",
         "error_message": sanitize_sensitive_text(warning),
-        "output_files": _json_list(output_files),
+        "output_files": _json_list(stored_output_files),
         "elapsed_ms": elapsed_ms,
         "updated_at": _now(),
     }
@@ -298,10 +301,26 @@ def succeed_request_record(
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
     if service_type is not None:
-        for file_path in output_files:
-            role = (artifact_roles or {}).get(file_path, "image")
-            version_tag = (artifact_versions or {}).get(file_path, "")
-            record_output_file(request_id, file_path, "image", service_type, artifact_role=role, version_tag=version_tag)
+        from .artifact_service import archive_output_files
+
+        stored_output_files, stored_artifact_roles, stored_artifact_versions, _path_map = archive_output_files(
+            request_id,
+            stored_output_files,
+            service_type,
+            artifact_roles=stored_artifact_roles,
+            artifact_versions=stored_artifact_versions,
+            owner_type="request",
+        )
+        with connect() as conn:
+            conn.execute(
+                update(investment_request_records)
+                .where(investment_request_records.c.request_id == request_id)
+                .values(output_files=_json_list(stored_output_files), updated_at=_now())
+            )
+        for file_path in stored_output_files:
+            role = stored_artifact_roles.get(file_path, "image")
+            version_tag = stored_artifact_versions.get(file_path, "")
+            record_output_file(request_id, file_path, None, service_type, artifact_role=role, version_tag=version_tag)
 
 
 def fail_request_record(
@@ -572,7 +591,7 @@ def list_output_files(owner_id: str) -> list[dict]:
 def record_output_file(
     owner_id: str,
     file_path: str,
-    file_type: str,
+    file_type: str | None,
     service_type: ServiceType,
     *,
     artifact_role: str = "",

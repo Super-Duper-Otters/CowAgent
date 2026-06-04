@@ -288,6 +288,20 @@ def handle_text_message(
                 result.main_chart_path: result.ta_version,
                 result.report_path: result.ta_version,
             }
+            from .artifact_service import archive_output_files
+
+            record_output_files, artifact_roles, artifact_versions, archived_path_map = archive_output_files(
+                request_id,
+                record_output_files,
+                route.service_type,
+                artifact_roles=artifact_roles,
+                artifact_versions=artifact_versions,
+                owner_type="request",
+            )
+            user_output_files = [
+                archived_path_map.get(result.signal_card_path, result.signal_card_path),
+                archived_path_map.get(result.main_chart_path, result.main_chart_path),
+            ]
             if result.cache_key and not result.cache_hit:
                 from .cache_service import write_cache_entry
 

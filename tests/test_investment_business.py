@@ -206,12 +206,14 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
 def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     from business.investment.audit_service import list_operation_audits
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.investment.records import get_content_record
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentAdminUserPasswordHandler,
         InvestmentAdminUserStatusHandler,
         InvestmentAdminUsersHandler,
         InvestmentConfigHandler,
+        InvestmentDailyContentHandler,
         InvestmentHealthHandler,
         InvestmentUsersHandler,
     )
@@ -274,6 +276,15 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     poster_admin_denied = json.loads(poster_admin_error.value.data)
     assert poster_admin_denied["status"] == "error"
     assert poster_admin_denied["code"] == "permission_denied"
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"service_type": "利率", "source_text": "rate source", "operator": "forged-admin"}).encode("utf-8"),
+    )
+    content = json.loads(InvestmentDailyContentHandler().POST())
+    assert content["status"] == "success"
+    assert get_content_record(content["content_id"]).operator == "operator-a"
 
     use_token(admin_token)
     monkeypatch.setattr(web_channel.web, "input", lambda **kwargs: SimpleNamespace())
@@ -1314,6 +1325,54 @@ def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_
     assert [user["openid"] for user in payload["users"]] == ["o92zVw4BYH2qaib", "1o92zVw4BYH2qai"]
 
 
+def test_web_customer_keyword_search_supports_field_categories(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUsersHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+
+    create_user("openid-name-hit", name="分类客户", mobile="13800000000", allowed_services=[ServiceType.ALL])
+    create_user("分类-openid-only", name="OpenID Only", mobile="13900000000", allowed_services=[ServiceType.ALL])
+    create_user("service-rate-hit", name="普通客户", mobile="13700000000", allowed_services=[ServiceType.RATE])
+    create_user("name-rate-only", name="利率客户", mobile="13600000000", allowed_services=[ServiceType.ALL])
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="分类", keyword_field="name", enabled="", page="1", page_size="20"),
+    )
+    name_payload = json.loads(InvestmentUsersHandler().GET())
+
+    assert name_payload["status"] == "success"
+    assert name_payload["pagination"]["total"] == 1
+    assert [user["openid"] for user in name_payload["users"]] == ["openid-name-hit"]
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="利率", keyword_field="service", enabled="", page="1", page_size="20"),
+    )
+    service_payload = json.loads(InvestmentUsersHandler().GET())
+
+    assert service_payload["status"] == "success"
+    assert service_payload["pagination"]["total"] == 1
+    assert [user["openid"] for user in service_payload["users"]] == ["service-rate-hit"]
+
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **_defaults: SimpleNamespace(keyword="利率", keyword_field="all", enabled="", page="1", page_size="20"),
+    )
+    all_payload = json.loads(InvestmentUsersHandler().GET())
+
+    assert all_payload["status"] == "success"
+    assert all_payload["pagination"]["total"] == 2
+
+
 def test_router_authenticates_before_parsing_unmatched_input(investment_env, monkeypatch):
     import pytest
 
@@ -1723,8 +1782,11 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
 
 
 def test_web_daily_content_get_returns_current_effective_content(investment_env, tmp_path, monkeypatch):
+    from pathlib import Path
+
     from business.investment.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.storage import get_storage_dirs
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-current.png"
@@ -1746,8 +1808,73 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     assert payload["current_effective"]["content_id"] == current_id
     assert payload["current_effective"]["service_type"] == ServiceType.RATE
     assert payload["current_effective"]["status"] == "effective"
-    assert payload["current_effective"]["output_image"] == str(image)
+    current_output = Path(payload["current_effective"]["output_image"])
+    assert current_output != image
+    assert current_output.is_file()
+    assert current_output.read_bytes() == b"png"
+    assert current_output.resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
     assert payload["current_effective"]["operator"] == "operator-current"
+
+
+def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_path, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, update_generation_success
+    from channel.web.web_channel import InvestmentDailyContentHandler
+
+    image = tmp_path / "rate-history.png"
+    image.write_bytes(b"history-png")
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="history source text",
+        operator="operator-history",
+        effective_date="2026-06-03",
+    )
+    update_generation_success(content_id, "history generated text", str(image))
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"service_type": "rate", "limit": "50"},
+    )
+
+    history = next(content for content in payload["contents"] if content["content_id"] == content_id)
+    assert history["source_text"] == "history source text"
+    assert history["generated_text"] == "history generated text"
+    assert history["output_artifacts"]
+    assert history["output_artifacts"][0]["artifact_role"] == "output_image"
+    assert history["output_artifacts"][0]["file_path"] == history["output_image"]
+
+
+def test_set_content_effective_archives_external_output_image(investment_env, tmp_path):
+    from pathlib import Path
+
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.records import get_content_record, list_output_files
+    from business.investment.storage import get_storage_dirs
+
+    image = tmp_path / "rate_card.png"
+    image.write_bytes(b"legacy-rate-card")
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="legacy image",
+        operator="operator-effective",
+        effective_date="2026-06-04",
+    )
+
+    set_content_effective(content_id, str(image), operator="operator-effective")
+
+    record = get_content_record(content_id)
+    artifacts = list_output_files(content_id)
+    assert record.status == Status.EFFECTIVE
+    assert record.output_image != str(image)
+    assert Path(record.output_image).is_file()
+    assert Path(record.output_image).read_bytes() == b"legacy-rate-card"
+    assert Path(record.output_image).resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
+    assert Path(record.output_image).name.startswith("output_image_rate_card_")
+    assert artifacts
+    assert artifacts[0]["artifact_role"] == "output_image"
+    assert artifacts[0]["file_path"] == record.output_image
 
 
 def test_list_content_records_filters_by_effective_date(investment_env):
@@ -2104,6 +2231,39 @@ def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, 
     assert [entry["cache_key"] for entry in payload["entries"]] == [cache_keys[2], cache_keys[1]]
     assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
     assert payload["market_dates"] == ["2026-05-29"]
+
+
+def test_cache_handler_without_market_date_returns_history_across_dates(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300500.SZ", "2026-05-28", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300500.SZ",
+        market_date="2026-05-28",
+        version_fingerprint="v1",
+        output_files=["/tmp/card-old.png"],
+    )
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.RATE, "RATE", "2026-06-03", "v1"),
+        service_type=ServiceType.RATE,
+        normalized_target="RATE",
+        market_date="2026-06-03",
+        version_fingerprint="v1",
+        output_files=["/tmp/rate-new.png"],
+    )
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20"},
+    )
+
+    assert {entry["market_date"] for entry in payload["entries"]} == {"2026-05-28", "2026-06-03"}
+    assert payload["market_dates"] == ["2026-06-03", "2026-05-28"]
+    assert payload["pagination"]["total"] == 2
 
 
 def test_request_records_api_filters_and_prefers_mobile_customer_display(investment_env, monkeypatch):
@@ -2575,6 +2735,32 @@ def test_user_service_crud_list_and_all_service_contract(investment_env):
     assert list_users(enabled=False, openid="crud")[0].enabled is False
 
 
+def test_user_services_normalize_all_when_all_or_every_business_service_selected(investment_env):
+    from business.investment.constants import ServiceType
+    from business.investment.user_service import create_user, get_user_by_openid, update_user
+
+    create_user(
+        "all-plus-specific",
+        allowed_services=["全部", "技术分析", "利率"],
+    )
+    all_plus_specific = get_user_by_openid("all-plus-specific")
+    assert all_plus_specific is not None
+    assert all_plus_specific.allowed_services == [ServiceType.ALL]
+
+    create_user(
+        "all-specific",
+        allowed_services=["技术分析", "利率", "转债"],
+    )
+    all_specific = get_user_by_openid("all-specific")
+    assert all_specific is not None
+    assert all_specific.allowed_services == [ServiceType.ALL]
+
+    update_user("all-specific", allowed_services=["技术分析", "利率"])
+    partial = get_user_by_openid("all-specific")
+    assert partial is not None
+    assert partial.allowed_services == [ServiceType.TECHNICAL_ANALYSIS, ServiceType.RATE]
+
+
 def test_user_service_excel_import_maps_fields_and_permissions_take_effect(investment_env):
     from business.investment.constants import ServiceType
     from business.investment.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
@@ -2666,6 +2852,62 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
     result = import_users_from_excel(payload)
     assert result.created == 1
     assert get_user_by_openid(rows[0].openid) is not None
+
+
+def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(investment_env):
+    from datetime import datetime
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    from business.investment.user_service import parse_users_excel
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["手机号", "服务权限", "授权开始日期", "授权结束日期"])
+    sheet.append(["13800138000", "利率", datetime(2026, 6, 1), datetime(2026, 12, 31)])
+    output = BytesIO()
+    workbook.save(output)
+
+    rows = parse_users_excel(output.getvalue())
+
+    assert rows[0].auth_start_at == datetime(2026, 5, 31, 16, 0)
+    assert rows[0].auth_end_at == datetime(2026, 12, 30, 16, 0)
+
+
+def test_user_service_excel_import_reports_invalid_date_with_row_and_field(investment_env):
+    from business.investment.user_service import parse_users_excel
+
+    payload = _xlsx_bytes(
+        ["手机号", "服务权限", "授权结束日期"],
+        [["13800138000", "利率", "2026-6-122"]],
+    )
+
+    with pytest.raises(ValueError) as error:
+        parse_users_excel(payload)
+
+    message = str(error.value)
+    assert "Excel row 2 invalid date field: auth_end_at" in message
+    assert "YYYY-MM-DD" in message
+    assert "unconverted data remains" not in message
+
+    invalid_month_payload = _xlsx_bytes(
+        ["手机号", "服务权限", "授权结束日期"],
+        [["13800138000", "利率", "2026-13-01"]],
+    )
+    with pytest.raises(ValueError) as month_error:
+        parse_users_excel(invalid_month_payload)
+
+    assert "Excel row 2 invalid date field: auth_end_at" in str(month_error.value)
+
+    short_number_payload = _xlsx_bytes(
+        ["手机号", "服务权限", "授权结束日期"],
+        [["13800138000", "利率", "1"]],
+    )
+    with pytest.raises(ValueError) as number_error:
+        parse_users_excel(short_number_payload)
+
+    assert "Excel row 2 invalid date field: auth_end_at" in str(number_error.value)
 
 
 def test_user_import_template_headers_are_parseable(investment_env):
@@ -3256,6 +3498,40 @@ def test_success_request_records_output_files_table(investment_env):
             "file_type": "image",
             "service_type": ServiceType.RATE,
         }
+    ]
+
+
+def test_success_request_archives_generated_images_and_documents(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, get_request_record, list_output_files, succeed_request_record
+    from business.investment.storage import get_storage_dirs
+
+    image = tmp_path / "rate_card.png"
+    report = tmp_path / "rate_report.md"
+    image.write_bytes(b"image-v1")
+    report.write_text("report-v1", encoding="utf-8")
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+
+    succeed_request_record(
+        request_id,
+        output_files=[str(image), str(report)],
+        elapsed_ms=3,
+        artifact_roles={str(image): "output_image", str(report): "markdown_report"},
+    )
+
+    record = get_request_record(request_id)
+    artifacts = list_output_files(request_id)
+    archive_root = get_storage_dirs()["generated"] / "archive"
+
+    assert len(record.output_files or []) == 2
+    assert all(Path(path).is_file() for path in record.output_files or [])
+    assert all(Path(path).resolve().is_relative_to(archive_root.resolve()) for path in record.output_files or [])
+    assert record.output_files != [str(image), str(report)]
+    assert Path(record.output_files[0]).read_bytes() == b"image-v1"
+    assert Path(record.output_files[1]).read_text(encoding="utf-8") == "report-v1"
+    assert [(item["file_path"], item["file_type"], item["artifact_role"]) for item in artifacts] == [
+        (record.output_files[0], "image", "output_image"),
+        (record.output_files[1], "markdown", "markdown_report"),
     ]
 
 
@@ -4247,10 +4523,12 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
+    from business.investment.cache_service import find_cache_entry_by_key
     from business.investment.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import list_request_records
     from business.investment.router import handle_text_message
+    from business.investment.storage import get_storage_dirs
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -4279,10 +4557,14 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
             ta_version="sha256:ta123456789012",
             renderer_version="sha256:renderer123456",
             template_version="sha256:template123456",
+            version_fingerprint="sha256:combined123456",
+            cache_key="technical_analysis:300502.SZ:2026-05-25:pytest",
         ),
     )
 
     record = list_request_records(limit=1)[0]
+    cache_entry = find_cache_entry_by_key("technical_analysis:300502.SZ:2026-05-25:pytest")
+    archive_root = get_storage_dirs()["generated"] / "archive"
     assert reply.success is True
     assert record.customer_name == "Alice"
     assert record.institution == "Inst A"
@@ -4304,11 +4586,18 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
             {"owner_id": record.request_id},
         ).mappings().all()
 
-    assert [(row["file_path"], row["artifact_role"]) for row in rows] == [
-        (str(card), "signal_card"),
-        (str(chart), "main_chart"),
-        (str(report), "markdown_report"),
+    artifact_paths = [row["file_path"] for row in rows]
+    assert [(Path(row["file_path"]).is_file(), row["artifact_role"]) for row in rows] == [
+        (True, "signal_card"),
+        (True, "main_chart"),
+        (True, "markdown_report"),
     ]
+    assert all(Path(path).resolve().is_relative_to(archive_root.resolve()) for path in artifact_paths)
+    assert artifact_paths != [str(card), str(chart), str(report)]
+    assert record.output_files == artifact_paths
+    assert cache_entry is not None
+    assert cache_entry.output_files == artifact_paths
+    assert reply.output_files == artifact_paths[:2]
     assert all(row["file_size"] > 0 for row in rows)
     assert all(str(row["file_hash"]).startswith("sha256:") for row in rows)
     assert [row["version_tag"] for row in rows] == [
@@ -4839,7 +5128,8 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
     assert reply.success is True
-    assert reply.output_files == [str(cached_card), str(cached_chart)]
+    assert reply.output_files != [str(cached_card), str(cached_chart)]
+    assert [Path(path).read_bytes() for path in reply.output_files] == [b"cached-card", b"cached-chart"]
     assert calls == []
     record = list_request_records(limit=1)[0]
     assert record.cache_hit is True
@@ -5174,7 +5464,11 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
     assert reply.success is True
-    assert reply.output_files == compatible_files[:2]
+    assert reply.output_files != compatible_files[:2]
+    assert [Path(path).read_bytes() for path in reply.output_files] == [
+        Path(compatible_files[0]).read_bytes(),
+        Path(compatible_files[1]).read_bytes(),
+    ]
     assert calls == []
     record = list_request_records(limit=1)[0]
     assert record.cache_hit is True
@@ -5405,7 +5699,11 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
     assert reply.success is True
-    assert reply.output_files == cached_files[:2]
+    assert reply.output_files != cached_files[:2]
+    assert [Path(path).read_bytes() for path in reply.output_files] == [
+        Path(cached_files[0]).read_bytes(),
+        Path(cached_files[1]).read_bytes(),
+    ]
     assert calls == []
     record = list_request_records(limit=1)[0]
     assert record.cache_hit is True
@@ -5455,7 +5753,11 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
     reply = handle_text_message("ok", "300502.SZ 2026-05-28 技术分析")
 
     assert reply.success is True
-    assert reply.output_files == cached_files[:2]
+    assert reply.output_files != cached_files[:2]
+    assert [Path(path).read_bytes() for path in reply.output_files] == [
+        Path(cached_files[0]).read_bytes(),
+        Path(cached_files[1]).read_bytes(),
+    ]
     assert calls == []
     record = list_request_records(limit=1)[0]
     assert record.cache_hit is True
@@ -7177,9 +7479,11 @@ def test_rate_direct_output_mode_uses_uploaded_png_without_ai_or_renderer(invest
 
     record = get_content_record(content_id)
     assert result.success is True
-    assert result.output_image == uploaded
+    assert result.output_image != uploaded
+    assert Path(result.output_image).is_file()
+    assert Path(result.output_image).read_bytes() == b"png"
     assert result.generated_text == ""
-    assert record.output_image == uploaded
+    assert record.output_image == result.output_image
     assert record.direct_output_mode is True
     assert record.status == Status.GENERATED
 
@@ -7381,6 +7685,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     from business.investment.constants import ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.records import get_content_record
+    from business.investment.storage import get_storage_dirs
 
     source_image = tmp_path / "uploaded-rate.png"
     source_image.write_bytes(b"\x89PNG\r\n\x1a\nimage")
@@ -7421,13 +7726,21 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
         lambda: fake_client,
     )
 
-    content_id = create_rate_content_draft(source_files=[str(source_image)], source_text="", operator="operator-a")
+    content_id = create_rate_content_draft(
+        source_files=[str(source_image)],
+        source_text="",
+        operator="operator-a",
+        effective_date="2026-05-25",
+    )
     result = generate_content(content_id)
 
     assert result.success is True
     assert Path(result.output_image).is_file()
     assert Path(result.output_image).stat().st_size > 0
-    assert result.output_image == str(output_dir / f"{ServiceType.RATE}_card.png")
+    assert Path(result.output_image).resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
+    assert Path(result.output_image).name.startswith("output_image_rate_2026-05-25_v1_")
+    assert Path(result.output_image).name.endswith(".png")
+    assert result.output_image != str(output_dir / f"{ServiceType.RATE}_card.png")
     assert get_content_record(content_id).output_image == result.output_image
     assert fake_client.calls
 
@@ -7494,8 +7807,11 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
     set_content_effective(second_id, operator="operator-b")
 
     assert get_content_record(first_id).status == Status.ARCHIVED
-    assert get_content_record(second_id).status == Status.EFFECTIVE
-    assert get_latest_effective_content(ServiceType.RATE).output_image == str(second_image)
+    second_record = get_content_record(second_id)
+    assert second_record.status == Status.EFFECTIVE
+    assert second_record.output_image != str(second_image)
+    assert Path(second_record.output_image).read_bytes() == b"second"
+    assert get_latest_effective_content(ServiceType.RATE).output_image == second_record.output_image
 
     regenerated = regenerate_content(
         second_id,
@@ -7505,10 +7821,11 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
 
     assert regenerated.success is True
     assert regenerated.generated_text == "second text regenerated"
-    assert regenerated.output_image == str(regenerated_image)
+    assert regenerated.output_image != str(regenerated_image)
+    assert Path(regenerated.output_image).read_bytes() == b"second-v2"
     updated_record = get_content_record(second_id)
     assert updated_record.generated_text == "second text regenerated"
-    assert updated_record.output_image == str(regenerated_image)
+    assert updated_record.output_image == regenerated.output_image
     assert updated_record.status == Status.GENERATED
 
 

@@ -96,6 +96,26 @@ def _output_image_version(service_type: ServiceType) -> str:
     return f"{renderer_version}|{template_version}"
 
 
+def _safe_output_segment(value: str, fallback: str = "item") -> str:
+    text = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value or "").strip()).strip("._-")
+    return text[:80] or fallback
+
+
+def _daily_content_render_output_path(item: dict[str, Any], service_type: ServiceType) -> str:
+    from .config_service import get_config
+
+    output_dir = Path(str(get_config("render.output_dir") or get_storage_dirs()["generated"]))
+    if not output_dir.is_absolute():
+        output_dir = Path.cwd() / output_dir
+    effective_date = _safe_output_segment(item.get("effective_date") or _today(), "unknown-date")
+    version = int(item.get("content_version") or 1)
+    content_id = _safe_output_segment(str(item.get("content_id") or "")[:8], "content")
+    service = _safe_output_segment(str(service_type), "service")
+    target_dir = output_dir / "daily-content" / service / effective_date
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return str(target_dir / f"{service}_{effective_date}_v{version}_{content_id}.png")
+
+
 def _load_source_files(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
@@ -267,22 +287,12 @@ def mark_generation_started(content_id: str, *, actor: Any | None = None) -> Dai
     return DailyContentResult(True, content_id=content_id)
 
 
-def update_generation_success(content_id: str, generated_text: str, output_image: str) -> None:
+def update_generation_success(content_id: str, generated_text: str, output_image: str) -> str:
     service_type: ServiceType | None = None
     operator = ""
     audit_actor = None
+    stored_output_image = output_image
     with connect() as conn:
-        conn.execute(
-            update(investment_daily_contents)
-            .where(investment_daily_contents.c.content_id == content_id)
-            .values(
-                generated_text=generated_text,
-                output_image=output_image,
-                status=str(Status.GENERATED),
-                error_message="",
-                updated_at=_now(),
-            )
-        )
         row = conn.execute(
             select(investment_daily_contents).where(investment_daily_contents.c.content_id == content_id)
         ).fetchone()
@@ -292,10 +302,32 @@ def update_generation_success(content_id: str, generated_text: str, output_image
         operator = item.get("operator") or ""
         audit_actor = _actor_from_content_item(item)
     if output_image and service_type is not None:
-        record_output_file(
+        from .artifact_service import archive_artifact_file
+
+        stored_output_image = archive_artifact_file(
             content_id,
             output_image,
-            "image",
+            "output_image",
+            service_type,
+            owner_type="content",
+        )
+    with connect() as conn:
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == content_id)
+            .values(
+                generated_text=generated_text,
+                output_image=stored_output_image,
+                status=str(Status.GENERATED),
+                error_message="",
+                updated_at=_now(),
+            )
+        )
+    if stored_output_image and service_type is not None:
+        record_output_file(
+            content_id,
+            stored_output_image,
+            None,
             service_type,
             artifact_role="output_image",
             version_tag=_output_image_version(service_type),
@@ -307,8 +339,9 @@ def update_generation_success(content_id: str, generated_text: str, output_image
         content_id,
         operator=operator,
         actor=audit_actor,
-        detail={"service_type": str(service_type) if service_type else "", "output_image": output_image},
+        detail={"service_type": str(service_type) if service_type else "", "output_image": stored_output_image},
     )
+    return stored_output_image
 
 
 def update_generation_failure(content_id: str, detail: str) -> None:
@@ -343,10 +376,10 @@ def _default_ai_generator(service_type: ServiceType, source_text: str, source_fi
     return generate_standard_text(service_type, source_text, source_files=source_files)
 
 
-def _default_renderer(service_type: ServiceType, generated_text: str):
+def _default_renderer(service_type: ServiceType, generated_text: str, output_path: str | None = None):
     from .render_service import RenderRequest, render_card
 
-    return render_card(RenderRequest(service_type=service_type, standard_text=generated_text))
+    return render_card(RenderRequest(service_type=service_type, standard_text=generated_text, output_path=output_path))
 
 
 def _validate_direct_output_png(output_image: str) -> str:
@@ -391,7 +424,7 @@ def generate_content(
         if detail:
             update_generation_failure(content_id, detail)
             return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.INPUT_ERROR, user_prompt=user_message(ErrorCode.INPUT_ERROR), detail=detail)
-        update_generation_success(content_id, "", output_image)
+        output_image = update_generation_success(content_id, "", output_image)
         return DailyContentResult(True, content_id=content_id, output_image=output_image, output_files=[output_image])
     if ai_generator is None:
         ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
@@ -403,14 +436,21 @@ def generate_content(
         update_generation_failure(content_id, detail)
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     generated_text = str(getattr(ai_result, "text", ""))
-    render_result = (renderer or _default_renderer)(service_type, generated_text)
+    if renderer is None:
+        render_result = _default_renderer(
+            service_type,
+            generated_text,
+            output_path=_daily_content_render_output_path(item, service_type),
+        )
+    else:
+        render_result = renderer(service_type, generated_text)
     if not render_result.success:
         detail = sanitize_sensitive_text(getattr(render_result, "detail", "render failed"))
         code = getattr(render_result, "error_code", None) or ErrorCode.IMAGE_GENERATION_FAILED
         update_generation_failure(content_id, detail)
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     output_image = str(getattr(render_result, "image_path", ""))
-    update_generation_success(content_id, generated_text, output_image)
+    output_image = update_generation_success(content_id, generated_text, output_image)
     return DailyContentResult(
         True,
         content_id=content_id,
@@ -453,6 +493,17 @@ def set_content_effective(
         service_type = item["service_type"]
         final_image = output_image or item["output_image"]
         normalized_effective_date = _normalize_effective_date(effective_date or item.get("effective_date"))
+        final_service_type = ServiceType(service_type)
+        if final_image:
+            from .artifact_service import archive_artifact_file
+
+            final_image = archive_artifact_file(
+                content_id,
+                final_image,
+                "output_image",
+                final_service_type,
+                owner_type="content",
+            )
         now = _now()
         archive_rows = conn.execute(
             select(investment_daily_contents.c.content_id).where(
@@ -488,7 +539,6 @@ def set_content_effective(
             )
         )
     if final_image:
-        final_service_type = ServiceType(service_type)
         record_output_file(
             content_id,
             final_image,
