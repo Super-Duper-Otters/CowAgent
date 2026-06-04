@@ -11,6 +11,13 @@ class ServiceType(StrEnum):
     ALL = "all"
 
 
+CUSTOMER_SERVICE_TYPES = (
+    ServiceType.TECHNICAL_ANALYSIS,
+    ServiceType.RATE,
+    ServiceType.CONVERTIBLE_BOND,
+)
+
+
 SERVICE_LABELS = {
     ServiceType.TECHNICAL_ANALYSIS: "技术分析",
     ServiceType.RATE: "利率",

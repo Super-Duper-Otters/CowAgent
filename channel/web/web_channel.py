@@ -2932,7 +2932,7 @@ class InvestmentUsersHandler:
         try:
             from business.investment.user_service import count_users, list_users
 
-            params = web.input(openid='', enabled='', keyword='', page='1', page_size='20')
+            params = web.input(openid='', enabled='', keyword='', keyword_field='all', page='1', page_size='20')
             page, page_size = _investment_safe_pagination(params, 20)
             enabled = None
             enabled_value = getattr(params, "enabled", "")
@@ -2940,11 +2940,13 @@ class InvestmentUsersHandler:
                 enabled = enabled_value in ("1", "true", "True", "yes")
             openid = getattr(params, "openid", "") or None
             keyword = getattr(params, "keyword", "") or None
-            total = count_users(enabled=enabled, openid=openid, keyword=keyword)
+            keyword_field = getattr(params, "keyword_field", "") or "all"
+            total = count_users(enabled=enabled, openid=openid, keyword=keyword, keyword_field=keyword_field)
             users = list_users(
                 enabled=enabled,
                 openid=openid,
                 keyword=keyword,
+                keyword_field=keyword_field,
                 page=page,
                 page_size=page_size,
             )
@@ -3119,7 +3121,7 @@ class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.investment.records import list_content_records
+            from business.investment.records import list_content_records, list_output_files
             from business.investment.constants import normalize_service, ServiceType
             from business.investment.daily_content import get_latest_effective_content
             from business.investment.records import get_content_record
@@ -3146,6 +3148,7 @@ class InvestmentDailyContentHandler:
                     current_effective = record.__dict__ | {
                         "service_type": str(record.service_type),
                         "status": str(record.status),
+                        "output_artifacts": list_output_files(record.content_id),
                     }
             return _investment_json_response({
                 "status": "success",
@@ -3153,6 +3156,7 @@ class InvestmentDailyContentHandler:
                 "contents": [content.__dict__ | {
                     "service_type": str(content.service_type),
                     "status": str(content.status),
+                    "output_artifacts": list_output_files(content.content_id),
                 } for content in contents],
             })
         except Exception as e:

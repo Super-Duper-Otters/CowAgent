@@ -1,5 +1,6 @@
 # encoding:utf-8
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -10,7 +11,7 @@ from zipfile import ZipFile
 
 from sqlalchemy import func, or_, insert, select, update
 
-from .constants import ErrorCode, ServiceType, normalize_service, user_message
+from .constants import CUSTOMER_SERVICE_TYPES, ErrorCode, SERVICE_LABELS, ServiceType, normalize_service, user_message
 from .db import connect, row_to_dict
 from .schema import investment_users
 
@@ -128,6 +129,22 @@ def _beijing_today_start_utc_naive() -> datetime:
     return datetime.combine(beijing_now.date(), datetime.min.time()) - timedelta(hours=8)
 
 
+_IMPORT_DATE_RE = re.compile(r"^\s*(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?(?:[ T].*)?\s*$")
+
+
+def _parse_excel_serial_date(value: Any) -> datetime | None:
+    if isinstance(value, (int, float)):
+        serial = float(value)
+    else:
+        text = str(value).strip()
+        if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+            return None
+        serial = float(text)
+    if serial < 20000 or serial > 60000:
+        return None
+    return datetime(1899, 12, 30) + timedelta(days=serial)
+
+
 def _parse_beijing_date_start(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -136,10 +153,30 @@ def _parse_beijing_date_start(value: Any) -> datetime | None:
     text = str(value).strip()
     if not text:
         return None
-    normalized = text.replace("/", "-")
-    if len(normalized) >= 10 and normalized[4:5] == "-" and normalized[7:8] == "-":
-        return _beijing_start_to_utc_naive(normalized)
-    return _parse_datetime(text)
+    serial_date = _parse_excel_serial_date(value)
+    if serial_date is not None:
+        return _beijing_start_to_utc_naive(serial_date.date().isoformat())
+    match = _IMPORT_DATE_RE.match(text)
+    if match:
+        year, month, day = (int(part) for part in match.groups())
+        return _beijing_start_to_utc_naive(datetime(year, month, day).date().isoformat())
+    return None
+
+
+def _parse_required_import_date(value: Any, row_number: int, field: str) -> datetime:
+    try:
+        parsed = _parse_beijing_date_start(value)
+    except ValueError as exc:
+        raise ValueError(f"Excel row {row_number} invalid date field: {field}; expected YYYY-MM-DD") from exc
+    if parsed is None:
+        raise ValueError(f"Excel row {row_number} invalid date field: {field}; expected YYYY-MM-DD")
+    return parsed
+
+
+def _parse_optional_import_date(value: Any, row_number: int, field: str) -> datetime | None:
+    if str(value or "").strip() == "":
+        return None
+    return _parse_required_import_date(value, row_number, field)
 
 
 def _parse_enabled(value: Any) -> bool:
@@ -162,8 +199,15 @@ def _encode_services(values: Iterable[str | ServiceType] | str) -> str:
         raw = [item.strip() for item in values.replace("，", ",").split(",") if item.strip()]
     else:
         raw = list(values)
-    services = [normalize_service(value) for value in raw]
+    services = []
+    for value in raw:
+        service = normalize_service(value)
+        if service not in services:
+            services.append(service)
     if not services:
+        services = [ServiceType.ALL]
+    customer_services = set(CUSTOMER_SERVICE_TYPES)
+    if ServiceType.ALL in services or customer_services.issubset(set(services)):
         services = [ServiceType.ALL]
     return json.dumps([str(service) for service in services], ensure_ascii=False)
 
@@ -389,7 +433,20 @@ def delete_user(openid: str, *, actor: Any | None = None, reason: str = "") -> N
         conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
 
 
-def _user_conditions(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None) -> list:
+def _service_keyword_conditions(keyword: str):
+    keyword_text = str(keyword or "").strip()
+    if not keyword_text:
+        return None
+    lowered = keyword_text.lower()
+    conditions = [investment_users.c.allowed_services.like(f"%{keyword_text}%")]
+    for service, label in SERVICE_LABELS.items():
+        service_value = str(service)
+        if lowered in service_value.lower() or keyword_text in str(label):
+            conditions.append(investment_users.c.allowed_services.like(f"%{service_value}%"))
+    return or_(*conditions)
+
+
+def _user_conditions(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None, keyword_field: str | None = None) -> list:
     conditions = []
     if enabled is not None:
         conditions.append(investment_users.c.enabled == (1 if enabled else 0))
@@ -398,20 +455,34 @@ def _user_conditions(enabled: bool | None = None, openid: str | None = None, key
     keyword_text = str(keyword or "").strip()
     if keyword_text:
         pattern = f"%{keyword_text}%"
-        conditions.append(
-            or_(
-                investment_users.c.openid.like(pattern),
-                investment_users.c.name.like(pattern),
-                investment_users.c.institution.like(pattern),
-                investment_users.c.mobile.like(pattern),
+        field = str(keyword_field or "all").strip().lower()
+        field_map = {
+            "openid": investment_users.c.openid,
+            "name": investment_users.c.name,
+            "institution": investment_users.c.institution,
+            "mobile": investment_users.c.mobile,
+        }
+        if field in field_map:
+            conditions.append(field_map[field].like(pattern))
+        elif field == "service":
+            conditions.append(_service_keyword_conditions(keyword_text))
+        else:
+            service_condition = _service_keyword_conditions(keyword_text)
+            conditions.append(
+                or_(
+                    investment_users.c.openid.like(pattern),
+                    investment_users.c.name.like(pattern),
+                    investment_users.c.institution.like(pattern),
+                    investment_users.c.mobile.like(pattern),
+                    service_condition,
+                )
             )
-        )
     return conditions
 
 
-def count_users(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None) -> int:
+def count_users(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None, keyword_field: str | None = None) -> int:
     stmt = select(func.count()).select_from(investment_users)
-    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword)
+    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword, keyword_field=keyword_field)
     if conditions:
         stmt = stmt.where(*conditions)
     with connect() as conn:
@@ -422,11 +493,12 @@ def list_users(
     enabled: bool | None = None,
     openid: str | None = None,
     keyword: str | None = None,
+    keyword_field: str | None = None,
     page: int | None = None,
     page_size: int | None = None,
 ) -> list[User]:
     stmt = select(investment_users)
-    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword)
+    conditions = _user_conditions(enabled=enabled, openid=openid, keyword=keyword, keyword_field=keyword_field)
     if conditions:
         stmt = stmt.where(*conditions)
     stmt = stmt.order_by(investment_users.c.id.desc())
@@ -534,8 +606,8 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
                 mobile=mobile,
                 enabled=_parse_enabled(_cell(row, indexes, "enabled")),
                 allowed_services=allowed_services,
-                auth_start_at=_parse_beijing_date_start(_cell(row, indexes, "auth_start_at")) or _beijing_today_start_utc_naive(),
-                auth_end_at=_parse_beijing_date_start(auth_end_at),
+                auth_start_at=_parse_optional_import_date(_cell(row, indexes, "auth_start_at"), row_number, "auth_start_at") or _beijing_today_start_utc_naive(),
+                auth_end_at=_parse_required_import_date(auth_end_at, row_number, "auth_end_at"),
                 remark=_cell(row, indexes, "remark"),
                 openid_generated=openid_generated,
             )
