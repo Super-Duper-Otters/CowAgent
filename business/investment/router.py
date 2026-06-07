@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .config_service import get_config, sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, user_message
-from .daily_content import get_latest_effective_content
+from .executors.daily_content_executor import get_daily_content_business
 from .records import create_request_record, fail_request_record, succeed_request_record
 from .user_service import verify_permission, verify_user_access
 
@@ -42,9 +42,9 @@ class BusinessReply:
 
 
 def parse_route(raw_input: str) -> RouteResult:
-    from .skill_registry import match_investment_skill
+    from .business_registry import match_business
 
-    matched = match_investment_skill(raw_input)
+    matched = match_business(raw_input)
     if matched is not None:
         return RouteResult(True, matched.service_type, raw_input, matched.target_text, matched.skill_key)
     return RouteResult(False, ServiceType.UNMATCHED, raw_input, error_code=ErrorCode.INPUT_ERROR)
@@ -202,7 +202,7 @@ def handle_text_message(
 
     if route.service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
         request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
-        content = get_latest_effective_content(route.service_type)
+        content = get_daily_content_business(route.service_type)
         if not content.success:
             code = content.error_code or ErrorCode.NO_CONTENT
             fail_request_record(request_id, code, content.user_prompt, content.detail, elapsed())
@@ -237,9 +237,9 @@ def handle_text_message(
 
     if route.service_type == ServiceType.TECHNICAL_ANALYSIS:
         from .job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
-        from .technical_analysis import prepare_technical_analysis_cache_context
+        from .executors.technical_analysis_executor import prepare_technical_analysis_business_context
 
-        cache_context = prepare_technical_analysis_cache_context(raw_input, route.target_text)
+        cache_context = prepare_technical_analysis_business_context(raw_input, route.target_text)
         if cache_context.cache_key:
             job = start_cache_job_if_absent(
                 openid,
@@ -266,9 +266,9 @@ def handle_text_message(
         request_id = job.record.request_id
         try:
             if technical_analysis_handler is None:
-                from .technical_analysis import run_technical_analysis
+                from .executors.technical_analysis_executor import run_technical_analysis_business
 
-                result = run_technical_analysis(openid, raw_input, route.target_text, cache_context=cache_context)
+                result = run_technical_analysis_business(openid, raw_input, route.target_text, cache_context=cache_context)
             else:
                 result = technical_analysis_handler(openid, raw_input, route.target_text)
             if not result.success:

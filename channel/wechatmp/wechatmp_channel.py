@@ -137,11 +137,11 @@ class WechatMPChannel(ChatChannel):
     def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
         if context.type == ContextType.TEXT:
             try:
-                from business.investment.router import handle_text_message
+                from business.investment.message_handler import handle_inbound_message
 
                 msg = context.get("msg")
                 openid = getattr(msg, "from_user_id", context.get("session_id", ""))
-                business_reply = handle_text_message(openid, context.content)
+                business_reply = handle_inbound_message(openid, context.content)
                 if business_reply.handled:
                     output_files = [path for path in business_reply.output_files if path]
                     if business_reply.success and output_files:
