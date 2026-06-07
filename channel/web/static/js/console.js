@@ -441,6 +441,7 @@ const INVEST_STATUS_LABELS = {
     generate_failed: '生成失败',
     effective: '已生效',
     archived: '已归档',
+    invalidated: '已失效',
 };
 
 const INVEST_CONTENT_POLL_INTERVAL_MS = 2000;
@@ -472,7 +473,7 @@ let investmentRecordsState = {
     filters: {
         requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
         contents: {page: '1', page_size: '80'},
-        cache: {page: '1', page_size: '120', market_date: ''},
+        cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()},
         audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
     },
     pagination: {
@@ -581,6 +582,7 @@ const INVEST_CONTENT_HISTORY_DATE_IDS = [
     'invest-content-history-effective-date-rate',
     'invest-content-history-effective-date-convertible_bond',
 ];
+let investmentCacheFilterRefreshTimer = null;
 
 function investmentContentEl(id) {
     return document.getElementById(id);
@@ -763,20 +765,20 @@ function investmentTokenToTailwind(token, tokens) {
         'investment-records-pagination-actions': 'flex flex-wrap items-center gap-2',
         'investment-records-page-size': 'flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400',
         'investment-records-table-shell': 'h-full overflow-auto rounded-lg bg-white dark:bg-[#1A1A1A]',
-        'investment-generated-content-home': 'grid grid-cols-1 md:grid-cols-3 gap-3',
-        'investment-generated-content-entry': 'flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 text-left transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-[#1A1A1A] dark:hover:bg-white/5',
-        'investment-generated-entry-icon': 'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-500 dark:bg-primary-500/10',
-        'investment-generated-entry-main': 'min-w-0 flex-1 [&_strong]:block [&_strong]:text-sm [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200 [&_span]:block [&_span]:truncate [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400',
-        'investment-generated-entry-meta': 'hidden text-right text-xs text-slate-400 dark:text-slate-500 lg:grid',
-        'investment-generated-content-detail': 'grid gap-3',
-        'investment-generated-content-detail-header': 'flex flex-col sm:flex-row sm:items-center gap-3',
-        'investment-generated-content-detail-title': 'flex items-center gap-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-slate-700 dark:[&_h3]:text-slate-200',
-        'investment-generated-content-detail-count': INVEST_TW.badge,
-        'investment-generated-content-entries': 'overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-white/10 dark:bg-[#1A1A1A]',
-        'investment-generated-content-header': 'hidden grid-cols-[1fr_110px_90px_160px_110px_90px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400 lg:grid',
-        'investment-generated-content-row': 'grid grid-cols-1 lg:grid-cols-[1fr_90px] border-b border-slate-100 last:border-b-0 dark:border-white/5',
-        'investment-generated-content-row-main': 'grid grid-cols-1 gap-2 px-3 py-3 text-left text-sm text-slate-700 dark:text-slate-300 lg:grid-cols-[1fr_110px_90px_160px_110px]',
-        'investment-generated-target': 'font-medium text-slate-700 dark:text-slate-200',
+        'investment-generated-content-home': '',
+        'investment-generated-content-entry': '',
+        'investment-generated-entry-icon': '',
+        'investment-generated-entry-main': '',
+        'investment-generated-entry-meta': '',
+        'investment-generated-content-detail': '',
+        'investment-generated-content-detail-header': '',
+        'investment-generated-content-detail-title': '',
+        'investment-generated-content-detail-count': '',
+        'investment-generated-content-entries': '',
+        'investment-generated-content-header': '',
+        'investment-generated-content-row': '',
+        'investment-generated-content-row-main': '',
+        'investment-generated-target': '',
         'investment-cache-category': 'grid gap-2',
         'investment-cache-category-grid': 'grid grid-cols-1 md:grid-cols-3 gap-3',
         'investment-cache-date-group': 'grid gap-3',
@@ -1256,9 +1258,156 @@ function investmentClearDatePicker(id) {
     investmentCloseDatePickers();
 }
 
+function investmentTimePickerInput(id) {
+    return document.getElementById(id);
+}
+
+function investmentTimePickerLabel(id) {
+    return document.getElementById(`${id}-time-label`);
+}
+
+function investmentTimePickerPanel(id) {
+    return document.getElementById(`${id}-time-panel`);
+}
+
+function investmentNormalizeTimeValue(value) {
+    const match = String(value || '').match(/^(\d{1,2}):(\d{1,2})$/);
+    if (!match) return '00:00';
+    const hour = Math.max(0, Math.min(23, Number(match[1]) || 0));
+    const minute = Math.max(0, Math.min(59, Number(match[2]) || 0));
+    return `${investmentPadDatePart(hour)}:${investmentPadDatePart(minute)}`;
+}
+
+function investmentRenderTimeOptions(max, selected) {
+    const values = [];
+    for (let value = 0; value <= max; value += 1) {
+        const text = investmentPadDatePart(value);
+        values.push(`<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`);
+    }
+    return values.join('');
+}
+
+function investmentRenderTimeControl(id, value = '00:00', options = {}) {
+    const attrs = options.attrs || '';
+    const safeId = escapeHtml(id);
+    const normalized = investmentNormalizeTimeValue(value);
+    return `<div class="investment-time-control" data-investment-time-control="${safeId}">
+        <input id="${safeId}" type="hidden" value="${escapeHtml(normalized)}" ${attrs}>
+        <button class="investment-time-value-button" type="button" onclick="investmentToggleTimePicker('${safeId}')" aria-haspopup="dialog" aria-expanded="false">
+            <span id="${safeId}-time-label">${escapeHtml(normalized)}</span>
+        </button>
+        <button class="investment-time-picker-button" type="button" onclick="investmentToggleTimePicker('${safeId}')" title="选择时间" aria-label="选择时间"><i class="far fa-clock"></i></button>
+        <div id="${safeId}-time-panel" class="investment-time-popover hidden"></div>
+    </div>`;
+}
+
+function investmentRenderTimePickerPanel(id) {
+    const [hour, minute] = investmentNormalizeTimeValue(investmentTimePickerInput(id)?.value || '00:00').split(':');
+    return `<div class="investment-time-picker">
+        <div class="investment-time-picker-head"><strong>选择时间</strong><span>北京时间</span></div>
+        <div class="investment-time-select-row">
+            <label><span>时</span><select id="${id}-hour-select" class="investment-time-select">${investmentRenderTimeOptions(23, hour)}</select></label>
+            <span class="investment-time-separator">:</span>
+            <label><span>分</span><select id="${id}-minute-select" class="investment-time-select">${investmentRenderTimeOptions(59, minute)}</select></label>
+        </div>
+        <div class="investment-time-picker-foot">
+            <button type="button" onclick="investmentSetTimePickerValue('${id}', '00:00')">00:00</button>
+            <button type="button" onclick="investmentSelectTime('${id}')">确定</button>
+        </div>
+    </div>`;
+}
+
+function investmentCloseTimePickers(exceptId = '') {
+    document.querySelectorAll('.investment-time-popover').forEach(panel => {
+        if (exceptId && panel.id === `${exceptId}-time-panel`) return;
+        panel.classList.add('hidden');
+    });
+}
+
+function investmentToggleTimePicker(id) {
+    const panel = investmentTimePickerPanel(id);
+    const input = investmentTimePickerInput(id);
+    if (!panel || !input || input.disabled) return;
+    const shouldOpen = panel.classList.contains('hidden');
+    investmentCloseDatePickers();
+    investmentCloseTimePickers(id);
+    if (!shouldOpen) {
+        panel.classList.add('hidden');
+        return;
+    }
+    panel.innerHTML = investmentRenderTimePickerPanel(id);
+    panel.classList.remove('hidden');
+}
+
+function investmentSetTimePickerValue(id, value) {
+    const input = investmentTimePickerInput(id);
+    const label = investmentTimePickerLabel(id);
+    if (!input || !label) return;
+    const normalized = investmentNormalizeTimeValue(value);
+    input.value = normalized;
+    label.textContent = normalized;
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+    investmentCloseTimePickers();
+}
+
+function investmentSelectTime(id) {
+    const hour = document.getElementById(`${id}-hour-select`)?.value || '00';
+    const minute = document.getElementById(`${id}-minute-select`)?.value || '00';
+    investmentSetTimePickerValue(id, `${hour}:${minute}`);
+}
+
+function investmentAddDays(dateValue, days) {
+    const parts = investmentDateParts(dateValue || investmentTodayDate());
+    if (!parts) return investmentTodayDate();
+    const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + Number(days || 0)));
+    return investmentFormatDateValue(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+function investmentDefaultExpiresDate() {
+    const effectiveDate = document.getElementById('invest-content-effective-date')?.value || investmentTodayDate();
+    return investmentAddDays(effectiveDate, 1);
+}
+
+function syncInvestmentDefaultExpiresAt() {
+    const enabled = document.getElementById('invest-content-expires-enabled')?.checked === true;
+    if (!enabled) return;
+    investmentSetDatePickerValue('invest-content-expires-date', investmentDefaultExpiresDate());
+    investmentSetTimePickerValue('invest-content-expires-time', '00:00');
+}
+
+function toggleInvestmentExpiresAt(checked) {
+    const enabled = checked === true;
+    const fields = document.getElementById('invest-content-expires-fields');
+    const hint = document.getElementById('invest-content-expires-hint');
+    const disabled = !enabled;
+    fields?.classList.toggle('disabled', disabled);
+    fields?.classList.toggle('hidden', disabled);
+    fields?.querySelectorAll('input, button').forEach(input => {
+        input.disabled = disabled;
+    });
+    if (hint) hint.textContent = enabled ? '指定失效时间' : '不指定失效时间';
+    if (enabled) {
+        syncInvestmentDefaultExpiresAt();
+    }
+}
+
+function changeInvestmentExpiresMode() {
+    toggleInvestmentExpiresAt(document.getElementById('invest-content-expires-enabled')?.checked === true);
+}
+
+function investmentContentExpiresAtValue() {
+    const enabled = document.getElementById('invest-content-expires-enabled')?.checked === true;
+    if (!enabled) return '';
+    const dateValue = document.getElementById('invest-content-expires-date')?.value || investmentDefaultExpiresDate();
+    const timeValue = document.getElementById('invest-content-expires-time')?.value || '00:00';
+    return `${dateValue}T${timeValue}`;
+}
+
 document.addEventListener('click', event => {
     if (event.target.closest('.investment-date-control')) return;
+    if (event.target.closest('.investment-time-control')) return;
     investmentCloseDatePickers();
+    investmentCloseTimePickers();
 });
 
 function investmentCompactText(value, max = 60) {
@@ -1329,7 +1478,7 @@ function investmentEncodedRecord(record) {
 
 function investmentStatusClass(status) {
     if (status === 'success' || status === 'generated' || status === 'effective') return 'ok';
-    if (status === 'failed' || status === 'generate_failed') return 'fail';
+    if (status === 'failed' || status === 'generate_failed' || status === 'invalidated') return 'fail';
     if (status === 'generating') return 'pending';
     return '';
 }
@@ -2270,6 +2419,7 @@ function renderInvestmentCurrentEffective(record, serviceType) {
                     <div><span>ID</span><strong>${escapeHtml((record?.content_id || '-').slice(0, 8))}</strong></div>
                     <div><span>生效日期</span><strong>${escapeHtml(record?.effective_date || '-')}</strong></div>
                     <div><span>生效时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record?.effective_at) || '-')}</strong></div>
+                    <div><span>失效时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record?.expires_at) || '不失效')}</strong></div>
                     <div><span>操作人</span><strong>${escapeHtml(record?.operator || '-')}</strong></div>
                     <div><span>输出文件</span><strong>${record?.output_image ? investmentFileLinks([record.output_image]) : '-'}</strong></div>
                 </div>
@@ -2283,21 +2433,91 @@ function renderInvestmentContentUploadPanel(serviceType) {
         <section class="investment-daily-upload-panel">
             <div class="investment-panel-title"><i class="fas fa-upload"></i><span>${isCb ? '上传转债资料' : '上传利率资料'}</span></div>
             <input type="hidden" id="invest-content-service" value="${serviceType}">
-            <div class="investment-grid cols-2">
-                ${investmentField('资料文本', 'invest-content-source-text', '', 'textarea')}
-                ${isCb ? investmentField('段子/补充文本', 'invest-content-joke-text', '', 'textarea') : investmentField('备注/补充文本', 'invest-content-joke-text-placeholder', '', 'textarea')}
+            <input type="hidden" id="invest-content-upload-mode" value="image">
+            <div class="investment-daily-upload-stage image-mode" id="invest-content-upload-stage">
+                <div class="investment-upload-mode-bar">
+                    ${investmentSwitch('纯文字生成', 'invest-content-text-mode-toggle', false, {className: 'investment-upload-mode-switch', attrs: `onchange="switchInvestmentUploadMode(this.checked ? 'text' : 'image')"`})}
+                </div>
+                <div class="investment-upload-image-mode">
+                    <label class="investment-upload-dropzone" for="invest-content-files">
+                        <input id="invest-content-files" type="file" accept="image/*" multiple onchange="updateInvestmentUploadFileSummary()">
+                        <span class="investment-upload-plus"><i class="fas fa-plus"></i></span>
+                        <strong>上传图片</strong>
+                        <small id="invest-content-file-summary">点击此区域选择利率/转债资料图片</small>
+                        <span id="invest-content-file-preview" class="investment-upload-preview"></span>
+                    </label>
+                    <label class="investment-field investment-upload-supplement">
+                        <span>${isCb ? '段子/补充文本（可选）' : '补充文本（可选）'}</span>
+                        <input id="invest-content-supplement-text" type="text" placeholder="${isCb ? '可输入转债段子或补充说明，参与生成' : '可输入补充说明，参与生成'}">
+                    </label>
+                </div>
+                <div class="investment-upload-text-mode">
+                    <label class="investment-field">
+                        <span>${isCb ? '转债段子/文字资料' : '文字资料'}</span>
+                        <textarea id="invest-content-source-text" placeholder="${isCb ? '输入转债段子或完整文字资料，用于生成转债结果图片' : '输入利率文字资料，用于生成利率结果图片'}"></textarea>
+                    </label>
+                </div>
             </div>
             <div class="investment-grid cols-2">
-                <label class="investment-field"><span>资料文件</span><input id="invest-content-files" type="file" multiple></label>
-                <label class="investment-field"><span>生效日期</span>${investmentRenderDateControl('invest-content-effective-date', investmentTodayDate(), {placeholder: '选择生效日期'})}</label>
-                ${!isCb ? investmentSwitch('直接上传最终 PNG', 'invest-content-direct-output-mode', false, {className: 'investment-direct-output-check'}) : ''}
+                <div class="investment-field investment-expires-toggle-field">
+                    <span>失效设置</span>
+                    <div class="investment-expires-toggle-row">
+                        ${investmentSwitch('指定失效时间', 'invest-content-expires-enabled', false, {className: 'investment-expires-switch', attrs: 'onchange="toggleInvestmentExpiresAt(this.checked)"'})}
+                        <small id="invest-content-expires-hint">不指定失效时间</small>
+                    </div>
+                </div>
+            </div>
+            <div id="invest-content-expires-fields" class="investment-grid cols-2 investment-expires-fields disabled hidden">
+                <label class="investment-field"><span>失效日期</span>${investmentRenderDateControl('invest-content-expires-date', investmentAddDays(investmentTodayDate(), 1), {placeholder: '选择失效日期'})}</label>
+                <label class="investment-field"><span>失效时间</span>${investmentRenderTimeControl('invest-content-expires-time', '00:00')}</label>
             </div>
             <div class="investment-actions">
-                ${investmentButtonIfCan('content.upload', 'fa-file-circle-plus', '保存草稿', 'createInvestmentContent(false)', 'primary')}
-                ${investmentButtonIfCan('content.upload', 'fa-wand-magic-sparkles', '保存并生成', 'createInvestmentContent(true)', 'primary')}
+                ${investmentButtonIfCan('content.upload', 'fa-wand-magic-sparkles', '生成', 'createInvestmentContent(true)', 'primary')}
             </div>
             <div id="invest-content-action-result" class="investment-muted"></div>
         </section>`;
+}
+
+async function investmentShouldAutoEffectiveAfterGenerate(serviceType) {
+    const label = serviceType === 'convertible_bond' ? '转债' : '利率';
+    const response = await investmentFetchJson(`/api/investment/daily-content?service_type=${encodeURIComponent(serviceType)}&effective_date=${encodeURIComponent(investmentTodayDate())}&limit=1`);
+    const records = Array.isArray(response.contents) ? response.contents : [];
+    if (records.length > 0) return false;
+    const confirmed = window.confirm(`今日还没有${label}内容记录，是否使用本次生成结果作为 ${investmentTodayDate()} 生效${label}图？`);
+    return confirmed ? true : null;
+}
+
+function switchInvestmentUploadMode(mode) {
+    const targetMode = mode === 'text' ? 'text' : 'image';
+    const modeInput = document.getElementById('invest-content-upload-mode');
+    const stage = document.getElementById('invest-content-upload-stage');
+    const toggle = document.getElementById('invest-content-text-mode-toggle');
+    if (modeInput) modeInput.value = targetMode;
+    if (toggle) toggle.checked = targetMode === 'text';
+    if (stage) {
+        stage.classList.toggle('text-mode', targetMode === 'text');
+        stage.classList.toggle('image-mode', targetMode !== 'text');
+    }
+    if (targetMode === 'text') {
+        document.getElementById('invest-content-source-text')?.focus();
+    }
+}
+
+function updateInvestmentUploadFileSummary() {
+    const input = document.getElementById('invest-content-files');
+    const summary = document.getElementById('invest-content-file-summary');
+    const preview = document.getElementById('invest-content-file-preview');
+    const files = Array.from(input?.files || []);
+    if (!summary) return;
+    summary.textContent = files.length
+        ? files.map(file => file.name).join('、')
+        : '点击此区域选择利率/转债资料图片';
+    if (!preview) return;
+    preview.innerHTML = files.slice(0, 4).map(file => {
+        if (!file.type.startsWith('image/')) return '';
+        const url = URL.createObjectURL(file);
+        return `<span class="investment-upload-thumb"><img src="${url}" alt="${escapeHtml(file.name)}"></span>`;
+    }).join('');
 }
 
 async function refreshInvestmentContentRecords(serviceType, filters = {}) {
@@ -2348,7 +2568,7 @@ function renderInvestmentImageFlow(record) {
 function renderInvestmentContentHistoryGroups(records) {
     if (!records.length) return '<div class="investment-empty">暂无内容记录</div>';
     return investmentTableWrap(`<table class="investment-table investment-history-table">
-                <thead><tr><th>ID</th><th>服务</th><th>版本</th><th>状态</th><th>模式</th><th>操作人</th><th>生成时间</th><th>原始资料</th><th>生成内容</th><th>输出</th><th>产物</th><th>动作</th></tr></thead>
+                <thead><tr><th>ID</th><th>服务</th><th>版本</th><th>状态</th><th>模式</th><th>操作人</th><th>生成时间</th><th>原始资料</th><th>生成内容</th><th>输出</th><th>产物</th><th>操作</th></tr></thead>
                 <tbody>${records.map(record => {
                     const serviceType = record.service_type || '';
                     const canGenerate = record.status !== 'generating';
@@ -2366,7 +2586,7 @@ function renderInvestmentContentHistoryGroups(records) {
                             <span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span>
                             ${warning ? `<div class="investment-history-warning">${warning}</div>` : ''}
                         </td>
-                        <td>${record.direct_output_mode ? '<span class="investment-badge ok">直传 PNG</span>' : '<span class="investment-muted-inline">AI+渲染</span>'}</td>
+                        <td><span class="investment-muted-inline">AI+渲染</span></td>
                         <td>${escapeHtml(record.operator || '')}</td>
                         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at) || '')}</td>
                         <td>${investmentHistoryHoverText(record.source_text, 24)}</td>
@@ -2399,7 +2619,7 @@ function renderInvestmentContentTable(records) {
             <td>${escapeHtml(record.effective_date || '-')}</td>
             <td>v${escapeHtml(record.content_version || 1)}</td>
             <td><span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span></td>
-            <td>${record.direct_output_mode ? '<span class="investment-badge ok">直传 PNG</span>' : '<span class="investment-muted-inline">AI+渲染</span>'}</td>
+            <td><span class="investment-muted-inline">AI+渲染</span></td>
             <td>${record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<span class="investment-muted-inline">未生成</span>'}</td>
             <td>${investmentCompactText(record.status_warning || record.error_message || '', 42)}</td>
             <td>${escapeHtml(investmentFormatBeijingTime(record.created_at))}</td>
@@ -2426,9 +2646,10 @@ function showInvestmentContentDetail(encoded) {
             <div><span>操作人</span><strong>${escapeHtml(record.operator || '-')}</strong></div>
             <div><span>生效日期</span><strong>${escapeHtml(record.effective_date || '-')}</strong></div>
             <div><span>版本</span><strong>v${escapeHtml(record.content_version || 1)}</strong></div>
-            <div><span>模式</span><strong>${record.direct_output_mode ? '直接 PNG' : 'AI+渲染'}</strong></div>
+            <div><span>模式</span><strong>AI+渲染</strong></div>
             <div><span>创建时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record.created_at) || '-')}</strong></div>
             <div><span>生效时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record.effective_at) || '-')}</strong></div>
+            <div><span>失效时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record.expires_at) || '不失效')}</strong></div>
             <div><span>归档时间</span><strong>${escapeHtml(investmentFormatBeijingTime(record.archived_at) || '-')}</strong></div>
             <div><span>输出图片</span><strong>${record.output_image ? investmentFileLinks([record.output_image]) : '-'}</strong></div>
         </div>
@@ -2458,27 +2679,29 @@ function showInvestmentContentDetail(encoded) {
 async function createInvestmentContent(generateAfterCreate) {
     const serviceType = document.getElementById('invest-content-service').value;
     const result = document.getElementById('invest-content-action-result');
-    if (result) result.textContent = generateAfterCreate ? '保存并启动生成中...' : '保存草稿中...';
+    if (result) result.textContent = generateAfterCreate ? '生成中...' : '保存中...';
+    const autoEffective = generateAfterCreate ? await investmentShouldAutoEffectiveAfterGenerate(serviceType) : false;
+    if (autoEffective === null) return;
+    const uploadMode = document.getElementById('invest-content-upload-mode')?.value || 'image';
+    const sourceText = uploadMode === 'text'
+        ? document.getElementById('invest-content-source-text')?.value || ''
+        : document.getElementById('invest-content-supplement-text')?.value || '';
     const form = new FormData();
     form.append('service_type', serviceType);
-    form.append('source_text', document.getElementById('invest-content-source-text').value);
-    const joke = document.getElementById('invest-content-joke-text');
-    if (joke) form.append('joke_text', joke.value);
+    form.append('source_text', sourceText);
     form.append('operator', investmentCurrentAdminUsername());
-    const effectiveDate = document.getElementById('invest-content-effective-date');
-    if (effectiveDate) form.append('effective_date', effectiveDate.value || investmentTodayDate());
-    const directOutput = document.getElementById('invest-content-direct-output-mode');
-    if (directOutput) form.append('direct_output_mode', directOutput.checked ? '1' : '0');
+    form.append('expires_at', investmentContentExpiresAtValue());
+    form.append('auto_effective_after_generate', autoEffective ? '1' : '0');
     Array.from(document.getElementById('invest-content-files').files || []).forEach(file => form.append('files', file));
     try {
         const created = await investmentFetchJson('/api/investment/daily-content', {method: 'POST', body: form});
-        let message = '草稿已保存';
-        showInvestmentToast('草稿已保存');
+        let message = '已保存';
+        showInvestmentToast('已保存');
         if (generateAfterCreate) {
             try {
                 await investmentFetchJson(`/api/investment/daily-content/${encodeURIComponent(created.content_id)}/generate`, {method: 'POST'});
-                message = '已保存，生成任务已启动';
-                showInvestmentToast('已启动生成');
+                message = autoEffective ? '已保存，生成任务已启动，生成成功后会自动设为生效图' : '已保存，生成任务已启动';
+                showInvestmentToast(autoEffective ? '已启动生成，成功后自动生效' : '已启动生成');
             } catch (error) {
                 message = `已保存，生成启动失败：${String(error.message || error)}`;
                 showInvestmentToast('生成启动失败', 'error');
@@ -2856,7 +3079,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
     }
     if (tab === 'cache') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), market_date: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: investmentTodayDate()};
     }
     if (tab === 'audits') {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
@@ -2890,21 +3113,130 @@ function investmentCacheKeyword() {
     return investmentRecordsState.filters.cache?.keyword || document.getElementById('investment-content-filter-keyword')?.value || '';
 }
 
+function investmentCachePeriodMode() {
+    return document.getElementById('investment-content-period-mode')?.value || investmentRecordsState.filters.cache?.period_mode || 'all';
+}
+
+function investmentCachePeriodValue() {
+    return document.getElementById('investment-content-period-value')?.value || investmentRecordsState.filters.cache?.period_value || '';
+}
+
+function investmentGeneratedDateValues(marketDates = [], entries = []) {
+    const values = new Set(Array.isArray(marketDates) ? marketDates : []);
+    (Array.isArray(entries) ? entries : []).forEach(entry => {
+        if (entry?.market_date) values.add(entry.market_date);
+        if (entry?.effective_date) values.add(entry.effective_date);
+    });
+    return Array.from(values).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(String(value))).sort().reverse();
+}
+
+function investmentGeneratedDefaultPeriodValue(mode) {
+    const today = investmentTodayDate();
+    if (mode === 'year') return today.slice(0, 4);
+    if (mode === 'month') return today.slice(0, 7);
+    return '';
+}
+
+function investmentGeneratedPeriodOptions(mode, marketDates = [], entries = []) {
+    const normalized = mode === 'year' ? 'year' : 'month';
+    const values = investmentGeneratedDateValues(marketDates, entries).map(dateValue => (
+        normalized === 'year' ? dateValue.slice(0, 4) : dateValue.slice(0, 7)
+    ));
+    values.push(investmentGeneratedDefaultPeriodValue(normalized));
+    return Array.from(new Set(values.filter(Boolean))).sort().reverse().map(value => [value, normalized === 'year' ? `${value} 年` : `${value} 月`]);
+}
+
+function renderInvestmentGeneratedPeriodValueControl(mode, marketDates = [], entries = []) {
+    const normalized = mode === 'year' ? 'year' : 'month';
+    return `
+        <span>${normalized === 'year' ? '年份' : '月份'}</span>
+        ${investmentDropdown('investment-content-period-value', investmentGeneratedPeriodOptions(normalized, marketDates, entries), investmentCachePeriodValue() || investmentGeneratedDefaultPeriodValue(normalized), '', 'scheduleInvestmentCacheFilterRefresh()')}`;
+}
+
+function investmentNormalizeCacheDateFilters() {
+    const periodMode = investmentCachePeriodMode();
+    if (periodMode === 'day') {
+        const marketDate = document.getElementById('investment-records-filter-market_date')?.value || investmentRecordsState.filters.cache?.market_date || investmentTodayDate();
+        return {mode: periodMode, marketDate, startDate: '', endDate: '', label: marketDate};
+    }
+    const periodValue = investmentCachePeriodValue().trim();
+    if (periodMode === 'month' && /^\d{4}-\d{2}$/.test(periodValue)) {
+        const [year, month] = periodValue.split('-').map(Number);
+        const lastDay = new Date(year, month, 0).getDate();
+        return {
+            mode: periodMode,
+            marketDate: '',
+            startDate: `${periodValue}-01`,
+            endDate: `${periodValue}-${investmentPadDatePart(lastDay)}`,
+            label: `${periodValue} 全月`,
+        };
+    }
+    if (periodMode === 'year' && /^\d{4}$/.test(periodValue)) {
+        return {
+            mode: periodMode,
+            marketDate: '',
+            startDate: `${periodValue}-01-01`,
+            endDate: `${periodValue}-12-31`,
+            label: `${periodValue} 全年`,
+        };
+    }
+    return {mode: 'all', marketDate: '', startDate: '', endDate: '', label: '全部历史'};
+}
+
+function scheduleInvestmentCacheFilterRefresh(delay = 260) {
+    clearTimeout(investmentCacheFilterRefreshTimer);
+    investmentCacheFilterRefreshTimer = setTimeout(() => {
+        applyInvestmentCacheDate().catch(error => console.error('Investment generated content refresh failed:', error));
+    }, delay);
+}
+
+function investmentChangeCachePeriodMode(mode) {
+    investmentRecordsState.filters.cache.period_mode = ['all', 'day', 'month', 'year'].includes(mode) ? mode : 'all';
+    syncInvestmentCachePeriodMode(investmentRecordsState.filters.cache.period_mode);
+    scheduleInvestmentCacheFilterRefresh();
+}
+
+function syncInvestmentCachePeriodMode(mode) {
+    const normalized = ['all', 'day', 'month', 'year'].includes(mode) ? mode : 'all';
+    const dateField = document.getElementById('investment-content-period-date-field');
+    const valueField = document.getElementById('investment-content-period-value-field');
+    const valueInput = document.getElementById('investment-content-period-value');
+    if (dateField) dateField.classList.toggle('hidden', normalized !== 'day');
+    if (valueField) valueField.classList.toggle('hidden', !['month', 'year'].includes(normalized));
+    if (normalized === 'day') {
+        const dateInput = document.getElementById('investment-records-filter-market_date');
+        if (dateInput && !dateInput.value) {
+            investmentSetDatePickerValue('investment-records-filter-market_date', investmentTodayDate());
+        }
+    }
+    if (valueField && ['month', 'year'].includes(normalized)) {
+        valueField.innerHTML = renderInvestmentGeneratedPeriodValueControl(
+            normalized,
+            investmentRecordsState.data.cache?.market_dates || [],
+            investmentRecordsState.data.cache?.entries || [],
+        );
+        initInvestmentDropdowns(valueField);
+    }
+    if (valueInput) {
+        if (['month', 'year'].includes(normalized) && !valueInput.value) {
+            valueInput.value = investmentGeneratedDefaultPeriodValue(normalized);
+        }
+    }
+}
+
 async function renderInvestmentGeneratedContent() {
     const element = investmentContentEl('invest-content-content');
     if (!element) return;
     element.innerHTML = `
-        <div class="investment-records-workspace investment-content-workspace">
-            <section class="investment-records-board">
-                <div class="investment-records-main">
-                    <div class="investment-records-list" id="investment-content-list"></div>
-                    <aside class="investment-records-drawer" id="investment-records-drawer">
-                        <div class="investment-records-drawer-empty">
-                            <i class="fas fa-circle-info"></i>
-                            <span>选择内容查看详情</span>
-                        </div>
-                    </aside>
-                </div>
+        <div class="investment-content-workspace">
+            <section class="investment-content-shell">
+                <div class="investment-content-list" id="investment-content-list"></div>
+                <aside class="investment-records-drawer" id="investment-records-drawer">
+                    <div class="investment-records-drawer-empty">
+                        <i class="fas fa-circle-info"></i>
+                        <span>选择内容查看详情</span>
+                    </div>
+                </aside>
             </section>
         </div>`;
     await loadInvestmentGeneratedContent();
@@ -2915,11 +3247,18 @@ async function loadInvestmentGeneratedContent() {
     if (list) investmentLoading(list);
     try {
         const query = investmentRecordsQueryParams('cache');
-        if (!investmentCacheMarketDate()) query.delete('market_date');
+        const range = investmentNormalizeCacheDateFilters();
+        query.delete('market_date');
+        query.delete('start_date');
+        query.delete('end_date');
+        if (range.marketDate) query.set('market_date', range.marketDate);
+        if (range.startDate) query.set('start_date', range.startDate);
+        if (range.endDate) query.set('end_date', range.endDate);
         const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
         investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
         investmentRecordsApplyPagination('cache', data.pagination);
-        if (list) list.innerHTML = `${renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination('cache')}`;
+        if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
+        syncInvestmentCachePeriodMode(investmentCachePeriodMode());
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
@@ -3066,7 +3405,7 @@ function renderInvestmentRecordsFilters(tab) {
     } else if (tab === 'contents') {
         controls = [
             select('service_type', '服务', [['', '全部'], ['rate', '利率'], ['convertible_bond', '转债']]),
-            select('status', '状态', [['', '全部'], ['draft', '草稿'], ['generating', '生成中'], ['generated', '已生成'], ['generate_failed', '生成失败'], ['effective', '已生效'], ['archived', '已归档']]),
+            select('status', '状态', [['', '全部'], ['draft', '草稿'], ['generating', '生成中'], ['generated', '已生成'], ['generate_failed', '生成失败'], ['effective', '已生效'], ['archived', '已归档'], ['invalidated', '已失效']]),
             field('effective_date', '生效日期', 'date'),
         ].join('');
     } else if (tab === 'cache') {
@@ -3263,7 +3602,7 @@ function renderInvestmentContentRecordsTable(records) {
         <td>${escapeHtml(record.effective_date || '-')}</td>
         <td>v${escapeHtml(record.content_version || 1)}</td>
         <td><span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span></td>
-        <td>${record.direct_output_mode ? '<span class="investment-badge ok">直传 PNG</span>' : '<span class="investment-muted-inline">AI+渲染</span>'}</td>
+        <td><span class="investment-muted-inline">AI+渲染</span></td>
         <td>${record.output_image ? investmentRecordFileSummary([record.output_image], '未生成') : '<span class="investment-muted-inline">未生成</span>'}</td>
         <td>${investmentRecordClamp(record.status_warning || record.error_message || '正常', 2, 54)}</td>
         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at))}</td>
@@ -3290,37 +3629,34 @@ function renderInvestmentRecordsCacheTab(cacheData = {}) {
 function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
     const marketDates = cacheData.market_dates || [];
-    const selectedDate = investmentCacheMarketDate();
+    const dateRange = investmentNormalizeCacheDateFilters();
+    const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
-    const keywordEntries = keyword ? values.filter(entry => {
-        const haystack = [
-            investmentServiceLabel(entry.service_type),
-            entry.service_type,
-            entry.normalized_target,
-            entry.market_date,
-            entry.status,
-            entry.cache_key,
-            ...(Array.isArray(entry.output_files) ? entry.output_files : []),
-        ].join(' ').toLowerCase();
-        return haystack.includes(keyword);
-    }) : values;
-    const visibleEntries = selectedDate ? keywordEntries.filter(entry => (entry.market_date || '') === selectedDate) : keywordEntries;
+    const visibleEntries = selectedDate ? values.filter(entry => (entry.market_date || '') === selectedDate) : values;
     const categories = ['technical_analysis', 'rate', 'convertible_bond'];
     const selectedCategory = categories.includes(investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
     const body = selectedCategory
         ? renderInvestmentGeneratedContentCategoryDetail(selectedCategory, visibleEntries.filter(entry => entry.service_type === selectedCategory))
         : renderInvestmentGeneratedContentHome(categories, visibleEntries);
+    const pagination = selectedCategory ? renderInvestmentRecordsPagination('cache') : '';
     return `
         <div class="investment-generated-content">
-            <div class="investment-generated-content-datebar">
+            <div class="investment-generated-content-toolbar">
                 <div class="investment-generated-content-title">
                     <h3>生成内容</h3>
-                    <span>${selectedDate ? escapeHtml(selectedDate) : '全部历史'}</span>
+                    <span>${escapeHtml(dateRange.label)}</span>
                 </div>
-                <div class="investment-generated-content-date-actions">
-                    <label class="investment-field compact">
-                        <span>生成日期</span>
-                        ${investmentRenderDateControl('investment-records-filter-market_date', selectedDate || '', {placeholder: '全部历史', attrs: 'data-investment-records-filter="market_date"'})}
+                <div class="investment-generated-content-filters">
+                    <label class="investment-field compact investment-generated-period-mode">
+                        <span>日期范围</span>
+                        ${investmentDropdown('investment-content-period-mode', [['all', '全部'], ['day', '按日'], ['month', '按月'], ['year', '按年']], dateRange.mode || 'all', '', 'investmentChangeCachePeriodMode(value)')}
+                    </label>
+                    <label id="investment-content-period-date-field" class="investment-field compact ${dateRange.mode === 'day' ? '' : 'hidden'}">
+                        <span>日期</span>
+                        ${investmentRenderDateControl('investment-records-filter-market_date', selectedDate || investmentTodayDate(), {placeholder: '当前日期', attrs: 'data-investment-records-filter="market_date"'})}
+                    </label>
+                    <label id="investment-content-period-value-field" class="investment-field compact investment-generated-period-value ${['month', 'year'].includes(dateRange.mode) ? '' : 'hidden'}">
+                        ${renderInvestmentGeneratedPeriodValueControl(dateRange.mode, marketDates, values)}
                     </label>
                     <label class="investment-field compact keyword">
                         <span>关键词</span>
@@ -3331,34 +3667,26 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                 </div>
             </div>
             ${body}
+            ${pagination}
         </div>`;
 }
 
 function renderInvestmentGeneratedContentHome(categories, entries) {
-    const grouped = investmentGroupCacheEntriesByDate(entries);
-    const history = grouped.length ? grouped.map(([dateKey, entriesForDate]) => `
-            <section class="investment-generated-date-section">
-                <div class="investment-generated-date-heading">
-                    <strong>${escapeHtml(dateKey)}</strong>
-                    <span>${entriesForDate.length} 条内容</span>
-                </div>
-                <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entriesForDate)}</div>
-            </section>`).join('') : '';
     return `
-        <section class="investment-generated-category-overview">
-            <div class="investment-generated-date-heading">
-                <strong>内容分类</strong>
-                <span>技术分析 / 利率 / 转债</span>
-            </div>
-            <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entries)}</div>
-        </section>
-        ${history}`;
+        <div class="investment-generated-library">
+            <section class="investment-generated-category-strip">
+                <div class="investment-generated-date-heading">
+                    <strong>内容分类</strong>
+                    <span>${entries.length} 条内容</span>
+                </div>
+                <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entries)}</div>
+            </section>
+        </div>`;
 }
 
 function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
     return categories.map(serviceType => {
         const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
-        const active = entries.filter(entry => entry.status === 'active').length;
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.hit_count || 0), 0);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
@@ -3366,7 +3694,7 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
                 <div class="investment-generated-entry-icon"><i class="fas ${serviceType === 'technical_analysis' ? 'fa-chart-line' : serviceType === 'rate' ? 'fa-percent' : 'fa-file-invoice-dollar'}"></i></div>
                 <div class="investment-generated-entry-main">
                     <strong>${investmentServiceLabel(serviceType)}</strong>
-                    <span>${entries.length ? `${entries.length} 条内容 / ${active} 条有效` : '暂无内容'}</span>
+                    <span>${entries.length ? `${entries.length} 条内容` : '暂无内容'}</span>
                 </div>
                 <div class="investment-generated-entry-meta">
                     <span>${hitCount} 次命中</span>
@@ -3376,36 +3704,30 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
     }).join('');
 }
 
-function investmentGroupCacheEntriesByDate(entries = []) {
-    const groups = new Map();
-    (Array.isArray(entries) ? entries : []).forEach(entry => {
-        const key = entry.market_date || '未设置日期';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(entry);
-    });
-    return Array.from(groups.entries()).sort(([left], [right]) => String(right).localeCompare(String(left)));
+function investmentGeneratedEntryIsActive(entry) {
+    if (!entry) return false;
+    if (entry.status === 'invalidated') return false;
+    if (entry.source_type === 'content') return ['generated', 'effective'].includes(entry.status);
+    return entry.status === 'active';
 }
 
-function renderInvestmentGeneratedContentHomeLegacy(categories, dateEntries) {
-    const cards = categories.map(serviceType => {
-        const entries = dateEntries.filter(entry => entry.service_type === serviceType);
-        const active = entries.filter(entry => entry.status === 'active').length;
-        const hitCount = entries.reduce((sum, entry) => sum + Number(entry.hit_count || 0), 0);
-        const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
-        return `
-            <button class="investment-generated-content-entry" onclick="selectInvestmentCacheCategory('${serviceType}')">
-                <div class="investment-generated-entry-icon"><i class="fas ${serviceType === 'technical_analysis' ? 'fa-chart-line' : serviceType === 'rate' ? 'fa-percent' : 'fa-file-invoice-dollar'}"></i></div>
-                <div class="investment-generated-entry-main">
-                    <strong>${investmentServiceLabel(serviceType)}</strong>
-                    <span>${entries.length ? `${entries.length} 条内容 / ${active} 条有效` : '暂无当日内容'}</span>
-                </div>
-                <div class="investment-generated-entry-meta">
-                    <span>${hitCount} 次命中</span>
-                    <span>${escapeHtml(investmentFormatBeijingTime(latest) || '未更新')}</span>
-                </div>
-            </button>`;
-    }).join('');
-    return `<div class="investment-generated-content-home">${cards}</div>`;
+function investmentGeneratedRecordDrawerType(entry) {
+    if (entry?.source_type === 'content') return 'content';
+    return 'cache';
+}
+
+function investmentGeneratedEntryStatus(entry) {
+    const status = entry?.status || '';
+    const label = entry?.source_type === 'content' ? investmentStatusLabel(status) : status;
+    const badgeClass = entry?.source_type === 'content' ? investmentStatusClass(status) : (status === 'active' ? 'ok' : 'fail');
+    return `<span class="investment-badge ${badgeClass}">${escapeHtml(label || '-')}</span>`;
+}
+
+function investmentGeneratedEntryActions(entry) {
+    if ((entry?.source_type === 'cache' || (!entry?.source_type && entry?.cache_key)) && entry.cache_key) {
+        return investmentTextButtonIfCan('cache.write', '失效', `invalidateInvestmentCache('${encodeURIComponent(entry.cache_key || '')}')`, 'danger');
+    }
+    return '<span class="investment-muted-inline">查看详情</span>';
 }
 
 function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
@@ -3436,20 +3758,23 @@ function renderInvestmentCacheCompactRows(entries) {
             <span>状态</span>
             <span>命中</span>
             <span>更新时间</span>
-            <span>输出</span>
+            <span>产物</span>
             <span>操作</span>
         </div>`;
-    const rows = entries.map(entry => `
+    const rows = entries.map(entry => {
+        const drawerType = investmentGeneratedRecordDrawerType(entry);
+        return `
         <div class="investment-generated-content-row">
-            <button class="investment-generated-content-row-main" onclick="openInvestmentRecordDrawer('cache', '${investmentEncodedRecord(entry)}')" title="查看详情">
+            <button class="investment-generated-content-row-main" onclick="openInvestmentRecordDrawer('${drawerType}', '${investmentEncodedRecord(entry)}')" title="查看详情">
                 <span class="investment-generated-target">${investmentRecordClamp(entry.normalized_target || '全市场/当日内容', 1, 34)}</span>
-                <span><span class="investment-badge ${entry.status === 'active' ? 'ok' : 'fail'}">${escapeHtml(entry.status || '-')}</span></span>
+                <span>${investmentGeneratedEntryStatus(entry)}</span>
                 <span><b>${escapeHtml(entry.hit_count ?? 0)}</b> 次命中</span>
                 <span>${escapeHtml(investmentFormatBeijingTime(entry.updated_at) || '-')}</span>
                 <span>${investmentGeneratedOutputState(entry)}</span>
             </button>
-            <div class="investment-row-actions">${investmentIconButtonIfCan('cache.write', 'fa-ban', '失效', `invalidateInvestmentCache('${encodeURIComponent(entry.cache_key || '')}')`, 'danger')}</div>
-        </div>`).join('');
+            <div class="investment-row-actions">${investmentGeneratedEntryActions(entry)}</div>
+        </div>`;
+    }).join('');
     return `<div class="investment-generated-content-entries">${header}${rows}</div>`;
 }
 
@@ -3471,10 +3796,14 @@ async function selectInvestmentCacheDate(date) {
 }
 
 async function applyInvestmentCacheDate() {
-    investmentRecordsState.filters.cache.market_date = document.getElementById('investment-records-filter-market_date')?.value || '';
+    const range = investmentNormalizeCacheDateFilters();
+    investmentRecordsState.filters.cache.market_date = range.marketDate || '';
+    investmentRecordsState.filters.cache.period_mode = investmentCachePeriodMode();
+    investmentRecordsState.filters.cache.period_value = investmentCachePeriodValue();
+    investmentRecordsState.filters.cache.start_date = range.startDate;
+    investmentRecordsState.filters.cache.end_date = range.endDate;
     investmentRecordsState.filters.cache.keyword = document.getElementById('investment-content-filter-keyword')?.value || '';
     investmentRecordsState.filters.cache.page = '1';
-    investmentRecordsState.cacheCategory = '';
     await loadInvestmentGeneratedContent();
 }
 
@@ -3482,7 +3811,7 @@ async function selectInvestmentCacheCategory(serviceType) {
     investmentRecordsState.cacheCategory = serviceType;
     investmentRecordsState.filters.cache.service_type = serviceType;
     investmentRecordsState.filters.cache.page = '1';
-    await loadInvestmentGeneratedContent();
+    scheduleInvestmentCacheFilterRefresh();
 }
 
 async function backInvestmentCacheCategoryMenu() {
@@ -3623,7 +3952,7 @@ function renderInvestmentContentDrawer(record) {
             ['操作人', escapeHtml(record.operator || '-')],
             ['生效日期', escapeHtml(record.effective_date || '-')],
             ['版本', `v${escapeHtml(record.content_version || 1)}`],
-            ['模式', record.direct_output_mode ? '直接 PNG' : 'AI+渲染'],
+            ['模式', 'AI+渲染'],
             ['创建时间', escapeHtml(investmentFormatBeijingTime(record.created_at) || '-')],
         ]))}
         ${investmentDrawerSection('输出图片', record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<span class="investment-muted-inline">未生成</span>')}
@@ -4236,6 +4565,15 @@ window.setInvestmentUserStatus = setInvestmentUserStatus;
 window.disableInvestmentUser = disableInvestmentUser;
 window.importInvestmentUsers = importInvestmentUsers;
 window.createInvestmentContent = createInvestmentContent;
+window.switchInvestmentUploadMode = switchInvestmentUploadMode;
+window.updateInvestmentUploadFileSummary = updateInvestmentUploadFileSummary;
+window.investmentShouldAutoEffectiveAfterGenerate = investmentShouldAutoEffectiveAfterGenerate;
+window.syncInvestmentDefaultExpiresAt = syncInvestmentDefaultExpiresAt;
+window.changeInvestmentExpiresMode = changeInvestmentExpiresMode;
+window.toggleInvestmentExpiresAt = toggleInvestmentExpiresAt;
+window.investmentToggleTimePicker = investmentToggleTimePicker;
+window.investmentSetTimePickerValue = investmentSetTimePickerValue;
+window.investmentSelectTime = investmentSelectTime;
 window.generateInvestmentContent = generateInvestmentContent;
 window.effectiveInvestmentContent = effectiveInvestmentContent;
 window.renderInvestmentOperationAudits = renderInvestmentOperationAudits;
