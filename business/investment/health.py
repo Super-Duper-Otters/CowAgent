@@ -285,7 +285,7 @@ def _run_renderer_smoke_checks() -> list[HealthItem]:
         (ServiceType.RATE, "smoke_renderer_rate", "利率债市场：样例\n关注久期与流动性。"),
         (ServiceType.CONVERTIBLE_BOND, "smoke_renderer_cb", "转债市场：样例\n关注估值与正股弹性。"),
     )
-    output_dir = Path(str(get_storage_dirs()["generated"])) / "health_smoke"
+    output_dir = Path(str(get_config("storage.tmp_dir") or get_storage_dirs()["tmp"])) / "health_smoke"
     items: list[HealthItem] = []
     for service_type, name, text in samples:
         try:
@@ -311,8 +311,8 @@ def run_health_checks(run_smoke: bool = False) -> list[HealthItem]:
         items.append(HealthItem("business_database", False, str(exc)))
 
     dirs = get_storage_dirs()
-    items.append(_check_writable_dir("upload_dir", Path(str(get_config("storage.upload_dir") or dirs["uploads"]))))
-    items.append(_check_writable_dir("generated_dir", Path(str(get_config("storage.generated_dir") or dirs["generated"]))))
+    items.append(_check_writable_dir("files_dir", Path(str(get_config("storage.files_dir") or dirs["files"]))))
+    items.append(_check_writable_dir("tmp_dir", Path(str(get_config("storage.tmp_dir") or dirs["tmp"]))))
     items.append(_check_file("technical_analysis_skill", get_config("technical_analysis.skill_path") or "skills/技术分析/scripts/analyze_universal.py"))
     items.append(_check_file("signal_card_renderer", get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))
     items.append(_check_file("template_ta", get_config("render.template_ta_path") or DEFAULT_TEMPLATE_TA_PATH))

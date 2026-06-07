@@ -132,7 +132,7 @@ def _safe_output_segment(value: str, fallback: str = "item") -> str:
 def _daily_content_render_output_path(item: dict[str, Any], service_type: ServiceType) -> str:
     from .config_service import get_config
 
-    output_dir = Path(str(get_config("render.output_dir") or get_storage_dirs()["generated"]))
+    output_dir = Path(str(get_config("render.output_dir") or get_config("storage.tmp_dir") or (get_storage_dirs()["tmp"] / "render")))
     if not output_dir.is_absolute():
         output_dir = Path.cwd() / output_dir
     effective_date = _safe_output_segment(item.get("effective_date") or _today(), "unknown-date")
@@ -164,14 +164,34 @@ def _ensure_content_service_type(service_type: ServiceType) -> ServiceType:
     return service_type
 
 
-def save_source_file(service_type: ServiceType, filename: str, content: bytes) -> str:
+def save_source_file(
+    service_type: ServiceType,
+    filename: str,
+    content: bytes,
+    *,
+    owner_id: str = "unassigned",
+    effective_date: str | None = None,
+) -> str:
+    from .config_service import get_config
+
     service_type = _ensure_content_service_type(service_type)
     safe_name = (filename or "").strip()
     if not safe_name or safe_name != Path(safe_name).name or "/" in safe_name or "\\" in safe_name:
         raise ValueError("invalid source filename")
-    target_dir = get_storage_dirs()["uploads"] / str(service_type)
+    files_root = Path(str(get_config("storage.files_dir") or get_storage_dirs()["files"]))
+    if not files_root.is_absolute():
+        files_root = Path.cwd() / files_root
+    storage_date = _safe_output_segment(effective_date or _today(), "unknown-date")
+    target_dir = (
+        files_root
+        / _safe_output_segment(str(service_type), "service")
+        / storage_date
+        / "content"
+        / _safe_output_segment(owner_id, "content")
+        / "source_image"
+    )
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
+    target = target_dir / f"source_image_{uuid.uuid4().hex}_{safe_name}"
     target.write_bytes(content)
     return str(target)
 

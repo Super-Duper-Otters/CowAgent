@@ -741,10 +741,10 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert "investmentHistoryHoverText(record.generated_text, 24)" in history_body
     assert "function investmentHistoryHoverText(value, max = 24)" in js
     assert "data-tooltip=\"${escapeHtml(text)}\"" in js
-    assert "const outputArtifactPaths = Array.isArray(record.output_artifacts)" in history_body
-    assert "const artifactPaths = record.output_image ? [record.output_image, ...outputArtifactPaths.filter(path => path !== record.output_image)] : outputArtifactPaths;" in history_body
-    assert "const artifactCount = artifactPaths.length;" in history_body
-    assert "investmentFileLinks(artifactPaths)" in history_body
+    assert "const artifactFiles = Array.isArray(record.output_artifacts)" in history_body
+    assert "const outputImage = investmentContentOutputImage(record);" in history_body
+    assert "const artifactCount = artifactFiles.length;" in history_body
+    assert "investmentFileLinks(artifactFiles)" in history_body
     assert "record.source_text" in history_body
     assert "record.generated_text" in history_body
     assert "record.output_artifacts" in history_body
@@ -996,6 +996,45 @@ def test_investment_layout_separates_table_settings_and_card_styles():
     assert ".investment-settings-page .investment-panel" in css
 
 
+def test_investment_config_uses_dedicated_layout_instead_of_shared_workbench():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    shell_body = _js_function_body(js, "renderInvestmentConfigShell")
+    stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
+    reply_panel_body = _js_function_body(js, "renderInvestmentConfigReplyTextsPanel")
+    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
+    web_chat_body = _js_function_body(js, "renderInvestmentConfigWebChatPanel")
+
+    combined_panels = "\n".join([stock_panel_body, reply_panel_body, generation_body, web_chat_body])
+    assert "investment-config-grid" in combined_panels
+    assert 'class="investment-workbench ' not in combined_panels
+    assert ".investment-config-grid" in css
+    assert ".investment-config-grid > .investment-panel" in css
+    assert ".investment-config-grid > .investment-workbench-full" in css
+    assert "#investment-config-panel-content" in css
+    assert "grid-template-columns: minmax(0, 1fr);" in css
+    assert "id=\"investment-config-panel-content\"" in shell_body
+    assert "investment-config-summary" not in shell_body
+    assert "investment-config-nav" in shell_body
+    assert '<section class="investment-config-summary">' not in shell_body
+    assert "investment-panel investment-workbench-full" not in shell_body
+    assert "investment-tabs investment-config-tabs" not in shell_body
+    assert ".investment-config-nav" in css
+    assert ".investment-config-nav {\n    display: flex;" in css
+    assert "position: sticky;" not in css[css.index(".investment-config-nav {"):css.index(".investment-config-tab {")]
+
+
+def test_investment_config_inline_handlers_are_not_html_escaped():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
+
+    assert "const saveHandler = `saveInvestmentConfigKey(${keyArg}, ${typeArg})`;" in config_field_body
+    assert "const dirtyHandler = `markInvestmentConfigDirty(${keyArg})`;" in config_field_body
+    assert "escapeHtml(`saveInvestmentConfigKey" not in config_field_body
+    assert "escapeHtml(`markInvestmentConfigDirty" not in config_field_body
+
+
 def test_investment_config_page_uses_task_based_tabs():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
@@ -1008,7 +1047,8 @@ def test_investment_config_page_uses_task_based_tabs():
     assert "let currentInvestmentConfigPanel = 'stock-data';" in js
     assert "function switchInvestmentConfigPanel(" in js
     assert "renderInvestmentConfigShell(data, stockData)" in config_body
-    assert "investment-tabs investment-config-tabs" in shell_body
+    assert "investment-config-nav" in shell_body
+    assert "investment-config-tab" in shell_body
     assert "function investmentConfigTabDefinitions(" in js
     assert "key: 'stock-data'" in js
     assert "key: 'reply-texts'" in js
@@ -1026,7 +1066,8 @@ def test_investment_config_page_uses_task_based_tabs():
     assert "renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})" in generation_body
     assert "renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})" in generation_body
     assert ".investment-config-page" in css
-    assert ".investment-config-tabs" in css
+    assert ".investment-config-nav" in css
+    assert ".investment-config-tab" in css
     assert "flex-wrap: wrap;" in css
 
 
@@ -1105,8 +1146,8 @@ def test_investment_reply_config_fields_show_descriptions_and_use_textareas():
     assert "escapeHtml(description)" in reply_field_body
     assert "escapeHtml(label)" in config_field_body
     assert "investmentJsString(key)" in config_field_body
-    assert "const saveHandler = escapeHtml(`saveInvestmentConfigKey(${keyArg}, ${typeArg})`);" in config_field_body
-    assert "const dirtyHandler = escapeHtml(`markInvestmentConfigDirty(${keyArg})`);" in config_field_body
+    assert "const saveHandler = `saveInvestmentConfigKey(${keyArg}, ${typeArg})`;" in config_field_body
+    assert "const dirtyHandler = `markInvestmentConfigDirty(${keyArg})`;" in config_field_body
     assert "saveInvestmentConfigKey(${keyArg}, ${typeArg})" in config_field_body
     assert "markInvestmentConfigDirty(${keyArg})" in config_field_body
     assert ".investment-config-description" in css
@@ -1128,42 +1169,94 @@ def test_investment_content_and_records_ui_respect_cache_and_export_permissions(
     assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
     assert "/api/investment/cache" in js
     assert "async function loadInvestmentGeneratedContent()" in js
-    assert "investmentButtonIfCan('records.export', 'fa-download'" in js
-    assert "investmentButtonIfCan('records.export', 'fa-calendar-days'" in js
-    assert "investmentButtonIfCan('records.export', 'fa-chart-pie'" in js
+    assert "investmentButtonIfCan('records.export', 'fa-file-export', '导出', 'openInvestmentRequestExportDialog()'" in js
 
 
-def test_investment_request_export_panel_is_scoped_and_mode_based():
+def test_investment_records_filters_and_export_share_toolbar_without_title_topbar():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
     shell_body = _js_function_body(js, "renderInvestmentRecordsShell")
-    assert "investmentRecordsState.tab === 'requests' ? renderInvestmentRequestExportPanel()" in shell_body
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+
+    assert "investment-records-topbar" not in shell_body
+    assert "investment-panel-title\"><i class=\"fas fa-table-list\"></i><span>业务记录</span>" not in shell_body
+    assert "investmentRecordsState.tab === 'requests' ? renderInvestmentRequestExportPanel()" not in shell_body
     assert "investment-records-export\">" not in shell_body
     assert "investment-records-export-fields" not in shell_body
+    assert "investment-records-toolbar" in filters_body
+    assert "investment-records-filter-grid" in filters_body
+    assert "investment-records-filter-actions" in filters_body
+    assert "openInvestmentRequestExportDialog()" in filters_body
+    assert ".investment-records-toolbar" in css
+    assert ".investment-records-topbar" not in css
+    assert ".investment-records-filter-grid {\n    display: grid;" in css
+    assert "grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(132px, 1fr));" in css
+    assert "@media (max-width: 1024px)" in css
+    assert ".investment-records-filter-grid {\n        grid-template-columns: repeat(2, minmax(0, 1fr));" in css
 
-    panel_body = _js_function_body(js, "renderInvestmentRequestExportPanel")
+
+def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    dialog_body = _js_function_body(js, "openInvestmentRequestExportDialog")
+    panel_body = _js_function_body(js, "renderInvestmentRequestExportDialogBody")
+    assert "showInvestmentModal('导出业务记录'" in dialog_body
+    assert "investmentRecordsSetFilterValues('requests', {resetPage: false})" in dialog_body
+    assert "initInvestmentDropdowns(document.getElementById('investment-modal-body'))" in dialog_body
     assert "公众号请求导出" in panel_body
     assert "导出当前筛选" in panel_body
     assert "全量导出" in panel_body
-    assert "按日期范围" in panel_body
-    assert "按月导出" in panel_body
+    assert "按时间范围导出" in panel_body
+    assert "按月度导出" in panel_body
     assert "按季度导出" in panel_body
     assert "investment-request-export-fields" in panel_body
+    assert "investment-request-export-dialog" in panel_body
+    assert "investment-request-export-layout" in panel_body
+    assert "investment-request-export-mode-grid" in panel_body
+    assert "investment-request-export-form" in panel_body
+    assert "investment-request-export-footer" in panel_body
+    assert "renderInvestmentRequestExportCurrentSummary(values)" in panel_body
+    assert "investmentRequestExportMonthOptions()" in panel_body
+    assert "type=\"month\"" not in panel_body
+    assert "导出会应用上方客户/输入/错误、服务、状态和日期筛选。" in panel_body
+    assert "可按下方条件缩小范围。" in panel_body
+    assert "不限制日期，按下方条件导出全部请求记录。" not in panel_body
+    assert "投资服务" in panel_body
+    assert "客户/机构" in panel_body
+    assert "Excel" in panel_body
 
     current_body = _js_function_body(js, "exportInvestmentRequestRecordsByCurrentFilters")
     range_body = _js_function_body(js, "exportInvestmentRequestRecordsByRange")
+    summary_body = _js_function_body(js, "renderInvestmentRequestExportCurrentSummary")
+    month_options_body = _js_function_body(js, "investmentRequestExportMonthOptions")
     assert "investmentRecordsQueryParams('requests')" in current_body
+    assert "params.delete('page')" in current_body
+    assert "params.delete('page_size')" in current_body
     assert "请选择导出开始和结束日期" in range_body
+    assert "当前筛选条件" in summary_body
+    assert "未设置筛选，将导出全部请求记录" in summary_body
+    assert "investmentServiceLabel(filters.service_type)" in summary_body
+    assert "investmentStatusLabel(filters.status)" in summary_body
+    assert "`${value}（本月）`" in month_options_body
+    assert "本月，最近18个月" not in month_options_body
     assert "function exportInvestmentRequestRecordsFull()" in js
-    assert ".investment-request-export-panel" in css
-    assert ".investment-request-export-modes" in css
+    assert ".investment-request-export-dialog" in css
+    assert ".investment-request-export-layout" in css
+    assert "grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1.45fr);" in css
+    assert ".investment-request-export-mode-grid" in css
+    assert "grid-template-columns: repeat(5, minmax(0, 1fr));" in css
+    assert ".investment-request-export-form" in css
+    assert ".investment-request-export-fields > .investment-request-export-note" in css
+    assert "grid-column: 1 / -1;" in css
+    assert ".investment-request-export-footer" in css
 
 
 def test_investment_request_export_exposes_unauthorized_and_customer_filter():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    panel_body = _js_function_body(js, "renderInvestmentRequestExportPanel")
+    panel_body = _js_function_body(js, "renderInvestmentRequestExportDialogBody")
     filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
     range_body = _js_function_body(js, "exportInvestmentRequestRecordsByRange")
     month_body = _js_function_body(js, "exportInvestmentRequestRecordsByMonth")
@@ -1176,7 +1269,7 @@ def test_investment_request_export_exposes_unauthorized_and_customer_filter():
     assert "investmentDropdown('invest-export-service-type'" in panel_body
     assert "['unauthorized_request', '无权限请求']" in panel_body
     assert "id=\"invest-export-customer\"" in panel_body
-    assert "OpenID/手机号" in panel_body
+    assert "客户/机构/OpenID/手机号" in panel_body
     assert "function investmentExportCustomer()" in js
     assert "params.set('customer', customer)" in current_body
     assert "customer: investmentExportCustomer()" in full_body
@@ -1542,6 +1635,31 @@ def test_investment_generated_content_drawer_hides_low_value_long_cache_fields()
     assert "生成内容详情" in js
 
 
+def test_investment_content_drawer_shows_source_images_like_output_image():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    drawer_body = _js_function_body(js, "renderInvestmentContentDrawer")
+
+    assert "输入图片" in drawer_body
+    assert "renderInvestmentSourcePreviews(investmentContentSourceFiles(record))" in drawer_body
+    assert "输出图片" in drawer_body
+    assert "investmentContentOutputImage(record)" in drawer_body
+    assert drawer_body.index("输入图片") < drawer_body.index("输出图片")
+
+
+def test_investment_file_links_prefer_file_id_urls_over_absolute_paths():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    file_url_body = _js_function_body(js, "investmentFileUrl")
+    links_body = _js_function_body(js, "investmentFileLinks")
+
+    assert "if (file.file_url) return file.file_url;" in file_url_body
+    assert "file.file_id || file.id" in file_url_body
+    assert "`/api/file?id=${encodeURIComponent(file.file_id || file.id)}`" in file_url_body
+    assert "investmentFileUrl(file)" in links_body
+    assert "investmentImageUrl(path)" not in links_body
+
+
 def test_investment_request_drawer_keeps_error_details_and_audit_fields():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -1551,6 +1669,11 @@ def test_investment_request_drawer_keeps_error_details_and_audit_fields():
     assert "function investmentDeliveryStatusClass(" in js
     assert "record.delivery_status" in request_table
     assert "<th>生成</th><th>交付</th><th>提示摘要</th>" in request_table
+    assert "<th>时间</th><th>详情</th>" in request_table
+    assert "<th>北京时间</th>" not in request_table
+    assert "<th>操作</th>" not in request_table
+    assert "record.user_prompt || record.delivery_status || '正常'), 1, 54)" in request_table
+    assert "record.user_prompt || record.delivery_status || '正常'), 2, 54)" not in request_table
     assert "record.status_warning === '未完成/可能超时' ? 'generating' : record.status" in request_table
     assert "record.user_prompt || record.delivery_status || '正常'" in request_table
     assert "record.delivery_detail || record.error_message" not in request_table
@@ -1562,8 +1685,18 @@ def test_investment_request_drawer_keeps_error_details_and_audit_fields():
     assert "record.normalized_target" in drawer_body
     assert "record.cache_key" in drawer_body
     assert "输出文件" in drawer_body
-    assert "产物审计" in drawer_body
-    assert "investmentArtifactTable(record.output_artifacts || [])" in drawer_body
+    assert "产物审计" not in drawer_body
+    assert "investmentArtifactTable(record.output_artifacts || [])" not in drawer_body
+    artifact_body = _js_function_body(js, "investmentArtifactTable")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    assert "investment-artifact-table" in artifact_body
+    assert "investment-artifact-role" in artifact_body
+    assert "investment-artifact-file" in artifact_body
+    assert ".investment-artifact-table" in css
+    assert ".investment-artifact-role" in css
+    assert ".investment-artifact-file" in css
+    assert ".investment-artifact-role," in css
+    assert "text-overflow: ellipsis;" in css
 
 
 def test_investment_records_times_are_formatted_as_beijing_time():

@@ -18,9 +18,8 @@ def get_storage_dirs() -> dict[str, Path]:
     root = _storage_root()
     return {
         "root": root,
-        "uploads": root / "uploads",
-        "generated": root / "generated",
-        "technical_analysis": root / "technical-analysis",
+        "files": root / "files",
+        "tmp": root / "tmp",
     }
 
 
@@ -50,3 +49,6 @@ def initialize_storage() -> None:
     if _MIGRATED_DATABASE_URL != database_url:
         migrations.upgrade("head")
         _MIGRATED_DATABASE_URL = database_url
+        from .file_migration import migrate_legacy_files_to_unified_storage
+
+        migrate_legacy_files_to_unified_storage()

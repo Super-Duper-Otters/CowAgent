@@ -1,6 +1,7 @@
 # encoding:utf-8
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -485,7 +486,14 @@ def run_technical_analysis(
             cache_key=cached.cache_key,
             cache_hit=True,
         )
-    output_dir = Path(str(get_config("technical_analysis.output_dir") or get_storage_dirs()["technical_analysis"])) / symbol.replace(".", "_")
+    output_base = Path(
+        str(
+            get_config("technical_analysis.output_dir")
+            or get_config("storage.tmp_dir")
+            or (get_storage_dirs()["tmp"] / "technical-analysis")
+        )
+    )
+    output_dir = output_base / symbol.replace(".", "_") / uuid.uuid4().hex
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
         generated_report_path, generated_chart_path = _run_skill(_skill_symbol(symbol), output_dir)

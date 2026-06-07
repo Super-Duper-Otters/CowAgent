@@ -19,6 +19,7 @@ from bridge.context import Context, ContextType
 from bridge.reply import Reply, ReplyType
 from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
+from channel.web.investment_handlers import INVESTMENT_API_URLS
 from collections import OrderedDict
 from common import const
 from common.log import logger
@@ -146,19 +147,19 @@ def _current_investment_admin():
 
 
 def _investment_permission_error(permission: str):
-    from business.investment.auth_service import require_permission
+    from business.investment.permission_service import verify_admin_permission
 
-    result = require_permission(_current_investment_admin(), permission)
+    result = verify_admin_permission(_current_investment_admin(), permission)
     if result.allowed:
         return {}
     return {"status": "error", "code": result.code, "message": result.message, "permission": permission}
 
 
 def _require_investment_permission(permission: str):
-    from business.investment.auth_service import require_permission
+    from business.investment.permission_service import verify_admin_permission
 
     admin = _current_investment_admin()
-    result = require_permission(admin, permission)
+    result = verify_admin_permission(admin, permission)
     if not result.allowed:
         error = {"status": "error", "code": result.code, "message": result.message, "permission": permission}
         raise web.HTTPError(
@@ -370,8 +371,12 @@ def _format_investment_web_reply(business_reply) -> str:
         return business_reply.reply_text
     links = []
     for path in business_reply.output_files:
+        from business.investment.records import get_file_record_by_path
+
+        file_record = get_file_record_by_path(path)
         file_name = os.path.basename(path) or "investment-output.png"
-        links.append(f"![{file_name}](/api/file?path={quote(path)})")
+        file_url = file_record.get("file_url") if file_record else ""
+        links.append(f"![{file_name}]({file_url or f'/api/file?path={quote(path)}'})")
     return "已生成投资业务图片：\n\n" + "\n\n".join(links)
 
 
@@ -973,36 +978,7 @@ class WebChannel(ChatChannel):
             '/api/history', 'HistoryHandler',
             '/api/logs', 'LogsHandler',
             '/api/version', 'VersionHandler',
-            '/api/investment/export/requests.xlsx', 'InvestmentRequestRecordsExportHandler',
-            '/api/investment/export/users.xlsx', 'InvestmentUsersExportHandler',
-            '/api/investment/auth/me', 'InvestmentAuthMeHandler',
-            '/api/investment/admin-users/(.*)/status/(enable|disable)', 'InvestmentAdminUserStatusHandler',
-            '/api/investment/admin-users/(.*)/password', 'InvestmentAdminUserPasswordHandler',
-            '/api/investment/admin-users', 'InvestmentAdminUsersHandler',
-            '/api/investment/users/import-template.xlsx', 'InvestmentUsersImportTemplateHandler',
-            '/api/investment/users/import', 'InvestmentUsersImportHandler',
-            '/api/investment/users', 'InvestmentUsersHandler',
-            '/api/investment/users/(.*)/status/(enable|disable)', 'InvestmentUserStatusHandler',
-            '/api/investment/users/(.*)/disable', 'InvestmentUserDisableHandler',
-            '/api/investment/daily-content', 'InvestmentDailyContentHandler',
-            '/api/investment/daily-content/(.*)/generate', 'InvestmentDailyContentGenerateHandler',
-            '/api/investment/daily-content/(.*)/effective', 'InvestmentDailyContentEffectiveHandler',
-            '/api/investment/audits', 'InvestmentOperationAuditsHandler',
-            '/api/investment/records/requests', 'InvestmentRequestRecordsHandler',
-            '/api/investment/records/contents', 'InvestmentContentRecordsHandler',
-            '/api/investment/cache', 'InvestmentCacheHandler',
-            '/api/investment/cache/clear', 'InvestmentCacheClearHandler',
-            '/api/investment/cache/(.*)/invalidate', 'InvestmentCacheEntryInvalidateHandler',
-            '/api/investment/skills/versions', 'InvestmentSkillVersionsHandler',
-            '/api/investment/skills/packages/upload', 'InvestmentSkillPackageUploadHandler',
-            '/api/investment/skills/(.*)/settings', 'InvestmentSkillSettingsHandler',
-            '/api/investment/skills/(.*)/upload', 'InvestmentSkillUploadHandler',
-            '/api/investment/skills/(.*)/versions/(.*)/activate', 'InvestmentSkillActivateHandler',
-            '/api/investment/skills/(.*)/versions/(.*)/delete', 'InvestmentSkillDeleteHandler',
-            '/api/investment/config', 'InvestmentConfigHandler',
-            '/api/investment/stocks/refresh', 'InvestmentStocksRefreshHandler',
-            '/api/investment/stocks', 'InvestmentStocksHandler',
-            '/api/investment/health', 'InvestmentHealthHandler',
+            *INVESTMENT_API_URLS,
             '/assets/(.*)', 'AssetsHandler',
         )
         app = web.application(urls, globals(), autoreload=False)
@@ -1180,6 +1156,14 @@ def _allowed_file_roots():
         from business.investment.storage import get_storage_dirs
 
         roots.append(str(get_storage_dirs()["root"]))
+        try:
+            from business.investment.config_service import get_config
+
+            files_dir = str(get_config("storage.files_dir") or "")
+            if files_dir:
+                roots.append(files_dir)
+        except Exception as exc:
+            logger.debug("[WebChannel] investment files dir config unavailable: {}".format(exc))
     except Exception as exc:
         logger.debug("[WebChannel] investment storage root unavailable: {}".format(exc))
     return roots
@@ -1193,8 +1177,17 @@ class FileServeHandler:
     def GET(self):
         _require_console_auth()
         try:
-            params = web.input(path="")
-            file_path = params.path
+            params = web.input(path="", id="")
+            file_id = str(getattr(params, "id", "") or "").strip()
+            if file_id:
+                from business.investment.records import get_file_record
+
+                record = get_file_record(file_id)
+                if not record:
+                    raise web.notfound()
+                file_path = record.get("file_path") or ""
+            else:
+                file_path = params.path
             if not file_path or not os.path.isabs(file_path):
                 raise web.notfound()
             file_path = os.path.normpath(file_path)
@@ -3167,9 +3160,10 @@ class InvestmentDailyContentHandler:
         admin = _require_investment_permission("content.upload")
         try:
             from business.investment.constants import normalize_service
-            from business.investment.daily_content import create_content_draft, save_source_file, update_generation_success
+            from business.investment.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
 
             source_files = []
+            file_items = []
             if _investment_is_multipart_request():
                 params = _raw_web_input()
                 body = {
@@ -3183,15 +3177,10 @@ class InvestmentDailyContentHandler:
                     "generated_text": params.get("generated_text", ""),
                     "output_image": params.get("output_image", ""),
                 }
-                file_items = []
                 primary_file = params.get("file")
                 if primary_file is not None:
                     file_items.append(primary_file)
                 file_items.extend(_ensure_list(params.get("files")))
-                service_type = normalize_service(body.get("service_type", ""))
-                for file_obj in file_items:
-                    filename = getattr(file_obj, "filename", "") or getattr(file_obj, "name", "") or "source.bin"
-                    source_files.append(save_source_file(service_type, os.path.basename(filename), _read_uploaded_file_bytes(file_obj)))
             else:
                 body = _investment_json_body()
                 source_files = body.get("source_files", [])
@@ -3210,6 +3199,29 @@ class InvestmentDailyContentHandler:
                 auto_effective_after_generate=str(body.get("auto_effective_after_generate", "")).lower() in {"1", "true", "yes", "on"},
                 actor=admin,
             )
+            if file_items:
+                from business.investment.records import record_output_file
+
+                source_files = []
+                for file_obj in file_items:
+                    filename = getattr(file_obj, "filename", "") or getattr(file_obj, "name", "") or "source.bin"
+                    source_path = save_source_file(
+                        service_type,
+                        os.path.basename(filename),
+                        _read_uploaded_file_bytes(file_obj),
+                        owner_id=content_id,
+                        effective_date=body.get("effective_date") or None,
+                    )
+                    source_files.append(source_path)
+                    record_output_file(
+                        content_id,
+                        source_path,
+                        None,
+                        service_type,
+                        artifact_role="source_image",
+                        owner_type="content",
+                    )
+                update_content_source(content_id, source_files=source_files)
             if body.get("generated_text") or body.get("output_image"):
                 update_generation_success(content_id, body.get("generated_text", ""), body.get("output_image", ""))
             return _investment_json_response({"status": "success", "content_id": content_id})
@@ -3438,6 +3450,11 @@ class InvestmentCacheHandler:
                 keyword=getattr(params, "keyword", "") or "",
                 include_invalidated=include_invalidated,
             )
+            from business.investment.records import list_output_files
+
+            for entry in entries:
+                owner_id = entry.get("content_id") if entry.get("source_type") == "content" else entry.get("artifact_owner_id")
+                entry["output_artifacts"] = list_output_files(owner_id) if owner_id else []
             return _investment_json_response({
                 "status": "success",
                 "entries": entries,
@@ -3456,9 +3473,9 @@ class InvestmentCacheEntryInvalidateHandler:
     def POST(self, cache_key):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.cache_service import invalidate_cache_entry
+            from business.investment.business_cache import invalidate_business_cache
 
-            invalidated = invalidate_cache_entry(cache_key)
+            invalidated = invalidate_business_cache(cache_key)
             queued_removed = 0
             if invalidated:
                 try:
@@ -3484,7 +3501,7 @@ class InvestmentCacheClearHandler:
     def POST(self):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.cache_service import clear_cache_entries
+            from business.investment.business_cache import clear_business_cache
             from business.investment.constants import ServiceType, normalize_service
 
             body = _investment_json_body()
@@ -3492,7 +3509,7 @@ class InvestmentCacheClearHandler:
             if service_type == ServiceType.UNMATCHED:
                 service_type = None
             market_date = str(body.get("market_date") or "").strip()
-            removed = clear_cache_entries(service_type=service_type, market_date=market_date)
+            removed = clear_business_cache(service_type=service_type, market_date=market_date)
             _record_investment_operation(
                 "cache.clear",
                 "investment_cache_entry",

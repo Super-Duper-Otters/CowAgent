@@ -566,8 +566,8 @@ const INVEST_CONFIG_GROUPS = [
     {
         title: '存储与提示词',
         keys: [
-            ['storage.upload_dir', '上传目录', 'text'],
-            ['storage.generated_dir', '生成结果目录', 'text'],
+            ['storage.files_dir', '统一文件目录', 'text'],
+            ['storage.tmp_dir', '临时工作目录', 'text'],
             ['prompt.technical_analysis', '技术分析摘要 prompt', 'textarea'],
             ['prompt.rate', '利率文本生成 prompt', 'textarea'],
             ['prompt.convertible_bond', '转债文本生成 prompt', 'textarea'],
@@ -672,6 +672,7 @@ function investmentTokenToTailwind(token, tokens) {
         'investment-records-tab': INVEST_TW.tab,
         'investment-request-export-mode': INVEST_TW.button,
         'investment-config-page': 'grid gap-3',
+        'investment-config-grid': 'grid grid-cols-1 lg:grid-cols-12 gap-3 items-start',
         'investment-config-panel': 'items-start',
         'investment-settings-panel': '',
         'investment-stock-data-panel': '',
@@ -740,14 +741,14 @@ function investmentTokenToTailwind(token, tokens) {
         'investment-detail-block': 'mt-3 [&>span]:mb-1 [&>span]:block [&>span]:text-xs [&>span]:text-slate-500 dark:[&>span]:text-slate-400',
         'investment-detail-links': 'flex flex-wrap gap-2',
         'investment-records-workspace': 'grid gap-3',
-        'investment-records-topbar': INVEST_TW.panel,
         'investment-records-summary': 'grid grid-cols-1 md:grid-cols-4 gap-3',
         'investment-records-stat': 'rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5 [&_span]:block [&_span]:text-xs [&_span]:text-slate-500 dark:[&_span]:text-slate-400 [&_strong]:mt-1 [&_strong]:block [&_strong]:text-lg [&_strong]:font-semibold [&_strong]:text-slate-700 dark:[&_strong]:text-slate-200',
         'investment-records-board': 'grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5',
-        'investment-records-filters': 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-records-toolbar': 'flex flex-wrap items-end justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-records-filters': '',
         'investment-records-filter-grid': 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3',
         'investment-records-filter-actions': 'flex flex-wrap items-center justify-start xl:justify-end gap-2',
-        'investment-request-export-panel': 'grid gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
+        'investment-request-export-dialog': 'grid gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#1A1A1A]',
         'investment-request-export-heading': 'flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3',
         'investment-request-export-modes': 'flex flex-wrap gap-2',
         'investment-request-export-fields': 'flex flex-wrap items-end gap-3',
@@ -1019,16 +1020,31 @@ if (document.readyState === 'loading') {
     startInvestmentDropdownObserver();
 }
 
-function investmentImageUrl(path) {
+function investmentFilePath(file) {
+    if (file && typeof file === 'object') return file.file_path || file.path || '';
+    return file || '';
+}
+
+function investmentFileUrl(file) {
+    if (file && typeof file === 'object') {
+        if (file.file_url) return file.file_url;
+        if (file.file_id || file.id) return `/api/file?id=${encodeURIComponent(file.file_id || file.id)}`;
+    }
+    const path = investmentFilePath(file);
     return `/api/file?path=${encodeURIComponent(path)}`;
 }
 
+function investmentImageUrl(path) {
+    return investmentFileUrl(path);
+}
+
 function investmentFileName(path) {
-    return String(path || '').split(/[\\/]/).pop() || '文件';
+    const value = investmentFilePath(path);
+    return String(value || '').split(/[\\/]/).pop() || '文件';
 }
 
 function investmentIsImage(path) {
-    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(path || ''));
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(investmentFilePath(path) || ''));
 }
 
 function investmentTruncate(value, max = 60) {
@@ -1423,9 +1439,10 @@ function investmentHistoryHoverText(value, max = 24) {
 function investmentFileLinks(files = []) {
     const values = Array.isArray(files) ? files.filter(Boolean) : [];
     if (!values.length) return '<span class="investment-muted-inline">无</span>';
-    return values.map(path => {
-        const name = escapeHtml(investmentFileName(path));
-        const url = investmentImageUrl(path);
+    return values.map(file => {
+        const path = investmentFilePath(file);
+        const name = escapeHtml(investmentFileName(file));
+        const url = investmentFileUrl(file);
         return `<a class="investment-detail-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(path)}">${name}</a>`;
     }).join('');
 }
@@ -1460,13 +1477,13 @@ function investmentArtifactTable(artifacts = []) {
     const values = Array.isArray(artifacts) ? artifacts : [];
     if (!values.length) return '<span class="investment-muted-inline">无</span>';
     const rows = values.map(item => `<tr>
-        <td>${escapeHtml(item.artifact_role || '-')}</td>
-        <td>${investmentFileLinks([item.file_path])}</td>
+        <td class="investment-artifact-role">${escapeHtml(item.artifact_role || '-')}</td>
+        <td class="investment-artifact-file">${investmentFileLinks([item.file_path])}</td>
         <td>${escapeHtml(item.file_size ?? '-')}</td>
         <td>${investmentCompactText(item.file_hash || '', 28)}</td>
         <td>${investmentCompactText(item.version_tag || '', 28)}</td>
     </tr>`).join('');
-    return `<div class="investment-table-scroll"><table class="investment-table">
+    return `<div class="investment-table-scroll"><table class="investment-table investment-artifact-table">
         <thead><tr><th>角色</th><th>文件</th><th>大小</th><th>哈希</th><th>版本</th></tr></thead>
         <tbody>${rows}</tbody>
     </table></div>`;
@@ -2557,11 +2574,26 @@ function renderInvestmentSourcePreviews(sourceFiles = []) {
     return files.map(path => renderInvestmentFilePreview(path, '输入图片')).join('');
 }
 
+function investmentArtifactsByRole(record, role) {
+    const artifacts = Array.isArray(record?.output_artifacts) ? record.output_artifacts : [];
+    return artifacts.filter(item => item && item.artifact_role === role);
+}
+
+function investmentContentSourceFiles(record) {
+    const artifacts = investmentArtifactsByRole(record, 'source_image');
+    return artifacts.length ? artifacts : (record.source_files || []);
+}
+
+function investmentContentOutputImage(record) {
+    const artifacts = investmentArtifactsByRole(record, 'output_image');
+    return artifacts[0] || record.output_image || '';
+}
+
 function renderInvestmentImageFlow(record) {
     return `<div class="investment-image-flow">
-        <div class="investment-file-stack">${renderInvestmentSourcePreviews(record.source_files || [])}</div>
+        <div class="investment-file-stack">${renderInvestmentSourcePreviews(investmentContentSourceFiles(record))}</div>
         <span class="investment-flow-arrow">→</span>
-        <div class="investment-file-stack">${renderInvestmentFilePreview(record.output_image || '', '输出图片')}</div>
+        <div class="investment-file-stack">${renderInvestmentFilePreview(investmentContentOutputImage(record), '输出图片')}</div>
     </div>`;
 }
 
@@ -2573,9 +2605,9 @@ function renderInvestmentContentHistoryGroups(records) {
                     const serviceType = record.service_type || '';
                     const canGenerate = record.status !== 'generating';
                     const actionServiceType = escapeHtml(serviceType);
-                    const outputArtifactPaths = Array.isArray(record.output_artifacts) ? record.output_artifacts.map(item => item.file_path).filter(Boolean) : [];
-                    const artifactPaths = record.output_image ? [record.output_image, ...outputArtifactPaths.filter(path => path !== record.output_image)] : outputArtifactPaths;
-                    const artifactCount = artifactPaths.length;
+                    const artifactFiles = Array.isArray(record.output_artifacts) ? record.output_artifacts.filter(item => item && item.file_path) : [];
+                    const outputImage = investmentContentOutputImage(record);
+                    const artifactCount = artifactFiles.length;
                     const warningText = record.status_warning || record.error_message || '';
                     const warning = warningText ? investmentCompactText(warningText, 80) : '';
                     return `<tr>
@@ -2591,10 +2623,10 @@ function renderInvestmentContentHistoryGroups(records) {
                         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at) || '')}</td>
                         <td>${investmentHistoryHoverText(record.source_text, 24)}</td>
                         <td>${investmentHistoryHoverText(record.generated_text, 24)}</td>
-                        <td><div class="investment-history-output-preview">${record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<div class="investment-preview-placeholder">未生成</div>'}</div></td>
+                        <td><div class="investment-history-output-preview">${outputImage ? renderInvestmentFilePreview(outputImage, '输出图片') : '<div class="investment-preview-placeholder">未生成</div>'}</div></td>
                         <td>
                             <span class="investment-muted-inline">${artifactCount} 个</span>
-                            ${artifactPaths.length ? investmentFileLinks(artifactPaths) : ''}
+                            ${artifactFiles.length ? investmentFileLinks(artifactFiles) : ''}
                         </td>
                         <td class="investment-row-actions">
                             ${investmentTextButton('刷新', `refreshInvestmentContentAction('${actionServiceType}')`)}
@@ -2871,8 +2903,11 @@ function investmentExportCustomer() {
 function changeInvestmentRequestExportMode(mode) {
     const allowed = ['current', 'full', 'range', 'month', 'quarter'];
     investmentRecordsState.exportMode = allowed.includes(mode) ? mode : 'current';
-    const panel = document.querySelector('[data-investment-request-export-panel]');
-    if (panel) panel.outerHTML = renderInvestmentRequestExportPanel();
+    const modalBody = document.getElementById('investment-modal-body');
+    if (modalBody) {
+        modalBody.innerHTML = renderInvestmentRequestExportDialogBody();
+        initInvestmentDropdowns(modalBody);
+    }
 }
 
 function exportInvestmentRequestRecordsByCurrentFilters() {
@@ -3268,11 +3303,6 @@ async function loadInvestmentGeneratedContent() {
 function renderInvestmentRecordsShell() {
     return `
         <div class="investment-records-workspace">
-            <section class="investment-records-topbar">
-                <div>
-                    <div class="investment-panel-title"><i class="fas fa-table-list"></i><span>业务记录</span></div>
-                </div>
-            </section>
             <section class="investment-records-summary" id="investment-records-summary">${renderInvestmentRecordsSummary()}</section>
             <section class="investment-records-board">
                 <div class="investment-records-tabs">
@@ -3281,7 +3311,6 @@ function renderInvestmentRecordsShell() {
                     ${renderInvestmentRecordsTabButton('audits', '操作流水', 'fa-clock-rotate-left')}
                 </div>
                 <div class="investment-records-filters" id="investment-records-filters">${renderInvestmentRecordsFilters(investmentRecordsState.tab)}</div>
-                ${investmentRecordsState.tab === 'requests' ? renderInvestmentRequestExportPanel() : ''}
                 <div class="investment-records-main">
                     <div class="investment-records-list" id="investment-records-list"></div>
                     <aside class="investment-records-drawer" id="investment-records-drawer">
@@ -3295,36 +3324,81 @@ function renderInvestmentRecordsShell() {
         </div>`;
 }
 
-function renderInvestmentRequestExportPanel() {
+function investmentRequestExportDefaults() {
+    const filters = investmentRecordsState.filters.requests || investmentRecordsDefaultFilters('requests');
+    return {
+        keyword: filters.keyword || '',
+        service_type: filters.service_type || '',
+        status: filters.status || '',
+        customer: filters.customer || '',
+        start_date: filters.start_date || '',
+        end_date: filters.end_date || '',
+        month: investmentTodayDate().slice(0, 7),
+        quarter_year: String(new Date().getFullYear()),
+        quarter: String(Math.floor(new Date().getMonth() / 3) + 1),
+    };
+}
+
+function investmentRequestExportMonthOptions() {
+    const todayMonth = investmentTodayDate().slice(0, 7);
+    const [baseYear, baseMonth] = todayMonth.split('-').map(value => Number(value));
+    const options = [];
+    for (let offset = 0; offset < 18; offset += 1) {
+        const monthIndex = baseYear * 12 + (baseMonth - 1) - offset;
+        const year = Math.floor(monthIndex / 12);
+        const month = monthIndex % 12 + 1;
+        const value = `${year}-${String(month).padStart(2, '0')}`;
+        const label = offset === 0 ? `${value}（本月）` : value;
+        options.push([value, label]);
+    }
+    return options;
+}
+
+function renderInvestmentRequestExportCurrentSummary(filters = {}) {
+    const items = [];
+    if (filters.keyword) items.push(['关键字', filters.keyword]);
+    if (filters.service_type) items.push(['服务', investmentServiceLabel(filters.service_type)]);
+    if (filters.status) items.push(['状态', investmentStatusLabel(filters.status)]);
+    if (filters.start_date) items.push(['开始日期', filters.start_date]);
+    if (filters.end_date) items.push(['结束日期', filters.end_date]);
+    if (filters.customer) items.push(['客户/机构', filters.customer]);
+    const body = items.length
+        ? items.map(([label, value]) => `<span><strong>${escapeHtml(label)}</strong>${escapeHtml(value)}</span>`).join('')
+        : '<em>未设置筛选，将导出全部请求记录</em>';
+    return `<div class="investment-request-export-current-summary"><div>当前筛选条件</div><p>${body}</p></div>`;
+}
+
+function renderInvestmentRequestExportDialogBody() {
     const mode = investmentRecordsState.exportMode || 'current';
+    const values = investmentRequestExportDefaults();
     const serviceField = `
         <label class="investment-field">
-            <span>服务</span>
-            ${investmentDropdown('invest-export-service-type', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']], '')}
+            <span>投资服务</span>
+            ${investmentDropdown('invest-export-service-type', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']], values.service_type)}
         </label>`;
-    const customerField = '<label class="investment-field"><span>OpenID/手机号</span><input id="invest-export-customer" type="text" value=""></label>';
+    const customerField = `<label class="investment-field"><span>客户/机构/OpenID/手机号</span><input id="invest-export-customer" type="text" value="${escapeHtml(values.customer)}" placeholder="留空表示全部客户"></label>`;
     const fieldsByMode = {
         current: `
-            <div class="investment-request-export-note">使用上方公众号请求筛选条件导出。</div>
-            ${customerField}`,
+            <div class="investment-request-export-note">导出会应用上方客户/输入/错误、服务、状态和日期筛选。</div>
+            ${renderInvestmentRequestExportCurrentSummary(values)}`,
         full: `
-            <div class="investment-request-export-note">不限制日期，按下方条件导出全部请求记录。</div>
+            <div class="investment-request-export-note">可按下方条件缩小范围。</div>
             ${customerField}
             ${serviceField}`,
         range: `
-            ${investmentField('开始日期', 'invest-export-start-date', '', 'date')}
-            ${investmentField('结束日期', 'invest-export-end-date', '', 'date')}
+            ${investmentField('开始日期', 'invest-export-start-date', values.start_date, 'date')}
+            ${investmentField('结束日期', 'invest-export-end-date', values.end_date, 'date')}
             ${customerField}
             ${serviceField}`,
         month: `
-            <label class="investment-field"><span>月度</span><input id="invest-export-month" type="month"></label>
+            <label class="investment-field"><span>自然月</span>${investmentDropdown('invest-export-month', investmentRequestExportMonthOptions(), values.month)}</label>
             ${customerField}
             ${serviceField}`,
         quarter: `
-            <label class="investment-field"><span>年度</span><input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${new Date().getFullYear()}"></label>
+            <label class="investment-field"><span>年度</span><input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${escapeHtml(values.quarter_year)}"></label>
             <label class="investment-field">
-                <span>季度</span>
-                ${investmentDropdown('invest-export-quarter', [['1', 'Q1'], ['2', 'Q2'], ['3', 'Q3'], ['4', 'Q4']], '1')}
+                <span>自然季度</span>
+                ${investmentDropdown('invest-export-quarter', [['1', 'Q1（1-3月）'], ['2', 'Q2（4-6月）'], ['3', 'Q3（7-9月）'], ['4', 'Q4（10-12月）']], values.quarter)}
             </label>
             ${customerField}
             ${serviceField}`,
@@ -3337,22 +3411,39 @@ function renderInvestmentRequestExportPanel() {
         quarter: investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()', 'primary'),
     };
     return `
-        <section data-investment-request-export-panel class="investment-request-export-panel">
-            <div class="investment-request-export-heading">
-                <div class="investment-panel-title"><i class="fas fa-file-export"></i><span>公众号请求导出</span></div>
-                <div class="investment-request-export-modes">
-                    ${investmentRequestExportModeButton('current', '导出当前筛选', 'fa-filter')}
-                    ${investmentRequestExportModeButton('full', '全量导出', 'fa-download')}
-                    ${investmentRequestExportModeButton('range', '按日期范围', 'fa-calendar-days')}
-                    ${investmentRequestExportModeButton('month', '按月导出', 'fa-calendar')}
-                    ${investmentRequestExportModeButton('quarter', '按季度导出', 'fa-chart-pie')}
+        <section data-investment-request-export-dialog class="investment-request-export-dialog">
+            <div class="investment-request-export-layout">
+                <div class="investment-request-export-aside">
+                    <div class="investment-panel-title"><i class="fas fa-file-export"></i><span>公众号请求导出</span></div>
+                    <p>选择导出范围后下载 Excel 文件。客户和机构筛选会匹配 OpenID、手机号、姓名、机构。</p>
+                    <div class="investment-request-export-format"><i class="fas fa-file-excel"></i><span>导出格式：Excel</span></div>
+                </div>
+                <div class="investment-request-export-main">
+                    <div class="investment-request-export-mode-grid">
+                        ${investmentRequestExportModeButton('current', '导出当前筛选', 'fa-filter')}
+                        ${investmentRequestExportModeButton('full', '全量导出', 'fa-download')}
+                        ${investmentRequestExportModeButton('range', '按时间范围导出', 'fa-calendar-days')}
+                        ${investmentRequestExportModeButton('month', '按月度导出', 'fa-calendar')}
+                        ${investmentRequestExportModeButton('quarter', '按季度导出', 'fa-chart-pie')}
+                    </div>
+                    <div class="investment-request-export-form">
+                        <div class="investment-request-export-fields">
+                            ${fieldsByMode[mode] || fieldsByMode.current}
+                        </div>
+                        <div class="investment-request-export-footer">
+                            <div class="investment-request-export-note">月份和季度按自然月、自然季度处理；留空字段表示不限。</div>
+                            <div class="investment-request-export-action">${actionsByMode[mode] || actionsByMode.current}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="investment-request-export-fields">
-                ${fieldsByMode[mode] || fieldsByMode.current}
-                <div class="investment-request-export-action">${actionsByMode[mode] || actionsByMode.current}</div>
-            </div>
         </section>`;
+}
+
+function openInvestmentRequestExportDialog() {
+    investmentRecordsSetFilterValues('requests', {resetPage: false});
+    showInvestmentModal('导出业务记录', renderInvestmentRequestExportDialogBody());
+    initInvestmentDropdowns(document.getElementById('investment-modal-body'));
 }
 
 function investmentRequestExportModeButton(mode, label, icon) {
@@ -3423,11 +3514,14 @@ function renderInvestmentRecordsFilters(tab) {
         ].join('');
     }
     return `
-        <div class="investment-records-filter-grid">${controls}</div>
-        <div class="investment-records-filter-actions">
-            ${investmentButton('fa-filter', '筛选', 'applyInvestmentRecordsFilters()', 'primary')}
-            ${investmentButton('fa-rotate-right', '重置', 'resetInvestmentRecordsFilters()')}
-            ${investmentButton('fa-arrows-rotate', '刷新', 'loadInvestmentRecordsTab()')}
+        <div class="investment-records-toolbar">
+            <div class="investment-records-filter-grid">${controls}</div>
+            <div class="investment-records-filter-actions">
+                ${investmentButton('fa-filter', '筛选', 'applyInvestmentRecordsFilters()', 'primary')}
+                ${investmentButton('fa-rotate-right', '重置', 'resetInvestmentRecordsFilters()')}
+                ${investmentButton('fa-arrows-rotate', '刷新', 'loadInvestmentRecordsTab()')}
+                ${tab === 'requests' ? investmentButtonIfCan('records.export', 'fa-file-export', '导出', 'openInvestmentRequestExportDialog()', 'primary') : ''}
+            </div>
         </div>`;
 }
 
@@ -3583,14 +3677,14 @@ function renderInvestmentRequestRecordsTable(records) {
         <td>${investmentRecordClamp(record.stock_name || record.stock_code || record.normalized_target || record.raw_input || '-', 2, 46)}</td>
         <td><span class="investment-badge ${investmentStatusClass(record.status_warning === '未完成/可能超时' ? 'generating' : record.status)}">${investmentStatusLabel(record.status)}${record.status_warning === '未完成/可能超时' ? ' / 可能超时' : ''}</span></td>
         <td><span class="investment-badge ${investmentDeliveryStatusClass(record.delivery_status)}">${escapeHtml(record.delivery_status || '-')}</span></td>
-        <td>${investmentRecordClamp(record.status_warning === '未完成/可能超时' ? record.status_warning : (record.user_prompt || record.delivery_status || '正常'), 2, 54)}</td>
+        <td>${investmentRecordClamp(record.status_warning === '未完成/可能超时' ? record.status_warning : (record.user_prompt || record.delivery_status || '正常'), 1, 54)}</td>
         <td>${record.cache_hit ? '<span class="investment-badge ok">命中</span>' : '<span class="investment-badge">未命中</span>'}</td>
         <td>${escapeHtml(record.elapsed_ms == null ? '-' : `${record.elapsed_ms} ms`)}</td>
         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at))}</td>
         <td class="investment-row-actions">${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('request', '${investmentEncodedRecord(record)}')`)}</td>
     </tr>`).join('');
     return investmentRecordTableShell(`<table class="investment-table investment-records-table">
-        <thead><tr><th>客户</th><th>服务</th><th>标的/输入</th><th>生成</th><th>交付</th><th>提示摘要</th><th>缓存</th><th>耗时</th><th>北京时间</th><th>操作</th></tr></thead>
+        <thead><tr><th>客户</th><th>服务</th><th>标的/输入</th><th>生成</th><th>交付</th><th>提示摘要</th><th>缓存</th><th>耗时</th><th>时间</th><th>详情</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
 }
@@ -3939,7 +4033,6 @@ function renderInvestmentRequestDrawer(record) {
             ['模板版本', escapeHtml(record.template_version || '-')],
         ]))}
         ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.output_files || [])}</div>`)}
-        ${investmentDrawerSection('产物审计', investmentArtifactTable(record.output_artifacts || []))}
     `;
 }
 
@@ -3955,7 +4048,8 @@ function renderInvestmentContentDrawer(record) {
             ['模式', 'AI+渲染'],
             ['创建时间', escapeHtml(investmentFormatBeijingTime(record.created_at) || '-')],
         ]))}
-        ${investmentDrawerSection('输出图片', record.output_image ? renderInvestmentFilePreview(record.output_image, '输出图片') : '<span class="investment-muted-inline">未生成</span>')}
+        ${investmentDrawerSection('输入图片', `<div class="investment-drawer-file-grid">${renderInvestmentSourcePreviews(investmentContentSourceFiles(record))}</div>`)}
+        ${investmentDrawerSection('输出图片', investmentContentOutputImage(record) ? renderInvestmentFilePreview(investmentContentOutputImage(record), '输出图片') : '<span class="investment-muted-inline">未生成</span>')}
         ${investmentDrawerPre('错误/警告', record.status_warning || record.error_message || '')}
         ${investmentDrawerPre('资料文本', record.source_text || '')}
         ${investmentDrawerPre('生成文本', record.generated_text || '')}
@@ -4041,21 +4135,13 @@ function renderInvestmentConfigShell(data = {}, stockData = {}) {
     const panelHtml = renderInvestmentConfigPanel(currentInvestmentConfigPanel, data, stockData, configs, canReadConfig, canReadStocks);
     return `
         <div class="investment-config-page investment-settings-page">
-            <section class="investment-panel investment-workbench-full">
-                <div class="investment-panel-heading">
-                    <div>
-                        <div class="investment-panel-title"><i class="fas fa-shield-halved"></i><span>系统配置</span></div>
-                        <div class="investment-subtitle">配置项修改后会在当前项旁显示保存按钮，长 prompt 独立展示，避免误改其他配置。</div>
-                    </div>
-                </div>
-                <div id="invest-config-save-result" class="investment-muted"></div>
-            </section>
-            <div class="investment-tabs investment-config-tabs">
+            <div class="investment-config-nav">
                 ${tabs.map(tab => `
-                    <button class="investment-tab ${currentInvestmentConfigPanel === tab.key ? 'active' : ''}" onclick="switchInvestmentConfigPanel('${escapeHtml(tab.key)}')">
+                    <button class="investment-config-tab ${currentInvestmentConfigPanel === tab.key ? 'active' : ''}" onclick="switchInvestmentConfigPanel('${escapeHtml(tab.key)}')">
                         <i class="fas ${escapeHtml(tab.icon)}"></i><span>${escapeHtml(tab.label)}</span>
                     </button>`).join('')}
             </div>
+            <div id="invest-config-save-result" class="investment-muted"></div>
             <div id="investment-config-panel-content">${panelHtml}</div>
         </div>`;
 }
@@ -4075,21 +4161,21 @@ function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadCon
 
 function renderInvestmentConfigStockDataPanel(configs, stockData, canReadConfig, canReadStocks) {
     return `
-        <div class="investment-workbench investment-config-panel investment-settings-panel investment-stock-data-panel">
+        <div class="investment-config-grid investment-config-panel investment-settings-panel investment-stock-data-panel">
             ${investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)}
         </div>`;
 }
 
 function renderInvestmentConfigReplyTextsPanel(data, configs) {
     return `
-        <div class="investment-workbench investment-config-panel investment-settings-panel">
+        <div class="investment-config-grid investment-config-panel investment-settings-panel">
             ${renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)}
         </div>`;
 }
 
 function renderInvestmentConfigGenerationPanel(configs) {
     return `
-        <div class="investment-workbench investment-config-panel investment-settings-panel">
+        <div class="investment-config-grid investment-config-panel investment-settings-panel">
             ${renderInvestmentConfigGroupByTitle('技术分析参数', configs, {sectionClass: 'investment-config-section'})}
             ${renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})}
             ${renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})}
@@ -4098,7 +4184,7 @@ function renderInvestmentConfigGenerationPanel(configs) {
 
 function renderInvestmentConfigWebChatPanel(configs) {
     return `
-        <div class="investment-workbench investment-config-panel investment-settings-panel">
+        <div class="investment-config-grid investment-config-panel investment-settings-panel">
             ${renderInvestmentConfigGroupByTitle('后台Web对话', configs, {sectionClass: 'investment-config-section investment-workbench-full'})}
         </div>`;
 }
@@ -4378,19 +4464,19 @@ function renderInvestmentConfigField(key, label, type, value = '', options = {})
     const typeArg = investmentJsString(type);
     const safeId = escapeHtml(id);
     const safeLabel = escapeHtml(label);
-    const saveHandler = escapeHtml(`saveInvestmentConfigKey(${keyArg}, ${typeArg})`);
-    const dirtyHandler = escapeHtml(`markInvestmentConfigDirty(${keyArg})`);
-    const saveButton = canEdit ? `<button id="${safeId}-save" class="investment-btn investment-config-save${showSaveButton ? '' : ' hidden'}" type="button" onclick="${saveHandler}"><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
+    const saveHandler = `saveInvestmentConfigKey(${keyArg}, ${typeArg})`;
+    const dirtyHandler = `markInvestmentConfigDirty(${keyArg})`;
+    const saveButton = canEdit ? `<button id="${safeId}-save" class="investment-btn investment-config-save${showSaveButton ? '' : ' hidden'}" type="button" onclick='${saveHandler}'><i class="fas fa-floppy-disk"></i><span>保存</span></button>` : '';
     const status = `<span id="${safeId}-status" class="investment-config-status"></span>`;
     const fieldClass = type === 'textarea' ? 'investment-config-field textarea-config' : 'investment-config-field';
     let control = '';
     if (type === 'textarea') {
-        control = `<label class="investment-field textarea"><span>${safeLabel}</span><textarea id="${safeId}" rows="4" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}>${escapeHtml(value || '')}</textarea></label>`;
+        control = `<label class="investment-field textarea"><span>${safeLabel}</span><textarea id="${safeId}" rows="4" ${canEdit ? `${eventName}='${dirtyHandler}'` : 'disabled'}>${escapeHtml(value || '')}</textarea></label>`;
     } else if (type === 'checkbox') {
         const checked = value === true || value === 'true' || value === '1';
-        control = investmentSwitch(label, id, checked, {attrs: canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'});
+        control = investmentSwitch(label, id, checked, {attrs: canEdit ? `${eventName}='${dirtyHandler}'` : 'disabled'});
     } else {
-        control = `<label class="investment-field"><span>${safeLabel}</span><input id="${safeId}" type="${type}" value="${escapeHtml(value || '')}" ${canEdit ? `${eventName}="${dirtyHandler}"` : 'disabled'}></label>`;
+        control = `<label class="investment-field"><span>${safeLabel}</span><input id="${safeId}" type="${type}" value="${escapeHtml(value || '')}" ${canEdit ? `${eventName}='${dirtyHandler}'` : 'disabled'}></label>`;
     }
     return `
         <div class="${fieldClass}" data-config-key="${escapeHtml(key)}">
@@ -4587,8 +4673,10 @@ window.resetInvestmentRecordsFilters = resetInvestmentRecordsFilters;
 window.loadInvestmentRecordsTab = loadInvestmentRecordsTab;
 window.changeInvestmentRecordsPage = changeInvestmentRecordsPage;
 window.changeInvestmentRecordsPageSize = changeInvestmentRecordsPageSize;
+window.openInvestmentRequestExportDialog = openInvestmentRequestExportDialog;
 window.changeInvestmentRequestExportMode = changeInvestmentRequestExportMode;
 window.exportInvestmentRequestRecordsByCurrentFilters = exportInvestmentRequestRecordsByCurrentFilters;
+window.exportInvestmentRequestRecordsFull = exportInvestmentRequestRecordsFull;
 window.exportInvestmentRequestRecordsByRange = exportInvestmentRequestRecordsByRange;
 window.exportInvestmentRequestRecordsByMonth = exportInvestmentRequestRecordsByMonth;
 window.exportInvestmentRequestRecordsByQuarter = exportInvestmentRequestRecordsByQuarter;

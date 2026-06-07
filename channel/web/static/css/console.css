@@ -2073,29 +2073,29 @@
 .investment-records-workspace {
     --investment-records-list-max-height: min(620px, calc(100vh - 300px));
     display: grid;
+    width: 100%;
+    min-width: 0;
     gap: 14px;
 }
 
-.investment-records-topbar,
 .investment-records-board {
+    width: 100%;
+    min-width: 0;
     border: 1px solid #d8e2ef;
     border-radius: 8px;
     background: #ffffff;
 }
 
-.investment-records-topbar {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 16px;
-}
-
 .investment-records-board {
+    display: grid;
+    gap: 12px;
     padding: 14px;
 }
 
 .investment-records-main {
     display: grid;
+    width: 100%;
+    min-width: 0;
     grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
     gap: 14px;
     align-items: start;
@@ -2103,11 +2103,15 @@
 
 .investment-records-list {
     height: var(--investment-records-list-max-height);
+    width: 100%;
+    min-width: 0;
     min-height: 0;
     overflow: auto;
 }
 
 .investment-records-drawer {
+    width: 100%;
+    min-width: 0;
     min-height: 360px;
     max-height: var(--investment-records-list-max-height);
     overflow: auto;
@@ -2124,9 +2128,80 @@
     color: #6b7c93;
 }
 
+.investment-records-drawer-section {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: 10px;
+    padding: 14px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.investment-records-drawer-section h4 {
+    margin: 0;
+    color: #1f2d3d;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.investment-records-drawer-section pre {
+    max-height: 260px;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.investment-drawer-file-grid {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 10px;
+}
+
+.investment-drawer-file-grid a,
+.investment-records-drawer-section > a {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+}
+
+.investment-drawer-file-grid .investment-preview,
+.investment-records-drawer-section > a .investment-preview {
+    width: 100%;
+    height: 150px;
+    border: 1px solid #d8e2ef;
+    border-radius: 8px;
+    background: #ffffff;
+    object-fit: contain;
+}
+
+.investment-drawer-file-grid .investment-preview-placeholder {
+    min-height: 120px;
+}
+
+.investment-drawer-file-grid .investment-file-chip {
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border: 1px solid #d8e2ef;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.investment-drawer-file-grid .investment-file-chip span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .investment-records-table-shell {
     height: 100%;
     min-height: 0;
+    min-width: 0;
 }
 
 .investment-content-workspace {
@@ -2547,12 +2622,76 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     gap: 14px;
 }
 
+.investment-config-page {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+}
+
+.investment-config-grid {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.investment-config-grid > .investment-panel {
+    grid-column: span 6;
+    min-width: 0;
+}
+
+.investment-config-grid > .investment-workbench-full {
+    grid-column: 1 / -1;
+}
+
 .investment-settings-page .investment-panel {
     align-self: start;
 }
 
-.investment-config-tabs {
-    margin-bottom: 12px;
+.investment-config-nav {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid #d8e1ee;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.investment-config-tab {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #526783;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.investment-config-tab:hover {
+    background: #ffffff;
+    color: #20324d;
+}
+
+.investment-config-tab.active {
+    background: #ffffff;
+    color: #0f172a;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+#investment-config-panel-content {
+    display: block;
+    width: 100%;
+    min-width: 0;
 }
 
 .investment-config-toolbar {
@@ -2583,13 +2722,68 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     font-size: 13px;
 }
 
-.investment-request-export-panel {
+.investment-request-export-dialog {
     display: grid;
-    gap: 12px;
-    padding: 14px;
+    width: 100%;
+    min-width: 0;
+    gap: 0;
+    padding: 16px;
     border: 1px solid #d8e1ee;
     border-radius: 8px;
     background: #ffffff;
+}
+
+.investment-request-export-layout {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1.45fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.investment-request-export-aside {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.investment-request-export-aside p {
+    margin: 0;
+    color: #5f7390;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.investment-request-export-format {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: #eaf7ef;
+    color: #228547;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.investment-request-export-main,
+.investment-request-export-form {
+    display: grid;
+    min-width: 0;
+    gap: 12px;
+}
+
+.investment-request-export-mode-grid {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
 }
 
 .investment-request-export-heading,
@@ -2599,6 +2793,104 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     flex-wrap: wrap;
     gap: 10px;
     align-items: end;
+    min-width: 0;
+}
+
+.investment-request-export-heading {
+    justify-content: space-between;
+}
+
+.investment-request-export-fields {
+    align-items: end;
+}
+
+.investment-request-export-form {
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.investment-request-export-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.investment-request-export-fields .investment-field {
+    min-width: 0;
+}
+
+.investment-request-export-fields > .investment-request-export-note {
+    grid-column: 1 / -1;
+    align-self: center;
+    margin: 0;
+    color: #5f7390;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.investment-request-export-current-summary {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid #d8e2ef;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.investment-request-export-current-summary > div {
+    color: #20324d;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.investment-request-export-current-summary p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    color: #6b7c93;
+    font-size: 13px;
+}
+
+.investment-request-export-current-summary span {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #334155;
+}
+
+.investment-request-export-current-summary strong {
+    flex-shrink: 0;
+    color: #64748b;
+    font-weight: 700;
+}
+
+.investment-request-export-current-summary em {
+    color: #6b7c93;
+    font-style: normal;
+}
+
+.investment-request-export-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    padding-top: 12px;
+    border-top: 1px solid #edf2f7;
+}
+
+.investment-request-export-action {
+    margin-left: auto;
 }
 
 .investment-record-clamp {
@@ -2612,14 +2904,91 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     -webkit-line-clamp: 2;
 }
 
+.investment-artifact-table {
+    min-width: 760px;
+    table-layout: fixed;
+}
+
+.investment-artifact-table th:nth-child(1),
+.investment-artifact-table td:nth-child(1) {
+    width: 96px;
+}
+
+.investment-artifact-table th:nth-child(2),
+.investment-artifact-table td:nth-child(2) {
+    width: 280px;
+}
+
+.investment-artifact-table th:nth-child(3),
+.investment-artifact-table td:nth-child(3) {
+    width: 88px;
+}
+
+.investment-artifact-table th:nth-child(4),
+.investment-artifact-table td:nth-child(4),
+.investment-artifact-table th:nth-child(5),
+.investment-artifact-table td:nth-child(5) {
+    width: 160px;
+}
+
+.investment-artifact-role,
+.investment-artifact-file,
+.investment-artifact-file a {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .investment-records-tabs,
-.investment-records-filters,
-.investment-records-filter-grid,
+.investment-records-toolbar,
 .investment-records-filter-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
     align-items: end;
+    min-width: 0;
+}
+
+.investment-records-tabs,
+.investment-records-toolbar {
+    width: 100%;
+}
+
+.investment-records-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    justify-content: space-between;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.investment-records-filter-grid {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(132px, 1fr));
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-records-filter-actions {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+}
+
+.investment-records-filter-grid .investment-field {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.investment-records-filter-grid .investment-field:first-child {
+    min-width: 0;
 }
 
 .investment-records-pagination {
@@ -2779,24 +3148,81 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     border-top-right-radius: 8px;
 }
 
+@media (max-width: 1024px) {
+    .investment-records-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .investment-records-filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 768px) {
     .investment-user-toolbar-grid {
         grid-template-columns: 1fr;
     }
 
-    .investment-toolbar-section.actions {
+    .investment-toolbar-section.actions,
+    .investment-records-filter-actions {
         justify-content: flex-start;
     }
 
     .investment-workbench,
+    .investment-config-grid,
     .investment-daily-content-page {
         grid-template-columns: 1fr;
+    }
+
+    .investment-config-grid > .investment-panel {
+        grid-column: 1 / -1;
     }
 
     .investment-content-top,
     .investment-records-main,
     .investment-daily-content-page .investment-daily-upload-panel .investment-grid.cols-2 {
         grid-template-columns: 1fr;
+    }
+
+    .investment-records-toolbar,
+    .investment-records-filter-grid,
+    .investment-records-filter-actions,
+    .investment-request-export-layout,
+    .investment-request-export-heading,
+    .investment-request-export-fields,
+    .investment-request-export-modes,
+    .investment-request-export-footer {
+        align-items: stretch;
+    }
+
+    .investment-request-export-layout,
+    .investment-request-export-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .investment-request-export-mode-grid {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }
+
+    .investment-records-filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .investment-records-filter-grid,
+    .investment-records-filter-actions,
+    .investment-records-filter-grid .investment-field,
+    .investment-records-filter-grid .investment-field:first-child,
+    .investment-records-filter-actions .investment-btn,
+    .investment-request-export-mode-grid .investment-request-export-mode,
+    .investment-request-export-fields .investment-field,
+    .investment-request-export-action,
+    .investment-request-export-action .investment-btn {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .investment-request-export-action {
+        margin-left: 0;
     }
 
     .investment-content-top-panel .investment-daily-current-panel {

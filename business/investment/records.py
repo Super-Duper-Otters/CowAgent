@@ -312,6 +312,7 @@ def succeed_request_record(
             artifact_roles=stored_artifact_roles,
             artifact_versions=stored_artifact_versions,
             owner_type="request",
+            storage_date=market_date,
         )
         with connect() as conn:
             conn.execute(
@@ -587,7 +588,48 @@ def list_output_files(owner_id: str) -> list[dict]:
             .where(investment_output_files.c.owner_id == owner_id)
             .order_by(investment_output_files.c.id)
         ).fetchall()
-    return [row_to_dict(row) for row in rows]
+    files = []
+    for row in rows:
+        item = row_to_dict(row)
+        file_id = str(item.get("id") or "")
+        item["file_id"] = file_id
+        item["file_url"] = f"/api/file?id={file_id}" if file_id else ""
+        files.append(item)
+    return files
+
+
+def get_file_record(file_id: int | str) -> dict | None:
+    try:
+        normalized_id = int(file_id)
+    except (TypeError, ValueError):
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_output_files).where(investment_output_files.c.id == normalized_id)
+        ).fetchone()
+    if row is None:
+        return None
+    item = row_to_dict(row)
+    item["file_id"] = str(item.get("id") or "")
+    item["file_url"] = f"/api/file?id={item['file_id']}" if item["file_id"] else ""
+    return item
+
+
+def get_file_record_by_path(file_path: str) -> dict | None:
+    if not file_path:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_output_files)
+            .where(investment_output_files.c.file_path == file_path)
+            .order_by(investment_output_files.c.id.desc())
+        ).fetchone()
+    if row is None:
+        return None
+    item = row_to_dict(row)
+    item["file_id"] = str(item.get("id") or "")
+    item["file_url"] = f"/api/file?id={item['file_id']}" if item["file_id"] else ""
+    return item
 
 
 def record_output_file(

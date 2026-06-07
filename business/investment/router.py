@@ -4,9 +4,16 @@ from dataclasses import dataclass
 
 from .config_service import get_config, sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, user_message
+from .permission_service import (
+    verify_customer_access as verify_user_access,
+    verify_customer_business_access as verify_permission,
+)
+from .business_records import (
+    create_business_record as create_request_record,
+    mark_business_failed as fail_request_record,
+    mark_business_success as succeed_request_record,
+)
 from .executors.daily_content_executor import get_daily_content_business
-from .records import create_request_record, fail_request_record, succeed_request_record
-from .user_service import verify_permission, verify_user_access
 
 
 DEFAULT_UNMATCHED_PROMPT = """请输入以下格式之一：
@@ -299,24 +306,25 @@ def handle_text_message(
                 result.main_chart_path: result.ta_version,
                 result.report_path: result.ta_version,
             }
-            from .artifact_service import archive_output_files
+            from .artifacts import archive_business_output_files
 
-            record_output_files, artifact_roles, artifact_versions, archived_path_map = archive_output_files(
+            record_output_files, artifact_roles, artifact_versions, archived_path_map = archive_business_output_files(
                 request_id,
                 record_output_files,
                 route.service_type,
                 artifact_roles=artifact_roles,
                 artifact_versions=artifact_versions,
                 owner_type="request",
+                storage_date=result.market_date,
             )
             user_output_files = [
                 archived_path_map.get(result.signal_card_path, result.signal_card_path),
                 archived_path_map.get(result.main_chart_path, result.main_chart_path),
             ]
             if result.cache_key and not result.cache_hit:
-                from .cache_service import write_cache_entry
+                from .business_cache import write_business_cache
 
-                write_cache_entry(
+                write_business_cache(
                     cache_key=result.cache_key,
                     service_type=ServiceType.TECHNICAL_ANALYSIS,
                     normalized_target=result.normalized_target,

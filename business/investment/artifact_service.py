@@ -4,11 +4,11 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 
 from .constants import ServiceType
-from .db import connect
-from .schema import investment_output_files
+from .db import connect, row_to_dict
+from .schema import investment_daily_contents, investment_output_files, investment_request_records
 from .storage import get_storage_dirs
 from .versioning import file_fingerprint
 
@@ -40,12 +40,57 @@ def _safe_segment(value: str, fallback: str = "item") -> str:
     return text[:80] or fallback
 
 
+def _date_from_text(value: str | None) -> str:
+    match = re.search(r"\d{4}-\d{2}-\d{2}", str(value or ""))
+    return match.group(0) if match else ""
+
+
+def _owner_date(owner_id: str, owner_type: str) -> str:
+    try:
+        with connect() as conn:
+            if owner_type == "content":
+                row = conn.execute(
+                    select(
+                        investment_daily_contents.c.effective_date,
+                        investment_daily_contents.c.created_at,
+                    ).where(investment_daily_contents.c.content_id == owner_id)
+                ).fetchone()
+                item = row_to_dict(row)
+                return _date_from_text(item.get("effective_date")) or _date_from_text(item.get("created_at"))
+            row = conn.execute(
+                select(
+                    investment_request_records.c.market_date,
+                    investment_request_records.c.created_at,
+                ).where(investment_request_records.c.request_id == owner_id)
+            ).fetchone()
+            item = row_to_dict(row)
+            return _date_from_text(item.get("market_date")) or _date_from_text(item.get("created_at"))
+    except Exception:
+        return ""
+    return ""
+
+
 def _is_path_under(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
         return True
     except ValueError:
         return False
+
+
+def _remove_empty_parents(start: Path, stop: Path) -> None:
+    current = start.resolve()
+    stop = stop.resolve()
+    while current != stop:
+        try:
+            current.relative_to(stop)
+        except ValueError:
+            return
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def archive_artifact_file(
@@ -55,6 +100,8 @@ def archive_artifact_file(
     service_type: ServiceType,
     *,
     owner_type: str = "request",
+    storage_date: str = "",
+    force_rehome: bool = False,
 ) -> str:
     path = Path(file_path)
     if not path.is_absolute():
@@ -62,24 +109,44 @@ def archive_artifact_file(
     if not path.is_file():
         return file_path
 
-    archive_root = get_storage_dirs()["generated"] / "archive"
-    if _is_path_under(path, archive_root):
+    from .config_service import get_config
+
+    files_root = Path(str(get_config("storage.files_dir") or get_storage_dirs()["files"]))
+    if not files_root.is_absolute():
+        files_root = Path.cwd() / files_root
+    if _is_path_under(path, files_root) and not force_rehome:
         return str(path)
 
     role = _safe_segment(artifact_role or _file_type(str(path)), "artifact")
     digest = file_fingerprint(str(path)).split(":", 1)[-1][:16] or "file"
     suffix = path.suffix or ".bin"
     stem = _safe_segment(path.stem, "file")
+    storage_date = _safe_segment(
+        _date_from_text(storage_date) or _owner_date(owner_id, owner_type) or datetime.now(UTC).date().isoformat(),
+        "unknown-date",
+    )
     target_dir = (
-        archive_root
+        files_root
         / _safe_segment(str(service_type), "service")
+        / storage_date
         / _safe_segment(owner_type, "owner")
         / _safe_segment(owner_id, "id")
         / role
     )
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{role}_{stem}_{digest}{suffix}"
-    if not target.exists() or file_fingerprint(str(target)) != file_fingerprint(str(path)):
+    if target.exists() and file_fingerprint(str(target)) == file_fingerprint(str(path)):
+        storage_root = get_storage_dirs()["root"]
+        if _is_path_under(path, storage_root) and path.resolve() != target.resolve():
+            path.unlink(missing_ok=True)
+            _remove_empty_parents(path.parent, storage_root)
+        return str(target)
+
+    storage_root = get_storage_dirs()["root"]
+    if _is_path_under(path, storage_root):
+        shutil.move(str(path), str(target))
+        _remove_empty_parents(path.parent, storage_root)
+    else:
         shutil.copy2(path, target)
     return str(target)
 
@@ -92,6 +159,7 @@ def archive_output_files(
     artifact_roles: dict[str, str] | None = None,
     artifact_versions: dict[str, str] | None = None,
     owner_type: str = "request",
+    storage_date: str = "",
 ) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str]]:
     archived_files: list[str] = []
     archived_roles: dict[str, str] = {}
@@ -100,7 +168,14 @@ def archive_output_files(
     for file_path in output_files:
         role = (artifact_roles or {}).get(file_path, _file_type(file_path))
         version = (artifact_versions or {}).get(file_path, "")
-        archived = archive_artifact_file(owner_id, file_path, role, service_type, owner_type=owner_type)
+        archived = archive_artifact_file(
+            owner_id,
+            file_path,
+            role,
+            service_type,
+            owner_type=owner_type,
+            storage_date=storage_date,
+        )
         archived_files.append(archived)
         archived_roles[archived] = role
         if version:

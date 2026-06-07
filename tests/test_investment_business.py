@@ -6,6 +6,7 @@ from collections import OrderedDict
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from types import SimpleNamespace
 import sys
@@ -677,9 +678,8 @@ def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
     storage.initialize_storage()
 
     assert calls == ["head"]
-    assert (tmp_path / "storage" / "uploads").is_dir()
-    assert (tmp_path / "storage" / "generated").is_dir()
-    assert (tmp_path / "storage" / "technical-analysis").is_dir()
+    assert (tmp_path / "storage" / "files").is_dir()
+    assert (tmp_path / "storage" / "tmp").is_dir()
 
 
 def test_investment_migration_smoke_creates_schema(investment_env):
@@ -1816,7 +1816,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     assert current_output != image
     assert current_output.is_file()
     assert current_output.read_bytes() == b"png"
-    assert current_output.resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
+    assert current_output.resolve().is_relative_to(get_storage_dirs()["files"].resolve())
     assert payload["current_effective"]["operator"] == "operator-current"
 
 
@@ -1874,7 +1874,15 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
     assert record.output_image != str(image)
     assert Path(record.output_image).is_file()
     assert Path(record.output_image).read_bytes() == b"legacy-rate-card"
-    assert Path(record.output_image).resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
+    assert Path(record.output_image).resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    output_parts = Path(record.output_image).parts
+    files_index = output_parts.index("files")
+    assert output_parts[files_index + 1 : files_index + 5] == (
+        str(ServiceType.RATE),
+        "2026-06-04",
+        "content",
+        content_id,
+    )
     assert Path(record.output_image).name.startswith("output_image_rate_card_")
     assert artifacts
     assert artifacts[0]["artifact_role"] == "output_image"
@@ -2414,6 +2422,9 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
     assert rate_entry["status"] == "generated"
     assert rate_entry["output_files"]
     assert rate_entry["output_image"] == rate_entry["output_files"][0]
+    assert rate_entry["output_artifacts"]
+    assert rate_entry["output_artifacts"][0]["file_id"]
+    assert rate_entry["output_artifacts"][0]["file_url"].startswith("/api/file?id=")
     assert "2026-06-05" in payload["market_dates"]
 
 
@@ -2843,7 +2854,10 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
     generated = call_json(lambda: InvestmentDailyContentGenerateHandler().POST(content_id))
     assert generated["status"] == "success"
     assert generated["generation_status"] == "started"
-    assert get_content_record(content_id).output_image == str(generated_image)
+    generated_record = get_content_record(content_id)
+    assert generated_record.output_image != str(generated_image)
+    assert Path(generated_record.output_image).is_file()
+    assert Path(generated_record.output_image).read_bytes() == b"rate"
 
     effective = call_json(
         lambda: InvestmentDailyContentEffectiveHandler().POST(content_id),
@@ -2871,9 +2885,9 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
     rate_reply = handle_text_message("openid-e2e", "利率")
     cb_reply = handle_text_message("openid-e2e", "转债")
     assert rate_reply.success is True
-    assert rate_reply.output_files == [str(generated_image)]
+    assert rate_reply.output_files == [get_content_record(content_id).output_image]
     assert cb_reply.success is True
-    assert cb_reply.output_files == [str(cb_image)]
+    assert cb_reply.output_files == [get_content_record(cb_draft["content_id"]).output_image]
 
     records = call_json(InvestmentRequestRecordsHandler().GET, params={"limit": "20"})
     assert {record["raw_input"] for record in records["records"]} >= {"利率", "转债"}
@@ -3468,7 +3482,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
     from business.investment import config_service
     from business.investment.constants import ErrorCode, ServiceType, Status
     from business.investment.job_service import find_running_job
-    from business.investment.records import list_request_records
+    from business.investment.records import get_content_record, list_request_records
     from business.investment.router import handle_text_message
     from business.investment.user_service import create_user
 
@@ -3523,7 +3537,7 @@ def test_job_service_concurrent_start_creates_single_running_job(investment_env)
 
     from business.investment.constants import ServiceType
     from business.investment.job_service import start_job_if_absent
-    from business.investment.records import list_request_records
+    from business.investment.records import get_content_record, list_request_records
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
@@ -3764,11 +3778,18 @@ def test_success_request_archives_generated_images_and_documents(investment_env,
 
     record = get_request_record(request_id)
     artifacts = list_output_files(request_id)
-    archive_root = get_storage_dirs()["generated"] / "archive"
+    files_root = get_storage_dirs()["files"]
 
     assert len(record.output_files or []) == 2
     assert all(Path(path).is_file() for path in record.output_files or [])
-    assert all(Path(path).resolve().is_relative_to(archive_root.resolve()) for path in record.output_files or [])
+    assert all(Path(path).resolve().is_relative_to(files_root.resolve()) for path in record.output_files or [])
+    for path in record.output_files or []:
+        parts = Path(path).parts
+        files_index = parts.index("files")
+        assert parts[files_index + 1] == str(ServiceType.RATE)
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[files_index + 2])
+        assert parts[files_index + 3] == "request"
+        assert parts[files_index + 4] == request_id
     assert record.output_files != [str(image), str(report)]
     assert Path(record.output_files[0]).read_bytes() == b"image-v1"
     assert Path(record.output_files[1]).read_text(encoding="utf-8") == "report-v1"
@@ -3776,6 +3797,91 @@ def test_success_request_archives_generated_images_and_documents(investment_env,
         (record.output_files[0], "image", "output_image"),
         (record.output_files[1], "markdown", "markdown_report"),
     ]
+    assert all(item["file_id"] for item in artifacts)
+    assert all(item["file_url"].startswith("/api/file?id=") for item in artifacts)
+
+
+def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
+    from business.investment.cache_service import find_cache_entry_by_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.file_migration import migrate_legacy_files_to_unified_storage
+    from business.investment.daily_content import create_content_draft
+    from business.investment.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
+    from business.investment.storage import get_storage_dirs
+
+    legacy_dir = get_storage_dirs()["root"] / "generated" / "archive" / "legacy"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    legacy_file = legacy_dir / "legacy-card.png"
+    legacy_file.write_bytes(b"legacy-card")
+    legacy_source = legacy_dir / "legacy-source.png"
+    legacy_source.write_bytes(b"legacy-source")
+    request_id = create_request_record("openid", "技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_files=[str(legacy_source)],
+        source_text="legacy",
+        effective_date="2026-06-07",
+    )
+    old_files_dir = get_storage_dirs()["files"] / "rate" / "content" / content_id / "output_image"
+    old_files_dir.mkdir(parents=True, exist_ok=True)
+    old_files_output = old_files_dir / "old-files-card.png"
+    old_files_output.write_bytes(b"old-files-card")
+    with connect() as conn:
+        conn.execute(
+            text("update investment_request_records set output_files = :files where request_id = :request_id"),
+            {"files": json.dumps([str(legacy_file)]), "request_id": request_id},
+        )
+        conn.execute(
+            text("update investment_daily_contents set output_image = :path where content_id = :content_id"),
+            {"path": str(old_files_output), "content_id": content_id},
+        )
+    record_output_file(
+        request_id,
+        str(legacy_file),
+        None,
+        ServiceType.TECHNICAL_ANALYSIS,
+        artifact_role="signal_card",
+    )
+    write_cache_entry(
+        cache_key="technical_analysis:legacy:2026-06-07:v1",
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="legacy",
+        market_date="2026-06-07",
+        version_fingerprint="v1",
+        output_files=[str(legacy_file)],
+        artifact_owner_id=request_id,
+    )
+
+    changed = migrate_legacy_files_to_unified_storage()
+
+    record = get_request_record(request_id)
+    artifacts = list_output_files(request_id)
+    content = get_content_record(content_id)
+    source_artifacts = [item for item in list_output_files(content_id) if item["artifact_role"] == "source_image"]
+    cache_entry = find_cache_entry_by_key("technical_analysis:legacy:2026-06-07:v1")
+    assert changed == 3
+    assert record.output_files and Path(record.output_files[0]).is_file()
+    assert Path(record.output_files[0]).resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    assert not legacy_file.exists()
+    assert artifacts[0]["file_path"] == record.output_files[0]
+    assert cache_entry is not None
+    assert cache_entry.output_files == record.output_files
+    assert content.source_files and Path(content.source_files[0]).resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    assert content.output_image and Path(content.output_image).resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    output_parts = Path(content.output_image).parts
+    files_index = output_parts.index("files")
+    assert output_parts[files_index + 1 : files_index + 5] == (
+        "rate",
+        "2026-06-07",
+        "content",
+        content_id,
+    )
+    assert not old_files_output.exists()
+    assert not legacy_source.exists()
+    assert len(source_artifacts) == 1
+    assert source_artifacts[0]["file_path"] == content.source_files[0]
+    assert source_artifacts[0]["file_url"].startswith("/api/file?id=")
 
 
 def test_request_records_save_audit_metadata(investment_env):
@@ -4723,7 +4829,7 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     chart.write_bytes(b"chart")
 
     def fake_skill(symbol, output_dir):
-        calls.append(("skill", symbol, output_dir.name))
+        calls.append(("skill", symbol, output_dir.parent.name, output_dir.name))
         return report, chart
 
     def fake_ai(report_text):
@@ -4750,10 +4856,9 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     result = run_technical_analysis("ok", "300502.SZ 技术分析")
 
     assert result.success is True
-    assert calls[:2] == [
-        ("skill", "300502", "300502_SZ"),
-        ("ai", "# 技术分析报告\n\n核心观点"),
-    ]
+    assert calls[0][0:3] == ("skill", "300502", "300502_SZ")
+    assert len(calls[0][3]) == 32
+    assert calls[1] == ("ai", "# 技术分析报告\n\n核心观点")
     assert calls[2][0:2] == ("render", "signal card standard text")
     assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-29_")
     assert calls[2][2].endswith(".png")
@@ -4769,7 +4874,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
     from business.investment.cache_service import find_cache_entry_by_key
     from business.investment.constants import ServiceType
     from business.investment.db import connect
-    from business.investment.records import list_request_records
+    from business.investment.records import get_content_record, list_request_records
     from business.investment.router import handle_text_message
     from business.investment.storage import get_storage_dirs
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -4807,7 +4912,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
 
     record = list_request_records(limit=1)[0]
     cache_entry = find_cache_entry_by_key("technical_analysis:300502.SZ:2026-05-25:pytest")
-    archive_root = get_storage_dirs()["generated"] / "archive"
+    files_root = get_storage_dirs()["files"]
     assert reply.success is True
     assert record.customer_name == "Alice"
     assert record.institution == "Inst A"
@@ -4835,7 +4940,16 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
         (True, "main_chart"),
         (True, "markdown_report"),
     ]
-    assert all(Path(path).resolve().is_relative_to(archive_root.resolve()) for path in artifact_paths)
+    assert all(Path(path).resolve().is_relative_to(files_root.resolve()) for path in artifact_paths)
+    for path in artifact_paths:
+        parts = Path(path).parts
+        files_index = parts.index("files")
+        assert parts[files_index + 1 : files_index + 5] == (
+            str(ServiceType.TECHNICAL_ANALYSIS),
+            "2026-05-25",
+            "request",
+            record.request_id,
+        )
     assert artifact_paths != [str(card), str(chart), str(report)]
     assert record.output_files == artifact_paths
     assert cache_entry is not None
@@ -6921,12 +7035,37 @@ def test_file_serve_handler_allows_investment_storage_file(investment_env, monke
     from channel.web.web_channel import FileServeHandler
 
     _login_default_investment_admin(monkeypatch)
-    image = get_storage_dirs()["generated"] / "allowed.png"
+    image = get_storage_dirs()["tmp"] / "allowed.png"
     image.write_bytes(b"png")
     monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(path=str(image)))
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
 
     assert FileServeHandler().GET() == b"png"
+
+
+def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, list_output_files, succeed_request_record
+    from channel.web import web_channel
+    from channel.web.web_channel import FileServeHandler
+
+    _login_default_investment_admin(monkeypatch)
+    image = tmp_path / "id-file.png"
+    image.write_bytes(b"file-id-png")
+    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    succeed_request_record(
+        request_id,
+        output_files=[str(image)],
+        elapsed_ms=1,
+        artifact_roles={str(image): "output_image"},
+    )
+    file_id = list_output_files(request_id)[0]["file_id"]
+    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(path="", id=file_id))
+    headers = {}
+    monkeypatch.setattr(web_channel.web, "header", lambda key, value: headers.setdefault(key, value))
+
+    assert FileServeHandler().GET() == b"file-id-png"
+    assert headers["Content-Type"] == "image/png"
 
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
@@ -8020,7 +8159,15 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     assert result.success is True
     assert Path(result.output_image).is_file()
     assert Path(result.output_image).stat().st_size > 0
-    assert Path(result.output_image).resolve().is_relative_to((get_storage_dirs()["generated"] / "archive").resolve())
+    assert Path(result.output_image).resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    output_parts = Path(result.output_image).parts
+    files_index = output_parts.index("files")
+    assert output_parts[files_index + 1 : files_index + 5] == (
+        str(ServiceType.RATE),
+        "2026-05-25",
+        "content",
+        content_id,
+    )
     assert Path(result.output_image).name.startswith("output_image_rate_2026-05-25_v1_")
     assert Path(result.output_image).name.endswith(".png")
     assert result.output_image != str(output_dir / f"{ServiceType.RATE}_card.png")
@@ -8043,17 +8190,73 @@ def test_daily_content_records_filter_by_service_type_for_console_pages(investme
     assert [record.content_id for record in cb_records] == [cb_id]
 
 
-def test_daily_content_upload_saves_files_under_investment_upload_dir(investment_env):
+def test_daily_content_upload_saves_files_under_investment_files_dir(investment_env):
     from business.investment.constants import ServiceType
     from business.investment.daily_content import save_source_file
 
-    saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data")
+    saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data", owner_id="content-123", effective_date="2026-06-07")
 
     assert Path(saved).read_bytes() == b"rate-data"
-    assert investment_env / "storage" / "uploads" in Path(saved).parents
+    assert investment_env / "storage" / "files" in Path(saved).parents
+    path_parts = Path(saved).parts
+    files_index = path_parts.index("files")
+    assert path_parts[files_index + 1 : files_index + 5] == (
+        str(ServiceType.RATE),
+        "2026-06-07",
+        "content",
+        "content-123",
+    )
+    assert "source_image" in Path(saved).parts
+    assert "content-123" in Path(saved).parts
 
     with pytest.raises(ValueError):
         save_source_file(ServiceType.RATE, "../escape.txt", b"bad")
+
+
+def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(investment_env, monkeypatch):
+    import io
+
+    from business.investment.records import get_content_record, list_output_files
+    from business.investment.storage import get_storage_dirs
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentDailyContentHandler
+
+    _login_default_investment_admin(monkeypatch)
+    upload = SimpleNamespace(filename="rates.png", file=io.BytesIO(b"rate-image"))
+    monkeypatch.setattr(web_channel, "_investment_is_multipart_request", lambda: True)
+    monkeypatch.setattr(
+        web_channel,
+        "_raw_web_input",
+        lambda: {
+            "service_type": "rate",
+            "source_text": "rate source",
+            "files": [upload],
+            "effective_date": "2026-06-07",
+        },
+    )
+
+    payload = json.loads(InvestmentDailyContentHandler().POST())
+
+    assert payload["status"] == "success"
+    content_id = payload["content_id"]
+    record = get_content_record(content_id)
+    assert len(record.source_files) == 1
+    source_path = Path(record.source_files[0])
+    assert source_path.read_bytes() == b"rate-image"
+    assert source_path.resolve().is_relative_to(get_storage_dirs()["files"].resolve())
+    source_parts = source_path.parts
+    files_index = source_parts.index("files")
+    assert source_parts[files_index + 1 : files_index + 6] == (
+        "rate",
+        "2026-06-07",
+        "content",
+        content_id,
+        "source_image",
+    )
+    source_artifacts = [item for item in list_output_files(content_id) if item["artifact_role"] == "source_image"]
+    assert len(source_artifacts) == 1
+    assert source_artifacts[0]["file_path"] == str(source_path)
+    assert source_artifacts[0]["file_url"].startswith("/api/file?id=")
 
 
 def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env, tmp_path):
@@ -8390,21 +8593,21 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
     from business.investment import health
     from business.investment.config_service import save_configs
 
-    missing_upload = tmp_path / "missing-upload"
-    generated_dir = tmp_path / "generated"
-    generated_dir.mkdir()
+    missing_files = tmp_path / "missing-files"
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
     save_configs(
         {
-            "storage.upload_dir": str(missing_upload),
-            "storage.generated_dir": str(generated_dir),
+            "storage.files_dir": str(missing_files),
+            "storage.tmp_dir": str(tmp_dir),
         },
         operator_role="admin",
     )
 
     items = {item.name: item for item in health.run_health_checks()}
 
-    assert items["upload_dir"].ok is False
-    assert f"directory does not exist: {missing_upload}" == items["upload_dir"].detail
+    assert items["files_dir"].ok is False
+    assert f"directory does not exist: {missing_files}" == items["files_dir"].detail
 
     def fail_mkstemp(*_args, **_kwargs):
         raise PermissionError("readonly")
@@ -8413,9 +8616,9 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
 
     items = {item.name: item for item in health.run_health_checks()}
 
-    assert items["generated_dir"].ok is False
-    assert "directory not writable" in items["generated_dir"].detail
-    assert "readonly" in items["generated_dir"].detail
+    assert items["tmp_dir"].ok is False
+    assert "directory not writable" in items["tmp_dir"].detail
+    assert "readonly" in items["tmp_dir"].detail
 
 
 def test_health_check_reports_all_dependencies_available(investment_env, tmp_path, monkeypatch):
@@ -8433,10 +8636,10 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     }
     for path in files.values():
         path.write_text("ok", encoding="utf-8")
-    upload_dir = tmp_path / "uploads"
-    generated_dir = tmp_path / "generated"
-    upload_dir.mkdir()
-    generated_dir.mkdir()
+    files_dir = tmp_path / "files"
+    tmp_dir = tmp_path / "tmp"
+    files_dir.mkdir()
+    tmp_dir.mkdir()
     monkeypatch.setattr(
         config_service,
         "conf",
@@ -8450,8 +8653,8 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     save_configs(
         {
             **{key: str(path) for key, path in files.items()},
-            "storage.upload_dir": str(upload_dir),
-            "storage.generated_dir": str(generated_dir),
+            "storage.files_dir": str(files_dir),
+            "storage.tmp_dir": str(tmp_dir),
             "tushare.token": "ts-health-ok-1234567890",
         },
         operator_role="admin",
@@ -8477,7 +8680,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     from business.investment.constants import ServiceType
     from business.investment.config_service import save_config
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.records import list_request_records
+    from business.investment.records import get_content_record, list_request_records
     from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
     from business.investment.user_service import create_user
 
@@ -8495,8 +8698,9 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     assert parse_route("hello").matched is False
 
     success = handle_text_message("ok", "利率")
+    effective_record = get_content_record(content_id)
     assert success.success is True
-    assert success.output_files == [str(image)]
+    assert success.output_files == [effective_record.output_image]
     assert "[图片:" in success.reply_text
 
     denied = handle_text_message("missing", "利率")
@@ -8505,7 +8709,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
 
     bypassed = handle_text_message("missing", "利率", skip_permission=True)
     assert bypassed.success is True
-    assert bypassed.output_files == [str(image)]
+    assert bypassed.output_files == [effective_record.output_image]
 
     missing_image = tmp_path / f"missing-rate-{secret}.png"
     missing_content_id = create_content_draft(ServiceType.RATE, source_text="missing rate")
@@ -8597,8 +8801,9 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
-    assert "![rate card.png](/api/file?path=" in reply.content
-    assert "%20" in reply.content
+    assert "![output_image_rate_card_" in reply.content
+    assert "](/api/file?id=" in reply.content
+    assert "/api/file?path=" not in reply.content
     assert "[图片:" not in reply.content
     plain = _build_investment_web_reply("web-session", "普通聊天")
     assert plain is not None
@@ -8626,7 +8831,9 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
-    assert "![rate override.png](/api/file?path=" in reply.content
+    assert "![output_image_rate_override_" in reply.content
+    assert "](/api/file?id=" in reply.content
+    assert "/api/file?path=" not in reply.content
 
 
 def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
@@ -8646,7 +8853,9 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
-    assert "![admin-rate.png](/api/file?path=" in reply.content
+    assert "![output_image_admin-rate_" in reply.content
+    assert "](/api/file?id=" in reply.content
+    assert "/api/file?path=" not in reply.content
 
 
 def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, monkeypatch):
@@ -8740,9 +8949,11 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investme
     expired_reply = channel._generate_reply(context("openid-expired", "利率"))
 
     assert rate_reply.type == ReplyType.IMAGE_URL
-    assert rate_reply.content == [str(rate_image)]
+    assert rate_reply.content != [str(rate_image)]
+    assert all("storage" in path and "files" in path for path in rate_reply.content)
     assert cb_reply.type == ReplyType.IMAGE_URL
-    assert cb_reply.content == [str(cb_image)]
+    assert cb_reply.content != [str(cb_image)]
+    assert all("storage" in path and "files" in path for path in cb_reply.content)
     assert missing_reply.type == ReplyType.TEXT
     assert missing_reply.content == "您暂未开通该服务，如需开通请联系服务人员。"
     assert disabled_reply.type == ReplyType.TEXT

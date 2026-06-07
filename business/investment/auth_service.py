@@ -59,6 +59,17 @@ ROLE_PERMISSIONS = {
         "config.read",
         "config.write",
     },
+    "readonly": {
+        "customers.read",
+        "content.read",
+        "records.read",
+        "audits.read",
+        "cache.read",
+        "config.read",
+        "health.read",
+        "stocks.read",
+        "skills.read",
+    },
 }
 
 

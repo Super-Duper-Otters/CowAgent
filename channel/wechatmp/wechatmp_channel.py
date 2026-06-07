@@ -194,9 +194,9 @@ class WechatMPChannel(ChatChannel):
         if not request_id:
             return
         try:
-            from business.investment.records import append_request_warning
+            from business.investment.business_records import append_delivery_warning
 
-            append_request_warning(request_id, detail)
+            append_delivery_warning(request_id, detail)
         except Exception as exc:
             logger.warning("[wechatmp] record investment delivery warning failed: {}".format(exc))
 

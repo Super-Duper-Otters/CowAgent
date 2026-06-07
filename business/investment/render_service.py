@@ -50,7 +50,7 @@ def _resolve_path(value: str) -> Path:
 
 
 def _configured_output_dir() -> Path:
-    return Path(str(get_config("render.output_dir") or get_storage_dirs()["generated"]))
+    return Path(str(get_config("render.output_dir") or get_config("storage.tmp_dir") or (get_storage_dirs()["tmp"] / "render")))
 
 
 def _default_output_path(service_type: ServiceType, output_dir: Path) -> str:
