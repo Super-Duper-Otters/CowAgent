@@ -91,7 +91,14 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
     request_record_columns = {column["name"] for column in inspector.get_columns("investment_request_records")}
     assert {"normalized_target", "stock_code", "stock_name", "cache_key", "cache_hit"}.issubset(request_record_columns)
     daily_content_columns = {column["name"] for column in inspector.get_columns("investment_daily_contents")}
-    assert {"effective_date", "content_version", "direct_output_mode", "archived_at"}.issubset(daily_content_columns)
+    assert {
+        "effective_date",
+        "expires_at",
+        "content_version",
+        "direct_output_mode",
+        "auto_effective_after_generate",
+        "archived_at",
+    }.issubset(daily_content_columns)
     output_file_columns = {column["name"] for column in inspector.get_columns("investment_output_files")}
     assert {"artifact_role", "file_size", "file_hash", "version_tag"}.issubset(output_file_columns)
     cache_columns = {column["name"] for column in inspector.get_columns("investment_cache_entries")}

@@ -53,6 +53,8 @@ def test_investment_schema_declares_all_tables():
         "published_by_admin_id",
         "published_by_username",
         "published_by_role",
+        "expires_at",
+        "auto_effective_after_generate",
     }.issubset(metadata.tables["investment_daily_contents"].columns.keys())
     assert {
         "operator_admin_id",
@@ -1750,6 +1752,7 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
             "service_type": "rate",
             "source_text": "content source",
             "operator": "spoofed-content-operator",
+            "expires_at": "2026-06-05T00:00",
         }).encode("utf-8"),
     )
 
@@ -1761,7 +1764,7 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
         row = conn.execute(
             text(
                 "select operator, created_by_admin_id, created_by_username, created_by_role, "
-                "updated_by_admin_id, updated_by_username, updated_by_role "
+                "updated_by_admin_id, updated_by_username, updated_by_role, expires_at "
                 "from investment_daily_contents where content_id = :content_id"
             ),
             {"content_id": content_id},
@@ -1774,6 +1777,7 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
     assert row.updated_by_admin_id == admin.id
     assert row.updated_by_username == "content-session"
     assert row.updated_by_role == "content_operator"
+    assert row.expires_at == "2026-06-04T16:00:00.000000+00:00"
     audit = list_operation_audits(limit=1, target_type="daily_content", target_id=content_id)[0]
     assert audit.action == "content.create"
     assert audit.operator == "content-session"
@@ -2264,6 +2268,245 @@ def test_cache_handler_without_market_date_returns_history_across_dates(investme
     assert {entry["market_date"] for entry in payload["entries"]} == {"2026-05-28", "2026-06-03"}
     assert payload["market_dates"] == ["2026-06-03", "2026-05-28"]
     assert payload["pagination"]["total"] == 2
+
+
+def test_cache_handler_keyword_search_filters_backend_results_and_total(investment_env, monkeypatch, tmp_path):
+    from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, update_generation_success
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-05", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-05",
+        version_fingerprint="v1",
+        output_files=["/tmp/target-300502-card.png"],
+    )
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "601288.SH", "2026-06-05", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="601288.SH",
+        market_date="2026-06-05",
+        version_fingerprint="v1",
+        output_files=["/tmp/agri-bank-card.png"],
+    )
+    rate_image = tmp_path / "rate-keyword-result.png"
+    rate_image.write_bytes(b"rate")
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="公开市场净投放 keyword-match",
+        effective_date="2026-06-05",
+        operator="ops",
+    )
+    update_generation_success(content_id, "利率生成结果", str(rate_image))
+
+    entries, total = list_generated_history_page(page=1, page_size=20, keyword="keyword-match")
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "keyword": "keyword-match"},
+    )
+
+    assert total == 1
+    assert [entry["content_id"] for entry in entries] == [content_id]
+    assert payload["pagination"]["total"] == 1
+    assert [entry["content_id"] for entry in payload["entries"]] == [content_id]
+
+    code_entries, code_total = list_generated_history_page(page=1, page_size=20, keyword="300502")
+    assert code_total == 1
+    assert code_entries[0]["normalized_target"] == "300502.SZ"
+
+
+def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.investment.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    for market_date, target in [
+        ("2026-04-30", "APR"),
+        ("2026-05-01", "MAY-A"),
+        ("2026-05-31", "MAY-B"),
+        ("2026-06-01", "JUN"),
+    ]:
+        write_cache_entry(
+            cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, target, market_date, "v1"),
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=target,
+            market_date=market_date,
+            version_fingerprint="v1",
+            output_files=[f"/tmp/{target}.png"],
+        )
+
+    entries, total = list_cache_entries_page(
+        page=1,
+        page_size=20,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        start_date="2026-05-01",
+        end_date="2026-05-31",
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={
+            "page": "1",
+            "page_size": "20",
+            "service_type": "technical_analysis",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+        },
+    )
+
+    assert total == 2
+    assert {entry.market_date for entry in entries} == {"2026-05-01", "2026-05-31"}
+    assert {entry["market_date"] for entry in payload["entries"]} == {"2026-05-01", "2026-05-31"}
+    assert payload["pagination"]["total"] == 2
+
+
+def test_generated_content_history_api_combines_cache_and_daily_content_records(investment_env, monkeypatch, tmp_path):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, update_generation_success
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "601288.SH", "2026-06-01", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="601288.SH",
+        market_date="2026-06-01",
+        version_fingerprint="v1",
+        output_files=["/tmp/601288-card.png"],
+    )
+    rate_image = tmp_path / "rate-card.png"
+    rate_image.write_bytes(b"rate-card")
+    rate_content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="rate source",
+        effective_date="2026-06-05",
+        operator="ops",
+    )
+    update_generation_success(rate_content_id, "rate generated", str(rate_image))
+    cb_image = tmp_path / "cb-card.png"
+    cb_image.write_bytes(b"cb-card")
+    cb_content_id = create_content_draft(
+        ServiceType.CONVERTIBLE_BOND,
+        source_text="cb source",
+        effective_date="2026-05-31",
+        operator="ops",
+    )
+    update_generation_success(cb_content_id, "cb generated", str(cb_image))
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "start_date": "2026-06-01", "end_date": "2026-06-30"},
+    )
+
+    assert payload["pagination"]["total"] == 2
+    services = {entry["service_type"] for entry in payload["entries"]}
+    assert services == {"technical_analysis", "rate"}
+    rate_entry = next(entry for entry in payload["entries"] if entry["service_type"] == "rate")
+    assert rate_entry["source_type"] == "content"
+    assert rate_entry["content_id"] == rate_content_id
+    assert rate_entry["market_date"] == "2026-06-05"
+    assert rate_entry["normalized_target"] == "利率内容"
+    assert rate_entry["status"] == "generated"
+    assert rate_entry["output_files"]
+    assert rate_entry["output_image"] == rate_entry["output_files"][0]
+    assert "2026-06-05" in payload["market_dates"]
+
+
+def test_generated_content_history_treats_expired_daily_content_as_invalidated(investment_env, tmp_path):
+    from business.investment.cache_service import list_generated_history_market_dates, list_generated_history_page
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, update_generation_success
+
+    expired_image = tmp_path / "expired-rate.png"
+    expired_image.write_bytes(b"expired-rate")
+    expired_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="expired rate",
+        effective_date="2026-06-04",
+        expires_at="2000-01-01T00:00",
+        operator="ops",
+    )
+    update_generation_success(expired_id, "expired generated", str(expired_image))
+
+    active_image = tmp_path / "active-rate.png"
+    active_image.write_bytes(b"active-rate")
+    active_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="active rate",
+        effective_date="2026-06-05",
+        operator="ops",
+    )
+    update_generation_success(active_id, "active generated", str(active_image))
+
+    active_entries, active_total = list_generated_history_page(
+        page=1,
+        page_size=20,
+        service_type=ServiceType.RATE,
+        start_date="2026-06-04",
+        end_date="2026-06-05",
+    )
+    assert active_total == 1
+    assert [entry["content_id"] for entry in active_entries] == [active_id]
+    assert list_generated_history_market_dates(service_type=ServiceType.RATE) == ["2026-06-05"]
+
+    all_entries, all_total = list_generated_history_page(
+        page=1,
+        page_size=20,
+        service_type=ServiceType.RATE,
+        start_date="2026-06-04",
+        end_date="2026-06-05",
+        include_invalidated=True,
+    )
+    assert all_total == 2
+    expired_entry = next(entry for entry in all_entries if entry["content_id"] == expired_id)
+    assert expired_entry["status"] == "invalidated"
+    assert list_generated_history_market_dates(service_type=ServiceType.RATE, include_invalidated=True) == [
+        "2026-06-05",
+        "2026-06-04",
+    ]
+
+
+def test_generated_content_history_paginates_sources_without_bulk_fetch(investment_env, tmp_path):
+    import inspect
+
+    from business.investment import cache_service
+    from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, update_generation_success
+
+    for index in range(3):
+        write_cache_entry(
+            cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, f"60128{index}.SH", "2026-06-05", "v1"),
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=f"60128{index}.SH",
+            market_date="2026-06-05",
+            version_fingerprint="v1",
+            output_files=[f"/tmp/60128{index}.png"],
+        )
+    for index in range(3):
+        image = tmp_path / f"rate-{index}.png"
+        image.write_bytes(f"rate-{index}".encode())
+        content_id = create_content_draft(
+            ServiceType.RATE,
+            source_text=f"rate source {index}",
+            effective_date="2026-06-05",
+            operator="ops",
+        )
+        update_generation_success(content_id, f"rate generated {index}", str(image))
+
+    entries, total = list_generated_history_page(page=2, page_size=2, market_date="2026-06-05")
+
+    assert total == 6
+    assert len(entries) == 2
+    assert {entry["source_type"] for entry in entries}.issubset({"cache", "content"})
+    source = inspect.getsource(cache_service.list_generated_history_page)
+    assert "page_size=10000" not in source
+    assert "offset + page_size" in source
 
 
 def test_request_records_api_filters_and_prefers_mobile_customer_display(investment_env, monkeypatch):
@@ -7394,6 +7637,54 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(investmen
     assert record.output_files == [card, chart, report]
 
 
+def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.router import handle_text_message
+    from business.investment.technical_analysis import TechnicalAnalysisResult
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    card = str(tmp_path / "card.png")
+    chart = str(tmp_path / "chart.png")
+    report = str(tmp_path / "report.md")
+
+    reply = handle_text_message(
+        "ok",
+        "300502.SZ 技术分析",
+        technical_analysis_handler=lambda _openid, _raw_input, _target: TechnicalAnalysisResult(
+            True,
+            signal_card_path=card,
+            main_chart_path=chart,
+            report_path=report,
+            output_files=[card, chart, report],
+            cache_key="technical_analysis:300502.SZ:2026-06-05:test",
+        ),
+    )
+
+    assert reply.success is True
+    assert reply.source_type == "cache"
+    assert reply.source_id == "technical_analysis:300502.SZ:2026-06-05:test"
+
+
+def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(investment_env, tmp_path):
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.router import handle_text_message
+    from business.investment.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"rate")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), operator="admin")
+
+    reply = handle_text_message("ok", "利率")
+
+    assert reply.success is True
+    assert reply.source_type == "content"
+    assert reply.source_id == content_id
+
+
 def test_daily_content_activation_and_query(investment_env, tmp_path):
     from business.investment.constants import ErrorCode, ServiceType
     from business.investment.daily_content import (
@@ -7418,7 +7709,102 @@ def test_daily_content_activation_and_query(investment_env, tmp_path):
 
     latest = get_latest_effective_content(ServiceType.RATE)
     assert latest.success is True
-    assert latest.output_image == str(second_img)
+    assert Path(latest.output_image).read_bytes() == b"png2"
+
+
+def test_daily_content_expired_effective_content_is_not_returned(investment_env, tmp_path):
+    from business.investment.constants import ErrorCode, ServiceType
+    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.investment.records import get_content_record
+
+    expired_img = tmp_path / "expired.png"
+    persistent_img = tmp_path / "persistent.png"
+    expired_img.write_bytes(b"expired")
+    persistent_img.write_bytes(b"persistent")
+
+    expired_id = create_content_draft(ServiceType.RATE, source_text="expired")
+    set_content_effective(
+        expired_id,
+        str(expired_img),
+        operator="admin",
+        expires_at="2000-01-01T00:00",
+    )
+
+    expired = get_latest_effective_content(ServiceType.RATE)
+    assert expired.success is False
+    assert expired.error_code == ErrorCode.NO_CONTENT
+    assert get_content_record(expired_id).expires_at
+
+    persistent_id = create_content_draft(ServiceType.RATE, source_text="persistent", expires_at="")
+    set_content_effective(persistent_id, str(persistent_img), operator="admin")
+
+    latest = get_latest_effective_content(ServiceType.RATE)
+    assert latest.success is True
+    assert latest.content_id == persistent_id
+    assert get_content_record(persistent_id).expires_at == ""
+
+
+def test_daily_content_expiration_persists_invalidated_status(investment_env, tmp_path):
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
+    from business.investment.records import get_content_record
+
+    expired_image = tmp_path / "expired.png"
+    fresh_image = tmp_path / "fresh.png"
+    expired_image.write_bytes(b"expired")
+    fresh_image.write_bytes(b"fresh")
+
+    expired_id = create_content_draft(ServiceType.RATE, source_text="expired")
+    set_content_effective(
+        expired_id,
+        str(expired_image),
+        operator="ops",
+        expires_at="2000-01-01T00:00",
+    )
+    fresh_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="fresh")
+    set_content_effective(
+        fresh_id,
+        str(fresh_image),
+        operator="ops",
+        expires_at="2099-01-01T00:00",
+    )
+
+    assert mark_expired_daily_contents_invalidated() == 1
+
+    assert get_content_record(expired_id).status == Status.INVALIDATED
+    assert get_content_record(fresh_id).status == Status.EFFECTIVE
+
+
+def test_daily_content_auto_effective_after_generate_publishes_on_backend(investment_env, tmp_path):
+    from business.investment.constants import ServiceType, Status
+    from business.investment.daily_content import create_content_draft, generate_content
+    from business.investment.records import get_content_record
+
+    output = tmp_path / "auto-effective.png"
+
+    def fake_ai(service_type, source_text):
+        assert service_type == ServiceType.RATE
+        return SimpleNamespace(success=True, text=f"generated: {source_text}")
+
+    def fake_renderer(service_type, generated_text):
+        output.write_bytes(generated_text.encode("utf-8"))
+        return SimpleNamespace(success=True, image_path=str(output))
+
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="auto source",
+        expires_at="",
+        auto_effective_after_generate=True,
+    )
+
+    result = generate_content(content_id, ai_generator=fake_ai, renderer=fake_renderer)
+
+    assert result.success is True
+    record = get_content_record(content_id)
+    assert record.status == Status.EFFECTIVE
+    assert record.effective_at
+    assert record.output_image
+    assert record.auto_effective_after_generate is True
 
 
 def test_daily_content_versions_are_effective_per_service_and_date(investment_env, tmp_path):
@@ -7456,109 +7842,6 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
     assert get_content_record(yesterday_second).effective_date == yesterday
     assert get_content_record(tomorrow_content).status == Status.EFFECTIVE
     assert get_latest_effective_content(ServiceType.RATE).content_id == yesterday_second
-
-
-def test_rate_direct_output_mode_uses_uploaded_png_without_ai_or_renderer(investment_env, tmp_path):
-    from business.investment.constants import ServiceType, Status
-    from business.investment.daily_content import create_rate_content_draft, generate_content, save_source_file
-    from business.investment.records import get_content_record
-
-    uploaded = save_source_file(ServiceType.RATE, "final-rate.png", b"png")
-    content_id = create_rate_content_draft(
-        source_files=[uploaded],
-        source_text="",
-        operator="operator-a",
-        direct_output_mode=True,
-    )
-
-    result = generate_content(
-        content_id,
-        ai_generator=lambda *_args, **_kwargs: pytest.fail("direct output mode must not call AI"),
-        renderer=lambda *_args, **_kwargs: pytest.fail("direct output mode must not call renderer"),
-    )
-
-    record = get_content_record(content_id)
-    assert result.success is True
-    assert result.output_image != uploaded
-    assert Path(result.output_image).is_file()
-    assert Path(result.output_image).read_bytes() == b"png"
-    assert result.generated_text == ""
-    assert record.output_image == result.output_image
-    assert record.direct_output_mode is True
-    assert record.status == Status.GENERATED
-
-
-@pytest.mark.parametrize(
-    ("case_name", "source_path_factory", "expected_detail"),
-    [
-        (
-            "missing png",
-            lambda uploads_dir, _tmp_path: str(uploads_dir / "rate" / "missing.png"),
-            "direct output mode requires an existing PNG upload",
-        ),
-        (
-            "directory png",
-            lambda uploads_dir, _tmp_path: _mkdir_and_return(uploads_dir / "rate" / "directory.png"),
-            "direct output mode requires an existing PNG upload",
-        ),
-        (
-            "relative png",
-            lambda _uploads_dir, _tmp_path: "relative.png",
-            "direct output mode requires an absolute uploaded PNG path",
-        ),
-        (
-            "non-png",
-            lambda uploads_dir, _tmp_path: _write_and_return(uploads_dir / "rate" / "rate.xlsx", b"excel"),
-            "direct output mode only supports PNG files",
-        ),
-    ],
-)
-def test_rate_direct_output_mode_rejects_invalid_uploaded_png_paths(
-    investment_env,
-    tmp_path,
-    case_name,
-    source_path_factory,
-    expected_detail,
-):
-    from business.investment.constants import ErrorCode, ServiceType, Status
-    from business.investment.daily_content import create_rate_content_draft, generate_content, save_source_file
-    from business.investment.records import get_content_record, list_output_files
-    from business.investment.storage import get_storage_dirs
-
-    source_path = source_path_factory(get_storage_dirs()["uploads"], tmp_path)
-    content_id = create_rate_content_draft(
-        source_files=[source_path],
-        source_text="",
-        operator=f"operator-{case_name}",
-        direct_output_mode=True,
-    )
-
-    result = generate_content(
-        content_id,
-        ai_generator=lambda *_args, **_kwargs: pytest.fail("invalid direct output mode must not call AI"),
-        renderer=lambda *_args, **_kwargs: pytest.fail("invalid direct output mode must not call renderer"),
-    )
-
-    record = get_content_record(content_id)
-    assert result.success is False
-    assert result.error_code == ErrorCode.INPUT_ERROR
-    assert expected_detail in result.detail
-    assert record.status == Status.GENERATE_FAILED
-    assert expected_detail in record.error_message
-    assert record.generated_text == ""
-    assert record.output_image == ""
-    assert list_output_files(content_id) == []
-
-
-def _mkdir_and_return(path: Path) -> str:
-    path.mkdir(parents=True, exist_ok=True)
-    return str(path)
-
-
-def _write_and_return(path: Path, content: bytes) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    return str(path)
 
 
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):

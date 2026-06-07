@@ -3178,7 +3178,8 @@ class InvestmentDailyContentHandler:
                     "joke_text": params.get("joke_text", ""),
                     "operator": params.get("operator", ""),
                     "effective_date": params.get("effective_date", ""),
-                    "direct_output_mode": params.get("direct_output_mode", ""),
+                    "expires_at": params.get("expires_at", ""),
+                    "auto_effective_after_generate": params.get("auto_effective_after_generate", ""),
                     "generated_text": params.get("generated_text", ""),
                     "output_image": params.get("output_image", ""),
                 }
@@ -3205,7 +3206,8 @@ class InvestmentDailyContentHandler:
                 source_text=source_text,
                 operator=admin.username,
                 effective_date=body.get("effective_date") or None,
-                direct_output_mode=_investment_bool(body.get("direct_output_mode")),
+                expires_at=body.get("expires_at") or "",
+                auto_effective_after_generate=str(body.get("auto_effective_after_generate", "")).lower() in {"1", "true", "yes", "on"},
                 actor=admin,
             )
             if body.get("generated_text") or body.get("output_image"):
@@ -3264,6 +3266,7 @@ class InvestmentDailyContentEffectiveHandler:
                 content_id,
                 body.get("output_image") or None,
                 effective_date=body.get("effective_date") or None,
+                expires_at=body.get("expires_at") if "expires_at" in body else None,
                 operator=admin.username,
                 actor=admin,
             )
@@ -3409,10 +3412,10 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.investment.cache_service import list_cache_entries_page, list_cache_market_dates
+            from business.investment.cache_service import list_generated_history_market_dates, list_generated_history_page
             from business.investment.constants import ServiceType, normalize_service
 
-            params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', include_invalidated='')
+            params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
@@ -3425,17 +3428,20 @@ class InvestmentCacheHandler:
                 })
             include_invalidated = str(getattr(params, "include_invalidated", "")).lower() in {"1", "true", "yes"}
             page, page_size = _investment_safe_pagination(params, 120)
-            entries, total = list_cache_entries_page(
+            entries, total = list_generated_history_page(
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
                 market_date=getattr(params, "market_date", "") or "",
+                start_date=_investment_date_bound(getattr(params, "start_date", "")),
+                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
+                keyword=getattr(params, "keyword", "") or "",
                 include_invalidated=include_invalidated,
             )
             return _investment_json_response({
                 "status": "success",
-                "entries": [entry.__dict__ | {"service_type": str(entry.service_type)} for entry in entries],
-                "market_dates": list_cache_market_dates(
+                "entries": entries,
+                "market_dates": list_generated_history_market_dates(
                     service_type=service_type,
                     include_invalidated=include_invalidated,
                 ),
@@ -3453,14 +3459,22 @@ class InvestmentCacheEntryInvalidateHandler:
             from business.investment.cache_service import invalidate_cache_entry
 
             invalidated = invalidate_cache_entry(cache_key)
+            queued_removed = 0
+            if invalidated:
+                try:
+                    from channel.wechatmp.wechatmp_channel import discard_passive_reply_cache_by_source
+
+                    queued_removed = discard_passive_reply_cache_by_source("cache", cache_key)
+                except Exception as exc:
+                    logger.debug(f"[Investment] cache invalidate passive queue cleanup failed: {exc}")
             _record_investment_operation(
                 "cache.invalidate",
                 "investment_cache_entry",
                 target_id=cache_key,
                 admin=admin,
-                detail={"invalidated": invalidated},
+                detail={"invalidated": invalidated, "queued_removed": queued_removed},
             )
-            return _investment_json_response({"status": "success", "invalidated": invalidated})
+            return _investment_json_response({"status": "success", "invalidated": invalidated, "queued_removed": queued_removed})
         except Exception as e:
             logger.error(f"[Investment] cache invalidate error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
