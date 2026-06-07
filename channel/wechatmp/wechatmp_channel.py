@@ -36,6 +36,18 @@ except ImportError as e:
 #         private_key='/ssl/cert.key')
 
 
+def discard_passive_reply_cache_by_source(source_type, source_id):
+    try:
+        cache = WechatMPChannel().cache_dict
+        discard = getattr(cache, "discard_by_source", None)
+        if not discard:
+            return 0
+        return discard(source_type, source_id)
+    except Exception as exc:
+        logger.debug("[wechatmp] discard passive reply cache by source failed: {}".format(exc))
+        return 0
+
+
 @singleton
 class WechatMPChannel(ChatChannel):
     def __init__(self, passive_reply=True):
@@ -139,6 +151,10 @@ class WechatMPChannel(ChatChannel):
                     result.investment_service_type = business_reply.service_type
                     if getattr(business_reply, "request_id", ""):
                         result.investment_request_id = business_reply.request_id
+                    if getattr(business_reply, "source_type", ""):
+                        result.investment_source_type = business_reply.source_type
+                    if getattr(business_reply, "source_id", ""):
+                        result.investment_source_id = business_reply.source_id
                     return result
             except Exception as exc:
                 logger.exception("[wechatmp] investment router failed: {}".format(exc))
@@ -197,6 +213,8 @@ class WechatMPChannel(ChatChannel):
             cache_title = context.content if isinstance(context.content, str) else ""
             investment_request_id = getattr(reply, "investment_request_id", "")
             investment_service_type = getattr(reply, "investment_service_type", "")
+            investment_source_type = getattr(reply, "investment_source_type", "")
+            investment_source_id = getattr(reply, "investment_source_id", "")
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
                 reply_text = remove_markdown_symbol(reply.content)
                 logger.info("[wechatmp] text cached, receiver {}\n{}".format(receiver, reply_text))
@@ -207,6 +225,8 @@ class WechatMPChannel(ChatChannel):
                     cache_title,
                     service_type=investment_service_type,
                     request_id=investment_request_id,
+                    source_type=investment_source_type,
+                    source_id=investment_source_id,
                 )
             elif reply.type == ReplyType.VOICE:
                 try:
@@ -236,6 +256,8 @@ class WechatMPChannel(ChatChannel):
                             cache_title,
                             service_type=investment_service_type,
                             request_id=investment_request_id,
+                            source_type=investment_source_type,
+                            source_id=investment_source_id,
                         )
                 except ImportError as e:
                     logger.error("[wechatmp] voice conversion failed: {}".format(e))
@@ -280,6 +302,8 @@ class WechatMPChannel(ChatChannel):
                             cache_title,
                             service_type=investment_service_type,
                             request_id=investment_request_id,
+                            source_type=investment_source_type,
+                            source_id=investment_source_id,
                         )
                 except Exception as e:
                     logger.error("[wechatmp] cache image failed: {}".format(e))
@@ -310,6 +334,8 @@ class WechatMPChannel(ChatChannel):
                     cache_title,
                     service_type=investment_service_type,
                     request_id=investment_request_id,
+                    source_type=investment_source_type,
+                    source_id=investment_source_id,
                 )
 
             elif reply.type == ReplyType.VIDEO:  # 从文件读取视频
@@ -333,6 +359,8 @@ class WechatMPChannel(ChatChannel):
                     cache_title,
                     service_type=investment_service_type,
                     request_id=investment_request_id,
+                    source_type=investment_source_type,
+                    source_id=investment_source_id,
                 )
 
         else:

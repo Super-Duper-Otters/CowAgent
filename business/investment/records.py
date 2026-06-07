@@ -80,8 +80,10 @@ class ContentRecord:
     created_at: str = ""
     effective_at: str | None = None
     effective_date: str = ""
+    expires_at: str = ""
     content_version: int = 1
     direct_output_mode: bool = False
+    auto_effective_after_generate: bool = False
     archived_at: str | None = None
     status_warning: str = ""
 
@@ -637,8 +639,10 @@ def _row_to_content(row) -> ContentRecord:
         created_at=created_at,
         effective_at=item["effective_at"],
         effective_date=item.get("effective_date") or "",
+        expires_at=item.get("expires_at") or "",
         content_version=int(item.get("content_version") or 1),
         direct_output_mode=bool(item.get("direct_output_mode")),
+        auto_effective_after_generate=bool(item.get("auto_effective_after_generate")),
         archived_at=item.get("archived_at"),
         status_warning=_status_warning(status, created_at),
     )

@@ -2,11 +2,11 @@
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, insert, or_, select, update
 
 from .audit_service import AdminActor, actor_from_admin, record_operation_audit
 from .config_service import sanitize_sensitive_text
@@ -39,6 +39,7 @@ CONTENT_STATUSES = (
     Status.GENERATE_FAILED,
     Status.EFFECTIVE,
     Status.ARCHIVED,
+    Status.INVALIDATED,
 )
 
 AIGenerator = Callable[..., Any]
@@ -47,6 +48,10 @@ Renderer = Callable[[ServiceType, str], Any]
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _beijing_now() -> datetime:
+    return datetime.now(UTC) + timedelta(hours=8)
 
 
 def _actor_identity(actor: Any | None, fallback_operator: str = ""):
@@ -75,7 +80,7 @@ def _actor_from_content_item(item: dict[str, Any]) -> AdminActor | None:
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return _beijing_now().date().isoformat()
 
 
 def _normalize_effective_date(value: str | None = None) -> str:
@@ -83,6 +88,29 @@ def _normalize_effective_date(value: str | None = None) -> str:
     if not text:
         return _today()
     return date.fromisoformat(text).isoformat()
+
+
+def _normalize_expires_at(value: str | None = None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) == 10:
+        parsed = datetime.combine(date.fromisoformat(text), time.min)
+    else:
+        parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed - timedelta(hours=8)
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+    return parsed.isoformat(timespec="microseconds")
+
+
+def default_expires_at_for_effective_date(effective_date: str | None = None) -> str:
+    normalized_effective_date = _normalize_effective_date(effective_date)
+    next_day = date.fromisoformat(normalized_effective_date) + timedelta(days=1)
+    beijing_midnight = datetime.combine(next_day, time.min)
+    return _normalize_expires_at(beijing_midnight.isoformat(timespec="minutes"))
 
 
 def _output_image_version(service_type: ServiceType) -> str:
@@ -155,12 +183,13 @@ def create_content_draft(
     source_text: str = "",
     operator: str = "",
     effective_date: str | None = None,
-    direct_output_mode: bool = False,
+    expires_at: str | None = None,
+    auto_effective_after_generate: bool = False,
     actor: Any | None = None,
 ) -> str:
     service_type = _ensure_content_service_type(service_type)
     normalized_effective_date = _normalize_effective_date(effective_date)
-    direct_output_mode = bool(direct_output_mode and service_type == ServiceType.RATE)
+    normalized_expires_at = _normalize_expires_at(expires_at)
     content_id = str(uuid.uuid4())
     now = _now()
     operator, audit_actor = _actor_identity(actor, operator)
@@ -187,8 +216,10 @@ def create_content_draft(
                 status=str(Status.DRAFT),
                 operator=operator,
                 effective_date=normalized_effective_date,
+                expires_at=normalized_expires_at,
                 content_version=content_version,
-                direct_output_mode=1 if direct_output_mode else 0,
+                direct_output_mode=0,
+                auto_effective_after_generate=1 if auto_effective_after_generate else 0,
                 created_at=now,
                 updated_at=now,
                 **actor_values,
@@ -203,8 +234,9 @@ def create_content_draft(
         detail={
             "service_type": str(service_type),
             "effective_date": normalized_effective_date,
+            "expires_at": normalized_expires_at,
             "content_version": content_version,
-            "direct_output_mode": bool(direct_output_mode),
+            "auto_effective_after_generate": bool(auto_effective_after_generate),
         },
     )
     return content_id
@@ -216,7 +248,8 @@ def create_rate_content_draft(
     source_text: str = "",
     operator: str = "",
     effective_date: str | None = None,
-    direct_output_mode: bool = False,
+    expires_at: str | None = None,
+    auto_effective_after_generate: bool = False,
     actor: Any | None = None,
 ) -> str:
     return create_content_draft(
@@ -225,7 +258,8 @@ def create_rate_content_draft(
         source_text=source_text,
         operator=operator,
         effective_date=effective_date,
-        direct_output_mode=direct_output_mode,
+        expires_at=expires_at,
+        auto_effective_after_generate=auto_effective_after_generate,
         actor=actor,
     )
 
@@ -236,6 +270,8 @@ def create_convertible_bond_content_draft(
     source_text: str = "",
     operator: str = "",
     effective_date: str | None = None,
+    expires_at: str | None = None,
+    auto_effective_after_generate: bool = False,
     actor: Any | None = None,
 ) -> str:
     return create_content_draft(
@@ -244,7 +280,8 @@ def create_convertible_bond_content_draft(
         source_text=source_text,
         operator=operator,
         effective_date=effective_date,
-        direct_output_mode=False,
+        expires_at=expires_at,
+        auto_effective_after_generate=auto_effective_after_generate,
         actor=actor,
     )
 
@@ -333,6 +370,15 @@ def update_generation_success(content_id: str, generated_text: str, output_image
             version_tag=_output_image_version(service_type),
             owner_type="content",
         )
+    if item.get("auto_effective_after_generate"):
+        set_content_effective(
+            content_id,
+            stored_output_image,
+            effective_date=item.get("effective_date") or None,
+            expires_at=item.get("expires_at") if "expires_at" in item else None,
+            operator=operator,
+            actor=audit_actor,
+        )
     record_operation_audit(
         "content.generate",
         "daily_content",
@@ -382,22 +428,6 @@ def _default_renderer(service_type: ServiceType, generated_text: str, output_pat
     return render_card(RenderRequest(service_type=service_type, standard_text=generated_text, output_path=output_path))
 
 
-def _validate_direct_output_png(output_image: str) -> str:
-    path = Path(output_image)
-    if not path.is_absolute():
-        return "direct output mode requires an absolute uploaded PNG path"
-    if path.suffix.lower() != ".png":
-        return "direct output mode only supports PNG files"
-
-    uploads_dir = get_storage_dirs()["uploads"].resolve()
-    resolved = path.resolve(strict=False)
-    if not resolved.is_relative_to(uploads_dir):
-        return "direct output mode requires a PNG file from the investment uploads directory"
-    if not path.is_file():
-        return "direct output mode requires an existing PNG upload"
-    return ""
-
-
 def generate_content(
     content_id: str,
     ai_generator: AIGenerator | None = None,
@@ -414,18 +444,6 @@ def generate_content(
     _ensure_content_service_type(service_type)
     _mark_generation_started(content_id)
     source_files = _load_source_files(item.get("source_files"))
-    if service_type == ServiceType.RATE and bool(item.get("direct_output_mode")):
-        if not source_files:
-            detail = "direct output mode requires an uploaded PNG"
-            update_generation_failure(content_id, detail)
-            return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.INPUT_ERROR, user_prompt=user_message(ErrorCode.INPUT_ERROR), detail=detail)
-        output_image = source_files[0]
-        detail = _validate_direct_output_png(output_image)
-        if detail:
-            update_generation_failure(content_id, detail)
-            return DailyContentResult(False, content_id=content_id, error_code=ErrorCode.INPUT_ERROR, user_prompt=user_message(ErrorCode.INPUT_ERROR), detail=detail)
-        output_image = update_generation_success(content_id, "", output_image)
-        return DailyContentResult(True, content_id=content_id, output_image=output_image, output_files=[output_image])
     if ai_generator is None:
         ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
     else:
@@ -469,6 +487,7 @@ def set_content_effective(
     output_image: str | None = None,
     *,
     effective_date: str | None = None,
+    expires_at: str | None = None,
     operator: str = "",
     actor: Any | None = None,
 ) -> None:
@@ -483,6 +502,7 @@ def set_content_effective(
                 investment_daily_contents.c.service_type,
                 investment_daily_contents.c.output_image,
                 investment_daily_contents.c.effective_date,
+                investment_daily_contents.c.expires_at,
             ).where(
                 investment_daily_contents.c.content_id == content_id
             )
@@ -493,6 +513,7 @@ def set_content_effective(
         service_type = item["service_type"]
         final_image = output_image or item["output_image"]
         normalized_effective_date = _normalize_effective_date(effective_date or item.get("effective_date"))
+        normalized_expires_at = _normalize_expires_at(expires_at) if expires_at is not None else (item.get("expires_at") or "")
         final_service_type = ServiceType(service_type)
         if final_image:
             from .artifact_service import archive_artifact_file
@@ -531,6 +552,7 @@ def set_content_effective(
                 status=str(Status.EFFECTIVE),
                 output_image=final_image,
                 effective_date=normalized_effective_date,
+                expires_at=normalized_expires_at,
                 effective_at=now,
                 archived_at=None,
                 updated_at=now,
@@ -563,12 +585,19 @@ def set_content_effective(
         content_id,
         operator=operator,
         actor=audit_actor,
-        detail={"service_type": service_type, "effective_date": normalized_effective_date, "output_image": final_image},
+        detail={
+            "service_type": service_type,
+            "effective_date": normalized_effective_date,
+            "expires_at": normalized_expires_at,
+            "output_image": final_image,
+        },
     )
 
 
 def get_latest_effective_content(service_type: ServiceType) -> DailyContentResult:
+    mark_expired_daily_contents_invalidated()
     today = _today()
+    now = _now()
     with connect() as conn:
         row = conn.execute(
             select(investment_daily_contents)
@@ -576,6 +605,11 @@ def get_latest_effective_content(service_type: ServiceType) -> DailyContentResul
                 investment_daily_contents.c.service_type == str(service_type),
                 investment_daily_contents.c.status == str(Status.EFFECTIVE),
                 investment_daily_contents.c.effective_date <= today,
+                or_(
+                    investment_daily_contents.c.expires_at.is_(None),
+                    investment_daily_contents.c.expires_at == "",
+                    investment_daily_contents.c.expires_at > now,
+                ),
             )
             .order_by(
                 investment_daily_contents.c.effective_date.desc(),
@@ -606,3 +640,25 @@ def get_latest_effective_content(service_type: ServiceType) -> DailyContentResul
         generated_text=item["generated_text"] or "",
         output_files=[item["output_image"]],
     )
+
+
+def mark_expired_daily_contents_invalidated(now: str | None = None) -> int:
+    current = now or _now()
+    with connect() as conn:
+        return int(
+            conn.execute(
+                update(investment_daily_contents)
+                .where(
+                    and_(
+                        investment_daily_contents.c.status.in_(
+                            [str(Status.GENERATED), str(Status.EFFECTIVE)]
+                        ),
+                        investment_daily_contents.c.expires_at.is_not(None),
+                        investment_daily_contents.c.expires_at != "",
+                        investment_daily_contents.c.expires_at <= current,
+                    )
+                )
+                .values(status=str(Status.INVALIDATED), updated_at=current)
+            ).rowcount
+            or 0
+        )

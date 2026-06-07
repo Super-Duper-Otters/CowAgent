@@ -37,6 +37,8 @@ class BusinessReply:
     user_prompt: str = ""
     detail: str = ""
     request_id: str = ""
+    source_type: str = ""
+    source_id: str = ""
 
 
 def parse_route(raw_input: str) -> RouteResult:
@@ -222,7 +224,16 @@ def handle_text_message(
             elapsed_ms=elapsed(),
             artifact_roles={content.output_image: "output_image"},
         )
-        return BusinessReply(True, True, _image_reply(output_files), output_files, route.service_type, request_id=request_id)
+        return BusinessReply(
+            True,
+            True,
+            _image_reply(output_files),
+            output_files,
+            route.service_type,
+            request_id=request_id,
+            source_type="content",
+            source_id=content.content_id,
+        )
 
     if route.service_type == ServiceType.TECHNICAL_ANALYSIS:
         from .job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
@@ -333,7 +344,16 @@ def handle_text_message(
                 warning=result.detail,
                 **customer_metadata,
             )
-            return BusinessReply(True, True, _image_reply(user_output_files), user_output_files, route.service_type, request_id=request_id)
+            return BusinessReply(
+                True,
+                True,
+                _image_reply(user_output_files),
+                user_output_files,
+                route.service_type,
+                request_id=request_id,
+                source_type="cache" if result.cache_key else "",
+                source_id=result.cache_key or "",
+            )
         except Exception as exc:
             detail = sanitize_sensitive_text(str(exc))
             prompt = user_message(ErrorCode.SYSTEM_ERROR)

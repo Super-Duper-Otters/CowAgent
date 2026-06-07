@@ -50,6 +50,7 @@ class Status(StrEnum):
     GENERATE_FAILED = "generate_failed"
     EFFECTIVE = "effective"
     ARCHIVED = "archived"
+    INVALIDATED = "invalidated"
 
 
 class ErrorCode(StrEnum):

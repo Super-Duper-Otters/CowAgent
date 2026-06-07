@@ -221,7 +221,7 @@ def _peek_cached_result(cache, receiver):
         return peek(receiver)
     replies = cache.get(receiver) if hasattr(cache, "get") else None
     if replies:
-        return type("CachedResult", (), {"title": "", "replies": replies, "service_type": "", "request_id": ""})()
+        return type("CachedResult", (), {"title": "", "replies": replies, "service_type": "", "request_id": "", "source_type": "", "source_id": ""})()
     return None
 
 
@@ -388,19 +388,68 @@ def _unmatched_prompt():
         from business.investment.config_service import get_config
 
         configured = get_config(UNMATCHED_KEY, None)
-        if configured is not None and str(configured) != "":
+        configured_text = str(configured or "")
+        if configured_text and configured_text != "请输入以下格式之一：":
             return reply_text
     except Exception as exc:
         logger.debug("[wechatmp] unmatched prompt config check failed: {}".format(exc))
     return default_prompt
 
 
-def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type="", request_id=""):
+def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type="", request_id="", source_type="", source_id=""):
     append_reply = getattr(cache, "append_reply", None)
     if append_reply:
-        append_reply(receiver, reply_type, reply_content, title, service_type=service_type, request_id=request_id)
+        append_reply(
+            receiver,
+            reply_type,
+            reply_content,
+            title,
+            service_type=service_type,
+            request_id=request_id,
+            source_type=source_type,
+            source_id=source_id,
+        )
         return
     cache.setdefault(receiver, []).append((reply_type, reply_content))
+
+
+def _pending_result_invalidated_prompt():
+    return _reply_text("reply.wechatmp.pending_result_invalidated", "内容已失效，请重新发起请求。")
+
+
+def _cleanup_invalid_cached_sources(cache, exclude_receiver=None):
+    cleanup = getattr(cache, "discard_invalid_sources", None)
+    if not cleanup:
+        return 0
+    try:
+        excluded = [exclude_receiver] if exclude_receiver else None
+        return cleanup(_cached_result_source_is_valid, exclude_receivers=excluded)
+    except Exception as exc:
+        logger.debug("[wechatmp] cleanup invalid cached investment source failed: {}".format(exc))
+        return 0
+
+
+def _cached_result_source_is_valid(cached_result):
+    source_type = str(getattr(cached_result, "source_type", "") or "")
+    source_id = str(getattr(cached_result, "source_id", "") or "")
+    if not source_type or not source_id:
+        return True
+    if source_type == "cache":
+        from business.investment.cache_service import find_cache_entry_by_key
+
+        return find_cache_entry_by_key(source_id, require_files=False) is not None
+    if source_type == "content":
+        from business.investment.constants import Status
+        from business.investment.daily_content import mark_expired_daily_contents_invalidated
+        from business.investment.records import get_content_record
+
+        mark_expired_daily_contents_invalidated()
+        try:
+            record = get_content_record(source_id)
+        except KeyError:
+            return False
+        return str(getattr(record, "status", "") or "") == str(Status.EFFECTIVE)
+    return True
 
 
 def _mark_cached_result_delivered(cached_result, rendered_reply):
@@ -537,6 +586,7 @@ class Query:
                     supported = False  # not supported, used to refresh
 
                 _cleanup_stale_running(channel, from_user)
+                _cleanup_invalid_cached_sources(channel.cache_dict, exclude_receiver=from_user)
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
                     if content == "1" or _is_direct_ready_result_request(content, pending_result):
@@ -548,6 +598,11 @@ class Query:
                         )
                         if permission_prompt:
                             replyPost = create_reply(permission_prompt, msg)
+                            return encrypt_func(replyPost.render())
+                        if not _cached_result_source_is_valid(pending_result):
+                            _discard_cached_result(channel.cache_dict, from_user)
+                            _pop_pending_command(channel.cache_dict, from_user)
+                            replyPost = create_reply(_pending_result_invalidated_prompt(), msg)
                             return encrypt_func(replyPost.render())
                         if content == "1":
                             _pop_pending_command(channel.cache_dict, from_user)
