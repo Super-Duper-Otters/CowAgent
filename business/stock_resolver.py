@@ -5,9 +5,10 @@ from sqlalchemy import select
 
 from business.investment.stock_resolver import (
     list_stock_symbols,
-    refresh_from_akshare,
-    refresh_from_auto,
-    refresh_from_tushare,
+    refresh_a_share_symbols_from_tushare,
+    refresh_all_symbols_from_tushare,
+    refresh_hk_symbols_from_tushare,
+    refresh_us_symbols_from_tushare,
     stock_dictionary_stats,
 )
 from business.db import connect, row_to_dict

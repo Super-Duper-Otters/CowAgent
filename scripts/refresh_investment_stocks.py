@@ -28,11 +28,11 @@ def _count_successes(result: dict[str, Any]) -> tuple[int, list[str]]:
 
 
 def _build_auto_payload() -> dict[str, Any]:
-    result = stock_resolver.refresh_from_auto()
+    result = stock_resolver.refresh_all_symbols_from_tushare()
     count, errors = _count_successes(result)
     has_success = any(isinstance(item, dict) and "count" in item for item in result.values())
     return {
-        "source": "auto",
+        "source": "all",
         "success": has_success,
         "count": count,
         "error": "; ".join(errors),
@@ -42,7 +42,12 @@ def _build_auto_payload() -> dict[str, Any]:
 
 
 def _build_single_source_payload(source: str) -> dict[str, Any]:
-    refresher = stock_resolver.refresh_from_akshare if source == "akshare" else stock_resolver.refresh_from_tushare
+    refreshers = {
+        "a_share": stock_resolver.refresh_a_share_symbols_from_tushare,
+        "hk": stock_resolver.refresh_hk_symbols_from_tushare,
+        "us": stock_resolver.refresh_us_symbols_from_tushare,
+    }
+    refresher = refreshers[source]
     try:
         count = refresher()
     except Exception as exc:  # noqa: BLE001 - CLI must log provider errors and return a scheduler-friendly exit code.
@@ -78,12 +83,12 @@ def _print_payload(payload: dict[str, Any], as_json: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Refresh the investment stock dictionary.")
-    parser.add_argument("--source", choices=("auto", "akshare", "tushare"), default="auto")
+    parser.add_argument("--source", choices=("all", "a_share", "hk", "us"), default="all")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args(argv)
 
     storage.initialize_storage()
-    payload = _build_auto_payload() if args.source == "auto" else _build_single_source_payload(args.source)
+    payload = _build_auto_payload() if args.source == "all" else _build_single_source_payload(args.source)
     _print_payload(payload, args.json)
     return 0 if payload["success"] else 1
 

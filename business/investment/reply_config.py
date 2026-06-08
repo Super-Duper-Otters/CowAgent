@@ -19,7 +19,7 @@ INVESTMENT_REPLY_DEFINITIONS = [
     ReplyTextDefinition("reply.investment.user_disabled", "服务停用提示", "客户账号被停用时返回。", "您的服务已停用，如需恢复请联系服务人员。"),
     ReplyTextDefinition("reply.investment.auth_expired", "授权过期提示", "客户授权时间过期时返回。", "您的授权已过期，如需续期请联系服务人员。"),
     ReplyTextDefinition("reply.investment.input_error", "输入格式错误提示", "客户输入无法匹配服务格式时返回。", "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。"),
-    ReplyTextDefinition("reply.investment.stock_not_found", "未找到股票提示", "股票代码或名称没有匹配结果时返回。", "未找到对应标的，请检查股票代码或改用标准股票代码。"),
+    ReplyTextDefinition("reply.investment.stock_not_found", "未找到股票提示", "股票代码或名称没有匹配结果时返回。", "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ、00700.HK、AAPL.US。"),
     ReplyTextDefinition("reply.investment.stock_ambiguous", "股票名称重复提示", "股票名称匹配多个标的时返回。", "股票名称匹配到多个标的，请改用股票代码。"),
     ReplyTextDefinition("reply.investment.technical_analysis_failed", "技术分析失败提示", "技术分析生成失败时返回。", "分析生成失败，请稍后重试或联系服务人员。"),
     ReplyTextDefinition("reply.investment.image_generation_failed", "图片生成失败提示", "图片生成或上传失败时返回。", "图片生成失败，请稍后重试或联系服务人员。"),

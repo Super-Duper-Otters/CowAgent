@@ -1608,6 +1608,7 @@ def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_ke
 
 def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_env, monkeypatch):
     from business.investment import stock_resolver
+    import business.stock_resolver as web_stock_resolver
     from channel.web.web_channel import InvestmentStocksHandler
 
     stock_resolver.refresh_stock_symbols(
@@ -1617,9 +1618,10 @@ def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_en
         ],
         source="seed",
     )
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", lambda: pytest.fail("query must not refresh"))
-    monkeypatch.setattr(stock_resolver, "refresh_from_akshare", lambda: pytest.fail("query must not refresh"))
-    monkeypatch.setattr(stock_resolver, "refresh_from_tushare", lambda: pytest.fail("query must not refresh"))
+    monkeypatch.setattr(web_stock_resolver, "refresh_all_symbols_from_tushare", lambda: pytest.fail("query must not refresh"))
+    monkeypatch.setattr(web_stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: pytest.fail("query must not refresh"))
+    monkeypatch.setattr(web_stock_resolver, "refresh_hk_symbols_from_tushare", lambda: pytest.fail("query must not refresh"))
+    monkeypatch.setattr(web_stock_resolver, "refresh_us_symbols_from_tushare", lambda: pytest.fail("query must not refresh"))
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -1634,32 +1636,32 @@ def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_en
 
 
 def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    import business.stock_resolver as stock_resolver
     from channel.web.web_channel import InvestmentStocksRefreshHandler
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_akshare", lambda: 3)
+    monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 3)
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentStocksRefreshHandler().POST,
-        body={"source": "akshare"},
+        body={"source": "a_share"},
     )
     assert payload["status"] == "success"
-    assert payload["result"] == {"akshare": {"count": 3}}
+    assert payload["result"] == {"a_share": {"count": 3}}
     assert "stats" in payload
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("ts failed")))
+    monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("hk failed")))
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentStocksRefreshHandler().POST,
-        body={"source": "tushare"},
+        body={"source": "hk"},
     )
     assert payload["status"] == "error"
-    assert payload["message"] == "ts failed"
+    assert payload["message"] == "hk failed"
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", lambda: {"akshare": {"error": "ak failed"}, "tushare": {"count": 4}})
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_tushare", lambda: {"a_share": {"error": "a failed"}, "hk": {"count": 4}, "us": {"count": 5}})
     payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={})
     assert payload["status"] == "success"
-    assert payload["result"] == {"akshare": {"error": "ak failed"}, "tushare": {"count": 4}}
+    assert payload["result"] == {"a_share": {"error": "a failed"}, "hk": {"count": 4}, "us": {"count": 5}}
 
 
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(investment_env):
@@ -5118,7 +5120,29 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
 
     def fake_ai(report_text):
         calls.append(("ai", report_text))
-        return SimpleNamespace(success=True, text="signal card standard text")
+        return SimpleNamespace(
+            success=True,
+            text=(
+                "【浙商固收 | 智能投研辅助系统】\n"
+                "📈 标的：300502.SZ（300502.SZ）\n"
+                "[庆祝] 信号方向：区间观望\n"
+                "💰 最新收盘：748.00 元\n"
+                "📅 行情日期：2026-05-29  日内涨幅：+1.00%\n"
+                "🔧 分析模型：技术分析体系\n\n"
+                "📊 趋势研判\n"
+                "区间震荡。\n"
+                "▪️ 方向确认：趋势中性。\n\n"
+                "🎯 核心关键位\n"
+                "▪️ 强压力：760.00（前高）\n"
+                "▪️ 强支撑：720.00（MA20）\n\n"
+                "💡 实操指引\n"
+                "观察突破和跌破。\n"
+                "⚠️ 本内容仅供研究参考，不构成任何投资建议\n"
+                "⏱️ 授权剩余时间：——\n"
+                "📚 数据来源：AKShare\n"
+                "🤝 业务对接：——"
+            ),
+        )
 
     def fake_render(standard_text, output_path):
         calls.append(("render", standard_text, Path(output_path).name))
@@ -5140,10 +5164,10 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     result = run_technical_analysis("ok", "300502.SZ 技术分析")
 
     assert result.success is True
-    assert calls[0][0:3] == ("skill", "300502.SZ", "300502_SZ")
+    assert calls[0][0:3] == ("skill", "300502", "300502_SZ")
     assert len(calls[0][3]) == 32
     assert calls[1] == ("ai", "# 技术分析报告\n\n核心观点")
-    assert calls[2][0:2] == ("render", "signal card standard text")
+    assert "📈 标的：300502.SZ（300502.SZ）" in calls[2][1]
     assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-29_")
     assert calls[2][2].endswith(".png")
     assert result.report_path == str(report)
@@ -5152,6 +5176,149 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     assert result.output_files == [result.signal_card_path, str(chart), str(report)]
     assert result.market_date == "2026-05-29"
     assert "2026-05-29" in result.cache_key
+    assert result.normalized_target == "300502.SZ"
+    assert result.stock_code == "300502.SZ"
+    assert result.stock_name == ""
+
+
+@pytest.mark.parametrize(
+    ("raw_input", "normalized_target", "skill_symbol"),
+    [
+        ("AAPL.US 技术分析", "AAPL.US", "AAPL.US"),
+        ("US:AAPL 技术分析", "AAPL.US", "AAPL.US"),
+        ("hk00700 技术分析", "00700.HK", "HK00700"),
+        ("00700.HK 技术分析", "00700.HK", "HK00700"),
+        ("GC 技术分析", "GC", "GC"),
+        ("COMEX_GOLD 技术分析", "GC", "GC"),
+    ],
+)
+def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
+    investment_env, tmp_path, monkeypatch, raw_input, normalized_target, skill_symbol
+):
+    from business.investment import technical_analysis
+    from business.investment.technical_analysis import run_technical_analysis
+
+    calls = []
+    report = tmp_path / "asset_技术分析报告_2026-05-25.md"
+    chart = tmp_path / "asset_TA_2026-05-25.png"
+    report.write_text("ta report", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
+    def fake_skill(symbol, _output_dir):
+        calls.append(("skill", symbol))
+        return report, chart
+
+    class FailResolver:
+        def resolve(self, *_args, **_kwargs):
+            pytest.fail("non-A-share targets should not enter A-share market date resolver")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FailResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", raw_input)
+
+    assert result.success is True
+    assert calls == [("skill", skill_symbol)]
+    assert result.normalized_target == normalized_target
+    assert result.stock_code == normalized_target
+    assert result.stock_name == ""
+
+
+@pytest.mark.parametrize(
+    ("raw_input", "dictionary_code", "expected_normalized", "expected_skill_symbol"),
+    [
+        ("新易盛 技术分析", "300502.SZ", "300502.SZ", "300502"),
+        ("腾讯控股 技术分析", "00700.HK", "00700.HK", "HK00700"),
+        ("苹果 技术分析", "AAPL.US", "AAPL.US", "AAPL.US"),
+    ],
+)
+def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
+    investment_env, tmp_path, monkeypatch, raw_input, dictionary_code, expected_normalized, expected_skill_symbol
+):
+    from business.investment import technical_analysis
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.technical_analysis import run_technical_analysis
+
+    name = raw_input.replace(" 技术分析", "")
+    market = dictionary_code.rsplit(".", 1)[1]
+    source = "tushare_a" if market in {"SZ", "SH"} else f"tushare_{market.lower()}"
+    refresh_stock_symbols(
+        [{"code": dictionary_code, "name": name, "market": market, "source": source}],
+        source="pytest",
+    )
+    calls = []
+    report = tmp_path / "name_技术分析报告_2026-05-25.md"
+    chart = tmp_path / "name_TA_2026-05-25.png"
+    report.write_text("ta report", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
+    def fake_skill(symbol, _output_dir):
+        calls.append(symbol)
+        return report, chart
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", raw_input)
+
+    assert result.success is True
+    assert calls == [expected_skill_symbol]
+    assert result.normalized_target == expected_normalized
+    assert result.stock_code == expected_normalized
+    assert result.stock_name == name
+
+
+@pytest.mark.parametrize(
+    ("raw_input", "expected_detail"),
+    [
+        ("不存在 技术分析", "cannot resolve stock name"),
+        ("重名 技术分析", "ambiguous stock name"),
+    ],
+)
+def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
+    investment_env, tmp_path, monkeypatch, raw_input, expected_detail
+):
+    from business.investment import technical_analysis
+    from business.investment.constants import ErrorCode
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "重名", "market": "SZ", "source": "tushare_a"},
+            {"code": "A00001.US", "name": "重名", "market": "US", "source": "tushare_us"},
+        ],
+        source="pytest",
+    )
+    monkeypatch.setattr(technical_analysis, "_run_skill", lambda *_args, **_kwargs: pytest.fail("invalid names must not enter skill"))
+
+    result = run_technical_analysis("ok", raw_input)
+
+    assert result.success is False
+    assert result.error_code in {ErrorCode.STOCK_NOT_FOUND, ErrorCode.STOCK_AMBIGUOUS}
+    assert "股票代码" in result.user_prompt
+    assert expected_detail in result.detail
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
@@ -6631,7 +6798,7 @@ def test_technical_analysis_different_market_date_misses_cache(investment_env, t
         lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
 
-    def fake_skill(symbol, output_dir):
+    def fake_skill(symbol, output_dir, stock_name=""):
         calls.append(("skill", symbol, current_market_date))
         report = tmp_path / f"{symbol}_技术分析报告_{current_market_date}.md"
         chart = tmp_path / f"{symbol}_TA_{current_market_date}.png"
@@ -6768,7 +6935,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
             assert requested_market_date == ""
             return SimpleNamespace(market_date="", known=False, source="unknown")
 
-    def fake_skill(_symbol, _output_dir):
+    def fake_skill(_symbol, _output_dir, stock_name=""):
         return report, chart
 
     def fake_ai(_report_text):
@@ -6821,7 +6988,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
             assert requested_market_date == ""
             return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
 
-    def fake_skill(symbol, _output_dir):
+    def fake_skill(symbol, _output_dir, stock_name=""):
         calls.append(("skill", symbol))
         return report, chart
 
@@ -7361,94 +7528,131 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env
         resolve_stock as core_resolve_stock,
         stock_dictionary_stats,
     )
-    from business.investment.technical_analysis import resolve_stock as technical_resolve_stock
-    from business.investment.technical_analysis import run_technical_analysis
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", lambda: {})
     inserted = refresh_stock_symbols(
         [
             {"code": "300502.SZ", "name": "新易盛", "market": "SZ", "ts_code": "300502.SZ"},
+            {"code": "00700.HK", "name": "腾讯控股", "market": "HK", "ts_code": "00700.HK"},
+            {"code": "AAPL.US", "name": "苹果", "market": "US", "ts_code": "AAPL"},
             {"code": "000001.SZ", "name": "重名", "market": "SZ"},
-            {"code": "600001.SH", "name": "重名", "market": "SH", "source": "row-source"},
+            {"code": "A00001.US", "name": "重名", "market": "US", "source": "tushare_us"},
         ],
-        source="test-source",
+        source="tushare_a",
     )
 
-    assert inserted == 3
+    assert inserted == 5
     assert core_resolve_stock("300502") == ("300502.SZ", None)
     assert core_resolve_stock("300502.SZ") == ("300502.SZ", None)
     assert core_resolve_stock("600519.SH") == ("600519.SH", None)
+    assert core_resolve_stock("00700.HK") == ("00700.HK", None)
+    assert core_resolve_stock("AAPL.US") == ("AAPL.US", None)
     assert core_resolve_stock("新易盛") == ("300502.SZ", None)
+    assert core_resolve_stock("腾讯控股") == ("00700.HK", None)
+    assert core_resolve_stock("苹果") == ("AAPL.US", None)
     assert core_resolve_stock("不存在的股票") == (None, ErrorCode.STOCK_NOT_FOUND)
     assert core_resolve_stock("重名") == (None, ErrorCode.STOCK_AMBIGUOUS)
-    assert technical_resolve_stock("新易盛") == ("300502.SZ", None)
     assert [row["code"] for row in list_stock_symbols("新", limit=5)] == ["300502.SZ"]
-    assert stock_dictionary_stats()["total"] == 3
+    assert stock_dictionary_stats()["total"] == 5
 
-    not_found = run_technical_analysis("ok", "不存在的股票 技术分析")
-    ambiguous_symbol, ambiguous_error = technical_resolve_stock("重名")
+    ambiguous_symbol, ambiguous_error = core_resolve_stock("重名")
 
-    assert not_found.success is False
-    assert not_found.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert not_found.user_prompt == user_message(ErrorCode.STOCK_NOT_FOUND)
     assert ambiguous_symbol is None
     assert ambiguous_error == ErrorCode.STOCK_AMBIGUOUS
     assert user_message(ambiguous_error) == "股票名称匹配到多个标的，请改用股票代码。"
 
 
-def test_stock_resolver_auto_refreshes_once_for_name_miss_then_resolves(investment_env, monkeypatch):
-    from business.investment import stock_resolver
-
-    calls = []
-
-    def fake_refresh():
-        calls.append("refresh")
-        stock_resolver.refresh_stock_symbols(
-            [{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "fake"}],
-            source="fake",
-        )
-        return {"fake": {"count": 1}}
-
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", fake_refresh)
-
-    assert stock_resolver.resolve_stock("新易盛") == ("300502.SZ", None)
-    assert calls == ["refresh"]
-
-
-def test_stock_resolver_auto_refresh_miss_respects_flag_errors_and_codes(investment_env, monkeypatch):
+def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_env):
     from business.investment import stock_resolver
     from business.investment.constants import ErrorCode
 
-    calls = []
+    stock_resolver.refresh_stock_symbols(
+        [{"code": "AAPL.US", "name": "苹果", "market": "US", "source": "akshare"}],
+        source="akshare",
+    )
 
-    def fake_refresh():
-        calls.append("refresh")
-        raise RuntimeError("refresh failed")
+    assert stock_resolver.resolve_stock("苹果") == (None, ErrorCode.STOCK_NOT_FOUND)
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", fake_refresh)
 
-    assert stock_resolver.resolve_stock("新易盛", auto_refresh_on_miss=False) == (None, ErrorCode.STOCK_NOT_FOUND)
+def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(investment_env, monkeypatch):
+    from business.investment import stock_resolver
+
+    monkeypatch.setattr(stock_resolver, "get_tushare_token", lambda: "token")
+    fake_tushare = SimpleNamespace(
+        pro_api=lambda _token: SimpleNamespace(
+            stock_basic=lambda **_kwargs: _FakeDataFrame(
+                [
+                    {"ts_code": "300502.SZ", "symbol": "300502", "name": "新易盛", "exchange": "SZSE"},
+                    {"ts_code": "600519.SH", "symbol": "600519", "name": "贵州茅台", "exchange": "SSE"},
+                ]
+            ),
+            hk_basic=lambda **_kwargs: _FakeDataFrame(
+                [
+                    {"ts_code": "00700.HK", "name": "腾讯控股", "fullname": "腾讯控股有限公司"},
+                    {"ts_code": "09988.HK", "name": "阿里巴巴-W", "fullname": "阿里巴巴集团控股有限公司"},
+                ]
+            ),
+            us_basic=lambda **_kwargs: _FakeDataFrame(
+                [
+                    {"ts_code": "AAPL", "name": "苹果", "enname": "Apple Inc."},
+                    {"ts_code": "MSFT", "name": "微软", "enname": "Microsoft Corporation"},
+                    {"ts_code": "NOZH", "name": None, "enname": "No Chinese Name"},
+                ]
+            ),
+        )
+    )
+    monkeypatch.setitem(sys.modules, "tushare", fake_tushare)
+
+    assert stock_resolver.refresh_a_share_symbols_from_tushare() == 2
+    assert stock_resolver.refresh_hk_symbols_from_tushare() == 2
+    assert stock_resolver.refresh_us_symbols_from_tushare() == 2
+    assert stock_resolver.refresh_all_symbols_from_tushare() == {
+        "a_share": {"count": 2},
+        "hk": {"count": 2},
+        "us": {"count": 2},
+    }
+
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=20)}
+    assert rows["300502.SZ"]["name"] == "新易盛"
+    assert rows["300502.SZ"]["market"] == "SZ"
+    assert rows["300502.SZ"]["source"] == "tushare_a"
+    assert rows["00700.HK"]["name"] == "腾讯控股"
+    assert rows["00700.HK"]["market"] == "HK"
+    assert rows["00700.HK"]["source"] == "tushare_hk"
+    assert rows["AAPL.US"]["name"] == "苹果"
+    assert rows["AAPL.US"]["market"] == "US"
+    assert rows["AAPL.US"]["source"] == "tushare_us"
+    assert "NOZH.US" not in rows
+
+
+def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env, monkeypatch):
+    from business.investment import stock_resolver
+    from business.investment.constants import ErrorCode
+
+    monkeypatch.setattr(
+        stock_resolver,
+        "refresh_all_symbols_from_tushare",
+        lambda: pytest.fail("name resolution must not refresh during customer requests"),
+        raising=False,
+    )
+
     assert stock_resolver.resolve_stock("新易盛") == (None, ErrorCode.STOCK_NOT_FOUND)
     assert stock_resolver.resolve_stock("300502") == ("300502.SZ", None)
     assert stock_resolver.resolve_stock("300502.SZ") == ("300502.SZ", None)
-    assert calls == ["refresh"]
+    assert stock_resolver.resolve_stock("00700.HK") == ("00700.HK", None)
+    assert stock_resolver.resolve_stock("AAPL.US") == ("AAPL.US", None)
 
 
-def test_stock_resolver_auto_refresh_reports_ambiguous_after_refresh(investment_env, monkeypatch):
+def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(investment_env):
     from business.investment import stock_resolver
     from business.investment.constants import ErrorCode
 
-    def fake_refresh():
-        stock_resolver.refresh_stock_symbols(
-            [
-                {"code": "000001.SZ", "name": "重名", "market": "SZ"},
-                {"code": "600001.SH", "name": "重名", "market": "SH"},
-            ],
-            source="fake",
-        )
-        return {"fake": {"count": 2}}
-
-    monkeypatch.setattr(stock_resolver, "refresh_from_auto", fake_refresh)
+    stock_resolver.refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "重名", "market": "SZ", "source": "tushare_a"},
+            {"code": "A00001.US", "name": "重名", "market": "US", "source": "tushare_us"},
+        ],
+        source="tushare-test",
+    )
 
     assert stock_resolver.resolve_stock("重名") == (None, ErrorCode.STOCK_AMBIGUOUS)
 
@@ -7460,30 +7664,6 @@ class _FakeDataFrame:
     def to_dict(self, orient):
         assert orient == "records"
         return self._rows
-
-
-def test_stock_resolver_refreshes_from_akshare_fake_dataframe(investment_env, monkeypatch):
-    from business.investment import stock_resolver
-
-    fake_akshare = SimpleNamespace(
-        stock_info_a_code_name=lambda: _FakeDataFrame(
-            [
-                {"code": "600519", "name": "贵州茅台"},
-                {"代码": "300502", "名称": "新易盛"},
-            ]
-        )
-    )
-    monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
-
-    assert stock_resolver.refresh_from_akshare() == 2
-
-    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=10)}
-    assert rows["600519.SH"]["name"] == "贵州茅台"
-    assert rows["600519.SH"]["market"] == "SH"
-    assert rows["600519.SH"]["source"] == "akshare"
-    assert rows["300502.SZ"]["name"] == "新易盛"
-    assert rows["300502.SZ"]["market"] == "SZ"
-    assert rows["300502.SZ"]["source"] == "akshare"
 
 
 def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
@@ -7532,7 +7712,7 @@ def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
 
     with pytest.raises(RuntimeError, match="tushare token not configured"):
-        stock_resolver.refresh_from_tushare()
+        stock_resolver.refresh_a_share_symbols_from_tushare()
 
 
 def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, monkeypatch):
@@ -7555,7 +7735,7 @@ def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, mo
     monkeypatch.setitem(sys.modules, "tushare", fake_tushare)
     save_config("tushare.token", "config-token-1234567890", operator_role="admin")
 
-    assert stock_resolver.refresh_from_tushare() == 2
+    assert stock_resolver.refresh_a_share_symbols_from_tushare() == 2
 
     assert calls == [
         {"token": "config-token-1234567890"},
@@ -7564,27 +7744,33 @@ def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, mo
     rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=10)}
     assert rows["600519.SH"]["ts_code"] == "600519.SH"
     assert rows["600519.SH"]["market"] == "SH"
-    assert rows["600519.SH"]["source"] == "tushare"
+    assert rows["600519.SH"]["source"] == "tushare_a"
     assert rows["300502.SZ"]["ts_code"] == "300502.SZ"
     assert rows["300502.SZ"]["market"] == "SZ"
-    assert rows["300502.SZ"]["source"] == "tushare"
+    assert rows["300502.SZ"]["source"] == "tushare_a"
 
 
-def test_stock_resolver_auto_reports_source_counts_and_errors(investment_env, monkeypatch):
+def test_stock_resolver_all_tushare_reports_market_counts_and_errors(investment_env, monkeypatch):
     from business.investment import stock_resolver
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_akshare", lambda: 2)
-    monkeypatch.setattr(stock_resolver, "get_tushare_token", lambda masked=False: "token")
-    monkeypatch.setattr(stock_resolver, "refresh_from_tushare", lambda: 3)
+    monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 2)
+    monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: 3)
+    monkeypatch.setattr(stock_resolver, "refresh_us_symbols_from_tushare", lambda: 4)
 
-    assert stock_resolver.refresh_from_auto() == {"akshare": {"count": 2}, "tushare": {"count": 3}}
+    assert stock_resolver.refresh_all_symbols_from_tushare() == {
+        "a_share": {"count": 2},
+        "hk": {"count": 3},
+        "us": {"count": 4},
+    }
 
-    monkeypatch.setattr(stock_resolver, "refresh_from_akshare", lambda: (_ for _ in ()).throw(RuntimeError("ak failed")))
-    monkeypatch.setattr(stock_resolver, "refresh_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("ts failed")))
+    monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("a failed")))
+    monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("hk failed")))
+    monkeypatch.setattr(stock_resolver, "refresh_us_symbols_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("us failed")))
 
-    assert stock_resolver.refresh_from_auto() == {
-        "akshare": {"error": "ak failed"},
-        "tushare": {"error": "ts failed"},
+    assert stock_resolver.refresh_all_symbols_from_tushare() == {
+        "a_share": {"error": "a failed"},
+        "hk": {"error": "hk failed"},
+        "us": {"error": "us failed"},
     }
 
 
@@ -7593,18 +7779,20 @@ def test_refresh_investment_stocks_script_dispatches_sources(investment_env, mon
 
     calls = []
     monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: calls.append("init"))
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_from_auto", lambda: calls.append("auto") or {"akshare": {"count": 2}})
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_from_akshare", lambda: calls.append("akshare") or 3)
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_from_tushare", lambda: calls.append("tushare") or 4)
+    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_all_symbols_from_tushare", lambda: calls.append("all") or {"a_share": {"count": 2}, "hk": {"count": 3}, "us": {"count": 4}})
+    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: calls.append("a_share") or 3)
+    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_hk_symbols_from_tushare", lambda: calls.append("hk") or 4)
+    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_us_symbols_from_tushare", lambda: calls.append("us") or 5)
 
-    assert refresh_investment_stocks.main(["--source", "auto", "--json"]) == 0
-    assert refresh_investment_stocks.main(["--source", "akshare", "--json"]) == 0
-    assert refresh_investment_stocks.main(["--source", "tushare", "--json"]) == 0
+    assert refresh_investment_stocks.main(["--source", "all", "--json"]) == 0
+    assert refresh_investment_stocks.main(["--source", "a_share", "--json"]) == 0
+    assert refresh_investment_stocks.main(["--source", "hk", "--json"]) == 0
+    assert refresh_investment_stocks.main(["--source", "us", "--json"]) == 0
 
-    assert calls == ["init", "auto", "init", "akshare", "init", "tushare"]
+    assert calls == ["init", "all", "init", "a_share", "init", "hk", "init", "us"]
     payloads = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
-    assert [payload["source"] for payload in payloads] == ["auto", "akshare", "tushare"]
-    assert [payload["count"] for payload in payloads] == [2, 3, 4]
+    assert [payload["source"] for payload in payloads] == ["all", "a_share", "hk", "us"]
+    assert [payload["count"] for payload in payloads] == [9, 3, 4, 5]
     assert all(payload["success"] is True for payload in payloads)
     assert all("db_path" in payload for payload in payloads)
 
@@ -7615,18 +7803,19 @@ def test_refresh_investment_stocks_script_exits_one_when_all_sources_fail(invest
     monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
     monkeypatch.setattr(
         refresh_investment_stocks.stock_resolver,
-        "refresh_from_auto",
-        lambda: {"akshare": {"error": "ak failed"}, "tushare": {"error": "ts failed"}},
+        "refresh_all_symbols_from_tushare",
+        lambda: {"a_share": {"error": "a failed"}, "hk": {"error": "hk failed"}, "us": {"error": "us failed"}},
     )
 
-    assert refresh_investment_stocks.main(["--source", "auto", "--json"]) == 1
+    assert refresh_investment_stocks.main(["--source", "all", "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["source"] == "auto"
+    assert payload["source"] == "all"
     assert payload["success"] is False
     assert payload["count"] == 0
-    assert "akshare: ak failed" in payload["error"]
-    assert "tushare: ts failed" in payload["error"]
+    assert "a_share: a failed" in payload["error"]
+    assert "hk: hk failed" in payload["error"]
+    assert "us: us failed" in payload["error"]
 
 
 def test_refresh_investment_stocks_script_reports_single_source_exceptions(investment_env, monkeypatch, capsys):
@@ -7635,14 +7824,14 @@ def test_refresh_investment_stocks_script_reports_single_source_exceptions(inves
     monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
     monkeypatch.setattr(
         refresh_investment_stocks.stock_resolver,
-        "refresh_from_akshare",
+        "refresh_hk_symbols_from_tushare",
         lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
     )
 
-    assert refresh_investment_stocks.main(["--source", "akshare", "--json"]) == 1
+    assert refresh_investment_stocks.main(["--source", "hk", "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["source"] == "akshare"
+    assert payload["source"] == "hk"
     assert payload["success"] is False
     assert payload["count"] == 0
     assert payload["error"] == "provider unavailable"
@@ -7982,7 +8171,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
     chart.write_bytes(b"chart")
     calls = []
 
-    def fake_skill(symbol, _output_dir):
+    def fake_skill(symbol, _output_dir, stock_name=""):
         calls.append(symbol)
         return report, chart
 
@@ -7995,7 +8184,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
 
     ai_failed = run_technical_analysis("ok", "600519.SH 技术分析")
 
-    assert calls == ["600519.SH"]
+    assert calls == ["600519"]
     assert ai_failed.success is False
     assert ai_failed.error_code == ErrorCode.TECHNICAL_ANALYSIS_FAILED
     assert ai_failed.user_prompt == user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED)
@@ -8027,7 +8216,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
     standard_code = run_technical_analysis("ok", "600519 技术分析")
 
     assert standard_code.success is True
-    assert calls == ["600519.SH"]
+    assert calls == ["600519"]
 
 
 def test_router_records_technical_analysis_report_chart_and_card_paths(investment_env, tmp_path):

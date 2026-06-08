@@ -22,10 +22,10 @@ from .cache_service import (
 )
 from .config_service import get_config, sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, user_message
-from .db import connect, row_to_dict
+from .db import connect
 from .market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from .render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
-from .schema import investment_cache_entries, investment_request_records, investment_stock_symbols
+from .schema import investment_cache_entries, investment_request_records
 from .storage import get_storage_dirs
 from .stock_resolver import resolve_stock
 from .versioning import file_fingerprint
@@ -75,6 +75,25 @@ class TechnicalAnalysisCacheContext:
     resolved_market_date: MarketDateResolution | None = None
 
 
+@dataclass(frozen=True)
+class TechnicalAnalysisTarget:
+    normalized_target: str = ""
+    skill_symbol: str = ""
+    is_a_share: bool = False
+    stock_name: str = ""
+
+
+_A_SHARE_SUFFIX_RE = re.compile(r"^(\d{6})\.(SH|SZ)$", re.IGNORECASE)
+_A_SHARE_BARE_RE = re.compile(r"^\d{6}$")
+_US_SUFFIX_RE = re.compile(r"^([A-Z0-9_.-]+)\.US$", re.IGNORECASE)
+_US_PREFIX_RE = re.compile(r"^US:([A-Z0-9_.-]+)$", re.IGNORECASE)
+_HK_SUFFIX_RE = re.compile(r"^(\d{5})\.HK$", re.IGNORECASE)
+_HK_PREFIX_RE = re.compile(r"^HK(\d{5})$", re.IGNORECASE)
+_GOLD_ALIASES = {"GC", "COMEX_GOLD", "GOLD_COMEX"}
+_ASCII_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]+$")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
 def parse_target(raw_input: str) -> str:
     text = (raw_input or "").strip()
     if not text.endswith("技术分析"):
@@ -82,8 +101,83 @@ def parse_target(raw_input: str) -> str:
     return text[: -len("技术分析")].strip()
 
 
+def _standard_a_share_symbol(bare_symbol: str) -> str:
+    return f"{bare_symbol}.SH" if bare_symbol.startswith("6") else f"{bare_symbol}.SZ"
+
+
+def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
+    value = str(target or "").strip()
+    if not value:
+        return TechnicalAnalysisTarget()
+
+    suffix_match = _A_SHARE_SUFFIX_RE.fullmatch(value)
+    if suffix_match:
+        bare_symbol = suffix_match.group(1)
+        normalized = f"{bare_symbol}.{suffix_match.group(2).upper()}"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=bare_symbol, is_a_share=True)
+
+    if _A_SHARE_BARE_RE.fullmatch(value):
+        return TechnicalAnalysisTarget(
+            normalized_target=_standard_a_share_symbol(value),
+            skill_symbol=value,
+            is_a_share=True,
+        )
+
+    us_prefix_match = _US_PREFIX_RE.fullmatch(value)
+    if us_prefix_match:
+        normalized = f"{us_prefix_match.group(1).upper()}.US"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+
+    us_suffix_match = _US_SUFFIX_RE.fullmatch(value)
+    if us_suffix_match:
+        normalized = f"{us_suffix_match.group(1).upper()}.US"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+
+    hk_prefix_match = _HK_PREFIX_RE.fullmatch(value)
+    if hk_prefix_match:
+        normalized = f"{hk_prefix_match.group(1)}.HK"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_prefix_match.group(1)}")
+
+    hk_suffix_match = _HK_SUFFIX_RE.fullmatch(value)
+    if hk_suffix_match:
+        normalized = f"{hk_suffix_match.group(1)}.HK"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_suffix_match.group(1)}")
+
+    upper_value = value.upper()
+    if upper_value in _GOLD_ALIASES:
+        return TechnicalAnalysisTarget(normalized_target="GC", skill_symbol="GC")
+
+    normalized = upper_value if _ASCII_SYMBOL_RE.fullmatch(value) else value
+    return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+
+
+def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysisTarget, ErrorCode | None, str]:
+    value = str(target or "").strip()
+    target_info = _technical_analysis_target(value)
+    if not value or not _CJK_RE.search(value):
+        return target_info, None, ""
+
+    symbol, error = resolve_stock(value, auto_refresh_on_miss=False)
+    if error == ErrorCode.STOCK_AMBIGUOUS:
+        return TechnicalAnalysisTarget(), error, f"ambiguous stock name: {value}"
+    if error or not symbol:
+        return TechnicalAnalysisTarget(), ErrorCode.STOCK_NOT_FOUND, f"cannot resolve stock name: {value}"
+
+    resolved = _technical_analysis_target(symbol)
+    return (
+        TechnicalAnalysisTarget(
+            normalized_target=resolved.normalized_target,
+            skill_symbol=resolved.skill_symbol,
+            is_a_share=resolved.is_a_share,
+            stock_name=value,
+        ),
+        None,
+        "",
+    )
+
+
 def _skill_symbol(symbol: str) -> str:
-    return symbol
+    return _technical_analysis_target(symbol).skill_symbol or str(symbol or "").strip()
 
 
 def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
@@ -95,8 +189,9 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
     tushare_token = str(get_config("tushare.token", "") or "").strip()
     if tushare_token:
         env["TUSHARE_TOKEN"] = tushare_token
+    command = [sys.executable, str(skill_path), "--symbol", symbol, "--days", chart_days, "--output", str(output_dir)]
     subprocess.run(
-        [sys.executable, str(skill_path), "--symbol", symbol, "--days", chart_days, "--output", str(output_dir)],
+        command,
         check=True,
         capture_output=True,
         text=True,
@@ -121,15 +216,6 @@ def _configured_renderer_path() -> Path:
     return renderer_path if renderer_path.is_absolute() else Path.cwd() / renderer_path
 
 
-def _stock_name(symbol: str, target: str) -> str:
-    with connect() as conn:
-        row = conn.execute(
-            investment_stock_symbols.select().where(investment_stock_symbols.c.code == symbol)
-        ).fetchone()
-    item = row_to_dict(row)
-    return item.get("name") or target
-
-
 def _extract_market_date_from_text(text: str) -> str:
     match = re.search(r"\d{4}-\d{2}-\d{2}", text or "")
     return normalize_market_date(match.group(0)) if match else ""
@@ -142,6 +228,19 @@ def _target_and_requested_market_date(target: str) -> tuple[str, str]:
     cleaned = re.sub(r"\d{4}-\d{2}-\d{2}", " ", target)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned, market_date
+
+
+def _resolve_market_date(target: TechnicalAnalysisTarget, requested_market_date: str = "") -> MarketDateResolution:
+    explicit_date = normalize_market_date(requested_market_date)
+    if explicit_date:
+        return MarketDateResolution(market_date=explicit_date, known=True, source="explicit")
+    if target.is_a_share:
+        return MarketDateResolver().resolve(target.normalized_target, requested_market_date)
+    return MarketDateResolution()
+
+
+def _target_path_part(symbol: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", symbol).strip("._") or "target"
 
 
 def _market_date(standard_text: str = "", *paths: Path) -> tuple[str, str]:
@@ -329,12 +428,15 @@ def prepare_technical_analysis_cache_context(
     target_text: str | None = None,
 ) -> TechnicalAnalysisCacheContext:
     target, requested_market_date = _target_and_requested_market_date(target_text or parse_target(raw_input))
-    symbol, error = resolve_stock(target)
-    if error or symbol is None:
+    target_info, error, _detail = _technical_analysis_target_from_input(target)
+    if error:
+        return TechnicalAnalysisCacheContext()
+    symbol = target_info.normalized_target
+    if not symbol:
         return TechnicalAnalysisCacheContext()
     program_version, ta_version, renderer_version, template_version = _versions()
     combined_version = _cache_version_fingerprint(ta_version, renderer_version, template_version)
-    resolved_market_date = MarketDateResolver().resolve(symbol, requested_market_date)
+    resolved_market_date = _resolve_market_date(target_info, requested_market_date)
     if not resolved_market_date.known or not resolved_market_date.market_date:
         cached = _find_latest_current_cache_entry(
             symbol=symbol,
@@ -401,10 +503,16 @@ def run_technical_analysis(
 ) -> TechnicalAnalysisResult:
     request = TechnicalAnalysisRequest(openid=openid, raw_input=raw_input, target_text=target_text or parse_target(raw_input))
     target, requested_market_date = _target_and_requested_market_date(request.target_text)
-    symbol, error = resolve_stock(target)
+    target_info, error, error_detail = _technical_analysis_target_from_input(target)
     if error:
-        return TechnicalAnalysisResult(False, error_code=error, user_prompt=user_message(error), detail=f"cannot resolve stock: {target}")
-    if symbol is None:
+        return TechnicalAnalysisResult(
+            False,
+            error_code=error,
+            user_prompt=user_message(error),
+            detail=error_detail,
+        )
+    symbol = target_info.normalized_target
+    if not symbol:
         return TechnicalAnalysisResult(
             False,
             error_code=ErrorCode.STOCK_NOT_FOUND,
@@ -428,7 +536,7 @@ def run_technical_analysis(
     if use_cache_context and cache_context.resolved_market_date is not None:
         resolved_market_date = cache_context.resolved_market_date
     else:
-        resolved_market_date = MarketDateResolver().resolve(symbol, requested_market_date)
+        resolved_market_date = _resolve_market_date(target_info, requested_market_date)
     if use_cache_context and cache_context.cache_key:
         cached = _find_cache_context_entry(
             cache_context,
@@ -484,7 +592,7 @@ def run_technical_analysis(
             output_files=output_files,
             normalized_target=symbol,
             stock_code=symbol,
-            stock_name=_stock_name(symbol, target),
+            stock_name=target_info.stock_name,
             market_date=cached.market_date,
             program_version=program_version,
             ta_version=ta_version,
@@ -501,10 +609,10 @@ def run_technical_analysis(
             or (get_storage_dirs()["tmp"] / "technical-analysis")
         )
     )
-    output_dir = output_base / symbol.replace(".", "_") / uuid.uuid4().hex
+    output_dir = output_base / _target_path_part(symbol.replace(".", "_")) / uuid.uuid4().hex
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        generated_report_path, generated_chart_path = _run_skill(_skill_symbol(symbol), output_dir)
+        generated_report_path, generated_chart_path = _run_skill(target_info.skill_symbol or _skill_symbol(symbol), output_dir)
         report_text = generated_report_path.read_text(encoding="utf-8")
         ai_result = generate_technical_analysis_text(report_text)
         if not ai_result.success:
@@ -539,7 +647,7 @@ def run_technical_analysis(
             )
         version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
         card_market_date = market_date or "unknown"
-        card_path = output_dir / f"{symbol.replace('.', '_')}_signal_card_{card_market_date}_{version_suffix}.png"
+        card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"
         render_result = render_technical_analysis_card(ai_result.text, str(card_path))
         if not render_result.success:
             return TechnicalAnalysisResult(
@@ -557,7 +665,7 @@ def run_technical_analysis(
             output_files=output_files,
             normalized_target=symbol,
             stock_code=symbol,
-            stock_name=_stock_name(symbol, target),
+            stock_name=target_info.stock_name,
             market_date=market_date,
             program_version=program_version,
             ta_version=ta_version,

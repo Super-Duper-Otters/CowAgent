@@ -14,18 +14,32 @@ from .db import connect, row_to_dict, upsert_stock_symbols
 from .schema import investment_stock_symbols
 
 
-_STANDARD_CODE_RE = re.compile(r"\d{6}\.(SZ|SH)", re.IGNORECASE)
+_A_SHARE_CODE_RE = re.compile(r"\d{6}\.(SZ|SH)", re.IGNORECASE)
 _BARE_CODE_RE = re.compile(r"\d{6}")
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_HK_CODE_RE = re.compile(r"\d{5}\.HK", re.IGNORECASE)
+_HK_PREFIX_RE = re.compile(r"HK(\d{5})", re.IGNORECASE)
+_US_CODE_RE = re.compile(r"[A-Z0-9_.-]+\.US", re.IGNORECASE)
+_US_PREFIX_RE = re.compile(r"US:([A-Z0-9_.-]+)", re.IGNORECASE)
 
 
 def _standardize_code(value: str) -> str:
     code = str(value or "").strip().upper()
-    if _STANDARD_CODE_RE.fullmatch(code):
+    if _A_SHARE_CODE_RE.fullmatch(code):
         return code
     if _BARE_CODE_RE.fullmatch(code):
         suffix = ".SH" if code.startswith("6") else ".SZ"
         return f"{code}{suffix}"
+    if _HK_CODE_RE.fullmatch(code):
+        return code
+    hk_prefix_match = _HK_PREFIX_RE.fullmatch(code)
+    if hk_prefix_match:
+        return f"{hk_prefix_match.group(1)}.HK"
+    us_prefix_match = _US_PREFIX_RE.fullmatch(code)
+    if us_prefix_match:
+        return f"{us_prefix_match.group(1).upper()}.US"
+    if _US_CODE_RE.fullmatch(code):
+        ticker = code.rsplit(".", 1)[0].upper()
+        return f"{ticker}.US"
     return code
 
 
@@ -36,6 +50,14 @@ def _infer_market(code: str, row_market: str = "") -> str:
     if "." in code:
         return code.rsplit(".", 1)[1]
     return "SH" if code.startswith("6") else "SZ"
+
+
+def _tushare_client():
+    token = get_tushare_token()
+    if not token:
+        raise RuntimeError("tushare token not configured")
+    tushare = importlib.import_module("tushare")
+    return tushare.pro_api(token)
 
 
 def _records_from_frame(frame: Any) -> list[dict[str, Any]]:
@@ -55,7 +77,11 @@ def _first_text(row: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 def _resolve_name_from_local(value: str) -> tuple[str | None, ErrorCode | None]:
     table = investment_stock_symbols
-    stmt = select(table.c.code).where(table.c.name == value).order_by(table.c.code)
+    stmt = (
+        select(table.c.code)
+        .where(table.c.name == value, table.c.source.in_(("tushare_a", "tushare_hk", "tushare_us")))
+        .order_by(table.c.code)
+    )
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()
 
@@ -64,21 +90,6 @@ def _resolve_name_from_local(value: str) -> tuple[str | None, ErrorCode | None]:
     if len(rows) > 1:
         return None, ErrorCode.STOCK_AMBIGUOUS
     return None, ErrorCode.STOCK_NOT_FOUND
-
-
-def refresh_from_akshare() -> int:
-    akshare = importlib.import_module("akshare")
-    frame = akshare.stock_info_a_code_name()
-    rows = []
-    for row in _records_from_frame(frame):
-        rows.append(
-            {
-                "code": _first_text(row, ("code", "代码")),
-                "name": _first_text(row, ("name", "名称")),
-                "source": "akshare",
-            }
-        )
-    return refresh_stock_symbols(rows, source="akshare")
 
 
 def get_tushare_token(masked: bool = False) -> str:
@@ -92,13 +103,8 @@ def get_tushare_token(masked: bool = False) -> str:
     return mask_sensitive_value(token) if masked else token
 
 
-def refresh_from_tushare() -> int:
-    token = get_tushare_token()
-    if not token:
-        raise RuntimeError("tushare token not configured")
-
-    tushare = importlib.import_module("tushare")
-    pro = tushare.pro_api(token)
+def refresh_a_share_symbols_from_tushare() -> int:
+    pro = _tushare_client()
     frame = pro.stock_basic(exchange="", list_status="L", fields="ts_code,symbol,name,exchange")
     rows = []
     for row in _records_from_frame(frame):
@@ -112,33 +118,79 @@ def refresh_from_tushare() -> int:
                 "market": market,
                 "name": _first_text(row, ("name", "名称")),
                 "ts_code": ts_code or code,
-                "source": "tushare",
+                "source": "tushare_a",
             }
         )
-    return refresh_stock_symbols(rows, source="tushare")
+    return refresh_stock_symbols(rows, source="tushare_a")
 
 
-def refresh_from_auto() -> dict[str, object]:
+def refresh_hk_symbols_from_tushare() -> int:
+    pro = _tushare_client()
+    frame = pro.hk_basic(list_status="L")
+    rows = []
+    for row in _records_from_frame(frame):
+        ts_code = _first_text(row, ("ts_code", "code"))
+        name = _first_text(row, ("name", "名称"))
+        if not name:
+            continue
+        rows.append(
+            {
+                "code": _standardize_code(ts_code),
+                "market": "HK",
+                "name": name,
+                "ts_code": ts_code or None,
+                "source": "tushare_hk",
+            }
+        )
+    return refresh_stock_symbols(rows, source="tushare_hk")
+
+
+def refresh_us_symbols_from_tushare() -> int:
+    pro = _tushare_client()
+    frame = pro.us_basic()
+    rows = []
+    for row in _records_from_frame(frame):
+        ts_code = _first_text(row, ("ts_code", "code", "symbol"))
+        name = _first_text(row, ("name", "名称"))
+        if not name:
+            continue
+        rows.append(
+            {
+                "code": _standardize_code(f"{ts_code}.US" if "." not in str(ts_code or "") else ts_code),
+                "market": "US",
+                "name": name,
+                "ts_code": ts_code or None,
+                "source": "tushare_us",
+            }
+        )
+    return refresh_stock_symbols(rows, source="tushare_us")
+
+
+def refresh_all_symbols_from_tushare() -> dict[str, object]:
     result: dict[str, object] = {}
-    try:
-        result["akshare"] = {"count": refresh_from_akshare()}
-    except Exception as exc:  # noqa: BLE001 - report provider failure without touching old dictionary rows.
-        result["akshare"] = {"error": str(exc)}
-
-    if get_tushare_token():
+    for market_key, refresher in (
+        ("a_share", refresh_a_share_symbols_from_tushare),
+        ("hk", refresh_hk_symbols_from_tushare),
+        ("us", refresh_us_symbols_from_tushare),
+    ):
         try:
-            result["tushare"] = {"count": refresh_from_tushare()}
-        except Exception as exc:  # noqa: BLE001 - keep sources isolated during manual refresh.
-            result["tushare"] = {"error": str(exc)}
+            result[market_key] = {"count": refresher()}
+        except Exception as exc:  # noqa: BLE001 - each Tushare market refresh is reported independently.
+            result[market_key] = {"error": str(exc)}
     return result
 
 
 def resolve_stock(target: str, auto_refresh_on_miss: bool = True) -> tuple[str | None, ErrorCode | None]:
     value = str(target or "").strip()
-    if _STANDARD_CODE_RE.fullmatch(value):
-        return value.upper(), None
+    code = _standardize_code(value)
+    if (
+        _A_SHARE_CODE_RE.fullmatch(code)
+        or _HK_CODE_RE.fullmatch(code)
+        or _US_CODE_RE.fullmatch(code)
+    ):
+        return code, None
     if _BARE_CODE_RE.fullmatch(value):
-        return _standardize_code(value), None
+        return code, None
 
     if not value:
         return None, ErrorCode.STOCK_NOT_FOUND
@@ -146,13 +198,6 @@ def resolve_stock(target: str, auto_refresh_on_miss: bool = True) -> tuple[str |
     code, error_code = _resolve_name_from_local(value)
     if error_code != ErrorCode.STOCK_NOT_FOUND:
         return code, error_code
-
-    if auto_refresh_on_miss and _CJK_RE.search(value):
-        try:
-            refresh_from_auto()
-        except Exception:  # noqa: BLE001 - keep resolver failures as business-level stock miss.
-            return None, ErrorCode.STOCK_NOT_FOUND
-        return _resolve_name_from_local(value)
 
     return None, ErrorCode.STOCK_NOT_FOUND
 

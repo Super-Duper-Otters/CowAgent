@@ -3826,13 +3826,15 @@ class InvestmentStocksRefreshHandler:
             from business import stock_resolver
 
             body = _investment_json_body()
-            source = str(body.get("source") or "auto").strip().lower()
-            if source == "auto":
-                result = stock_resolver.refresh_from_auto()
-            elif source == "akshare":
-                result = {"akshare": {"count": stock_resolver.refresh_from_akshare()}}
-            elif source == "tushare":
-                result = {"tushare": {"count": stock_resolver.refresh_from_tushare()}}
+            source = str(body.get("source") or "all").strip().lower()
+            if source == "all":
+                result = stock_resolver.refresh_all_symbols_from_tushare()
+            elif source == "a_share":
+                result = {"a_share": {"count": stock_resolver.refresh_a_share_symbols_from_tushare()}}
+            elif source == "hk":
+                result = {"hk": {"count": stock_resolver.refresh_hk_symbols_from_tushare()}}
+            elif source == "us":
+                result = {"us": {"count": stock_resolver.refresh_us_symbols_from_tushare()}}
             else:
                 return _investment_json_response({"status": "error", "message": f"unsupported source: {source}"})
             _record_investment_operation("stock.refresh", "investment_stock_symbol", admin=admin, detail={"source": source, "result": result})
