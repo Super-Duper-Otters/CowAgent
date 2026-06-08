@@ -135,32 +135,6 @@ class WechatMPChannel(ChatChannel):
         loop.run_forever()
 
     def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
-        if context.type == ContextType.TEXT:
-            try:
-                from business.investment.message_handler import handle_inbound_message
-
-                msg = context.get("msg")
-                openid = getattr(msg, "from_user_id", context.get("session_id", ""))
-                business_reply = handle_inbound_message(openid, context.content)
-                if business_reply.handled:
-                    output_files = [path for path in business_reply.output_files if path]
-                    if business_reply.success and output_files:
-                        result = Reply(ReplyType.IMAGE_URL, output_files)
-                    else:
-                        result = Reply(ReplyType.TEXT, business_reply.reply_text)
-                    result.investment_service_type = business_reply.service_type
-                    if getattr(business_reply, "request_id", ""):
-                        result.investment_request_id = business_reply.request_id
-                    if getattr(business_reply, "source_type", ""):
-                        result.investment_source_type = business_reply.source_type
-                    if getattr(business_reply, "source_id", ""):
-                        result.investment_source_id = business_reply.source_id
-                    return result
-            except Exception as exc:
-                logger.exception("[wechatmp] investment router failed: {}".format(exc))
-                from business.investment.constants import ErrorCode, user_message
-
-                return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
         return super()._generate_reply(context, reply)
 
     def _reply_media_items(self, content):
@@ -194,7 +168,7 @@ class WechatMPChannel(ChatChannel):
         if not request_id:
             return
         try:
-            from business.investment.business_records import append_delivery_warning
+            from business.business_records import append_delivery_warning
 
             append_delivery_warning(request_id, detail)
         except Exception as exc:
@@ -211,10 +185,10 @@ class WechatMPChannel(ChatChannel):
         if self.passive_reply:
             self.cache_dict.cleanup_expired()
             cache_title = context.content if isinstance(context.content, str) else ""
-            investment_request_id = getattr(reply, "investment_request_id", "")
-            investment_service_type = getattr(reply, "investment_service_type", "")
-            investment_source_type = getattr(reply, "investment_source_type", "")
-            investment_source_id = getattr(reply, "investment_source_id", "")
+            business_request_id = getattr(reply, "business_request_id", "") or getattr(reply, "investment_request_id", "")
+            business_service_type = getattr(reply, "business_service_type", "") or getattr(reply, "investment_service_type", "")
+            business_source_type = getattr(reply, "business_source_type", "") or getattr(reply, "investment_source_type", "")
+            business_source_id = getattr(reply, "business_source_id", "") or getattr(reply, "investment_source_id", "")
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
                 reply_text = remove_markdown_symbol(reply.content)
                 logger.info("[wechatmp] text cached, receiver {}\n{}".format(receiver, reply_text))
@@ -223,10 +197,10 @@ class WechatMPChannel(ChatChannel):
                     "text",
                     reply_text,
                     cache_title,
-                    service_type=investment_service_type,
-                    request_id=investment_request_id,
-                    source_type=investment_source_type,
-                    source_id=investment_source_id,
+                    service_type=business_service_type,
+                    request_id=business_request_id,
+                    source_type=business_source_type,
+                    source_id=business_source_id,
                 )
             elif reply.type == ReplyType.VOICE:
                 try:
@@ -254,10 +228,10 @@ class WechatMPChannel(ChatChannel):
                             "voice",
                             media_id,
                             cache_title,
-                            service_type=investment_service_type,
-                            request_id=investment_request_id,
-                            source_type=investment_source_type,
-                            source_id=investment_source_id,
+                            service_type=business_service_type,
+                            request_id=business_request_id,
+                            source_type=business_source_type,
+                            source_id=business_source_id,
                         )
                 except ImportError as e:
                     logger.error("[wechatmp] voice conversion failed: {}".format(e))
@@ -282,7 +256,7 @@ class WechatMPChannel(ChatChannel):
                     except WeChatClientException as e:
                         warning = self._wechat_error_text("图片上传", e)
                         logger.error("[wechatmp] upload image failed: {}".format(e))
-                        self._record_investment_delivery_warning(investment_request_id, warning)
+                        self._record_investment_delivery_warning(business_request_id, warning)
                         self.cache_dict.discard_result(receiver)
                         return
                     finally:
@@ -300,10 +274,10 @@ class WechatMPChannel(ChatChannel):
                             "image",
                             media_id,
                             cache_title,
-                            service_type=investment_service_type,
-                            request_id=investment_request_id,
-                            source_type=investment_source_type,
-                            source_id=investment_source_id,
+                            service_type=business_service_type,
+                            request_id=business_request_id,
+                            source_type=business_source_type,
+                            source_id=business_source_id,
                         )
                 except Exception as e:
                     logger.error("[wechatmp] cache image failed: {}".format(e))
@@ -332,10 +306,10 @@ class WechatMPChannel(ChatChannel):
                     "video",
                     media_id,
                     cache_title,
-                    service_type=investment_service_type,
-                    request_id=investment_request_id,
-                    source_type=investment_source_type,
-                    source_id=investment_source_id,
+                    service_type=business_service_type,
+                    request_id=business_request_id,
+                    source_type=business_source_type,
+                    source_id=business_source_id,
                 )
 
             elif reply.type == ReplyType.VIDEO:  # 从文件读取视频
@@ -357,10 +331,10 @@ class WechatMPChannel(ChatChannel):
                     "video",
                     media_id,
                     cache_title,
-                    service_type=investment_service_type,
-                    request_id=investment_request_id,
-                    source_type=investment_source_type,
-                    source_id=investment_source_id,
+                    service_type=business_service_type,
+                    request_id=business_request_id,
+                    source_type=business_source_type,
+                    source_id=business_source_id,
                 )
 
         else:
@@ -503,7 +477,7 @@ class WechatMPChannel(ChatChannel):
                 self.running_started_at.pop(session_id, None)
                 self.technical_analysis_titles.pop(session_id, None)
         else:
-            from business.investment.constants import ErrorCode, user_message
+            from business.constants import ErrorCode, user_message
 
             self.queue_active_fallback(session_id, "text", user_message(ErrorCode.SYSTEM_ERROR))
             self.mark_active_done(session_id)

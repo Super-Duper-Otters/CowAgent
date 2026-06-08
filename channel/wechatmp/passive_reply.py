@@ -15,79 +15,19 @@ from common.utils import split_string_by_utf8_length
 from config import conf, subscribe_msg
 
 
-IMMEDIATE_ACK_KEY = "reply.wechatmp.immediate_ack"
-PASSIVE_TECHNICAL_ACK_KEY = "reply.wechatmp.technical_ack"
-PASSIVE_TECHNICAL_CACHE_HIT_KEY = "reply.wechatmp.technical_cache_hit"
 CANCEL_PENDING_RESULT_KEY = "reply.wechatmp.cancel_pending_result"
 RUNNING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.running_technical_analysis"
 PENDING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.pending_technical_analysis"
 THINKING_TIMEOUT_KEY = "reply.wechatmp.thinking_timeout"
-UNMATCHED_KEY = "reply.wechatmp.unmatched"
 CHAT_PREFIX_HINT_KEY = "reply.wechatmp.chat_prefix_hint"
 DEFAULT_CHAT_HINT_KEY = "reply.wechatmp.default_chat_hint"
 UNKNOWN_ERROR_KEY = "reply.wechatmp.unknown_error"
 RUNNING_STALE_SECONDS = 15 * 60
-PERMISSION_DENIED_RECORD_TTL_SECONDS = 15 * 60
-_permission_denied_record_keys = {}
-_permission_denied_record_lock = threading.RLock()
-
-
-def _investment_route(content: str):
-    try:
-        from business.investment.router import parse_route
-
-        route = parse_route(content)
-        return route if route.matched else None
-    except Exception as exc:
-        logger.debug("[wechatmp] investment route check failed: {}".format(exc))
-        return None
-
-
-def _is_investment_command(content: str) -> bool:
-    return _investment_route(content) is not None
-
-
-def _is_technical_analysis_route(route) -> bool:
-    try:
-        from business.investment.constants import ServiceType
-
-        return route is not None and route.service_type == ServiceType.TECHNICAL_ANALYSIS
-    except Exception as exc:
-        logger.debug("[wechatmp] technical analysis route check failed: {}".format(exc))
-        return False
-
-
-def _technical_analysis_target(content: str) -> str:
-    route = _investment_route(content)
-    if _is_technical_analysis_route(route):
-        target = (route.target_text or "").strip()
-        if target:
-            return target
-    text = (content or "").strip()
-    trigger = "技术分析"
-    if text.endswith(trigger):
-        text = text[: -len(trigger)].strip()
-    return text or "本次"
-
-
-def _technical_analysis_cache_hit(content: str) -> bool:
-    route = _investment_route(content)
-    if not _is_technical_analysis_route(route):
-        return False
-    try:
-        from business.investment.technical_analysis import prepare_technical_analysis_cache_context
-        from business.investment.cache_service import find_cache_entry_by_key
-
-        context = prepare_technical_analysis_cache_context(content, route.target_text)
-        return bool(context.cache_key and find_cache_entry_by_key(context.cache_key) is not None)
-    except Exception as exc:
-        logger.debug("[wechatmp] technical analysis cache check failed: {}".format(exc))
-        return False
 
 
 def _reply_text(key: str, default: str = "") -> str:
     try:
-        from business.investment.reply_config import get_reply_text
+        from business.reply_config import get_reply_text
 
         return get_reply_text(key, default)
     except Exception:
@@ -96,7 +36,7 @@ def _reply_text(key: str, default: str = "") -> str:
 
 def _reply_format(key: str, *args, default: str = "") -> str:
     try:
-        from business.investment.reply_config import format_reply_text
+        from business.reply_config import format_reply_text
 
         return format_reply_text(key, *args, default=default)
     except Exception:
@@ -109,104 +49,6 @@ def _running_technical_analysis_text(title: str) -> str:
         title,
         default="「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。",
     )
-
-
-def _investment_ack_text(content: str) -> str:
-    route = _investment_route(content)
-    if _is_technical_analysis_route(route):
-        if _technical_analysis_cache_hit(content):
-            return _reply_format(
-                PASSIVE_TECHNICAL_CACHE_HIT_KEY,
-                _technical_analysis_target(content),
-                default="已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。",
-            )
-        return _reply_format(
-            PASSIVE_TECHNICAL_ACK_KEY,
-            _technical_analysis_target(content),
-            default="已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。",
-        )
-    return _reply_text(IMMEDIATE_ACK_KEY, "收到，正在运行，请稍候。")
-
-
-def _investment_permission_prompt(openid: str, content: str, dedupe_key: str = "") -> str:
-    try:
-        from business.investment.router import parse_route
-        from business.investment.user_service import verify_permission
-
-        route = parse_route(content)
-        if not route.matched:
-            return ""
-        permission = verify_permission(openid, route.service_type)
-        if permission.allowed:
-            return ""
-        _record_permission_denied_request(openid, content, permission, dedupe_key=dedupe_key)
-        return permission.user_prompt
-    except Exception as exc:
-        logger.debug("[wechatmp] investment permission check failed: {}".format(exc))
-        from business.investment.constants import ErrorCode, user_message
-
-        return user_message(ErrorCode.SYSTEM_ERROR)
-
-
-def _investment_user_access_prompt(openid: str, dedupe_key: str = "") -> str:
-    try:
-        from business.investment.user_service import verify_user_access
-
-        permission = verify_user_access(openid)
-        if permission.allowed:
-            return ""
-        _record_permission_denied_request(openid, "", permission, dedupe_key=dedupe_key)
-        return permission.user_prompt
-    except Exception as exc:
-        logger.debug("[wechatmp] investment user access check failed: {}".format(exc))
-        from business.investment.constants import ErrorCode, user_message
-
-        return user_message(ErrorCode.SYSTEM_ERROR)
-
-
-def _claim_permission_denied_record_key(dedupe_key: str) -> bool:
-    if not dedupe_key:
-        return True
-    now = time.time()
-    with _permission_denied_record_lock:
-        expired = [
-            key
-            for key, recorded_at in _permission_denied_record_keys.items()
-            if now - recorded_at > PERMISSION_DENIED_RECORD_TTL_SECONDS
-        ]
-        for key in expired:
-            _permission_denied_record_keys.pop(key, None)
-        if dedupe_key in _permission_denied_record_keys:
-            return False
-        _permission_denied_record_keys[dedupe_key] = now
-        return True
-
-
-def _release_permission_denied_record_key(dedupe_key: str) -> None:
-    if not dedupe_key:
-        return
-    with _permission_denied_record_lock:
-        _permission_denied_record_keys.pop(dedupe_key, None)
-
-
-def _record_permission_denied_request(openid: str, content: str, permission, dedupe_key: str = "") -> None:
-    if not _claim_permission_denied_record_key(dedupe_key):
-        return
-    try:
-        from business.investment.constants import ErrorCode, ServiceType
-        from business.investment.records import create_request_record, fail_request_record
-
-        request_id = create_request_record(openid, content or "", ServiceType.UNAUTHORIZED_REQUEST)
-        fail_request_record(
-            request_id,
-            getattr(permission, "error_code", None) or ErrorCode.UNAUTHORIZED,
-            getattr(permission, "user_prompt", "") or "",
-            getattr(permission, "detail", "") or "permission denied before investment router",
-            0,
-        )
-    except Exception as exc:
-        _release_permission_denied_record_key(dedupe_key)
-        logger.debug("[wechatmp] record permission denied request failed: {}".format(exc))
 
 
 def _cleanup_expired(cache):
@@ -263,43 +105,35 @@ def _pop_pending_command(cache, receiver):
 
 
 def _pending_result_prompt(title):
-    route = _investment_route(title or "")
-    if _is_technical_analysis_route(route) or str(title or "").strip().endswith("技术分析"):
+    if _is_technical_analysis_service_title(title):
         return _reply_format(
             PENDING_TECHNICAL_ANALYSIS_KEY,
-            _technical_analysis_target(title or ""),
+            _technical_analysis_title(title or ""),
             default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。",
         )
     prefix = title or ""
     return "{}结果已生成完成，是否需要返回？无需则回复 0，需要则回复 1。".format(prefix)
 
 
-def _is_direct_ready_result_request(content, cached_result):
-    current_route = _investment_route(content)
-    if current_route is None or _is_technical_analysis_route(current_route):
-        return False
-    return bool(getattr(cached_result, "service_type", "")) and cached_result.service_type == current_route.service_type
-
-
-def _permission_prompt_for_cached_result(openid, cached_result, content="", dedupe_key=""):
-    service_type = getattr(cached_result, "service_type", "")
-    if not service_type:
-        return ""
+def _is_technical_analysis_service_type(service_type) -> bool:
     try:
-        from business.investment.constants import normalize_service
-        from business.investment.user_service import verify_permission
+        from business.constants import ServiceType, normalize_service
 
-        permission = verify_permission(openid, normalize_service(service_type))
-        if permission.allowed:
-            return ""
-        raw_input = getattr(cached_result, "title", "") or content or ""
-        _record_permission_denied_request(openid, raw_input, permission, dedupe_key=dedupe_key)
-        return permission.user_prompt
-    except Exception as exc:
-        logger.debug("[wechatmp] cached investment permission check failed: {}".format(exc))
-        from business.investment.constants import ErrorCode, user_message
+        return normalize_service(service_type) == ServiceType.TECHNICAL_ANALYSIS
+    except Exception:
+        return str(service_type or "") == "technical_analysis"
 
-        return user_message(ErrorCode.SYSTEM_ERROR)
+
+def _is_technical_analysis_service_title(title) -> bool:
+    return str(title or "").strip().endswith("技术分析")
+
+
+def _technical_analysis_title(title: str) -> str:
+    text = (title or "").strip()
+    trigger = "技术分析"
+    if text.endswith(trigger):
+        text = text[: -len(trigger)].strip()
+    return text or "本次"
 
 
 def _technical_titles(channel):
@@ -336,14 +170,14 @@ def _running_lock(channel):
 
 
 def _set_running_technical_title(channel, receiver, content):
-    _technical_titles(channel)[receiver] = _technical_analysis_target(content)
+    _technical_titles(channel)[receiver] = _technical_analysis_title(content)
 
 
 def _get_running_technical_title(channel, receiver):
     return _technical_titles(channel).get(receiver, "")
 
 
-def _mark_running(channel, receiver, is_technical_analysis, content):
+def _mark_running(channel, receiver, is_technical_analysis=False, content=""):
     with _running_lock(channel):
         channel.running.add(receiver)
         _running_started_at(channel)[receiver] = time.time()
@@ -369,31 +203,6 @@ def _cleanup_stale_running(channel, receiver=None):
                 channel.running.discard(item)
                 started_at.pop(item, None)
                 _technical_titles(channel).pop(item, None)
-
-
-def _unmatched_prompt():
-    default_prompt = "请输入以下格式之一："
-    try:
-        from business.investment.router import DEFAULT_UNMATCHED_PROMPT
-
-        default_prompt = DEFAULT_UNMATCHED_PROMPT
-    except Exception as exc:
-        logger.debug("[wechatmp] unmatched prompt default import failed: {}".format(exc))
-
-    reply_text = _reply_text(UNMATCHED_KEY, default_prompt)
-    if reply_text != "请输入以下格式之一：" or default_prompt == reply_text:
-        return reply_text
-
-    try:
-        from business.investment.config_service import get_config
-
-        configured = get_config(UNMATCHED_KEY, None)
-        configured_text = str(configured or "")
-        if configured_text and configured_text != "请输入以下格式之一：":
-            return reply_text
-    except Exception as exc:
-        logger.debug("[wechatmp] unmatched prompt config check failed: {}".format(exc))
-    return default_prompt
 
 
 def _append_cached_reply(cache, receiver, reply_type, reply_content, title="", service_type="", request_id="", source_type="", source_id=""):
@@ -435,13 +244,13 @@ def _cached_result_source_is_valid(cached_result):
     if not source_type or not source_id:
         return True
     if source_type == "cache":
-        from business.investment.cache_service import find_cache_entry_by_key
+        from business.cache_service import find_cache_entry_by_key
 
         return find_cache_entry_by_key(source_id, require_files=False) is not None
     if source_type == "content":
-        from business.investment.constants import Status
-        from business.investment.daily_content import mark_expired_daily_contents_invalidated
-        from business.investment.records import get_content_record
+        from business.constants import Status
+        from business.daily_content import mark_expired_daily_contents_invalidated
+        from business.business_records import get_content_record
 
         mark_expired_daily_contents_invalidated()
         try:
@@ -459,9 +268,9 @@ def _mark_cached_result_delivered(cached_result, rendered_reply):
     if not request_id:
         return
     try:
-        from business.investment import records
+        from business import business_records
 
-        mark_request_delivered = getattr(records, "mark_request_delivered", None)
+        mark_request_delivered = getattr(business_records, "mark_request_delivered", None)
         if mark_request_delivered:
             mark_request_delivered(request_id)
     except Exception as exc:
@@ -573,14 +382,6 @@ class Query:
                 content = wechatmp_msg.content
                 message_id = wechatmp_msg.msg_id
 
-                access_prompt = _investment_user_access_prompt(
-                    from_user,
-                    dedupe_key=f"user-access:{from_user}:{message_id}",
-                )
-                if access_prompt:
-                    replyPost = create_reply(access_prompt, msg)
-                    return encrypt_func(replyPost.render())
-
                 supported = True
                 if "【收到不支持的消息类型，暂无法显示】" in content:
                     supported = False  # not supported, used to refresh
@@ -589,16 +390,7 @@ class Query:
                 _cleanup_invalid_cached_sources(channel.cache_dict, exclude_receiver=from_user)
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
-                    if content == "1" or _is_direct_ready_result_request(content, pending_result):
-                        permission_prompt = _permission_prompt_for_cached_result(
-                            from_user,
-                            pending_result,
-                            content,
-                            dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
-                        )
-                        if permission_prompt:
-                            replyPost = create_reply(permission_prompt, msg)
-                            return encrypt_func(replyPost.render())
+                    if content == "1":
                         if not _cached_result_source_is_valid(pending_result):
                             _discard_cached_result(channel.cache_dict, from_user)
                             _pop_pending_command(channel.cache_dict, from_user)
@@ -623,15 +415,6 @@ class Query:
                         _mark_cached_result_delivered(pending_result, rendered_reply)
                         return rendered_reply
                     if content == "0":
-                        permission_prompt = _permission_prompt_for_cached_result(
-                            from_user,
-                            pending_result,
-                            content,
-                            dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
-                        )
-                        if permission_prompt:
-                            replyPost = create_reply(permission_prompt, msg)
-                            return encrypt_func(replyPost.render())
                         _discard_cached_result(channel.cache_dict, from_user)
                         pending_command = _pop_pending_command(channel.cache_dict, from_user)
                         if pending_command:
@@ -665,21 +448,8 @@ class Query:
                     logger.debug("[wechatmp] context: {} {} {}".format(context, wechatmp_msg, supported))
 
                     if supported and context:
-                        permission_prompt = _investment_permission_prompt(
-                            from_user,
-                            content,
-                            dedupe_key=f"request:{from_user}:{message_id}:{content}",
-                        )
-                        if permission_prompt:
-                            replyPost = create_reply(permission_prompt, msg)
-                            return encrypt_func(replyPost.render())
-                        route = _investment_route(content)
-                        is_technical_analysis = _is_technical_analysis_route(route)
-                        _mark_running(channel, from_user, is_technical_analysis, content)
+                        _mark_running(channel, from_user)
                         channel.produce(context)
-                        if is_technical_analysis:
-                            replyPost = create_reply(_investment_ack_text(content), msg)
-                            return encrypt_func(replyPost.render())
                     else:
                         trigger_prefix = conf().get("single_chat_prefix", [""])[0]
                         if trigger_prefix or not supported:
@@ -741,15 +511,8 @@ class Query:
                 # Only one request can access to the cached data
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
-                    permission_prompt = _permission_prompt_for_cached_result(
-                        from_user,
-                        pending_result,
-                        content,
-                        dedupe_key=f"cached:{from_user}:{message_id}:{getattr(pending_result, 'request_id', '')}",
-                    )
-                    if permission_prompt:
-                        replyPost = create_reply(permission_prompt, msg)
-                        return encrypt_func(replyPost.render())
+                    if _is_technical_analysis_service_type(getattr(pending_result, "service_type", "")):
+                        _set_running_technical_title(channel, from_user, pending_result.title)
                 cached_item = _pop_cached_reply(channel.cache_dict, from_user)
                 rendered_reply = _render_cached_reply(
                     channel,

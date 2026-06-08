@@ -80,7 +80,7 @@ def _check_auth():
 
 def _investment_admin_login_enabled():
     try:
-        from business.investment.auth_service import count_admin_users
+        from business.auth_service import count_admin_users
 
         return count_admin_users() > 0
     except Exception:
@@ -138,7 +138,7 @@ def _investment_session_token():
 
 
 def _current_investment_admin():
-    from business.investment.auth_service import AdminUser, count_admin_users, get_admin_session
+    from business.auth_service import AdminUser, count_admin_users, get_admin_session
 
     if count_admin_users() == 0:
         _require_auth()
@@ -147,7 +147,7 @@ def _current_investment_admin():
 
 
 def _investment_permission_error(permission: str):
-    from business.investment.permission_service import verify_admin_permission
+    from business.permission_service import verify_admin_permission
 
     result = verify_admin_permission(_current_investment_admin(), permission)
     if result.allowed:
@@ -156,7 +156,7 @@ def _investment_permission_error(permission: str):
 
 
 def _require_investment_permission(permission: str):
-    from business.investment.permission_service import verify_admin_permission
+    from business.permission_service import verify_admin_permission
 
     admin = _current_investment_admin()
     result = verify_admin_permission(admin, permission)
@@ -173,7 +173,7 @@ def _require_investment_permission(permission: str):
 def _investment_admin_payload(admin):
     if admin is None:
         return None
-    from business.investment.auth_service import permissions_for_role
+    from business.auth_service import permissions_for_role
 
     permissions = sorted(permissions_for_role(admin.role))
     return {
@@ -215,7 +215,7 @@ def _record_investment_operation(
     after_state=None,
 ):
     try:
-        from business.investment.audit_service import actor_from_admin, record_operation_audit
+        from business.audit_service import actor_from_admin, record_operation_audit
 
         operator = getattr(admin, "username", "") if admin is not None else ""
         env = getattr(web.ctx, "env", {}) or {}
@@ -361,17 +361,18 @@ class WebMessage(ChatMessage):
 
 
 def _is_investment_web_command(prompt: str) -> bool:
-    from business.investment.skill_registry import match_investment_skill
+    from business.router import parse_route
 
-    return match_investment_skill(prompt) is not None
+    return parse_route(prompt).matched
 
 
-def _format_investment_web_reply(business_reply) -> str:
-    if not business_reply.success or not business_reply.output_files:
-        return business_reply.reply_text
+def _format_investment_web_reply(reply: Reply) -> str:
+    if reply.type != ReplyType.IMAGE_URL:
+        return reply.content
     links = []
-    for path in business_reply.output_files:
-        from business.investment.records import get_file_record_by_path
+    content = reply.content if isinstance(reply.content, list) else [reply.content]
+    for path in [item for item in content if item]:
+        from business.business_records import get_file_record_by_path
 
         file_record = get_file_record_by_path(path)
         file_name = os.path.basename(path) or "investment-output.png"
@@ -382,15 +383,18 @@ def _format_investment_web_reply(business_reply) -> str:
 
 def _build_investment_web_reply(session_id: str, prompt: str):
     if _is_investment_web_command(prompt):
-        from business.investment.router import handle_text_message
+        from bridge.context import Context, ContextType
+        from business.business_router import build_business_reply
 
-        business_reply = handle_text_message(session_id, prompt, skip_permission=True)
-        if not business_reply.handled:
+        context = Context(ContextType.TEXT, prompt)
+        context["session_id"] = session_id
+        reply = build_business_reply(context, skip_permission=True)
+        if reply is None:
             return None
-        return Reply(ReplyType.TEXT, _format_investment_web_reply(business_reply))
+        return Reply(ReplyType.TEXT, _format_investment_web_reply(reply))
 
-    from business.investment.config_service import get_config
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from business.config_service import get_config
+    from business.router import DEFAULT_UNMATCHED_PROMPT
 
     if get_config("router.enable_web_open_chat", False):
         return None
@@ -434,7 +438,7 @@ class WebChannel(ChatChannel):
                     return investment_reply
             except Exception as exc:
                 logger.exception(f"[WebChannel] investment router failed: {exc}")
-                from business.investment.constants import ErrorCode, user_message
+                from business.constants import ErrorCode, user_message
 
                 return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
         from bridge.bridge import Bridge
@@ -1072,7 +1076,7 @@ class AuthLoginHandler:
         username = str(data.get("username", "") or "").strip()
         password = data.get("password", "")
         try:
-            from business.investment.auth_service import authenticate_admin, count_admin_users, create_admin_session
+            from business.auth_service import authenticate_admin, count_admin_users, create_admin_session
 
             if count_admin_users() > 0:
                 admin = authenticate_admin(username, password)
@@ -1153,11 +1157,11 @@ def _is_path_under(path: str, root: str) -> bool:
 def _allowed_file_roots():
     roots = [_get_upload_dir()]
     try:
-        from business.investment.storage import get_storage_dirs
+        from business.storage import get_storage_dirs
 
         roots.append(str(get_storage_dirs()["root"]))
         try:
-            from business.investment.config_service import get_config
+            from business.config_service import get_config
 
             files_dir = str(get_config("storage.files_dir") or "")
             if files_dir:
@@ -1180,7 +1184,7 @@ class FileServeHandler:
             params = web.input(path="", id="")
             file_id = str(getattr(params, "id", "") or "").strip()
             if file_id:
-                from business.investment.records import get_file_record
+                from business.business_records import get_file_record
 
                 record = get_file_record(file_id)
                 if not record:
@@ -2711,19 +2715,9 @@ def _investment_quarter_bounds(year: int, quarter: int) -> tuple[str, str]:
 
 
 def _investment_stock_stats():
-    from sqlalchemy import select
-    from business.investment.db import connect, row_to_dict
-    from business.investment.schema import investment_stock_symbols
-    from business.investment.stock_resolver import stock_dictionary_stats
+    from business.stock_resolver import stock_dictionary_stats_with_latest_source
 
-    stats = stock_dictionary_stats()
-    table = investment_stock_symbols
-    latest_updated_at = select(table.c.updated_at).order_by(table.c.updated_at.desc()).limit(1).scalar_subquery()
-    stmt = select(table.c.source).where(table.c.updated_at == latest_updated_at).order_by(table.c.source).limit(1)
-    with connect() as conn:
-        row = conn.execute(stmt).fetchone()
-    stats["latest_source"] = row_to_dict(row).get("source", "") if row else ""
-    return stats
+    return stock_dictionary_stats_with_latest_source()
 
 
 class InvestmentAuthMeHandler:
@@ -2751,7 +2745,7 @@ class InvestmentAdminUsersHandler:
     def GET(self):
         _require_investment_permission("admin_users.read")
         try:
-            from business.investment.auth_service import count_admin_users, list_admin_users
+            from business.auth_service import count_admin_users, list_admin_users
 
             params = web.input(keyword='', page='1', page_size='20')
             page, page_size = _investment_safe_pagination(params, 20)
@@ -2773,7 +2767,7 @@ class InvestmentAdminUsersHandler:
     def POST(self):
         admin = _require_investment_permission("admin_users.write")
         try:
-            from business.investment.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
+            from business.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
 
             body = _investment_json_body()
             username = str(body.get("username", "")).strip()
@@ -2818,7 +2812,7 @@ class InvestmentAdminUserStatusHandler:
     def POST(self, username, action):
         admin = _require_investment_permission("admin_users.write")
         try:
-            from business.investment.auth_service import update_admin_user
+            from business.auth_service import update_admin_user
 
             update_admin_user(username, enabled=(action == "enable"))
             _record_investment_operation(
@@ -2838,7 +2832,7 @@ class InvestmentAdminUserPasswordHandler:
     def POST(self, username):
         admin = _require_investment_permission("admin_users.reset_password")
         try:
-            from business.investment.auth_service import reset_admin_password
+            from business.auth_service import reset_admin_password
 
             body = _investment_json_body()
             password = str(body.get("password", "") or "")
@@ -2856,7 +2850,7 @@ class InvestmentRequestRecordsExportHandler:
     def GET(self):
         admin = _require_investment_permission("records.export")
         try:
-            from business.investment.export_service import export_request_records_xlsx
+            from business.export_service import export_request_records_xlsx
 
             params = web.input(
                 start_date='',
@@ -2906,7 +2900,7 @@ class InvestmentUsersExportHandler:
     def GET(self):
         admin = _require_investment_permission("customers.export")
         try:
-            from business.investment.export_service import export_users_xlsx
+            from business.export_service import export_users_xlsx
 
             params = web.input(enabled='')
             enabled = None
@@ -2923,7 +2917,7 @@ class InvestmentUsersHandler:
     def GET(self):
         _require_investment_permission("customers.read")
         try:
-            from business.investment.user_service import count_users, list_users
+            from business.user_service import count_users, list_users
 
             params = web.input(openid='', enabled='', keyword='', keyword_field='all', page='1', page_size='20')
             page, page_size = _investment_safe_pagination(params, 20)
@@ -2969,7 +2963,7 @@ class InvestmentUsersHandler:
     def POST(self):
         admin = _require_investment_permission("customers.write")
         try:
-            from business.investment.user_service import create_user, update_user, get_user_by_openid
+            from business.user_service import create_user, update_user, get_user_by_openid
 
             body = _investment_json_body()
             openid = body.get("openid", "").strip()
@@ -3013,7 +3007,7 @@ class InvestmentUserStatusHandler:
     def POST(self, openid, action):
         admin = _require_investment_permission("customers.enable")
         try:
-            from business.investment.user_service import disable_user, enable_user, get_user_by_openid
+            from business.user_service import disable_user, enable_user, get_user_by_openid
 
             before_user = get_user_by_openid(openid)
             if before_user is None:
@@ -3047,7 +3041,7 @@ class InvestmentUsersImportHandler:
     def POST(self):
         admin = _require_investment_permission("customers.import")
         try:
-            from business.investment.user_service import get_user_by_openid, import_users, parse_users_excel
+            from business.user_service import get_user_by_openid, import_users, parse_users_excel
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3084,7 +3078,7 @@ class InvestmentUsersImportTemplateHandler:
     def GET(self):
         _require_investment_permission("customers.import")
         try:
-            from business.investment.export_service import export_users_import_template_xlsx
+            from business.export_service import export_users_import_template_xlsx
 
             return _investment_xlsx_response(export_users_import_template_xlsx(), "investment-users-import-template.xlsx")
         except Exception as e:
@@ -3114,10 +3108,10 @@ class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.investment.records import list_content_records, list_output_files
-            from business.investment.constants import normalize_service, ServiceType
-            from business.investment.daily_content import get_latest_effective_content
-            from business.investment.records import get_content_record
+            from business.business_records import list_content_records, list_output_files
+            from business.constants import normalize_service, ServiceType
+            from business.daily_content import get_latest_effective_content
+            from business.business_records import get_content_record
 
             params = web.input(limit='50', service_type='', effective_date='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3159,8 +3153,8 @@ class InvestmentDailyContentHandler:
     def POST(self):
         admin = _require_investment_permission("content.upload")
         try:
-            from business.investment.constants import normalize_service
-            from business.investment.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
+            from business.constants import normalize_service
+            from business.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
 
             source_files = []
             file_items = []
@@ -3200,7 +3194,7 @@ class InvestmentDailyContentHandler:
                 actor=admin,
             )
             if file_items:
-                from business.investment.records import record_output_file
+                from business.business_records import record_output_file
 
                 source_files = []
                 for file_obj in file_items:
@@ -3234,7 +3228,7 @@ class InvestmentDailyContentGenerateHandler:
     def POST(self, content_id):
         admin = _require_investment_permission("content.generate")
         try:
-            from business.investment.daily_content import generate_content, mark_generation_started, update_generation_failure
+            from business.daily_content import generate_content, mark_generation_started, update_generation_failure
 
             result = mark_generation_started(content_id, actor=admin)
             if result.success:
@@ -3271,7 +3265,7 @@ class InvestmentDailyContentEffectiveHandler:
     def POST(self, content_id):
         admin = _require_investment_permission("content.publish")
         try:
-            from business.investment.daily_content import set_content_effective
+            from business.daily_content import set_content_effective
 
             body = _investment_json_body()
             set_content_effective(
@@ -3292,7 +3286,7 @@ class InvestmentOperationAuditsHandler:
     def GET(self):
         _require_investment_permission("audits.read")
         try:
-            from business.investment.audit_service import list_operation_audits_page
+            from business.audit_service import list_operation_audits_page
 
             params = web.input(
                 limit='50',
@@ -3332,8 +3326,8 @@ class InvestmentRequestRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.investment.records import list_output_files, list_request_records_page
-            from business.investment.constants import ServiceType, normalize_service
+            from business.business_records import list_output_files, list_request_records_page
+            from business.constants import ServiceType, normalize_service
 
             params = web.input(
                 limit='50',
@@ -3385,8 +3379,8 @@ class InvestmentContentRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.investment.constants import ServiceType, normalize_service
-            from business.investment.records import list_content_records_page, list_output_files
+            from business.constants import ServiceType, normalize_service
+            from business.business_records import list_content_records_page, list_output_files
 
             params = web.input(limit='50', page='1', page_size='', service_type='', effective_date='', status='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3424,8 +3418,8 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.investment.cache_service import list_generated_history_market_dates, list_generated_history_page
-            from business.investment.constants import ServiceType, normalize_service
+            from business.cache_service import list_generated_history_market_dates, list_generated_history_page
+            from business.constants import ServiceType, normalize_service
 
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3450,7 +3444,7 @@ class InvestmentCacheHandler:
                 keyword=getattr(params, "keyword", "") or "",
                 include_invalidated=include_invalidated,
             )
-            from business.investment.records import list_output_files
+            from business.business_records import list_output_files
 
             for entry in entries:
                 owner_id = entry.get("content_id") if entry.get("source_type") == "content" else entry.get("artifact_owner_id")
@@ -3473,7 +3467,7 @@ class InvestmentCacheEntryInvalidateHandler:
     def POST(self, cache_key):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.business_cache import invalidate_business_cache
+            from business.cache_service import invalidate_business_cache
 
             invalidated = invalidate_business_cache(cache_key)
             queued_removed = 0
@@ -3501,8 +3495,8 @@ class InvestmentCacheClearHandler:
     def POST(self):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.investment.business_cache import clear_business_cache
-            from business.investment.constants import ServiceType, normalize_service
+            from business.cache_service import clear_business_cache
+            from business.constants import ServiceType, normalize_service
 
             body = _investment_json_body()
             service_type = normalize_service(body.get("service_type", "")) if body.get("service_type") else None
@@ -3526,8 +3520,8 @@ class InvestmentConfigHandler:
     def GET(self):
         _require_investment_permission("config.read")
         try:
-            from business.investment.config_service import CONFIG_FALLBACK_KEYS, get_configs
-            from business.investment.reply_config import reply_text_config_metadata
+            from business.config_service import CONFIG_FALLBACK_KEYS, get_configs
+            from business.reply_config import reply_text_config_metadata
 
             return _investment_json_response({
                 "status": "success",
@@ -3541,8 +3535,8 @@ class InvestmentConfigHandler:
     def POST(self):
         admin = _require_investment_permission("config.write")
         try:
-            from business.investment.config_service import save_configs
-            from business.investment.audit_service import record_operation_audit
+            from business.config_service import save_configs
+            from business.audit_service import record_operation_audit
 
             body = _investment_json_body()
             save_configs(
@@ -3567,7 +3561,7 @@ class InvestmentSkillVersionsHandler:
     def GET(self):
         _require_investment_permission("skills.read")
         try:
-            from business.investment.skill_versions import list_all_skills
+            from business.skill_versions import list_all_skills
 
             return _investment_json_response({
                 "status": "success",
@@ -3582,9 +3576,9 @@ class InvestmentSkillSettingsHandler:
     def POST(self, skill_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.config_service import save_config
-            from business.investment.skill_registry import get_skill_definition
-            from business.investment.skill_versions import list_all_skills
+            from business.config_service import save_config
+            from business.skill_registry import get_skill_definition
+            from business.skill_versions import list_all_skills
 
             definition = get_skill_definition(skill_key)
             body = _investment_json_body()
@@ -3630,7 +3624,7 @@ class InvestmentSkillPackageUploadHandler:
     def POST(self):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.skill_versions import list_all_skills, save_package_upload
+            from business.skill_versions import list_all_skills, save_package_upload
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3657,7 +3651,7 @@ class InvestmentSkillUploadHandler:
     def POST(self, skill_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.skill_versions import list_all_skills, save_upload
+            from business.skill_versions import list_all_skills, save_upload
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3685,7 +3679,7 @@ class InvestmentSkillActivateHandler:
     def POST(self, skill_key, version_id):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.skill_versions import activate_version, list_all_skills
+            from business.skill_versions import activate_version, list_all_skills
 
             version = activate_version(skill_key, version_id, operator=admin.username)
             _record_investment_operation("skill.activate", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
@@ -3703,7 +3697,7 @@ class InvestmentSkillDeleteHandler:
     def POST(self, skill_key, version_id):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.skill_versions import delete_version, list_all_skills
+            from business.skill_versions import delete_version, list_all_skills
 
             deleted = delete_version(skill_key, version_id, operator=admin.username)
             _record_investment_operation("skill.delete", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
@@ -3721,7 +3715,7 @@ class InvestmentStocksHandler:
     def GET(self):
         _require_investment_permission("stocks.read")
         try:
-            from business.investment.stock_resolver import list_stock_symbols
+            from business.stock_resolver import list_stock_symbols
 
             params = web.input(name='', limit='20')
             stocks = list_stock_symbols(params.name, limit=int(params.limit or 20))
@@ -3739,7 +3733,7 @@ class InvestmentStocksRefreshHandler:
     def POST(self):
         admin = _require_investment_permission("stocks.write")
         try:
-            from business.investment import stock_resolver
+            from business import stock_resolver
 
             body = _investment_json_body()
             source = str(body.get("source") or "auto").strip().lower()
@@ -3782,7 +3776,7 @@ class InvestmentHealthHandler:
 
     def _run(self, run_smoke: bool):
         try:
-            from business.investment.health import run_health_checks
+            from business.health import run_health_checks
 
             checks = run_health_checks(run_smoke=run_smoke)
             level = "error" if any(item.level == "error" for item in checks) else "warning" if any(item.level == "warning" for item in checks) else "ok"

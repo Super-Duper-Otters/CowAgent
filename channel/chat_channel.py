@@ -203,7 +203,20 @@ class ChatChannel(Channel):
             logger.debug("[chat_channel] type={}, content={}".format(context.type, context.content))
             if context.type == ContextType.TEXT or context.type == ContextType.IMAGE_CREATE:  # 文字和图片消息
                 context["channel"] = e_context["channel"]
-                reply = super().build_reply_content(context.content, context)
+                if context.type == ContextType.TEXT:
+                    try:
+                        from business.business_router import build_business_reply
+
+                        business_reply = build_business_reply(context)
+                    except Exception as exc:
+                        logger.exception("[chat_channel] business router failed: {}".format(exc))
+                        business_reply = None
+                    if business_reply is not None:
+                        reply = business_reply
+                    else:
+                        reply = super().build_reply_content(context.content, context)
+                else:
+                    reply = super().build_reply_content(context.content, context)
             elif context.type == ContextType.VOICE:  # 语音消息
                 cmsg = context["msg"]
                 cmsg.prepare()
