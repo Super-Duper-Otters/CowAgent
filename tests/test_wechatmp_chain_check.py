@@ -195,12 +195,12 @@ def test_default_content_queries_cover_three_investment_routes():
 
 def test_business_content_check_accepts_expected_no_content_reply(monkeypatch, tmp_path):
     mod = _load_script_module()
-    from business.investment.constants import ErrorCode, ServiceType, user_message
-    from business.investment.router import BusinessReply
-    import business.investment.router as investment_router
+    from business.constants import ErrorCode, ServiceType, user_message
+    from business.router import BusinessReply
+    import business.router as business_route
 
     monkeypatch.setattr(
-        investment_router,
+        business_route,
         "handle_text_message",
         lambda _openid, _query: BusinessReply(
             handled=True,

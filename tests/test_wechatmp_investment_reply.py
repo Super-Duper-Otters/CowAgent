@@ -9,6 +9,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 
+STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED = pytest.mark.skip(
+    reason="stage 8 removes investment route and permission prechecks from wechatmp channel modules"
+)
+
+
 @pytest.fixture(autouse=True)
 def _default_investment_user_access(monkeypatch):
     monkeypatch.setattr(
@@ -21,6 +26,8 @@ def _default_investment_user_access(monkeypatch):
 def _isolate_investment_record_writes(monkeypatch):
     monkeypatch.setattr("business.investment.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
     monkeypatch.setattr("business.investment.records.fail_request_record", lambda *args, **_kwargs: None)
+    monkeypatch.setattr("business.business_records.create_request_record", lambda *args, **_kwargs: "test-request-id")
+    monkeypatch.setattr("business.business_records.fail_request_record", lambda *args, **_kwargs: None)
 
 
 @pytest.fixture()
@@ -118,6 +125,15 @@ def _fake_passive_post(monkeypatch, passive_reply, channel, current_message, pro
         {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
         raising=False,
     )
+
+
+def test_wechatmp_stage8_channel_modules_do_not_import_investment_runtime():
+    for path in (
+        "channel/wechatmp/passive_reply.py",
+        "channel/wechatmp/active_reply.py",
+    ):
+        source = open(path, encoding="utf-8").read()
+        assert "business.investment" not in source
 
 
 def test_passive_reply_cache_confirms_discards_expires_and_tracks_pending_command():
@@ -340,13 +356,13 @@ def _wechatmp_channel(monkeypatch):
     return channel
 
 
-def _context(openid="openid", msg_id="msg-1"):
+def _context(openid="openid", msg_id="msg-1", content="利率"):
     from bridge.context import Context, ContextType
 
     msg = SimpleNamespace(from_user_id=openid, other_user_id=openid, msg_id=msg_id)
     return Context(
         ContextType.TEXT,
-        "利率",
+        content,
         {
             "msg": msg,
             "session_id": openid,
@@ -361,13 +377,16 @@ def test_wechatmp_investment_success_returns_image_reply(monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
     from business.investment.router import BusinessReply
-    import business.investment.router as investment_router
+    import business.business_router as business_router
+    import business.daily_content_handler as cowagent_content_handler
 
     image_path = str(tmp_path / "rate_card.png")
+    monkeypatch.setattr(business_router, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(business_router, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
     monkeypatch.setattr(
-        investment_router,
-        "handle_text_message",
-        lambda _openid, _content: BusinessReply(
+        cowagent_content_handler,
+        "handle_daily_content",
+        lambda _openid, _content, _route, **_kwargs: BusinessReply(
             handled=True,
             success=True,
             reply_text=f"[图片: {image_path}]",
@@ -375,18 +394,24 @@ def test_wechatmp_investment_success_returns_image_reply(monkeypatch, tmp_path):
             service_type=ServiceType.RATE,
         ),
     )
+    monkeypatch.setattr(
+        "business.investment.message_handler.handle_inbound_message",
+        lambda *_args, **_kwargs: pytest.fail("wechatmp must route business through ChatChannel main chain"),
+    )
 
     reply = _wechatmp_channel(monkeypatch)._generate_reply(_context())
 
     assert reply.type == ReplyType.IMAGE_URL
     assert reply.content == [image_path]
+    assert reply.business_service_type == ServiceType.RATE
     assert reply.investment_service_type == ServiceType.RATE
 
 
 def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(monkeypatch, tmp_path):
     from business.investment.constants import ServiceType
     from business.investment.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
-    import business.investment.router as investment_router
+    import business.router as business_route
+    import business.technical_analysis_handler as cowagent_ta_handler
 
     signal_card_path = str(tmp_path / "signal-card.png")
     main_chart_path = str(tmp_path / "main-chart.png")
@@ -394,17 +419,22 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
     recorded_output_files = []
 
     monkeypatch.setattr(
-        investment_router,
+        business_route,
         "verify_user_access",
         lambda _openid: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(
-        investment_router,
+        business_route,
         "verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(
         "business.investment.technical_analysis.prepare_technical_analysis_cache_context",
+        lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
+    )
+    monkeypatch.setattr(
+        cowagent_ta_handler,
+        "prepare_technical_analysis_business_context",
         lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
     )
     monkeypatch.setattr(
@@ -415,12 +445,20 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
         ),
     )
     monkeypatch.setattr(
-        investment_router,
+        cowagent_ta_handler,
+        "start_job_if_absent_with_metadata",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            created=True,
+            record=SimpleNamespace(request_id="request-tech"),
+        ),
+    )
+    monkeypatch.setattr(
+        cowagent_ta_handler,
         "succeed_request_record",
         lambda _request_id, output_files, **_kwargs: recorded_output_files.extend(output_files),
     )
 
-    reply = investment_router.handle_text_message(
+    reply = business_route.handle_text_message(
         "openid",
         "天娱数科 技术分析",
         technical_analysis_handler=lambda *_args: TechnicalAnalysisResult(
@@ -443,16 +481,19 @@ def test_wechatmp_technical_analysis_generate_reply_uses_router_user_images(monk
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
     from business.investment.router import BusinessReply
-    import business.investment.router as investment_router
+    import business.business_router as business_router
+    import business.technical_analysis_handler as cowagent_ta_handler
 
     signal_card_path = str(tmp_path / "signal-card.png")
     main_chart_path = str(tmp_path / "main-chart.png")
     markdown_report_path = str(tmp_path / "report.md")
 
+    monkeypatch.setattr(business_router, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(business_router, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
     monkeypatch.setattr(
-        investment_router,
-        "handle_text_message",
-        lambda _openid, _content: BusinessReply(
+        cowagent_ta_handler,
+        "handle_technical_analysis",
+        lambda _openid, _content, _route, **_kwargs: BusinessReply(
             handled=True,
             success=True,
             reply_text=f"[图片: {signal_card_path}]\n[图片: {main_chart_path}]",
@@ -461,11 +502,12 @@ def test_wechatmp_technical_analysis_generate_reply_uses_router_user_images(monk
         ),
     )
 
-    reply = _wechatmp_channel(monkeypatch)._generate_reply(_context())
+    reply = _wechatmp_channel(monkeypatch)._generate_reply(_context(content="天娱数科 技术分析"))
 
     assert reply.type == ReplyType.IMAGE_URL
     assert reply.content == [signal_card_path, main_chart_path]
     assert markdown_report_path not in reply.content
+    assert reply.business_service_type == ServiceType.TECHNICAL_ANALYSIS
     assert reply.investment_service_type == ServiceType.TECHNICAL_ANALYSIS
 
 
@@ -502,13 +544,13 @@ def test_wechatmp_passive_send_uploads_image_list_without_text_marker(monkeypatc
     assert channel.cache_dict["openid"] == [("image", "media-1"), ("image", "media-2")]
 
 
-def test_wechatmp_passive_send_preserves_investment_request_id_in_cache(monkeypatch, tmp_path):
+def test_wechatmp_passive_send_preserves_business_request_id_in_cache(monkeypatch, tmp_path):
     from bridge.reply import Reply, ReplyType
 
     channel = _wechatmp_channel(monkeypatch)
     text_reply = Reply(ReplyType.TEXT, "ready")
-    text_reply.investment_request_id = "request-text"
-    text_reply.investment_service_type = ServiceType.RATE
+    text_reply.business_request_id = "request-text"
+    text_reply.business_service_type = ServiceType.RATE
 
     channel.send(text_reply, _context(openid="openid-text", msg_id="msg-text"))
 
@@ -523,10 +565,10 @@ def test_wechatmp_passive_send_preserves_investment_request_id_in_cache(monkeypa
 
     channel.client.media = FakeMedia()
     image_reply = Reply(ReplyType.IMAGE_URL, [str(image_path)])
-    image_reply.investment_request_id = "request-image"
-    image_reply.investment_service_type = ServiceType.TECHNICAL_ANALYSIS
-    image_reply.investment_source_type = "cache"
-    image_reply.investment_source_id = "cache-image"
+    image_reply.business_request_id = "request-image"
+    image_reply.business_service_type = ServiceType.TECHNICAL_ANALYSIS
+    image_reply.business_source_type = "cache"
+    image_reply.business_source_id = "cache-image"
 
     channel.send(image_reply, _context(openid="openid-image", msg_id="msg-image"))
 
@@ -534,6 +576,21 @@ def test_wechatmp_passive_send_preserves_investment_request_id_in_cache(monkeypa
     assert cached_image.request_id == "request-image"
     assert cached_image.source_type == "cache"
     assert cached_image.source_id == "cache-image"
+
+
+def test_wechatmp_passive_send_preserves_legacy_investment_metadata_in_cache(monkeypatch):
+    from bridge.reply import Reply, ReplyType
+
+    channel = _wechatmp_channel(monkeypatch)
+    text_reply = Reply(ReplyType.TEXT, "ready")
+    text_reply.investment_request_id = "legacy-request"
+    text_reply.investment_service_type = ServiceType.RATE
+
+    channel.send(text_reply, _context(openid="openid-legacy", msg_id="msg-legacy"))
+
+    cached = channel.cache_dict.peek_result("openid-legacy")
+    assert cached.request_id == "legacy-request"
+    assert cached.service_type == ServiceType.RATE
 
 
 def test_wechatmp_passive_send_closes_local_image_file_after_upload_success(monkeypatch, tmp_path):
@@ -721,12 +778,9 @@ def test_wechatmp_passive_send_records_image_upload_failure(monkeypatch, tmp_pat
             raise WeChatClientException(40164, "invalid ip 14.153.6.203 ipv6 ::ffff:14.153.6.203, not in whitelist")
 
     channel.client.media = FakeMedia()
-    monkeypatch.setattr(
-        "business.investment.records.append_request_warning",
-        lambda request_id, detail: warnings.append((request_id, detail)),
-    )
+    monkeypatch.setattr("business.business_records.append_delivery_warning", lambda request_id, detail: warnings.append((request_id, detail)))
     reply = Reply(ReplyType.IMAGE_URL, [str(image_path)])
-    reply.investment_request_id = "request-1"
+    reply.business_request_id = "request-1"
 
     channel.send(reply, _context())
 
@@ -847,7 +901,7 @@ def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_confirm
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.investment.cache_service.find_cache_entry_by_key",
+        "business.cache_service.find_cache_entry_by_key",
         lambda _cache_key, require_files=False: None,
     )
 
@@ -889,7 +943,7 @@ def test_wechatmp_passive_invalidated_daily_content_is_not_returned_by_confirm(m
         raising=False,
     )
     monkeypatch.setattr(
-        "business.investment.records.get_content_record",
+        "business.business_records.get_content_record",
         lambda _content_id: SimpleNamespace(status="invalidated"),
     )
 
@@ -899,7 +953,7 @@ def test_wechatmp_passive_invalidated_daily_content_is_not_returned_by_confirm(m
 
 
 def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(monkeypatch):
-    import business.investment.records as records
+    import business.business_records as business_records
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -925,13 +979,14 @@ def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(mo
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
-    monkeypatch.setattr(records, "mark_request_delivered", lambda request_id: delivered.append(request_id), raising=False)
+    monkeypatch.setattr(business_records, "mark_request_delivered", lambda request_id: delivered.append(request_id), raising=False)
 
     assert passive_reply.Query().POST() == "<image>media-1</image>"
     assert delivered == ["request-1"]
     assert produced_contexts == []
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_unauthorized_user_confirm_keeps_pending_result(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1018,6 +1073,7 @@ def test_wechatmp_passive_pending_result_defers_rate_until_discard(monkeypatch):
     assert [context.content for context in produced_contexts] == ["利率"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_pending_result_defers_new_technical_analysis_until_discard(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1039,6 +1095,7 @@ def test_wechatmp_passive_pending_result_defers_new_technical_analysis_until_dis
     assert [context.content for context in produced_contexts] == ["aa 技术分析"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1057,6 +1114,7 @@ def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
     assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_env, monkeypatch):
     from business.investment.config_service import save_config
     from channel.wechatmp import passive_reply
@@ -1067,6 +1125,7 @@ def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_en
     assert passive_reply._investment_ack_text("天娱数科 技术分析") == "配置提示：天娱数科 生成中，回复1。"
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, monkeypatch):
     from business.investment.config_service import save_config
     from channel.wechatmp import passive_reply
@@ -1077,6 +1136,7 @@ def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, m
     assert passive_reply._investment_ack_text("天娱数科 技术分析") == "缓存好了：天娱数科，回复1取图。"
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_config(investment_env):
     from business.investment.router import DEFAULT_UNMATCHED_PROMPT
     from channel.wechatmp import passive_reply
@@ -1095,6 +1155,7 @@ def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(
     assert passive_reply._pending_result_prompt("农业银行 技术分析") == "农业银行 已完成，回1取，回0弃。"
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1184,6 +1245,7 @@ def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(m
     assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_cache_miss_returns_running_ack(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1483,6 +1545,7 @@ def test_wechatmp_passive_rate_and_bond_return_ready_image_without_running_ack(m
     assert [context.content for context in produced_contexts] == ["利率", "转债"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_rate_ready_between_retries_returns_image_without_confirm(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1568,6 +1631,7 @@ def test_wechatmp_passive_rate_ready_between_retries_returns_image_without_confi
     assert channel_state.cache_dict.peek_result("openid") is None
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_rate_ready_between_retries_rechecks_permission_before_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1737,6 +1801,7 @@ def test_wechatmp_passive_rate_retry_returns_image_when_cache_ready_on_second_re
     assert sleep_calls
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_auto_wait_rechecks_permission_before_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1818,6 +1883,7 @@ def test_wechatmp_passive_auto_wait_rechecks_permission_before_pop(monkeypatch):
     assert len(permission_calls) == 2
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_auto_wait_permission_error_does_not_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1979,6 +2045,7 @@ def test_wechatmp_passive_bond_retry_returns_image_when_cache_ready_on_third_req
     assert channel_state.request_cnt == {}
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_technical_analysis_does_not_wait_for_ready_image(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2046,6 +2113,7 @@ def test_wechatmp_passive_technical_analysis_does_not_wait_for_ready_image(monke
     assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_permission_error_does_not_start_investment_generation(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2065,6 +2133,7 @@ def test_wechatmp_passive_permission_error_does_not_start_investment_generation(
     assert "openid" not in channel.running
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_permission_prompt_records_failed_precheck(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ErrorCode
@@ -2080,11 +2149,11 @@ def test_wechatmp_passive_permission_prompt_records_failed_precheck(monkeypatch)
         ),
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2097,6 +2166,7 @@ def test_wechatmp_passive_permission_prompt_records_failed_precheck(monkeypatch)
     assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_permission_denied_records_are_deduped_by_message_key(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ErrorCode
@@ -2110,11 +2180,11 @@ def test_wechatmp_passive_permission_denied_records_are_deduped_by_message_key(m
         detail="permission denied",
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2124,6 +2194,7 @@ def test_wechatmp_passive_permission_denied_records_are_deduped_by_message_key(m
     assert [call[0] for call in calls] == ["create", "fail"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_cached_result_permission_prompt_records_failed_precheck(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ErrorCode
@@ -2148,11 +2219,11 @@ def test_wechatmp_cached_result_permission_prompt_records_failed_precheck(monkey
         ),
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2169,6 +2240,7 @@ def test_wechatmp_cached_result_permission_prompt_records_failed_precheck(monkey
     assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_user_access_permission_prompt_records_failed_precheck_with_empty_input(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ErrorCode
@@ -2184,11 +2256,11 @@ def test_wechatmp_passive_user_access_permission_prompt_records_failed_precheck_
         ),
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2201,6 +2273,7 @@ def test_wechatmp_passive_user_access_permission_prompt_records_failed_precheck_
     assert calls[1][1][1] == ErrorCode.USER_DISABLED
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_permission_prompt_records_failed_precheck(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
     from business.investment.constants import ErrorCode
@@ -2217,11 +2290,11 @@ def test_wechatmp_active_permission_prompt_records_failed_precheck(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2234,6 +2307,7 @@ def test_wechatmp_active_permission_prompt_records_failed_precheck(monkeypatch):
     assert calls[1][1][1] == ErrorCode.UNAUTHORIZED
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_permission_denied_records_are_deduped_by_message_key(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
     from business.investment.constants import ErrorCode
@@ -2247,11 +2321,11 @@ def test_wechatmp_active_permission_denied_records_are_deduped_by_message_key(mo
         detail="permission denied",
     )
     monkeypatch.setattr(
-        "business.investment.records.create_request_record",
+        "business.business_records.create_request_record",
         lambda *args, **_kwargs: calls.append(("create", args)) or "request-id",
     )
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2261,6 +2335,7 @@ def test_wechatmp_active_permission_denied_records_are_deduped_by_message_key(mo
     assert [call[0] for call in calls] == ["create", "fail"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_permission_denied_record_retries_after_write_failure(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ErrorCode
@@ -2280,9 +2355,9 @@ def test_wechatmp_passive_permission_denied_record_retries_after_write_failure(m
             raise RuntimeError("database unavailable")
         return "request-id"
 
-    monkeypatch.setattr("business.investment.records.create_request_record", fake_create)
+    monkeypatch.setattr("business.business_records.create_request_record", fake_create)
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2292,6 +2367,7 @@ def test_wechatmp_passive_permission_denied_record_retries_after_write_failure(m
     assert [call[0] for call in calls] == ["create", "create", "fail"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_permission_denied_record_retries_after_write_failure(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
     from business.investment.constants import ErrorCode
@@ -2311,9 +2387,9 @@ def test_wechatmp_active_permission_denied_record_retries_after_write_failure(mo
             raise RuntimeError("database unavailable")
         return "request-id"
 
-    monkeypatch.setattr("business.investment.records.create_request_record", fake_create)
+    monkeypatch.setattr("business.business_records.create_request_record", fake_create)
     monkeypatch.setattr(
-        "business.investment.records.fail_request_record",
+        "business.business_records.fail_request_record",
         lambda *args, **_kwargs: calls.append(("fail", args)),
     )
 
@@ -2323,6 +2399,7 @@ def test_wechatmp_active_permission_denied_record_retries_after_write_failure(mo
     assert [call[0] for call in calls] == ["create", "create", "fail"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_pending_result_confirm_rechecks_permission_before_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2346,6 +2423,7 @@ def test_wechatmp_passive_pending_result_confirm_rechecks_permission_before_pop(
     assert produced_contexts == []
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_pending_result_permission_uses_cached_service_type_not_title(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from business.investment.constants import ServiceType
@@ -2378,6 +2456,7 @@ def test_wechatmp_passive_pending_result_permission_uses_cached_service_type_not
     assert produced_contexts == []
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_pending_result_discard_permission_uses_cached_service_type(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2409,6 +2488,7 @@ def test_wechatmp_passive_pending_result_discard_permission_uses_cached_service_
     assert produced_contexts == []
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_split_text_keeps_original_investment_title_for_permission_recheck(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2464,6 +2544,7 @@ def test_wechatmp_passive_stale_running_technical_analysis_confirm_clears_state(
     assert [context.content for context in produced_contexts] == ["1"]
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_disabled_investment_user_gets_service_stopped_prompt(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
 
@@ -2532,6 +2613,7 @@ def test_wechatmp_passive_disabled_investment_user_gets_service_stopped_prompt(m
     assert channel_holder["channel"].running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_disabled_user_invalid_text_stops_before_produce(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2554,6 +2636,7 @@ def test_wechatmp_passive_disabled_user_invalid_text_stops_before_produce(monkey
     assert channel.running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_user_access_error_stops_before_produce(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -2573,6 +2656,7 @@ def test_wechatmp_passive_user_access_error_stops_before_produce(monkeypatch):
     assert channel.running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_unmatched_investment_message_returns_passive_prompt(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 
@@ -2634,6 +2718,7 @@ def test_wechatmp_active_unmatched_investment_message_returns_passive_prompt(mon
     assert produced_contexts == []
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_valid_investment_message_returns_polling_ack(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 
@@ -2704,6 +2789,7 @@ def test_wechatmp_active_valid_investment_message_returns_polling_ack(monkeypatc
     assert "openid" in channel_holder["channel"].active_running
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_disabled_investment_user_gets_service_stopped_prompt(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 
@@ -2772,6 +2858,7 @@ def test_wechatmp_active_disabled_investment_user_gets_service_stopped_prompt(mo
     assert channel_holder["channel"].active_running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_permission_check_error_does_not_start_generation(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 
@@ -2837,6 +2924,7 @@ def test_wechatmp_active_permission_check_error_does_not_start_generation(monkey
     assert channel_holder["channel"].active_running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_parse_route_error_does_not_start_generation(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 
@@ -2882,7 +2970,7 @@ def test_wechatmp_active_parse_route_error_does_not_start_generation(monkeypatch
     )
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(
-        "business.investment.router.parse_route",
+        "business.router.parse_route",
         lambda _content: (_ for _ in ()).throw(RuntimeError("router unavailable")),
     )
     monkeypatch.setattr(active_reply.web, "input", lambda: {})
@@ -2901,6 +2989,7 @@ def test_wechatmp_active_parse_route_error_does_not_start_generation(monkeypatch
     assert channel_holder["channel"].active_running == set()
 
 
+@STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_active_running_investment_job_does_not_start_duplicate(monkeypatch):
     import channel.wechatmp.active_reply as active_reply
 

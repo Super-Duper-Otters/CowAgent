@@ -750,6 +750,19 @@ def test_config_service_direct_call_initializes_storage_schema(investment_env):
     assert inspect(db.get_engine()).has_table("investment_configs")
 
 
+def test_business_config_facade_shares_existing_config_storage(investment_env):
+    from business.config_service import get_config as get_business_config
+    from business.config_service import save_config as save_business_config
+    from business.investment.config_service import get_config as get_legacy_config
+    from business.investment.config_service import save_config as save_legacy_config
+
+    save_business_config("prompt.rate", "business facade prompt", operator_role="admin")
+    assert get_legacy_config("prompt.rate") == "business facade prompt"
+
+    save_legacy_config("prompt.convertible_bond", "legacy compatible prompt", operator_role="admin")
+    assert get_business_config("prompt.convertible_bond") == "legacy compatible prompt"
+
+
 def test_config_masks_sensitive_values_and_checks_permissions(investment_env, monkeypatch):
     from business.investment.config_service import (
         can_modify_config,
@@ -788,6 +801,21 @@ def test_investment_user_message_can_be_overridden_from_database(investment_env)
 
     assert user_message(ErrorCode.UNAUTHORIZED) == "请联系客户经理开通权限。"
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+
+
+def test_business_user_message_uses_cowagent_reply_config_facade(investment_env, monkeypatch):
+    from business.config_service import save_config
+    from business.constants import ErrorCode, user_message
+    import business.investment.reply_config as legacy_reply_config
+
+    save_config("reply.investment.no_content", "业务内容稍后更新。", operator_role="admin", operator="pytest")
+    monkeypatch.setattr(
+        legacy_reply_config,
+        "get_reply_text",
+        lambda *_args, **_kwargs: pytest.fail("business user_message must not use investment reply_config"),
+    )
+
+    assert user_message(ErrorCode.NO_CONTENT) == "业务内容稍后更新。"
 
 
 def test_web_open_chat_config_is_admin_only(investment_env):
@@ -956,6 +984,7 @@ def test_uploaded_script_investment_skill_executes_from_route(investment_env, tm
     from business.investment.router import handle_text_message
     from business.investment.skill_versions import save_package_upload
     from business.investment.user_service import create_user
+    import business.investment.skill_registry as investment_skill_registry
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     package = tmp_path / "macro.zip"
@@ -982,8 +1011,17 @@ investment:
         archive.writestr("scripts/macro.py", script)
 
     save_package_upload("macro.zip", package.read_bytes(), operator="pytest")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        investment_skill_registry,
+        "get_skill_definition",
+        lambda *_args, **_kwargs: pytest.fail("runtime script execution must not use investment skill registry"),
+    )
 
-    reply = handle_text_message("ok", "宏观脚本")
+    try:
+        reply = handle_text_message("ok", "宏观脚本")
+    finally:
+        monkeypatch.undo()
 
     assert reply.handled is True
     assert reply.success is True
@@ -3505,6 +3543,41 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
     assert find_running_job("ok", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS) is None
 
 
+def test_router_delegates_technical_analysis_to_cowagent_business_handler(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.router import BusinessReply, handle_text_message
+    from business.investment.user_service import create_user
+    import business.investment.executors.technical_analysis_executor as investment_ta_executor
+    import business.technical_analysis_handler as cowagent_ta_handler
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    monkeypatch.setattr(
+        investment_ta_executor,
+        "prepare_technical_analysis_business_context",
+        lambda *_args, **_kwargs: pytest.fail("router must not directly prepare investment technical analysis"),
+    )
+    calls = []
+
+    def fake_handler(openid, raw_input, route, **kwargs):
+        calls.append((openid, raw_input, route.target_text, bool(kwargs.get("customer_metadata") is not None)))
+        return BusinessReply(
+            True,
+            True,
+            "[图片: /tmp/signal.png]",
+            ["/tmp/signal.png"],
+            ServiceType.TECHNICAL_ANALYSIS,
+            request_id="request-from-cowagent-handler",
+        )
+
+    monkeypatch.setattr(cowagent_ta_handler, "handle_technical_analysis", fake_handler)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert reply.request_id == "request-from-cowagent-handler"
+    assert calls == [("ok", "300502.SZ 技术分析", "300502.SZ", True)]
+
+
 def test_job_service_ignores_stale_running_technical_analysis_record(investment_env):
     from datetime import UTC, datetime, timedelta
 
@@ -4249,6 +4322,44 @@ def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp
     assert file_fingerprint(str(tmp_path / "missing.png")).startswith("missing:")
 
 
+def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp_path):
+    from business.investment.artifact_service import record_artifact
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+
+    artifact = tmp_path / "card.png"
+    artifact.write_bytes(b"card-bytes")
+
+    record_artifact(
+        "request-1",
+        str(artifact),
+        "signal_card",
+        ServiceType.TECHNICAL_ANALYSIS,
+        version_tag="sha256:first",
+    )
+    record_artifact(
+        "request-1",
+        str(artifact),
+        "signal_card",
+        ServiceType.TECHNICAL_ANALYSIS,
+        version_tag="sha256:second",
+    )
+
+    with connect() as conn:
+        rows = conn.execute(
+            text(
+                "select owner_id, file_path, artifact_role, version_tag "
+                "from investment_output_files where owner_id = :owner_id"
+            ),
+            {"owner_id": "request-1"},
+        ).mappings().all()
+
+    assert len(rows) == 1
+    assert rows[0]["file_path"] == str(artifact)
+    assert rows[0]["artifact_role"] == "signal_card"
+    assert rows[0]["version_tag"] == "sha256:second"
+
+
 def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
     from business.investment import config_service
     from business.investment.config_service import safe_log_value
@@ -4512,20 +4623,20 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(investment
         },
     )
 
-    class FakeClient:
+    class FakeBot:
         def __init__(self):
             self.calls = []
 
-        def chat_completions(self, **kwargs):
+        def call_with_tools(self, **kwargs):
             self.calls.append(kwargs)
             return {"choices": [{"message": {"content": "standard rate text"}}]}
 
-    client = FakeClient()
+    bot = FakeBot()
 
-    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(client=client))
+    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(bot=bot))
 
     assert result.success is True
-    messages = client.calls[0]["messages"]
+    messages = bot.calls[0]["messages"]
     assert messages[1]["role"] == "user"
     content = messages[1]["content"]
     assert content[0]["type"] == "text"
@@ -4541,7 +4652,6 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(investment
 def test_ai_generation_retries_transient_model_connection_errors(investment_env, monkeypatch):
     from business.investment import config_service
     from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
-    from models.openai.openai_http_client import OpenAIHTTPError
 
     monkeypatch.setattr(
         config_service,
@@ -4554,23 +4664,23 @@ def test_ai_generation_retries_transient_model_connection_errors(investment_env,
         },
     )
 
-    class FlakyClient:
+    class FlakyBot:
         def __init__(self):
             self.calls = 0
 
-        def chat_completions(self, **kwargs):
+        def call_with_tools(self, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                raise OpenAIHTTPError(0, {}, "Connection error: SSL EOF")
+                return {"error": True, "status_code": 0, "message": "Connection error: SSL EOF"}
             return {"choices": [{"message": {"content": "standard rate text"}}]}
 
-    client = FlakyClient()
+    bot = FlakyBot()
 
-    result = generate_rate_text("rate source", adapter=ExistingModelAdapter(client=client))
+    result = generate_rate_text("rate source", adapter=ExistingModelAdapter(bot=bot))
 
     assert result.success is True
     assert result.text == "standard rate text"
-    assert client.calls == 2
+    assert bot.calls == 2
 
 
 def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_env, tmp_path, monkeypatch):
@@ -4590,25 +4700,25 @@ def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_e
         },
     )
 
-    class FakeClient:
+    class FakeBot:
         def __init__(self):
             self.calls = []
 
-        def chat_completions(self, **kwargs):
+        def call_with_tools(self, **kwargs):
             self.calls.append(kwargs)
             if len(self.calls) == 1:
                 return {"choices": [{"message": {"content": "OCR: 2026-05-25 108.970 入场（3/8）"}}]}
             return {"choices": [{"message": {"content": "standard rate card text"}}]}
 
-    client = FakeClient()
+    bot = FakeBot()
 
-    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(client=client))
+    result = generate_rate_text("", source_files=[str(image_path)], adapter=ExistingModelAdapter(bot=bot))
 
     assert result.success is True
     assert result.text == "standard rate card text"
-    assert len(client.calls) == 2
-    assert any(block.get("type") == "image_url" for block in client.calls[0]["messages"][1]["content"])
-    assert client.calls[1]["messages"][1]["content"] == (
+    assert len(bot.calls) == 2
+    assert any(block.get("type") == "image_url" for block in bot.calls[0]["messages"][1]["content"])
+    assert bot.calls[1]["messages"][1]["content"] == (
         "以下是上传图片的识别结果，请据此生成标准卡片文本。禁止要求用户再提供原文；"
         "缺失字段按系统要求填“——”。\n\nOCR: 2026-05-25 108.970 入场（3/8）"
     )
@@ -4735,9 +4845,10 @@ def test_model_health_check_accepts_global_config_fallback(investment_env, monke
     assert api_key not in model_health.detail
 
 
-def test_ai_generation_configured_adapter_uses_existing_model_http_client(investment_env, monkeypatch):
+def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investment_env, monkeypatch):
     from business.investment import config_service
-    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.investment import ai_generation
+    from business.investment.ai_generation import generate_rate_text
     from business.investment.config_service import save_configs
 
     monkeypatch.setattr(
@@ -4753,29 +4864,40 @@ def test_ai_generation_configured_adapter_uses_existing_model_http_client(invest
     )
     save_configs({"prompt.rate": "Configured rate prompt"}, operator_role="admin")
 
-    class FakeClient:
+    def fail_default_client():
+        raise AssertionError("investment AI generation must not bypass Bridge via default HTTP client")
+
+    monkeypatch.setattr("models.openai.openai_http_client.get_default_client", fail_default_client)
+
+    class FakeBot:
         def __init__(self):
             self.calls = []
 
-        def chat_completions(self, **kwargs):
+        def call_with_tools(self, **kwargs):
             self.calls.append(kwargs)
             return {"choices": [{"message": {"content": "standard rate text"}}]}
 
-    client = FakeClient()
+    bot = FakeBot()
 
-    result = generate_rate_text("rate source", adapter=ExistingModelAdapter(client=client))
+    class FakeBridge:
+        def get_bot(self, typename):
+            assert typename == "chat"
+            return bot
+
+    monkeypatch.setattr(ai_generation, "Bridge", lambda: FakeBridge())
+
+    result = generate_rate_text("rate source")
 
     assert result.success is True
     assert result.generated_text == "standard rate text"
-    assert client.calls == [
+    assert bot.calls == [
         {
-            "api_key": "sk-http-client-1234567890",
-            "api_base": "https://configured.example/v1",
             "model": "configured-model",
             "messages": [
                 {"role": "system", "content": "Configured rate prompt"},
                 {"role": "user", "content": "rate source"},
             ],
+            "tools": None,
             "temperature": 0.33,
             "stream": False,
         }
@@ -4856,7 +4978,7 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     result = run_technical_analysis("ok", "300502.SZ 技术分析")
 
     assert result.success is True
-    assert calls[0][0:3] == ("skill", "300502", "300502_SZ")
+    assert calls[0][0:3] == ("skill", "300502.SZ", "300502_SZ")
     assert len(calls[0][3]) == 32
     assert calls[1] == ("ai", "# 技术分析报告\n\n核心观点")
     assert calls[2][0:2] == ("render", "signal card standard text")
@@ -7711,7 +7833,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
 
     ai_failed = run_technical_analysis("ok", "600519.SH 技术分析")
 
-    assert calls == ["600519"]
+    assert calls == ["600519.SH"]
     assert ai_failed.success is False
     assert ai_failed.error_code == ErrorCode.TECHNICAL_ANALYSIS_FAILED
     assert ai_failed.user_prompt == user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED)
@@ -7743,7 +7865,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
     standard_code = run_technical_analysis("ok", "600519 技术分析")
 
     assert standard_code.success is True
-    assert calls == ["600519"]
+    assert calls == ["600519.SH"]
 
 
 def test_router_records_technical_analysis_report_chart_and_card_paths(investment_env, tmp_path):
@@ -8128,11 +8250,11 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     )
     standard_text = Path("skills/signal-card-renderer/examples/bond_sample.txt").read_text(encoding="utf-8")
 
-    class FakeClient:
+    class FakeBot:
         def __init__(self):
             self.calls = []
 
-        def chat_completions(self, **kwargs):
+        def call_with_tools(self, **kwargs):
             self.calls.append(kwargs)
             user_content = kwargs["messages"][1]["content"]
             if len(self.calls) == 1:
@@ -8142,11 +8264,14 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
             assert "OCR: 2026-05-25 108.970 入场（3/8）" in user_content
             return {"choices": [{"message": {"content": standard_text}}]}
 
-    fake_client = FakeClient()
-    monkeypatch.setattr(
-        "models.openai.openai_http_client.get_default_client",
-        lambda: fake_client,
-    )
+    fake_bot = FakeBot()
+
+    class FakeBridge:
+        def get_bot(self, typename):
+            assert typename == "chat"
+            return fake_bot
+
+    monkeypatch.setattr("business.investment.ai_generation.Bridge", lambda: FakeBridge())
 
     content_id = create_rate_content_draft(
         source_files=[str(source_image)],
@@ -8172,7 +8297,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     assert Path(result.output_image).name.endswith(".png")
     assert result.output_image != str(output_dir / f"{ServiceType.RATE}_card.png")
     assert get_content_record(content_id).output_image == result.output_image
-    assert fake_client.calls
+    assert fake_bot.calls
 
 
 def test_daily_content_records_filter_by_service_type_for_console_pages(investment_env):
@@ -8767,6 +8892,23 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
     assert parse_route("利率").matched is False
 
 
+def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.router import parse_route
+    import business.investment.skill_registry as investment_skill_registry
+
+    monkeypatch.setattr(
+        investment_skill_registry,
+        "match_investment_skill",
+        lambda *_args, **_kwargs: pytest.fail("runtime business matching must not use investment skill matcher"),
+    )
+
+    assert parse_route("利率").service_type == ServiceType.RATE
+    technical = parse_route("300502.SZ 技术分析")
+    assert technical.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert technical.target_text == "300502.SZ"
+
+
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
     from business.investment.config_service import save_config
     from business.investment.constants import ServiceType
@@ -8781,6 +8923,152 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
     assert miss.success is False
     assert miss.handled is False
     assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
+
+
+def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_env, tmp_path):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.investment.config_service import save_config
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.user_service import create_user
+    from business.business_router import build_business_reply
+
+    create_user("business-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"png")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), operator="admin")
+
+    context = Context(ContextType.TEXT, "利率")
+    context["session_id"] = "business-openid"
+
+    reply = build_business_reply(context)
+
+    assert reply is not None
+    assert reply.type == ReplyType.IMAGE_URL
+    assert len(reply.content) == 1
+    assert Path(reply.content[0]).is_file()
+    assert Path(reply.content[0]).name.startswith("output_image_rate_")
+    assert reply.business_service_type == ServiceType.RATE
+    assert reply.investment_service_type == ServiceType.RATE
+
+    save_config("router.enable_agent_fallback", True, operator_role="admin")
+    context = Context(ContextType.TEXT, "普通聊天")
+    context["session_id"] = "business-openid"
+
+    assert build_business_reply(context) is None
+
+
+def test_business_router_ignores_unmatched_text_without_auth_or_handler(investment_env, monkeypatch):
+    from bridge.context import Context, ContextType
+    import business.router as business_route
+    import business.business_router as business_router
+
+    monkeypatch.setattr(
+        business_route,
+        "handle_text_message",
+        lambda *_args, **_kwargs: pytest.fail("unmatched text must continue to normal chat"),
+    )
+
+    context = Context(ContextType.TEXT, "普通聊天")
+    context["session_id"] = "anonymous-user"
+
+    assert business_router.build_business_reply(context) is None
+
+
+def test_business_router_routes_technical_analysis_without_investment_router_handler(investment_env, monkeypatch):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.investment.constants import ServiceType
+    from business.router import BusinessReply
+    from business.investment.user_service import create_user
+    import business.router as business_route
+    import business.business_router as business_router
+    import business.technical_analysis_handler as cowagent_ta_handler
+
+    create_user("openid-ta", enabled=True, allowed_services=[ServiceType.ALL])
+    monkeypatch.setattr(
+        business_route,
+        "handle_text_message",
+        lambda *_args, **_kwargs: pytest.fail("technical analysis must use native handler short path"),
+    )
+    calls = []
+
+    def fake_handler(openid, raw_input, route, **kwargs):
+        calls.append((openid, raw_input, route.target_text, kwargs.get("technical_analysis_handler")))
+        return BusinessReply(
+            True,
+            True,
+            "[图片: /tmp/signal.png]",
+            ["/tmp/signal.png"],
+            ServiceType.TECHNICAL_ANALYSIS,
+            request_id="ta-request",
+        )
+
+    monkeypatch.setattr(cowagent_ta_handler, "handle_technical_analysis", fake_handler)
+    context = Context(ContextType.TEXT, "300502.SZ 技术分析")
+    context["session_id"] = "openid-ta"
+
+    reply = business_router.build_business_reply(context)
+
+    assert reply is not None
+    assert reply.type == ReplyType.IMAGE_URL
+    assert reply.content == ["/tmp/signal.png"]
+    assert reply.business_service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert reply.business_request_id == "ta-request"
+    assert reply.investment_service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert reply.investment_request_id == "ta-request"
+    assert calls == [("openid-ta", "300502.SZ 技术分析", "300502.SZ", None)]
+
+
+def test_business_router_routes_daily_content_without_investment_router_handler(investment_env, monkeypatch):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.investment.constants import ServiceType
+    from business.router import BusinessReply
+    from business.investment.user_service import create_user
+    import business.router as business_route
+    import business.business_router as business_router
+    import business.daily_content_handler as cowagent_content_handler
+
+    create_user("openid-rate", enabled=True, allowed_services=[ServiceType.ALL])
+    monkeypatch.setattr(
+        business_route,
+        "handle_text_message",
+        lambda *_args, **_kwargs: pytest.fail("daily content must use native handler short path"),
+    )
+    calls = []
+
+    def fake_handler(openid, raw_input, route, **kwargs):
+        calls.append((openid, raw_input, route.service_type, bool(kwargs.get("customer_metadata") is not None)))
+        return BusinessReply(
+            True,
+            True,
+            "[图片: /tmp/rate.png]",
+            ["/tmp/rate.png"],
+            ServiceType.RATE,
+            request_id="rate-request",
+            source_type="content",
+            source_id="content-rate",
+        )
+
+    monkeypatch.setattr(cowagent_content_handler, "handle_daily_content", fake_handler)
+    context = Context(ContextType.TEXT, "利率")
+    context["session_id"] = "openid-rate"
+
+    reply = business_router.build_business_reply(context)
+
+    assert reply is not None
+    assert reply.type == ReplyType.IMAGE_URL
+    assert reply.content == ["/tmp/rate.png"]
+    assert reply.business_service_type == ServiceType.RATE
+    assert reply.business_request_id == "rate-request"
+    assert reply.business_source_type == "content"
+    assert reply.business_source_id == "content-rate"
+    assert reply.investment_service_type == ServiceType.RATE
+    assert reply.investment_request_id == "rate-request"
+    assert calls == [("openid-rate", "利率", ServiceType.RATE, True)]
 
 
 def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, tmp_path):
