@@ -2470,6 +2470,63 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(inve
     assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["input", "output", "intermediate"]
 
 
+def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_env, monkeypatch):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import list_artifact_folder_nodes
+    from channel.web.web_channel import InvestmentArtifactFoldersHandler
+
+    for market_date, target in [
+        ("2026-05-31", "MAY"),
+        ("2026-06-07", "JUN-A"),
+        ("2026-06-08", "JUN-B"),
+        ("2027-01-02", "NEXT"),
+    ]:
+        write_cache_entry(
+            cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, target, market_date, "v1"),
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=target,
+            market_date=market_date,
+            version_fingerprint="v1",
+            output_files=[f"/tmp/{target}.png", f"/tmp/{target}.md"],
+        )
+
+    months, month_total = list_artifact_folder_nodes(
+        level="month",
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        year="2026",
+    )
+    days, day_total = list_artifact_folder_nodes(
+        level="date",
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        month="2026-06",
+    )
+    packages, package_total = list_artifact_folder_nodes(
+        level="package",
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        date="2026-06-08",
+        page=1,
+        page_size=20,
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactFoldersHandler().GET,
+        params={"level": "month", "service_type": "technical_analysis", "year": "2026"},
+    )
+
+    assert month_total == 2
+    assert [(node["key"], node["count"]) for node in months] == [("2026-06", 2), ("2026-05", 1)]
+    assert day_total == 2
+    assert [(node["key"], node["count"]) for node in days] == [("2026-06-08", 1), ("2026-06-07", 1)]
+    assert package_total == 1
+    assert packages[0]["level"] == "package"
+    assert packages[0]["package_id"].startswith("technical_analysis:JUN-B:2026-06-08")
+    assert "files" not in packages[0]
+    assert payload["status"] == "success"
+    assert payload["nodes"][0]["key"] == "2026-06"
+    assert "packages" not in payload
+
+
 def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.investment.constants import ServiceType

@@ -3421,7 +3421,7 @@ class InvestmentArtifactPackagesHandler:
             from business.business_records import build_artifact_package_tree, list_artifact_packages_page
             from business.constants import ServiceType, normalize_service
 
-            params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='')
+            params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='', package_id='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
@@ -3440,6 +3440,7 @@ class InvestmentArtifactPackagesHandler:
                 start_date=_investment_date_bound(getattr(params, "start_date", "")),
                 end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
                 keyword=getattr(params, "keyword", "") or "",
+                package_id=getattr(params, "package_id", "") or "",
             )
             return _investment_json_response({
                 "status": "success",
@@ -3449,6 +3450,57 @@ class InvestmentArtifactPackagesHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] artifact packages error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentArtifactFoldersHandler:
+    def GET(self):
+        _require_investment_permission("content.read")
+        try:
+            from business.business_records import list_artifact_folder_nodes
+            from business.constants import ServiceType, normalize_service
+
+            params = web.input(
+                page='1',
+                page_size='',
+                level='year',
+                service_type='',
+                year='',
+                month='',
+                date='',
+                start_date='',
+                end_date='',
+                keyword='',
+            )
+            service_value = str(getattr(params, "service_type", "") or "").strip()
+            service_type = normalize_service(service_value) if service_value else None
+            if service_type == ServiceType.UNMATCHED:
+                page, page_size = _investment_safe_pagination(params, 100)
+                return _investment_json_response({
+                    "status": "success",
+                    "nodes": [],
+                    "pagination": _investment_pagination_payload(page, page_size, 0),
+                })
+            page, page_size = _investment_safe_pagination(params, 100)
+            nodes, total = list_artifact_folder_nodes(
+                level=getattr(params, "level", "") or "year",
+                page=page,
+                page_size=page_size,
+                service_type=service_type,
+                year=getattr(params, "year", "") or "",
+                month=getattr(params, "month", "") or "",
+                date=_investment_date_bound(getattr(params, "date", "")),
+                start_date=_investment_date_bound(getattr(params, "start_date", "")),
+                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
+                keyword=getattr(params, "keyword", "") or "",
+            )
+            return _investment_json_response({
+                "status": "success",
+                "nodes": nodes,
+                "pagination": _investment_pagination_payload(page, page_size, total),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] artifact folders error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

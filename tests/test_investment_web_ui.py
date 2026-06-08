@@ -27,6 +27,44 @@ def _js_function_body(js: str, name: str) -> str:
     return js[match.end():index - 1]
 
 
+def test_web_console_uses_investment_assistant_branding():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    login_html = LOGIN_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert "智能投研辅助系统" in html
+    assert "智能投研辅助系统" in login_html
+    assert "智能投研辅助系统" in js
+    assert "CowAgent" not in html
+    assert "CowAgent" not in login_html
+    assert "CowAgent" not in js
+
+
+def test_non_investment_management_pages_are_removed_from_frontend_navigation():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    removed_views = ("memory", "knowledge", "tasks")
+
+    for view in removed_views:
+        assert f'data-view="{view}"' not in html
+        assert f'id="view-{view}"' not in html
+        assert f"{view}:" not in js
+
+    for key in ("menu_memory", "menu_knowledge", "menu_tasks", "nav_investment"):
+        assert key not in js
+
+    manage_group_start = html.index('data-group="manage"')
+    monitor_group_start = html.index('data-group="monitor"')
+    manage_group = html[manage_group_start:monitor_group_start]
+    assert 'data-group="investment"' not in html
+    assert 'data-view="channels"' in html
+    assert 'id="view-channels"' in html
+    assert "channels: { group: 'nav_manage',  page: 'menu_channels' }" in js
+    assert "else if (viewId === 'channels') loadChannelsView();" in js
+    assert 'data-view="invest-users"' in manage_group
+    assert 'data-view="invest-health"' in manage_group
+
+
 def test_investment_tables_are_bounded_and_have_sticky_headers():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -149,18 +187,28 @@ def test_investment_generated_content_uses_shared_artifact_file_tree():
     load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     category_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
 
-    assert "/api/investment/artifacts" in load_body
+    assert "/api/investment/artifact-folders" in load_body
     assert "/api/investment/cache" not in load_body
     assert "investment-artifact-browser" in category_body
     assert "investment-artifact-tree" in category_body
-    assert "renderInvestmentArtifactTree(" in category_body
+    assert "renderInvestmentArtifactLazyTree(" in category_body
+    assert "loadInvestmentArtifactRootNodes(" in js
+    assert "toggleInvestmentArtifactNode(" in js
+    assert "loadInvestmentArtifactPackage(" in js
+    assert "level=service" in js
+    assert "query.set('level', 'month')" in js
+    assert "query.set('level', 'date')" in js
+    assert "query.set('level', 'package')" in js
+    assert "package_id" in js
+    assert "renderInvestmentArtifactTree(" not in js
     assert "openInvestmentArtifactFile(" in js
     assert "renderInvestmentArtifactViewer(" in js
     assert "virtual_path" in js
     assert "raw_input.txt" in js
     assert "output" in js
     assert "intermediate" in js
-    assert "investment-artifact-date open" in js
+    assert "data-artifact-level" in js
+    assert "data-artifact-loaded" in js
     assert "investment-artifact-package open" not in js
     assert "investment-artifact-folder open" not in js
     assert "investment-artifact-package-btn" in js
@@ -182,8 +230,8 @@ def test_rate_and_convertible_bond_content_are_merged_under_investment_content_p
     html = CHAT_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    sidebar_start = html.index("<!-- Investment Group -->")
-    sidebar_end = html.index("</div>\n                </div>", sidebar_start)
+    sidebar_start = html.index('data-view="invest-users"')
+    sidebar_end = html.index('data-view="invest-skills"', sidebar_start)
     sidebar_body = html[sidebar_start:sidebar_end]
     daily_view_start = html.index('id="view-invest-daily-content"')
     daily_view_end = html.index('id="view-invest-content"')
@@ -1799,7 +1847,7 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     content_load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     assert "/api/investment/records/requests" in load_body
     assert "/api/investment/records/contents" in load_body
-    assert "/api/investment/artifacts" in content_load_body
+    assert "/api/investment/artifact-folders" in content_load_body
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
     assert "['invalidated', '已失效']" in filters_body
@@ -1896,7 +1944,7 @@ def test_investment_content_and_cache_date_filters_are_exposed():
     assert "refreshInvestmentContentRecords(serviceType, {effective_date: investmentContentHistoryEffectiveDate(serviceType)})" in js
     assert "investment-records-filter-market_date" in js
     assert "investmentCacheMarketDate()" in js
-    assert "investmentFetchJson(query.toString() ? `/api/investment/artifacts?${query.toString()}` : '/api/investment/artifacts')" in js
+    assert "investmentFetchJson(query.toString() ? `/api/investment/artifact-folders?${query.toString()}` : '/api/investment/artifact-folders?level=service')" in js
     assert "investmentGeneratedOutputState(entry)" in js
     assert "investmentRecordFileSummary(entry.output_files || [])" not in js
 

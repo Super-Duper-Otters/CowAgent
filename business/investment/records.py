@@ -806,6 +806,7 @@ def list_artifact_packages_page(
     start_date: str = "",
     end_date: str = "",
     keyword: str = "",
+    package_id: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -813,6 +814,8 @@ def list_artifact_packages_page(
     conditions = _artifact_package_conditions(table, service_type, start_date, end_date, keyword)
     if conditions is None:
         return [], 0
+    if package_id:
+        conditions.append(table.c.cache_key == str(package_id))
     stmt = select(table).order_by(table.c.market_date.desc(), table.c.updated_at.desc()).limit(page_size).offset((page - 1) * page_size)
     count_stmt = select(func.count()).select_from(table)
     if conditions:
@@ -822,6 +825,109 @@ def list_artifact_packages_page(
         total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()
     return [_row_to_artifact_package(row_to_dict(row)) for row in rows], total
+
+
+def _artifact_period_bounds(*, year: str = "", month: str = "", date: str = "", start_date: str = "", end_date: str = "") -> tuple[str, str]:
+    if date:
+        return str(date), str(date)
+    if month and len(str(month)) == 7:
+        year_value, month_value = str(month).split("-", 1)
+        try:
+            month_number = int(month_value)
+            if month_number < 1 or month_number > 12:
+                return str(start_date or ""), str(end_date or "")
+            last_day = (datetime(int(year_value), month_number + 1, 1) - timedelta(days=1)).day if month_number < 12 else 31
+        except ValueError:
+            return str(start_date or ""), str(end_date or "")
+        return f"{year_value}-{month_value}-01", f"{year_value}-{month_value}-{last_day:02d}"
+    if year and len(str(year)) == 4:
+        return f"{year}-01-01", f"{year}-12-31"
+    return str(start_date or ""), str(end_date or "")
+
+
+def _artifact_package_summary(item: dict) -> dict:
+    output_files = _load_list(item.get("output_files"))
+    return {
+        "level": "package",
+        "key": str(item.get("cache_key") or ""),
+        "package_id": str(item.get("cache_key") or ""),
+        "label": str(item.get("normalized_target") or "产物包"),
+        "service_type": str(item.get("service_type") or ""),
+        "market_date": str(item.get("market_date") or ""),
+        "normalized_target": str(item.get("normalized_target") or ""),
+        "version_fingerprint": str(item.get("version_fingerprint") or ""),
+        "artifact_owner_id": str(item.get("artifact_owner_id") or ""),
+        "file_count": len(output_files),
+        "hit_count": int(item.get("hit_count") or 0),
+        "updated_at": str(item.get("updated_at") or ""),
+    }
+
+
+def list_artifact_folder_nodes(
+    *,
+    level: str,
+    page: int = 1,
+    page_size: int = 100,
+    service_type: ServiceType | str | None = None,
+    year: str = "",
+    month: str = "",
+    date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+) -> tuple[list[dict], int]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 100))
+    normalized_level = str(level or "").strip().lower()
+    table = investment_cache_entries
+    bounded_start, bounded_end = _artifact_period_bounds(year=year, month=month, date=date, start_date=start_date, end_date=end_date)
+    conditions = _artifact_package_conditions(table, service_type, bounded_start, bounded_end, keyword)
+    if conditions is None:
+        return [], 0
+    conditions.append(table.c.market_date != "")
+    if normalized_level == "package":
+        stmt = (
+            select(table)
+            .where(*conditions)
+            .order_by(table.c.market_date.desc(), table.c.normalized_target.asc(), table.c.updated_at.desc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        count_stmt = select(func.count()).select_from(table).where(*conditions)
+        with connect() as conn:
+            total = int(conn.execute(count_stmt).scalar_one() or 0)
+            rows = conn.execute(stmt).fetchall()
+        return [_artifact_package_summary(row_to_dict(row)) for row in rows], total
+
+    if normalized_level == "service":
+        key_expr = table.c.service_type
+    else:
+        slices = {"year": 4, "month": 7, "date": 10, "day": 10}
+        length = slices.get(normalized_level)
+        if not length:
+            return [], 0
+        key_expr = func.substr(table.c.market_date, 1, length)
+    grouped = (
+        select(key_expr.label("key"), func.count().label("count"), func.max(table.c.updated_at).label("updated_at"))
+        .where(*conditions)
+        .group_by(key_expr)
+    )
+    count_stmt = select(func.count()).select_from(grouped.subquery())
+    stmt = grouped.order_by(key_expr.desc()).limit(page_size).offset((page - 1) * page_size)
+    with connect() as conn:
+        total = int(conn.execute(count_stmt).scalar_one() or 0)
+        rows = conn.execute(stmt).fetchall()
+    node_level = "date" if normalized_level == "day" else normalized_level
+    return [
+        {
+            "level": node_level,
+            "key": str(row_to_dict(row).get("key") or ""),
+            "label": str(row_to_dict(row).get("key") or ""),
+            "count": int(row_to_dict(row).get("count") or 0),
+            "updated_at": str(row_to_dict(row).get("updated_at") or ""),
+        }
+        for row in rows
+    ], total
 
 
 def build_artifact_package_tree(packages: list[dict]) -> list[dict]:

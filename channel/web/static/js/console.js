@@ -1,5 +1,5 @@
 /* =====================================================================
-   CowAgent Console - Main Application Script
+   智能投研辅助系统 Console - Main Application Script
    ===================================================================== */
 
 // =====================================================================
@@ -13,26 +13,25 @@ let APP_VERSION = '';
 const I18N = {
     zh: {
         console: '控制台',
-        nav_chat: '对话', nav_manage: '管理', nav_monitor: '监控', nav_investment: '投资业务',
-        menu_chat: '对话', menu_config: '配置', menu_skills: '技能',
-        menu_memory: '记忆', menu_knowledge: '知识', menu_channels: '通道', menu_tasks: '定时',
+        nav_chat: '对话', nav_manage: '管理', nav_monitor: '监控',
+        menu_chat: '对话', menu_config: '配置', menu_skills: '技能', menu_channels: '通道',
         menu_logs: '日志',
         menu_invest_users: '用户管理', menu_invest_daily_content: '投资内容',
         menu_invest_content: '内容',
-        menu_invest_records: '业务记录', menu_invest_skills: '投资Skill', menu_invest_config: '系统配置', menu_invest_health: '健康检查',
+        menu_invest_records: '业务记录', menu_invest_skills: '投研组件', menu_invest_config: '系统配置', menu_invest_health: '健康检查',
         knowledge_title: '知识库', knowledge_desc: '浏览和探索你的知识库',
         knowledge_tab_docs: '文档', knowledge_tab_graph: '图谱',
         knowledge_loading: '加载知识库中...', knowledge_loading_desc: '知识页面将显示在这里',
         knowledge_select_hint: '选择一个文档查看', knowledge_empty_hint: '暂无知识页面',
         knowledge_empty_guide: '在对话中发送文档、链接或主题给 Agent，它会自动整理到你的知识库中。',
         knowledge_go_chat: '开始对话',
-        welcome_subtitle: '我可以帮你解答问题、管理计算机、创造和执行技能，并通过<br>长期记忆和知识库不断成长',
-        example_sys_title: '系统管理', example_sys_text: '查看工作空间里有哪些文件',
-        example_task_title: '定时任务', example_task_text: '1分钟后提醒我检查服务器',
-        example_code_title: '编程助手', example_code_text: '搜索AI资讯并生成可视化网页报告',
-        example_knowledge_title: '知识库', example_knowledge_text: '查看知识库当前文档情况',
-        example_skill_title: '技能系统', example_skill_text: '查看所有支持的工具和技能',
-        example_web_title: '指令中心', example_web_text: '查看全部命令',
+        welcome_subtitle: '围绕投研内容生成、用户运营、业务记录和系统配置，提供统一辅助工作台',
+        example_sys_title: '投研内容', example_sys_text: '生成并维护每日投研内容',
+        example_task_title: '用户运营', example_task_text: '管理投研服务用户与权限状态',
+        example_code_title: '业务记录', example_code_text: '查看请求、内容和操作留痕',
+        example_knowledge_title: '历史内容', example_knowledge_text: '检索历史投研图片和素材包',
+        example_skill_title: '系统配置', example_skill_text: '配置投研服务参数和回复词',
+        example_web_title: '健康检查', example_web_text: '检查服务配置和上线状态',
         input_placeholder: '输入消息，或输入 / 使用指令',
         config_title: '配置管理', config_desc: '管理模型和 Agent 配置',
         config_model: '模型配置', config_agent: 'Agent 配置',
@@ -122,26 +121,25 @@ const I18N = {
     },
     en: {
         console: 'Console',
-        nav_chat: 'Chat', nav_manage: 'Management', nav_monitor: 'Monitor', nav_investment: 'Investment',
-        menu_chat: 'Chat', menu_config: 'Config', menu_skills: 'Skills',
-        menu_memory: 'Memory', menu_knowledge: 'Knowledge', menu_channels: 'Channels', menu_tasks: 'Tasks',
+        nav_chat: 'Chat', nav_manage: 'Management', nav_monitor: 'Monitor',
+        menu_chat: 'Chat', menu_config: 'Config', menu_skills: 'Skills', menu_channels: 'Channels',
         menu_logs: 'Logs',
         menu_invest_users: 'Users', menu_invest_daily_content: 'Investment Content',
         menu_invest_content: 'Content',
-        menu_invest_records: 'Records', menu_invest_skills: 'Investment Skills', menu_invest_config: 'Investment Config', menu_invest_health: 'Health',
+        menu_invest_records: 'Records', menu_invest_skills: 'Research Components', menu_invest_config: 'Investment Config', menu_invest_health: 'Health',
         knowledge_title: 'Knowledge', knowledge_desc: 'Browse and explore your knowledge base',
         knowledge_tab_docs: 'Documents', knowledge_tab_graph: 'Graph',
         knowledge_loading: 'Loading knowledge base...', knowledge_loading_desc: 'Knowledge pages will be displayed here',
         knowledge_select_hint: 'Select a document to view', knowledge_empty_hint: 'No knowledge pages yet',
         knowledge_empty_guide: 'Send documents, links or topics to the agent in chat, and it will automatically organize them into your knowledge base.',
         knowledge_go_chat: 'Start a conversation',
-        welcome_subtitle: 'I can help you answer questions, manage your computer, create and execute skills, and keep growing through <br> long-term memory and a personal knowledge base.',
-        example_sys_title: 'System', example_sys_text: 'Show me the files in the workspace',
-        example_task_title: 'Scheduler', example_task_text: 'Remind me to check the server in 5 minutes',
-        example_code_title: 'Coding', example_code_text: 'Search today\'s AI news and generate a visual report webpage',
-        example_knowledge_title: 'Knowledge', example_knowledge_text: 'Show me the current knowledge base',
-        example_skill_title: 'Skills', example_skill_text: 'Show current tools and skills',
-        example_web_title: 'Commands', example_web_text: 'Show all commands',
+        welcome_subtitle: 'A unified workspace for investment research content, user operations, business records, and system configuration.',
+        example_sys_title: 'Research Content', example_sys_text: 'Generate and maintain daily research content',
+        example_task_title: 'User Operations', example_task_text: 'Manage research service users and permissions',
+        example_code_title: 'Business Records', example_code_text: 'Review requests, content, and operation logs',
+        example_knowledge_title: 'Content History', example_knowledge_text: 'Find historical research images and packages',
+        example_skill_title: 'System Config', example_skill_text: 'Configure research service parameters and reply text',
+        example_web_title: 'Health Check', example_web_text: 'Check service configuration and launch readiness',
         input_placeholder: 'Type a message, or press / for commands',
         config_title: 'Configuration', config_desc: 'Manage model and agent settings',
         config_model: 'Model Configuration', config_agent: 'Agent Configuration',
@@ -344,23 +342,24 @@ const VIEW_META = {
     chat:     { group: 'nav_chat',    page: 'menu_chat' },
     config:   { group: 'nav_manage',  page: 'menu_config' },
     skills:   { group: 'nav_manage',  page: 'menu_skills' },
-    memory:   { group: 'nav_manage',  page: 'menu_memory' },
-    knowledge:{ group: 'nav_manage',  page: 'menu_knowledge' },
     channels: { group: 'nav_manage',  page: 'menu_channels' },
-    tasks:    { group: 'nav_manage',  page: 'menu_tasks' },
-    'invest-users':   { group: 'nav_investment', page: 'menu_invest_users' },
-    'invest-daily-content': { group: 'nav_investment', page: 'menu_invest_daily_content' },
-    'invest-content': { group: 'nav_investment', page: 'menu_invest_content' },
-    'invest-records': { group: 'nav_investment', page: 'menu_invest_records' },
-    'invest-skills':  { group: 'nav_investment', page: 'menu_invest_skills' },
-    'invest-config':  { group: 'nav_investment', page: 'menu_invest_config' },
-    'invest-health':  { group: 'nav_investment', page: 'menu_invest_health' },
+    'invest-users':   { group: 'nav_manage', page: 'menu_invest_users' },
+    'invest-daily-content': { group: 'nav_manage', page: 'menu_invest_daily_content' },
+    'invest-content': { group: 'nav_manage', page: 'menu_invest_content' },
+    'invest-records': { group: 'nav_manage', page: 'menu_invest_records' },
+    'invest-skills':  { group: 'nav_manage', page: 'menu_invest_skills' },
+    'invest-config':  { group: 'nav_manage', page: 'menu_invest_config' },
+    'invest-health':  { group: 'nav_manage', page: 'menu_invest_health' },
     logs:     { group: 'nav_monitor', page: 'menu_logs' },
 };
 
 let currentView = 'chat';
 
 function navigateTo(viewId) {
+    const removedViews = new Set(['memory', 'knowledge', 'tasks']);
+    if (removedViews.has(viewId)) {
+        viewId = 'chat';
+    }
     if (!VIEW_META[viewId]) return;
     if (viewId !== 'invest-daily-content') {
         stopInvestmentContentPolling();
@@ -3286,17 +3285,24 @@ async function loadInvestmentGeneratedContent() {
         }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
-        const data = await investmentFetchJson(query.toString() ? `/api/investment/artifacts?${query.toString()}` : '/api/investment/artifacts');
-        const packages = data.packages || [];
+        query.set('level', 'service');
+        const data = await investmentFetchJson(query.toString() ? `/api/investment/artifact-folders?${query.toString()}` : '/api/investment/artifact-folders?level=service');
+        const packages = (data.nodes || []).map(node => ({
+            source_type: 'artifact_folder',
+            service_type: node.key,
+            request_count: node.count || 0,
+            updated_at: node.updated_at || '',
+        }));
         investmentRecordsState.data.cache = {
             entries: packages,
             packages,
-            tree: data.tree || [],
+            tree: data.nodes || [],
             market_dates: investmentGeneratedDateValues([], packages),
         };
         investmentRecordsApplyPagination('cache', data.pagination);
         if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
+        if (investmentRecordsState.cacheCategory) await loadInvestmentArtifactRootNodes(investmentRecordsState.cacheCategory);
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
@@ -3778,13 +3784,14 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
     return categories.map(serviceType => {
         const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
+        const contentCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.count || 0), 0);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
             <button class="investment-generated-content-entry" onclick="selectInvestmentCacheCategory('${serviceType}')">
                 <div class="investment-generated-entry-icon"><i class="fas ${serviceType === 'technical_analysis' ? 'fa-chart-line' : serviceType === 'rate' ? 'fa-percent' : 'fa-file-invoice-dollar'}"></i></div>
                 <div class="investment-generated-entry-main">
                     <strong>${investmentServiceLabel(serviceType)}</strong>
-                    <span>${entries.length ? `${entries.length} 条内容` : '暂无内容'}</span>
+                    <span>${contentCount ? `${contentCount} 条内容` : '暂无内容'}</span>
                 </div>
                 <div class="investment-generated-entry-meta">
                     <span>${hitCount} 次命中</span>
@@ -3831,29 +3838,45 @@ function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
                 </div>
             </div>
             <div class="investment-artifact-browser">
-                <aside class="investment-artifact-tree" id="investment-artifact-tree">${renderInvestmentArtifactTree(entries)}</aside>
+                <aside class="investment-artifact-tree" id="investment-artifact-tree">${renderInvestmentArtifactLazyTree(serviceType)}</aside>
                 <section class="investment-artifact-viewer" id="investment-artifact-viewer">${renderInvestmentArtifactViewer()}</section>
             </div>
         </div>`;
 }
 
-function renderInvestmentArtifactTree(packages = []) {
-    if (!packages.length) return '<div class="investment-history-empty investment-generated-history-empty">暂无历史内容</div>';
-    const byDate = new Map();
-    packages.forEach(pkg => {
-        const dateKey = pkg.market_date || 'unknown-date';
-        if (!byDate.has(dateKey)) byDate.set(dateKey, []);
-        byDate.get(dateKey).push(pkg);
-    });
-    return Array.from(byDate.entries()).sort((a, b) => b[0].localeCompare(a[0])).map(([dateKey, datePackages]) => `
-        <div class="knowledge-tree-group investment-artifact-date open">
-            <button class="knowledge-tree-group-btn" onclick="this.parentElement.classList.toggle('open')">
-                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-folder text-amber-400 text-[11px]"></i><span>${escapeHtml(dateKey)}</span><span class="ml-auto text-[10px] text-slate-400">${datePackages.length}</span>
+function renderInvestmentArtifactLazyTree(serviceType) {
+    const range = investmentNormalizeCacheDateFilters();
+    const root = investmentArtifactRootNode(range);
+    if (!root) return '<div class="investment-history-empty investment-generated-history-empty">选择日期范围查看目录</div>';
+    return renderInvestmentArtifactFolderNode(root, serviceType, true);
+}
+
+function investmentArtifactRootNode(range) {
+    if (range.mode === 'year' && /^\d{4}$/.test(investmentCachePeriodValue())) {
+        const key = investmentCachePeriodValue();
+        return {level: 'year', key, label: key, count: ''};
+    }
+    if (range.mode === 'month' && /^\d{4}-\d{2}$/.test(investmentCachePeriodValue())) {
+        const key = investmentCachePeriodValue();
+        return {level: 'month', key, label: key, count: ''};
+    }
+    if (range.mode === 'day' && range.marketDate) {
+        return {level: 'date', key: range.marketDate, label: range.marketDate, count: ''};
+    }
+    return {level: 'all', key: 'all', label: '全部', count: ''};
+}
+
+function renderInvestmentArtifactFolderNode(node, serviceType, open = false) {
+    const level = node.level || 'year';
+    const key = node.key || node.label || '';
+    const count = node.count === '' || node.count == null ? '' : `<span class="ml-auto text-[10px] text-slate-400">${escapeHtml(node.count)}</span>`;
+    return `
+        <div class="knowledge-tree-group investment-artifact-${escapeHtml(level)} ${open ? 'open' : ''}" data-artifact-level="${escapeHtml(level)}" data-artifact-key="${escapeHtml(key)}" data-artifact-loaded="0">
+            <button class="knowledge-tree-group-btn investment-artifact-${level === 'package' ? 'package' : level === 'date' ? 'folder' : 'package'}-btn" onclick="toggleInvestmentArtifactNode(this, '${escapeHtml(serviceType)}', '${escapeHtml(level)}', '${escapeHtml(key)}')">
+                <i class="fas fa-chevron-right chevron"></i><i class="fas ${level === 'package' ? 'fa-box-archive text-slate-400' : 'fa-folder text-amber-400'} text-[11px]"></i><span>${escapeHtml(node.label || key)}</span>${count}
             </button>
-            <div class="knowledge-tree-group-items">
-                ${datePackages.map(pkg => renderInvestmentArtifactPackageTree(pkg)).join('')}
-            </div>
-        </div>`).join('');
+            <div class="knowledge-tree-group-items">${open ? '<div class="investment-muted-inline">加载中...</div>' : ''}</div>
+        </div>`;
 }
 
 function renderInvestmentArtifactPackageTree(pkg = {}) {
@@ -3893,6 +3916,95 @@ function renderInvestmentArtifactGroupTree(group, files, encodedPackage) {
                 }).join('')}
             </div>
         </div>`;
+}
+
+async function loadInvestmentArtifactRootNodes(serviceType) {
+    const tree = document.getElementById('investment-artifact-tree');
+    if (!tree) return;
+    const root = tree.querySelector('.knowledge-tree-group');
+    if (!root) return;
+    const button = root.querySelector('.knowledge-tree-group-btn');
+    if (button) await toggleInvestmentArtifactNode(button, serviceType, root.dataset.artifactLevel || 'all', root.dataset.artifactKey || 'all', true);
+}
+
+function investmentArtifactFolderQuery(serviceType, level, key) {
+    const query = new URLSearchParams();
+    query.set('service_type', serviceType);
+    query.set('page_size', '100');
+    if (level === 'all') {
+        query.set('level', 'year');
+    } else if (level === 'year') {
+        query.set('level', 'month');
+        query.set('year', key);
+    } else if (level === 'month') {
+        query.set('level', 'date');
+        query.set('month', key);
+    } else if (level === 'date') {
+        query.set('level', 'package');
+        query.set('date', key);
+    }
+    const keyword = investmentCacheKeyword().trim();
+    if (keyword) query.set('keyword', keyword);
+    return query;
+}
+
+function investmentArtifactNextLevel(level) {
+    if (level === 'all') return 'year';
+    if (level === 'year') return 'month';
+    if (level === 'month') return 'date';
+    if (level === 'date') return 'package';
+    return '';
+}
+
+async function toggleInvestmentArtifactNode(button, serviceType, level, key, forceLoad = false) {
+    const group = button.closest('.knowledge-tree-group');
+    if (!group) return;
+    const items = group.querySelector(':scope > .knowledge-tree-group-items');
+    if (!items) return;
+    group.classList.toggle('open', forceLoad || !group.classList.contains('open'));
+    if (!forceLoad && group.dataset.artifactLoaded === '1') return;
+    if (level === 'package') {
+        await loadInvestmentArtifactPackage(group, key);
+        return;
+    }
+    items.innerHTML = '<div class="investment-muted-inline">加载中...</div>';
+    try {
+        const query = investmentArtifactFolderQuery(serviceType, level, key);
+        const data = await investmentFetchJson(`/api/investment/artifact-folders?${query.toString()}`);
+        const nextLevel = investmentArtifactNextLevel(level);
+        const nodes = data.nodes || [];
+        items.innerHTML = nodes.length
+            ? nodes.map(node => renderInvestmentArtifactFolderNode({...node, level: node.level || nextLevel}, serviceType)).join('')
+            : '<div class="investment-history-empty investment-generated-history-empty">暂无历史内容</div>';
+        group.dataset.artifactLoaded = '1';
+    } catch (error) {
+        items.innerHTML = `<div class="investment-history-empty investment-generated-history-empty">${escapeHtml(error.message || error)}</div>`;
+    }
+}
+
+async function loadInvestmentArtifactPackage(group, packageId) {
+    const items = group.querySelector(':scope > .knowledge-tree-group-items');
+    if (!items) return;
+    items.innerHTML = '<div class="investment-muted-inline">加载中...</div>';
+    try {
+        const data = await investmentFetchJson(`/api/investment/artifacts?package_id=${encodeURIComponent(packageId)}&page_size=1`);
+        const pkg = (data.packages || [])[0];
+        if (!pkg) {
+            items.innerHTML = '<div class="investment-history-empty investment-generated-history-empty">暂无文件</div>';
+            return;
+        }
+        const encodedPackage = investmentEncodedRecord(pkg);
+        const groups = {input: [], output: [], intermediate: []};
+        (pkg.files || []).forEach(file => {
+            const fileGroup = file.group || 'intermediate';
+            if (!groups[fileGroup]) groups[fileGroup] = [];
+            groups[fileGroup].push(file);
+        });
+        items.innerHTML = ['input', 'output', 'intermediate'].map(folder => renderInvestmentArtifactGroupTree(folder, groups[folder] || [], encodedPackage)).join('');
+        group.dataset.artifactLoaded = '1';
+    } catch (error) {
+        items.innerHTML = `<div class="investment-history-empty investment-generated-history-empty">${escapeHtml(error.message || error)}</div>`;
+    }
 }
 
 function investmentArtifactFileIcon(file = {}) {
@@ -4317,7 +4429,7 @@ function renderInvestmentSkillManager() {
             <div class="investment-panel-heading">
                 <div>
                     <div class="investment-panel-title"><i class="fas fa-code-branch"></i><span>skill配置</span></div>
-                    <div class="investment-subtitle">当前仅启用 technical-analysis 和 signal-card-renderer 两个投资业务 Skill，可上传版本、切换版本或删除上传版本。</div>
+                    <div class="investment-subtitle">当前仅启用 technical-analysis 和 signal-card-renderer 两个投研组件，可上传版本、切换版本或删除上传版本。</div>
                 </div>
                 <div class="investment-panel-actions">
                     ${investmentButton('fa-arrows-rotate', '刷新版本', 'loadInvestmentSkillVersions()')}
@@ -4344,7 +4456,7 @@ async function loadInvestmentSkillVersions() {
 }
 
 function renderInvestmentSkillConfigTable(skills = []) {
-    if (!skills.length) return '<div class="investment-empty">暂无投资业务 Skill</div>';
+    if (!skills.length) return '<div class="investment-empty">暂无投研组件</div>';
     const rows = skills.map(item => renderInvestmentSkillConfigRow(item.skill || {}, item.versions || [])).join('');
     return investmentTableWrap(`<table class="investment-table investment-skill-config-table">
         <thead><tr><th>Skill 名字</th><th>状态</th><th>版本</th><th>来源</th><th>文件</th><th>上传时间</th><th>操作</th></tr></thead>
@@ -5002,7 +5114,7 @@ let pollGeneration = 0;   // incremented on each restart to cancel stale poll lo
 let loadingContainers = {};
 let activeStreams = {};   // request_id -> EventSource
 let isComposing = false;
-let appConfig = { use_agent: false, title: 'CowAgent', subtitle: '', providers: {}, api_bases: {} };
+let appConfig = { use_agent: false, title: '智能投研辅助系统', subtitle: '', providers: {}, api_bases: {} };
 
 const SESSION_ID_KEY = 'cow_session_id';
 
@@ -5032,7 +5144,7 @@ let historyLoading = false;
 fetch('/config').then(r => r.json()).then(data => {
     if (data.status === 'success') {
         appConfig = data;
-        const title = data.title || 'CowAgent';
+        const title = data.title || '智能投研辅助系统';
         document.getElementById('welcome-title').textContent = title;
         initConfigView(data);
     }
@@ -5081,18 +5193,6 @@ messagesDiv.addEventListener('click', (e) => {
             });
         }
         return;
-    }
-    const a = e.target.closest('a');
-    if (!a) return;
-    const href = a.getAttribute('href') || '';
-    if (href === '/memory/dreams') {
-        e.preventDefault();
-        navigateTo('memory');
-        setTimeout(() => switchMemoryTab('dreams'), 50);
-    } else if (href === '/memory/MEMORY.md') {
-        e.preventDefault();
-        navigateTo('memory');
-        setTimeout(() => { switchMemoryTab('files'); openMemoryFile('MEMORY.md', 'memory'); }, 50);
     }
 });
 const attachmentPreview = document.getElementById('attachment-preview');
@@ -5349,11 +5449,6 @@ const SLASH_COMMANDS = [
     { cmd: '/skill info ',         desc: '查看技能详情' },
     { cmd: '/skill enable ',       desc: '启用技能' },
     { cmd: '/skill disable ',      desc: '禁用技能' },
-    { cmd: '/memory dream ',        desc: '手动触发记忆蒸馏 (可指定天数, 默认3)' },
-    { cmd: '/knowledge',            desc: '查看知识库统计' },
-    { cmd: '/knowledge list',      desc: '查看知识库文件树' },
-    { cmd: '/knowledge on',        desc: '开启知识库' },
-    { cmd: '/knowledge off',       desc: '关闭知识库' },
     { cmd: '/config',              desc: '查看当前配置' },
     { cmd: '/logs',                desc: '查看最近日志' },
     { cmd: '/version',             desc: '查看版本' },
@@ -5702,7 +5797,7 @@ function startSSE(requestId, loadingEl, timestamp, titleInfo) {
         botEl.className = 'flex gap-3 px-4 sm:px-6 py-3';
         botEl.dataset.requestId = requestId;
         botEl.innerHTML = `
-            <img src="assets/logo.jpg" alt="CowAgent" class="w-8 h-8 rounded-lg flex-shrink-0">
+            <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-8 h-8 rounded-lg flex-shrink-0">
             <div class="min-w-0 flex-1 max-w-[85%]">
                 <div class="bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-2xl px-4 py-3 text-sm leading-relaxed msg-content text-slate-700 dark:text-slate-200">
                     <div class="agent-steps"></div>
@@ -6251,7 +6346,7 @@ function createBotMessageEl(content, timestamp, requestId, msg) {
     }
 
     el.innerHTML = `
-        <img src="assets/logo.jpg" alt="CowAgent" class="w-8 h-8 rounded-lg flex-shrink-0">
+        <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-8 h-8 rounded-lg flex-shrink-0">
         <div class="min-w-0 flex-1 max-w-[85%]">
             <div class="bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-2xl px-4 py-3 text-sm leading-relaxed msg-content text-slate-700 dark:text-slate-200">
                 ${stepsHtml ? `<div class="agent-steps">${stepsHtml}</div>` : ''}
@@ -6382,7 +6477,7 @@ function addLoadingIndicator() {
     const el = document.createElement('div');
     el.className = 'flex gap-3 px-4 sm:px-6 py-3';
     el.innerHTML = `
-        <img src="assets/logo.jpg" alt="CowAgent" class="w-8 h-8 rounded-lg flex-shrink-0">
+        <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-8 h-8 rounded-lg flex-shrink-0">
         <div class="bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-2xl px-4 py-3">
             <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-primary-400 animate-pulse-dot" style="animation-delay: 0s"></span>
@@ -6412,8 +6507,8 @@ function newChat() {
     ws.className = 'flex flex-col items-center justify-center h-full px-6 pb-16';
     ws.style.paddingTop = '6vh';
     ws.innerHTML = `
-        <img src="assets/logo.jpg" alt="CowAgent" class="w-16 h-16 rounded-2xl mb-6 shadow-lg shadow-primary-500/20">
-        <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">${appConfig.title || 'CowAgent'}</h1>
+        <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-16 h-16 rounded-2xl mb-6 shadow-lg shadow-primary-500/20">
+        <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">${appConfig.title || '智能投研辅助系统'}</h1>
         <p class="text-slate-500 dark:text-slate-400 text-center max-w-lg mb-10 leading-relaxed" data-i18n="welcome_subtitle">${t('welcome_subtitle')}</p>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-2xl">
             <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
@@ -8724,14 +8819,7 @@ navigateTo = function(viewId) {
     // Lazy-load view data
     if (viewId === 'config') loadConfigView();
     else if (viewId === 'skills') loadSkillsView();
-    else if (viewId === 'memory') {
-        document.getElementById('memory-panel-viewer').classList.add('hidden');
-        document.getElementById('memory-panel-list').classList.remove('hidden');
-        switchMemoryTab('files');
-    }
-    else if (viewId === 'knowledge') loadKnowledgeView();
     else if (viewId === 'channels') loadChannelsView();
-    else if (viewId === 'tasks') loadTasksView();
     else if (viewId === 'logs') startLogStream();
 };
 
@@ -8916,46 +9004,7 @@ function bindKnowledgeLinks(container, currentFilePath) {
 }
 
 function bindChatKnowledgeLinks(container) {
-    if (!container) return;
-    container.querySelectorAll('a').forEach(a => {
-        const href = a.getAttribute('href');
-        if (!href || !href.endsWith('.md')) return;
-        if (/^https?:\/\//.test(href)) return;
-
-        // Determine knowledge path
-        let knowledgePath = null;
-        if (href.startsWith('knowledge/')) {
-            // Full path from workspace root: knowledge/concepts/moe.md
-            knowledgePath = href.replace(/^knowledge\//, '');
-        } else if (/^[a-z0-9_-]+\/[a-z0-9_.-]+\.md$/i.test(href)) {
-            // Looks like category/file.md pattern without knowledge/ prefix
-            knowledgePath = href;
-        } else if (href.includes('/') && !href.startsWith('/')) {
-            // Relative path like ../entities/deepseek.md — extract filename and search
-            const filename = href.split('/').pop();
-            knowledgePath = '__search__:' + filename;
-        }
-        if (!knowledgePath) return;
-
-        a.addEventListener('click', (e) => {
-            e.preventDefault();
-            if (knowledgePath.startsWith('__search__:')) {
-                const filename = knowledgePath.replace('__search__:', '');
-                // Find the file in cached tree data
-                const found = _findKnowledgeFileByName(filename);
-                if (found) {
-                    navigateTo('knowledge');
-                    setTimeout(() => openKnowledgeFile(found.path, found.title), 100);
-                }
-            } else {
-                navigateTo('knowledge');
-                const linkTitle = a.textContent.trim() || knowledgePath.replace(/\.md$/, '').split('/').pop();
-                setTimeout(() => openKnowledgeFile(knowledgePath, linkTitle), 100);
-            }
-        });
-        a.style.cursor = 'pointer';
-        a.classList.add('text-primary-500', 'hover:underline');
-    });
+    return;
 }
 
 function _findKnowledgeFileByName(filename) {
@@ -9335,7 +9384,7 @@ function updateAuthUserSummary(admin) {
     }
     summary.classList.remove('hidden');
     summary.classList.add('sm:flex');
-    nameEl.textContent = admin?.username || 'CowAgent';
+    nameEl.textContent = admin?.username || '智能投研辅助系统';
     roleEl.textContent = admin ? investmentAdminRoleLabel(admin.role) : t('auth_logged_in');
 }
 
@@ -9373,18 +9422,11 @@ function initApp() {
     _restoreSessionPanel();
     loadInvestmentAdminSession().catch(() => {});
 
-    fetch('/api/knowledge/list').then(r => r.json()).then(data => {
-        if (data.status === 'success') {
-            _knowledgeTreeData = data.tree || [];
-            _knowledgeRootFiles = data.root_files || [];
-        }
-    }).catch(() => {});
-
     fetch('/api/version').then(r => r.json()).then(data => {
         APP_VERSION = `v${data.version}`;
-        document.getElementById('sidebar-version').textContent = `CowAgent ${APP_VERSION}`;
+        document.getElementById('sidebar-version').textContent = `智能投研辅助系统 ${APP_VERSION}`;
     }).catch(() => {
-        document.getElementById('sidebar-version').textContent = 'CowAgent';
+        document.getElementById('sidebar-version').textContent = '智能投研辅助系统';
     });
     chatInput.focus();
 }
