@@ -18,6 +18,7 @@ INVESTMENT_API_URLS = (
     '/api/investment/audits', 'InvestmentOperationAuditsHandler',
     '/api/investment/records/requests', 'InvestmentRequestRecordsHandler',
     '/api/investment/records/contents', 'InvestmentContentRecordsHandler',
+    '/api/investment/artifacts', 'InvestmentArtifactPackagesHandler',
     '/api/investment/cache', 'InvestmentCacheHandler',
     '/api/investment/cache/clear', 'InvestmentCacheClearHandler',
     '/api/investment/cache/(.*)/invalidate', 'InvestmentCacheEntryInvalidateHandler',

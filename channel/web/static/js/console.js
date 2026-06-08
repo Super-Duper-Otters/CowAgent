@@ -493,7 +493,7 @@ let investmentRecordsState = {
 const INVEST_VIEW_PERMISSIONS = {
     'invest-users': ['customers.read', 'admin_users.read'],
     'invest-daily-content': 'content.read',
-    'invest-content': 'cache.read',
+    'invest-content': 'content.read',
     'invest-records': 'records.read',
     'invest-skills': 'skills.read',
     'invest-config': ['config.read', 'stocks.read'],
@@ -3266,12 +3266,6 @@ async function renderInvestmentGeneratedContent() {
         <div class="investment-content-workspace">
             <section class="investment-content-shell">
                 <div class="investment-content-list" id="investment-content-list"></div>
-                <aside class="investment-records-drawer" id="investment-records-drawer">
-                    <div class="investment-records-drawer-empty">
-                        <i class="fas fa-circle-info"></i>
-                        <span>选择内容查看详情</span>
-                    </div>
-                </aside>
             </section>
         </div>`;
     await loadInvestmentGeneratedContent();
@@ -3286,11 +3280,20 @@ async function loadInvestmentGeneratedContent() {
         query.delete('market_date');
         query.delete('start_date');
         query.delete('end_date');
-        if (range.marketDate) query.set('market_date', range.marketDate);
+        if (range.marketDate) {
+            query.set('start_date', range.marketDate);
+            query.set('end_date', range.marketDate);
+        }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
-        const data = await investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache');
-        investmentRecordsState.data.cache = {entries: data.entries || [], market_dates: data.market_dates || []};
+        const data = await investmentFetchJson(query.toString() ? `/api/investment/artifacts?${query.toString()}` : '/api/investment/artifacts');
+        const packages = data.packages || [];
+        investmentRecordsState.data.cache = {
+            entries: packages,
+            packages,
+            tree: data.tree || [],
+            market_dates: investmentGeneratedDateValues([], packages),
+        };
         investmentRecordsApplyPagination('cache', data.pagination);
         if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
@@ -3313,12 +3316,6 @@ function renderInvestmentRecordsShell() {
                 <div class="investment-records-filters" id="investment-records-filters">${renderInvestmentRecordsFilters(investmentRecordsState.tab)}</div>
                 <div class="investment-records-main">
                     <div class="investment-records-list" id="investment-records-list"></div>
-                    <aside class="investment-records-drawer" id="investment-records-drawer">
-                        <div class="investment-records-drawer-empty">
-                            <i class="fas fa-circle-info"></i>
-                            <span>选择记录查看详情</span>
-                        </div>
-                    </aside>
                 </div>
             </section>
         </div>`;
@@ -3757,7 +3754,6 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                         <input id="investment-content-filter-keyword" type="search" value="${escapeHtml(keyword)}" placeholder="类型/标的/文件" onkeydown="if(event.key === 'Enter') applyInvestmentCacheDate()">
                     </label>
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
-                    ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日', 'clearInvestmentGeneratedContentCacheByDate()')}
                 </div>
             </div>
             ${body}
@@ -3781,7 +3777,7 @@ function renderInvestmentGeneratedContentHome(categories, entries) {
 function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
     return categories.map(serviceType => {
         const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
-        const hitCount = entries.reduce((sum, entry) => sum + Number(entry.hit_count || 0), 0);
+        const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
             <button class="investment-generated-content-entry" onclick="selectInvestmentCacheCategory('${serviceType}')">
@@ -3834,8 +3830,117 @@ function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
                     <span class="investment-generated-content-detail-count">${entries.length} 条</span>
                 </div>
             </div>
-            ${renderInvestmentCacheCategory(serviceType, entries)}
+            <div class="investment-artifact-browser">
+                <aside class="investment-artifact-tree" id="investment-artifact-tree">${renderInvestmentArtifactTree(entries)}</aside>
+                <section class="investment-artifact-viewer" id="investment-artifact-viewer">${renderInvestmentArtifactViewer()}</section>
+            </div>
         </div>`;
+}
+
+function renderInvestmentArtifactTree(packages = []) {
+    if (!packages.length) return '<div class="investment-history-empty investment-generated-history-empty">暂无历史内容</div>';
+    const byDate = new Map();
+    packages.forEach(pkg => {
+        const dateKey = pkg.market_date || 'unknown-date';
+        if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+        byDate.get(dateKey).push(pkg);
+    });
+    return Array.from(byDate.entries()).sort((a, b) => b[0].localeCompare(a[0])).map(([dateKey, datePackages]) => `
+        <div class="knowledge-tree-group investment-artifact-date open">
+            <button class="knowledge-tree-group-btn" onclick="this.parentElement.classList.toggle('open')">
+                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-folder text-amber-400 text-[11px]"></i><span>${escapeHtml(dateKey)}</span><span class="ml-auto text-[10px] text-slate-400">${datePackages.length}</span>
+            </button>
+            <div class="knowledge-tree-group-items">
+                ${datePackages.map(pkg => renderInvestmentArtifactPackageTree(pkg)).join('')}
+            </div>
+        </div>`).join('');
+}
+
+function renderInvestmentArtifactPackageTree(pkg = {}) {
+    const groups = {input: [], output: [], intermediate: []};
+    (pkg.files || []).forEach(file => {
+        const group = file.group || 'intermediate';
+        if (!groups[group]) groups[group] = [];
+        groups[group].push(file);
+    });
+    const encodedPackage = investmentEncodedRecord(pkg);
+    return `
+        <div class="knowledge-tree-group investment-artifact-package">
+            <button class="knowledge-tree-group-btn investment-artifact-package-btn" onclick="this.parentElement.classList.toggle('open')">
+                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-box-archive text-[11px] text-slate-400"></i><span>${escapeHtml(pkg.display_name || pkg.package_id || '产物包')}</span><span class="ml-auto text-[10px] text-slate-400">${escapeHtml(pkg.request_count || 0)}</span>
+            </button>
+            <div class="knowledge-tree-group-items">
+                ${['input', 'output', 'intermediate'].map(group => renderInvestmentArtifactGroupTree(group, groups[group] || [], encodedPackage)).join('')}
+            </div>
+        </div>`;
+}
+
+function renderInvestmentArtifactGroupTree(group, files, encodedPackage) {
+    if (!files.length) return '';
+    const label = group === 'input' ? 'input' : group === 'output' ? 'output' : 'intermediate';
+    return `
+        <div class="knowledge-tree-group investment-artifact-folder">
+            <button class="knowledge-tree-group-btn investment-artifact-folder-btn" onclick="this.parentElement.classList.toggle('open')">
+                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-folder text-amber-400 text-[11px]"></i><span>${label}</span><span class="ml-auto text-[10px] text-slate-400">${files.length}</span>
+            </button>
+            <div class="knowledge-tree-group-items">
+                ${files.map(file => {
+                    const encodedFile = investmentEncodedRecord(file);
+                    const fileName = file.file_name || (file.kind === 'virtual_text' ? 'raw_input.txt' : '') || file.virtual_path || 'artifact';
+                    return `<button class="knowledge-tree-file investment-artifact-file-btn" onclick="openInvestmentArtifactFile('${encodedPackage}', '${encodedFile}', this)">
+                        <i class="fas ${investmentArtifactFileIcon(file)} text-[10px] text-slate-400"></i><span class="truncate">${escapeHtml(fileName)}</span>
+                    </button>`;
+                }).join('')}
+            </div>
+        </div>`;
+}
+
+function investmentArtifactFileIcon(file = {}) {
+    const fileType = file.file_type || '';
+    if (fileType === 'image') return 'fa-image';
+    if (fileType === 'markdown' || fileType === 'text') return 'fa-file-lines';
+    return 'fa-file';
+}
+
+function openInvestmentArtifactFile(encodedPackage, encodedFile, button = null) {
+    const pkg = JSON.parse(decodeURIComponent(encodedPackage));
+    const file = JSON.parse(decodeURIComponent(encodedFile));
+    document.querySelectorAll('.investment-artifact-tree .knowledge-tree-file').forEach(el => el.classList.remove('active'));
+    if (button) button.classList.add('active');
+    const viewer = document.getElementById('investment-artifact-viewer');
+    if (viewer) viewer.innerHTML = renderInvestmentArtifactViewer(pkg, file);
+}
+
+function renderInvestmentArtifactViewer(pkg = null, file = null) {
+    if (!pkg || !file) {
+        return `<div class="investment-artifact-viewer-empty"><i class="fas fa-file-lines"></i><span>选择文件查看内容</span></div>`;
+    }
+    const title = file.file_name || file.virtual_path || 'artifact';
+    const meta = `
+        <div class="investment-artifact-viewer-meta">
+            <span>${escapeHtml(pkg.display_name || '')}</span>
+            <span>${escapeHtml(pkg.market_date || '')}</span>
+            <span>${escapeHtml(file.virtual_path || '')}</span>
+        </div>`;
+    const actions = file.file_url
+        ? `<a class="investment-btn secondary" href="${investmentFileUrl(file)}" target="_blank" rel="noopener noreferrer" download><i class="fas fa-download"></i><span>下载</span></a>`
+        : '';
+    let body = '';
+    if (file.kind === 'virtual_text') {
+        body = `<pre class="investment-artifact-text">${escapeHtml(file.content || '')}</pre>`;
+    } else if (file.file_type === 'image') {
+        body = `<div class="investment-artifact-image-wrap"><img src="${investmentFileUrl(file)}" alt="${escapeHtml(title)}"></div>`;
+    } else if (file.file_type === 'markdown') {
+        body = `<div class="investment-artifact-download-card"><i class="fas fa-file-lines"></i><div><strong>${escapeHtml(title)}</strong><span>Markdown 报告可下载查看</span></div></div>`;
+    } else {
+        body = `<div class="investment-artifact-download-card"><i class="fas fa-file"></i><div><strong>${escapeHtml(title)}</strong><span>文件可下载查看</span></div></div>`;
+    }
+    return `
+        <div class="investment-artifact-viewer-header">
+            <div><h4>${escapeHtml(title)}</h4>${meta}</div>
+            <div class="investment-row-actions">${actions}</div>
+        </div>
+        <div class="investment-artifact-viewer-body">${body}</div>`;
 }
 
 function renderInvestmentCacheCategory(serviceType, entries) {

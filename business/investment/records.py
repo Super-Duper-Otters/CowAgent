@@ -3,13 +3,14 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import delete, func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, Status, normalize_service, user_message
 from .db import connect, row_to_dict
-from .schema import investment_daily_contents, investment_output_files, investment_request_records, investment_users
+from .schema import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records, investment_users
 
 
 GENERATING_TIMEOUT_WARNING = "未完成/可能超时"
@@ -596,6 +597,249 @@ def list_output_files(owner_id: str) -> list[dict]:
         item["file_url"] = f"/api/file?id={file_id}" if file_id else ""
         files.append(item)
     return files
+
+
+def _artifact_service_label(service_type: str) -> str:
+    labels = {
+        str(ServiceType.TECHNICAL_ANALYSIS): "技术分析",
+        str(ServiceType.RATE): "利率",
+        str(ServiceType.CONVERTIBLE_BOND): "转债",
+    }
+    return labels.get(str(service_type or ""), str(service_type or ""))
+
+
+def _artifact_target_label(item: dict) -> str:
+    target = str(item.get("normalized_target") or "").strip()
+    stock_name = str(item.get("stock_name") or "").strip()
+    if target and stock_name and stock_name != target:
+        return f"{target} {stock_name}"
+    return target or stock_name or "全市场"
+
+
+def _artifact_bucket(role: str, owner_type: str = "") -> str:
+    role = str(role or "").strip()
+    if role in {"signal_card", "output_image"}:
+        return "output"
+    if role in {"main_chart", "markdown_report", "generated_text"}:
+        return "intermediate"
+    if role.startswith("source") or owner_type == "input":
+        return "input"
+    if role in {"image", "markdown"}:
+        return "output" if role == "image" else "intermediate"
+    return "intermediate"
+
+
+def _artifact_virtual_name(role: str, file_path: str) -> str:
+    suffix = Path(file_path).suffix.lower() if file_path else ""
+    if role == "signal_card":
+        return f"signal_card{suffix or '.png'}"
+    if role == "main_chart":
+        return f"main_chart{suffix or '.png'}"
+    if role == "markdown_report":
+        return f"markdown_report{suffix or '.md'}"
+    if role == "output_image":
+        return f"output_image{suffix or '.png'}"
+    if role == "source_image":
+        return Path(file_path).name or f"source_image{suffix or '.png'}"
+    return Path(file_path).name or f"{role or 'artifact'}{suffix or ''}"
+
+
+def _file_payload(item: dict) -> dict:
+    file_id = str(item.get("id") or item.get("file_id") or "")
+    payload = dict(item)
+    payload["file_id"] = file_id
+    payload["file_url"] = item.get("file_url") or (f"/api/file?id={file_id}" if file_id else "")
+    return payload
+
+
+def _artifact_file_payload(item: dict) -> dict:
+    role = str(item.get("artifact_role") or item.get("file_type") or "artifact")
+    bucket = _artifact_bucket(role, str(item.get("owner_type") or ""))
+    file_payload = _file_payload(item)
+    file_payload.update(
+        {
+            "kind": "file",
+            "group": bucket,
+            "virtual_path": f"{bucket}/{_artifact_virtual_name(role, str(item.get('file_path') or ''))}",
+        }
+    )
+    return file_payload
+
+
+def _virtual_input_file(raw_input: str) -> dict:
+    return {
+        "kind": "virtual_text",
+        "group": "input",
+        "virtual_path": "input/raw_input.txt",
+        "file_name": "raw_input.txt",
+        "file_type": "text",
+        "artifact_role": "raw_input",
+        "content": raw_input or "",
+    }
+
+
+def _dedupe_files(files: list[dict]) -> list[dict]:
+    seen = set()
+    result = []
+    for file in files:
+        key = (file.get("virtual_path"), file.get("file_path") or file.get("content") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(file)
+    order = {"input": 0, "output": 1, "intermediate": 2}
+    return sorted(result, key=lambda item: (order.get(item.get("group"), 99), item.get("virtual_path") or ""))
+
+
+def _request_rows_by_cache_key(cache_key: str) -> list[dict]:
+    if not cache_key:
+        return []
+    with connect() as conn:
+        rows = conn.execute(
+            select(investment_request_records)
+            .where(investment_request_records.c.cache_key == cache_key)
+            .order_by(investment_request_records.c.created_at.desc())
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def _request_row(request_id: str) -> dict:
+    if not request_id:
+        return {}
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_request_records).where(investment_request_records.c.request_id == request_id)
+        ).fetchone()
+    return row_to_dict(row)
+
+
+def _artifact_files_for_owner(owner_id: str, output_files: list[str]) -> list[dict]:
+    files = list_output_files(owner_id) if owner_id else []
+    if files:
+        return [_artifact_file_payload(file) for file in files]
+    fallback = []
+    for file_path in output_files:
+        role = "markdown_report" if str(file_path).lower().endswith((".md", ".markdown")) else "image"
+        fallback.append(
+            _artifact_file_payload(
+                {
+                    "owner_id": owner_id,
+                    "owner_type": "request",
+                    "file_path": file_path,
+                    "file_type": "markdown" if role == "markdown_report" else "image",
+                    "artifact_role": role,
+                }
+            )
+        )
+    return fallback
+
+
+def _row_to_artifact_package(cache_item: dict) -> dict:
+    cache_key = str(cache_item.get("cache_key") or "")
+    owner_id = str(cache_item.get("artifact_owner_id") or "")
+    requests = _request_rows_by_cache_key(cache_key)
+    created_from = _request_row(owner_id) if owner_id else (requests[-1] if requests else {})
+    if not owner_id:
+        owner_id = str(created_from.get("request_id") or "")
+    service_type = str(cache_item.get("service_type") or created_from.get("service_type") or "")
+    market_date = str(cache_item.get("market_date") or created_from.get("market_date") or "")
+    target = str(cache_item.get("normalized_target") or created_from.get("normalized_target") or "")
+    stock_name = str(created_from.get("stock_name") or "")
+    target_item = {"normalized_target": target, "stock_name": stock_name}
+    output_files = _load_list(cache_item.get("output_files"))
+    raw_input = str(created_from.get("raw_input") or (requests[-1].get("raw_input") if requests else "") or "")
+    related_request_ids = [str(item.get("request_id") or "") for item in requests if item.get("request_id")]
+    files = [_virtual_input_file(raw_input)] if raw_input else []
+    files.extend(_artifact_files_for_owner(owner_id, output_files))
+    return {
+        "package_id": cache_key,
+        "source_type": "cache",
+        "service_type": service_type,
+        "service_label": _artifact_service_label(service_type),
+        "market_date": market_date,
+        "normalized_target": target,
+        "stock_name": stock_name,
+        "display_name": _artifact_target_label(target_item),
+        "display_path": [_artifact_service_label(service_type), market_date, _artifact_target_label(target_item)],
+        "version_fingerprint": cache_item.get("version_fingerprint") or "",
+        "created_from_request_id": owner_id,
+        "related_request_ids": related_request_ids,
+        "request_count": len(related_request_ids),
+        "hit_count": int(cache_item.get("hit_count") or 0),
+        "created_at": cache_item.get("created_at") or "",
+        "updated_at": cache_item.get("updated_at") or "",
+        "files": _dedupe_files(files),
+    }
+
+
+def _artifact_package_conditions(table, service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+    conditions = []
+    service_condition, impossible = _service_condition(table, service_type)
+    if impossible:
+        return None
+    if service_condition is not None:
+        conditions.append(service_condition)
+    if start_date:
+        conditions.append(table.c.market_date >= str(start_date))
+    if end_date:
+        conditions.append(table.c.market_date <= str(end_date))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                table.c.cache_key.ilike(pattern),
+                table.c.service_type.ilike(pattern),
+                table.c.normalized_target.ilike(pattern),
+                table.c.market_date.ilike(pattern),
+                table.c.output_files.ilike(pattern),
+            )
+        )
+    return conditions
+
+
+def list_artifact_packages_page(
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    service_type: ServiceType | str | None = None,
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+) -> tuple[list[dict], int]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 50))
+    table = investment_cache_entries
+    conditions = _artifact_package_conditions(table, service_type, start_date, end_date, keyword)
+    if conditions is None:
+        return [], 0
+    stmt = select(table).order_by(table.c.market_date.desc(), table.c.updated_at.desc()).limit(page_size).offset((page - 1) * page_size)
+    count_stmt = select(func.count()).select_from(table)
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
+    with connect() as conn:
+        total = int(conn.execute(count_stmt).scalar_one() or 0)
+        rows = conn.execute(stmt).fetchall()
+    return [_row_to_artifact_package(row_to_dict(row)) for row in rows], total
+
+
+def build_artifact_package_tree(packages: list[dict]) -> list[dict]:
+    tree_by_date: dict[str, dict] = {}
+    for package in packages:
+        date_key = package.get("market_date") or "unknown-date"
+        target_key = package.get("display_name") or package.get("package_id") or "artifact"
+        date_node = tree_by_date.setdefault(date_key, {"dir": date_key, "children": []})
+        target_node = {"dir": target_key, "package_id": package.get("package_id"), "children": []}
+        groups: dict[str, list[dict]] = {"input": [], "output": [], "intermediate": []}
+        for file in package.get("files") or []:
+            groups.setdefault(file.get("group") or "intermediate", []).append(file)
+        for group_name in ("input", "output", "intermediate"):
+            files = groups.get(group_name) or []
+            if files:
+                target_node["children"].append({"dir": group_name, "files": files})
+        date_node["children"].append(target_node)
+    return list(tree_by_date.values())
 
 
 def get_file_record(file_id: int | str) -> dict | None:

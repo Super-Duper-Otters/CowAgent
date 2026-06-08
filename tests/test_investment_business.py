@@ -2365,6 +2365,111 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(investme
     assert code_entries[0]["normalized_target"] == "300502.SZ"
 
 
+def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(investment_env, monkeypatch, tmp_path):
+    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.investment.constants import ServiceType
+    from business.investment.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
+    from channel.web.web_channel import InvestmentArtifactPackagesHandler
+
+    signal = tmp_path / "signal-card.png"
+    chart = tmp_path / "main-chart.png"
+    report = tmp_path / "report.md"
+    signal.write_bytes(b"signal")
+    chart.write_bytes(b"chart")
+    report.write_text("markdown report", encoding="utf-8")
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-08", "version-a")
+    first_request_id = create_request_record(
+        "openid-a",
+        "新易盛 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        market_date="2026-06-08",
+        cache_key=cache_key,
+    )
+    succeed_request_record(
+        first_request_id,
+        output_files=[str(signal), str(chart), str(report)],
+        elapsed_ms=120,
+        artifact_roles={str(signal): "signal_card", str(chart): "main_chart", str(report): "markdown_report"},
+        normalized_target="300502.SZ",
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        market_date="2026-06-08",
+        cache_key=cache_key,
+    )
+    first_record = get_request_record(first_request_id)
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-08",
+        version_fingerprint="version-a",
+        output_files=first_record.output_files,
+        artifact_owner_id=first_request_id,
+    )
+
+    second_request_id = create_request_record(
+        "openid-b",
+        "300502.SZ 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        market_date="2026-06-08",
+        cache_key=cache_key,
+        cache_hit=True,
+    )
+    succeed_request_record(
+        second_request_id,
+        output_files=first_record.output_files,
+        elapsed_ms=5,
+        cache_hit=True,
+        normalized_target="300502.SZ",
+        stock_code="300502.SZ",
+        stock_name="新易盛",
+        market_date="2026-06-08",
+        cache_key=cache_key,
+    )
+
+    packages, total = list_artifact_packages_page(
+        page=1,
+        page_size=20,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        start_date="2026-06-08",
+        end_date="2026-06-08",
+    )
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactPackagesHandler().GET,
+        params={"service_type": "technical_analysis", "start_date": "2026-06-08", "end_date": "2026-06-08"},
+    )
+
+    assert total == 1
+    package = packages[0]
+    assert package["package_id"] == cache_key
+    assert package["display_path"] == ["技术分析", "2026-06-08", "300502.SZ 新易盛"]
+    assert package["related_request_ids"] == [second_request_id, first_request_id]
+    assert package["created_from_request_id"] == first_request_id
+    assert [file["virtual_path"] for file in package["files"]] == [
+        "input/raw_input.txt",
+        "output/signal_card.png",
+        "intermediate/main_chart.png",
+        "intermediate/markdown_report.md",
+    ]
+    assert package["files"][0]["content"] == "新易盛 技术分析"
+    assert len([file for file in package["files"] if file.get("file_path")]) == 3
+    assert all(first_request_id not in file["virtual_path"] for file in package["files"])
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 1
+    assert payload["packages"][0]["package_id"] == cache_key
+    assert payload["tree"][0]["dir"] == "2026-06-08"
+    assert payload["tree"][0]["children"][0]["dir"] == "300502.SZ 新易盛"
+    assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["input", "output", "intermediate"]
+
+
 def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.investment.constants import ServiceType

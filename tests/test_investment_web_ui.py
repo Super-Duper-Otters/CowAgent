@@ -139,7 +139,43 @@ def test_investment_content_is_a_top_level_view():
     assert 'id="invest-content-content"' in html
     assert "'invest-content':" in js
     assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
-    assert "'invest-content': 'cache.read'" in js
+    assert "'invest-content': 'content.read'" in js
+
+
+def test_investment_generated_content_uses_shared_artifact_file_tree():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
+    load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
+    category_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
+
+    assert "/api/investment/artifacts" in load_body
+    assert "/api/investment/cache" not in load_body
+    assert "investment-artifact-browser" in category_body
+    assert "investment-artifact-tree" in category_body
+    assert "renderInvestmentArtifactTree(" in category_body
+    assert "openInvestmentArtifactFile(" in js
+    assert "renderInvestmentArtifactViewer(" in js
+    assert "virtual_path" in js
+    assert "raw_input.txt" in js
+    assert "output" in js
+    assert "intermediate" in js
+    assert "investment-artifact-date open" in js
+    assert "investment-artifact-package open" not in js
+    assert "investment-artifact-folder open" not in js
+    assert "investment-artifact-package-btn" in js
+    assert "investment-artifact-folder-btn" in js
+    assert "investment-artifact-file-btn" in js
+    assert ".investment-artifact-package-btn" in css
+    assert ".investment-artifact-folder-btn" in css
+    assert ".investment-artifact-file-btn" in css
+    assert "padding-left: 22px;" in css
+    assert "padding-left: 40px;" in css
+    assert "padding-left: 58px;" in css
+    assert "investment-content-list" in render_body
+    assert ".investment-artifact-browser" in css
+    assert ".investment-artifact-tree" in css
+    assert ".investment-artifact-viewer" in css
 
 
 def test_rate_and_convertible_bond_content_are_merged_under_investment_content_page():
@@ -1306,7 +1342,7 @@ def test_investment_cache_empty_date_falls_back_to_today_before_loading():
     assert "await loadInvestmentGeneratedContent()" in apply_body
 
 
-def test_investment_records_page_uses_tab_workspace_and_drawer():
+def test_investment_records_page_uses_tab_workspace_without_side_drawer():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1317,13 +1353,17 @@ def test_investment_records_page_uses_tab_workspace_and_drawer():
     assert "investment-records-workspace" in js
     assert "investment-records-board" in js
     assert "investment-records-tabs" in js
-    assert "investment-records-drawer" in js
+    assert 'id="investment-records-drawer"' not in js
+    assert "选择记录查看详情" not in _js_function_body(js, "renderInvestmentRecordsShell")
+    assert "选择内容查看详情" not in _js_function_body(js, "renderInvestmentGeneratedContent")
     assert ".investment-records-workspace" in css
     assert ".investment-records-board" in css
     assert "border: 1px solid #d8e1ee;" in css
     assert ".investment-records-tabs" in css
-    assert ".investment-records-drawer" in css
     assert ".investment-records-main" in css
+    assert ".investment-content-shell" in css
+    assert "grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);" not in css
+    assert "grid-template-columns: minmax(0, 1fr);" in css
 
 
 def test_investment_records_page_uses_human_filters_customer_display_and_compact_tables():
@@ -1759,7 +1799,7 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     content_load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     assert "/api/investment/records/requests" in load_body
     assert "/api/investment/records/contents" in load_body
-    assert "/api/investment/cache" in content_load_body
+    assert "/api/investment/artifacts" in content_load_body
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
     assert "['invalidated', '已失效']" in filters_body
@@ -1856,7 +1896,7 @@ def test_investment_content_and_cache_date_filters_are_exposed():
     assert "refreshInvestmentContentRecords(serviceType, {effective_date: investmentContentHistoryEffectiveDate(serviceType)})" in js
     assert "investment-records-filter-market_date" in js
     assert "investmentCacheMarketDate()" in js
-    assert "investmentFetchJson(query.toString() ? `/api/investment/cache?${query.toString()}` : '/api/investment/cache')" in js
+    assert "investmentFetchJson(query.toString() ? `/api/investment/artifacts?${query.toString()}` : '/api/investment/artifacts')" in js
     assert "investmentGeneratedOutputState(entry)" in js
     assert "investmentRecordFileSummary(entry.output_files || [])" not in js
 
