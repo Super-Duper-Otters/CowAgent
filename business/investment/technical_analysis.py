@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+import os
 
 from sqlalchemy import and_, desc, select
 
@@ -82,7 +83,7 @@ def parse_target(raw_input: str) -> str:
 
 
 def _skill_symbol(symbol: str) -> str:
-    return symbol.split(".", 1)[0] if "." in symbol else symbol
+    return symbol
 
 
 def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
@@ -90,11 +91,18 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
     if not skill_path.is_absolute():
         skill_path = Path.cwd() / skill_path
     chart_days = str(get_config("technical_analysis.default_chart_days", 120) or 120)
+    env = os.environ.copy()
+    tushare_token = str(get_config("tushare.token", "") or "").strip()
+    if tushare_token:
+        env["TUSHARE_TOKEN"] = tushare_token
     subprocess.run(
         [sys.executable, str(skill_path), "--symbol", symbol, "--days", chart_days, "--output", str(output_dir)],
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
     )
     reports = sorted(output_dir.glob("*技术分析报告*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
     charts = sorted(output_dir.glob("*_TA_*.png"), key=lambda path: path.stat().st_mtime, reverse=True)

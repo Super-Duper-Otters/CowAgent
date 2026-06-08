@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import requests
 
 from common import const
+from bridge.bridge import Bridge
 from models.openai.openai_http_client import OpenAIHTTPError
 
 from . import config_service
@@ -79,6 +80,12 @@ DEFAULT_TECHNICAL_ANALYSIS_PROMPT = (
     "3. “核心关键位”下必须使用“强压力：”和“强支撑：”两行；多个点位可用 / 合并。\n"
     "4. 不要输出原报告的大段表格、附录、形态胜率明细或情景推演表，只保留可渲染卡片需要的信息。"
 )
+
+
+class ModelResponseError(RuntimeError):
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -193,15 +200,13 @@ def normalize_generated_text(service_type: ServiceType, text: str) -> str:
 
 
 class ExistingModelAdapter:
-    def __init__(self, client: Any | None = None):
-        self._client = client
+    def __init__(self, bot: Any | None = None):
+        self._bot = bot
 
-    def _get_client(self) -> Any:
-        if self._client is not None:
-            return self._client
-        from models.openai.openai_http_client import get_default_client
-
-        return get_default_client()
+    def _get_bot(self) -> Any:
+        if self._bot is not None:
+            return self._bot
+        return Bridge().get_bot("chat")
 
     @staticmethod
     def _image_block(source_file: str) -> dict[str, Any] | None:
@@ -243,6 +248,8 @@ class ExistingModelAdapter:
     def _is_transient_model_error(exc: Exception) -> bool:
         if isinstance(exc, OpenAIHTTPError):
             return exc.status_code in TRANSIENT_MODEL_STATUS_CODES
+        if isinstance(exc, ModelResponseError):
+            return exc.status_code in TRANSIENT_MODEL_STATUS_CODES
         return isinstance(
             exc,
             (
@@ -251,26 +258,23 @@ class ExistingModelAdapter:
             ),
         )
 
-    def _chat_content(self, request: AIGenerationRequest, messages: list[dict[str, Any]]) -> str:
-        for attempt in range(len(MODEL_RETRY_DELAYS_SECONDS) + 1):
-            try:
-                response = self._get_client().chat_completions(
-                    api_key=request.api_key,
-                    api_base=request.api_base,
-                    model=request.model_name,
-                    messages=messages,
-                    temperature=request.temperature,
-                    stream=False,
-                )
-                break
-            except Exception as exc:
-                if attempt >= len(MODEL_RETRY_DELAYS_SECONDS) or not self._is_transient_model_error(exc):
-                    raise
-                delay = MODEL_RETRY_DELAYS_SECONDS[attempt]
-                if delay > 0:
-                    time.sleep(delay)
+    @staticmethod
+    def _content_from_response(response: Any) -> str:
+        if not isinstance(response, dict) and hasattr(response, "__iter__"):
+            last_chunk: Any = None
+            for chunk in response:
+                last_chunk = chunk
+                if isinstance(chunk, dict) and chunk.get("error"):
+                    raise ModelResponseError(
+                        str(chunk.get("message") or chunk.get("error")),
+                        int(chunk.get("status_code") or 500),
+                    )
+            response = last_chunk
         if isinstance(response, dict) and response.get("error"):
-            raise RuntimeError(response.get("message") or response["error"])
+            raise ModelResponseError(
+                str(response.get("message") or response["error"]),
+                int(response.get("status_code") or 500),
+            )
         choices = response.get("choices", []) if isinstance(response, dict) else []
         if not choices:
             raise RuntimeError("model returned empty choices")
@@ -278,6 +282,28 @@ class ExistingModelAdapter:
         if not isinstance(content, str) or not content:
             raise RuntimeError("model returned empty text")
         return content
+
+    def _chat_response(self, request: AIGenerationRequest, messages: list[dict[str, Any]]) -> Any:
+        return self._get_bot().call_with_tools(
+            messages=messages,
+            tools=None,
+            model=request.model_name,
+            temperature=request.temperature,
+            stream=False,
+        )
+
+    def _chat_content(self, request: AIGenerationRequest, messages: list[dict[str, Any]]) -> str:
+        for attempt in range(len(MODEL_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                response = self._chat_response(request, messages)
+                return self._content_from_response(response)
+            except Exception as exc:
+                if attempt >= len(MODEL_RETRY_DELAYS_SECONDS) or not self._is_transient_model_error(exc):
+                    raise
+                delay = MODEL_RETRY_DELAYS_SECONDS[attempt]
+                if delay > 0:
+                    time.sleep(delay)
+        raise RuntimeError("model returned empty text")
 
     def _extract_image_text(self, request: AIGenerationRequest) -> str:
         image_blocks = self._image_blocks(request)

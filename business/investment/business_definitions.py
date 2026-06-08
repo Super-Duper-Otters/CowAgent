@@ -47,7 +47,22 @@ def from_skill_definition(definition) -> BusinessDefinition:
     )
 
 
-def list_builtin_business_definitions() -> list[BusinessDefinition]:
-    from .skill_registry import list_definitions
+def from_cowagent_definition(definition) -> BusinessDefinition:
+    handler_type = str(getattr(definition, "handler_type", "") or "")
+    business_key = str(getattr(definition, "business_key", "") or getattr(definition, "skill_key", "") or "")
+    return BusinessDefinition(
+        business_key=business_key,
+        skill_key=str(getattr(definition, "skill_key", "") or business_key),
+        service_type=getattr(definition, "service_type", ServiceType.UNMATCHED),
+        label=str(getattr(definition, "label", "") or business_key),
+        input_types=tuple(getattr(definition, "input_types", ("text",)) or ("text",)),
+        handler_type=handler_type,
+        cache_mode=str(getattr(definition, "cache_mode", "") or _cache_mode_for_handler(handler_type)),
+        artifact_roles=tuple(getattr(definition, "artifact_roles", ()) or _artifact_roles_for_handler(handler_type)),
+    )
 
-    return [from_skill_definition(definition) for definition in list_definitions()]
+
+def list_builtin_business_definitions() -> list[BusinessDefinition]:
+    from business.business_registry import list_business_definitions
+
+    return [from_cowagent_definition(definition) for definition in list_business_definitions()]

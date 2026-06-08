@@ -4,10 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.skills.frontmatter import parse_frontmatter
-
 from .config_service import get_config
-from .constants import ServiceType, normalize_service
+from .constants import ServiceType
 from .render_service import DEFAULT_RENDERER_PATH
 
 
@@ -130,9 +128,9 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
 
 
 def _uploaded_skill_root() -> Path:
-    from .storage import get_storage_dirs
+    from business.business_registry import uploaded_business_root
 
-    return get_storage_dirs()["root"] / "investment-skills"
+    return uploaded_business_root()
 
 
 def _bool_value(value: Any, default: bool = True) -> bool:
@@ -156,52 +154,45 @@ def _normalize_triggers(value: Any) -> tuple[str, ...]:
 
 
 def validate_skill_key(skill_key: str) -> str:
-    normalized = str(skill_key or "").strip()
-    if not SAFE_SKILL_KEY_RE.fullmatch(normalized):
-        raise ValueError(f"unsafe investment skill key: {skill_key}")
-    return normalized
+    from business.business_registry import validate_business_key
+
+    return validate_business_key(skill_key)
 
 
 def _read_uploaded_definition(skill_dir: Path) -> InvestmentSkillDefinition | None:
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_md.is_file():
+    from business.business_registry import read_uploaded_business_definition
+
+    definition = read_uploaded_business_definition(skill_dir)
+    if definition is None:
         return None
-    frontmatter = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
-    investment = frontmatter.get("investment") or {}
-    if not isinstance(investment, dict):
-        return None
-    skill_key = validate_skill_key(frontmatter.get("name") or skill_dir.name)
-    if not skill_key:
-        return None
-    entry = str(investment.get("entry") or "").strip()
+    return _from_business_definition(definition)
+
+
+def _from_business_definition(definition) -> InvestmentSkillDefinition:
     return InvestmentSkillDefinition(
-        skill_key=skill_key,
-        label=str(investment.get("label") or skill_key),
-        description=str(frontmatter.get("description") or ""),
-        service_type=normalize_service(str(investment.get("service_type") or "unmatched")),
-        match_type=str(investment.get("match_type") or "exact"),
-        default_triggers=_normalize_triggers(investment.get("triggers")),
-        handler_type=str(investment.get("handler_type") or "script"),
-        entry=entry,
-        output_mode=str(investment.get("output_mode") or "mixed"),
-        routable=_bool_value(investment.get("routable"), True),
-        base_dir=str(skill_dir),
-        config_key=str(investment.get("config_key") or ""),
-        default_script_path=str((skill_dir / entry).resolve()) if entry else "",
-        script_name=Path(entry).name if entry else "",
-        storage_name=skill_key,
+        skill_key=str(getattr(definition, "skill_key", "") or getattr(definition, "business_key", "")),
+        label=str(getattr(definition, "label", "")),
+        description=str(getattr(definition, "description", "")),
+        service_type=getattr(definition, "service_type", ServiceType.UNMATCHED),
+        match_type=str(getattr(definition, "match_type", "exact") or "exact"),
+        default_triggers=tuple(getattr(definition, "default_triggers", ()) or ()),
+        handler_type=str(getattr(definition, "handler_type", "") or ""),
+        entry=str(getattr(definition, "entry", "") or ""),
+        output_mode=str(getattr(definition, "output_mode", "images") or "images"),
+        routable=bool(getattr(definition, "routable", True)),
+        base_dir=str(getattr(definition, "base_dir", "") or ""),
+        config_key=str(getattr(definition, "config_key", "") or ""),
+        default_script_path=str(getattr(definition, "default_script_path", "") or ""),
+        script_name=str(getattr(definition, "script_name", "") or ""),
+        storage_name=str(getattr(definition, "storage_name", "") or ""),
+        copy_assets_from=str(getattr(definition, "copy_assets_from", "") or ""),
     )
 
 
 def list_definitions() -> list[InvestmentSkillDefinition]:
-    definitions = {definition.skill_key: definition for definition in BUILTIN_DEFINITIONS}
-    root = _uploaded_skill_root()
-    if root.is_dir():
-        for skill_dir in sorted(item for item in root.iterdir() if item.is_dir() and not item.name.startswith(".")):
-            definition = _read_uploaded_definition(skill_dir)
-            if definition is not None:
-                definitions[definition.skill_key] = definition
-    return list(definitions.values())
+    from business.business_registry import list_business_definitions
+
+    return [_from_business_definition(definition) for definition in list_business_definitions()]
 
 
 def get_skill_definition(skill_key: str) -> InvestmentSkillDefinition:
@@ -225,20 +216,9 @@ def resolve_triggers(definition: InvestmentSkillDefinition) -> tuple[str, ...]:
 
 
 def match_investment_skill(raw_input: str) -> InvestmentSkillMatch | None:
-    text = (raw_input or "").strip()
-    if not text:
+    from business.business_registry import match_business
+
+    matched = match_business(raw_input)
+    if matched is None:
         return None
-    for definition in list_definitions():
-        if not definition.routable or not is_skill_enabled(definition):
-            continue
-        triggers = resolve_triggers(definition)
-        if definition.match_type == "exact" and text in triggers:
-            return InvestmentSkillMatch(definition.skill_key, definition.service_type, raw_input)
-        if definition.match_type == "suffix":
-            for trigger in triggers:
-                if not trigger or not text.endswith(trigger):
-                    continue
-                target = text[: -len(trigger)].strip()
-                if target:
-                    return InvestmentSkillMatch(definition.skill_key, definition.service_type, raw_input, target)
-    return None
+    return InvestmentSkillMatch(matched.skill_key or matched.business_key, matched.service_type, raw_input, matched.target_text)

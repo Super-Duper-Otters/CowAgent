@@ -4,7 +4,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, update
 
 from .constants import ServiceType
 from .db import connect, row_to_dict
@@ -194,18 +194,44 @@ def record_artifact(
     version_tag: str = "",
     owner_type: str = "request",
 ) -> None:
+    role = artifact_role or _file_type(file_path)
+    resolved_file_type = file_type or _file_type(file_path)
+    size = _file_size(file_path)
+    digest = file_fingerprint(file_path)
+    now = _now()
     with connect() as conn:
+        existing = conn.execute(
+            select(investment_output_files.c.id).where(
+                investment_output_files.c.owner_id == owner_id,
+                investment_output_files.c.owner_type == owner_type,
+                investment_output_files.c.file_path == file_path,
+                investment_output_files.c.artifact_role == role,
+            )
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                update(investment_output_files)
+                .where(investment_output_files.c.id == existing.id)
+                .values(
+                    file_type=resolved_file_type,
+                    service_type=str(service_type),
+                    file_size=size,
+                    file_hash=digest,
+                    version_tag=version_tag,
+                )
+            )
+            return
         conn.execute(
             insert(investment_output_files).values(
                 owner_id=owner_id,
                 owner_type=owner_type,
                 file_path=file_path,
-                file_type=file_type or _file_type(file_path),
+                file_type=resolved_file_type,
                 service_type=str(service_type),
-                artifact_role=artifact_role,
-                file_size=_file_size(file_path),
-                file_hash=file_fingerprint(file_path),
+                artifact_role=role,
+                file_size=size,
+                file_hash=digest,
                 version_tag=version_tag,
-                created_at=_now(),
+                created_at=now,
             )
         )

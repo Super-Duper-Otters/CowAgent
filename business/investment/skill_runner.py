@@ -4,10 +4,10 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .constants import ErrorCode, user_message
 from .daily_content import get_latest_effective_content
-from .skill_registry import InvestmentSkillDefinition
 from .technical_analysis import run_technical_analysis
 
 
@@ -25,7 +25,7 @@ def _image_reply(paths: list[str]) -> str:
     return "\n".join(f"[图片: {path}]" for path in paths)
 
 
-def _run_daily_content(definition: InvestmentSkillDefinition) -> InvestmentSkillRunResult:
+def _run_daily_content(definition: Any) -> InvestmentSkillRunResult:
     content = get_latest_effective_content(definition.service_type)
     if not content.success:
         code = content.error_code or ErrorCode.NO_CONTENT
@@ -39,7 +39,7 @@ def _run_daily_content(definition: InvestmentSkillDefinition) -> InvestmentSkill
 
 
 def _run_script(
-    definition: InvestmentSkillDefinition,
+    definition: Any,
     openid: str,
     raw_input: str,
     target_text: str,
@@ -51,7 +51,7 @@ def _run_script(
         "openid": openid,
         "raw_input": raw_input,
         "target_text": target_text,
-        "skill_key": definition.skill_key,
+        "skill_key": getattr(definition, "skill_key", "") or getattr(definition, "business_key", ""),
     }
     completed = subprocess.run(
         [sys.executable, str(script)],
@@ -71,7 +71,7 @@ def _run_script(
 
 
 def run_investment_skill(
-    definition: InvestmentSkillDefinition,
+    definition: Any,
     openid: str,
     raw_input: str,
     target_text: str = "",

@@ -35,7 +35,7 @@ CONFIG_FALLBACK_KEYS = {
 }
 
 try:
-    from .reply_config import reply_config_fallback_keys
+    from business.reply_config import reply_config_fallback_keys
 
     CONFIG_FALLBACK_KEYS.update(reply_config_fallback_keys())
 except Exception:
@@ -135,7 +135,7 @@ def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
         value = conf().get(fallback_key, default)
         if value is None and key.startswith("reply."):
             try:
-                from .reply_config import default_reply_text
+                from business.reply_config import default_reply_text
 
                 value = default_reply_text(key, default)
             except Exception:
