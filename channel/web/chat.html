@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CowAgent Console</title>
+    <title>智能投研辅助系统</title>
     <link rel="icon" href="assets/favicon.ico" type="image/x-icon">
     <!-- Vendored third-party assets (no external CDN dependency).
          See channel/web/static/vendor/README.md for sources & versions. -->
@@ -61,8 +61,8 @@
     <div id="login-overlay" class="fixed inset-0 z-[200] bg-gray-50 dark:bg-[#111111] flex items-center justify-center hidden">
         <div class="w-full max-w-sm mx-4">
             <div class="flex flex-col items-center mb-8">
-                <img src="assets/logo.jpg" alt="CowAgent" class="w-16 h-16 rounded-2xl mb-4 shadow-lg">
-                <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100">CowAgent</h1>
+                <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-16 h-16 rounded-2xl mb-4 shadow-lg">
+                <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100">智能投研辅助系统</h1>
                 <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" id="login-subtitle">请输入密码以访问控制台</p>
             </div>
             <form id="login-form" class="space-y-4" onsubmit="return false;">
@@ -110,9 +110,9 @@
                                     transition-transform duration-300 ease-in-out">
             <!-- Logo -->
             <div class="flex items-center gap-3 px-5 h-14 border-b border-white/10 flex-shrink-0">
-                <img src="assets/logo.jpg" alt="CowAgent" class="w-8 h-8 rounded-lg flex-shrink-0">
+                <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-8 h-8 rounded-lg flex-shrink-0">
                 <div class="flex flex-col min-w-0">
-                    <span class="text-white font-semibold text-sm truncate">CowAgent</span>
+                    <span class="text-white font-semibold text-sm truncate">智能投研辅助系统</span>
                     <span class="text-neutral-500 text-xs" data-i18n="console">控制台</span>
                 </div>
             </div>
@@ -152,35 +152,10 @@
                             <span data-i18n="menu_skills">技能</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="memory">
-                            <i class="fas fa-brain item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="menu_memory">记忆</span>
-                        </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="knowledge">
-                            <i class="fas fa-book item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="menu_knowledge">知识</span>
-                        </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="channels">
                             <i class="fas fa-tower-broadcast item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_channels">通道</span>
                         </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="tasks">
-                            <i class="fas fa-clock item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="menu_tasks">定时</span>
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Investment Group -->
-                <div class="menu-group open" data-group="investment">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
-                        <span>投资业务</span>
-                    </button>
-                    <div class="menu-group-items pl-2">
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-users">
                             <i class="fas fa-users item-icon text-xs w-5 text-center"></i><span>用户管理</span>
                         </a>
@@ -194,7 +169,7 @@
                             <i class="fas fa-table-list item-icon text-xs w-5 text-center"></i><span>业务记录</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-skills">
-                            <i class="fas fa-code-branch item-icon text-xs w-5 text-center"></i><span>投资Skill</span>
+                            <i class="fas fa-code-branch item-icon text-xs w-5 text-center"></i><span>投研组件</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-config">
                             <i class="fas fa-shield-halved item-icon text-xs w-5 text-center"></i><span>系统配置</span>
@@ -222,15 +197,7 @@
             </nav>
 
             <!-- Sidebar Footer -->
-            <div class="px-4 py-3 border-t border-white/10 flex-shrink-0">
-                <div class="flex items-center gap-2 text-xs text-neutral-600">
-                    <i class="fas fa-circle text-[6px] text-primary-400"></i>
-                    <a id="sidebar-version"
-                       href="https://github.com/zhayujie/chatgpt-on-wechat/releases"
-                       target="_blank" rel="noopener noreferrer"
-                       class="hover:text-primary-400 transition-colors duration-150 cursor-pointer"></a>
-                </div>
-            </div>
+            <div class="px-4 py-3 border-t border-white/10 flex-shrink-0"></div>
         </aside>
 
         <!-- Mobile Overlay -->
@@ -334,72 +301,72 @@
                     <div id="chat-messages" class="flex-1 overflow-y-auto">
                         <!-- Welcome Screen -->
                         <div id="welcome-screen" class="flex flex-col items-center justify-center h-full px-6 pb-16" style="padding-top: 6vh">
-                            <img src="assets/logo.jpg" alt="CowAgent" class="w-16 h-16 rounded-2xl mb-6 shadow-lg shadow-primary-500/20">
-                            <h1 id="welcome-title" class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">CowAgent</h1>
+                            <img src="assets/logo.jpg" alt="智能投研辅助系统" class="w-16 h-16 rounded-2xl mb-6 shadow-lg shadow-primary-500/20">
+                            <h1 id="welcome-title" class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">智能投研辅助系统</h1>
                             <p id="welcome-subtitle" class="text-slate-500 dark:text-slate-400 text-center max-w-lg mb-10 leading-relaxed"
-                               data-i18n-html="welcome_subtitle">我可以帮你解答问题、管理计算机、创造和执行技能，并通过<br>长期记忆和知识库不断成长</p>
+                               data-i18n-html="welcome_subtitle">围绕投研内容生成、用户运营、业务记录和系统配置，提供统一辅助工作台</p>
 
                             <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-2xl">
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
-                                            <i class="fas fa-folder-open text-blue-500 text-xs"></i>
+                                            <i class="fas fa-chart-line text-blue-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_sys_title">系统管理</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_sys_title">投研内容</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_sys_text">查看工作空间里有哪些文件</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_sys_text">生成并维护每日投研内容</p>
                                 </div>
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center">
-                                            <i class="fas fa-clock text-amber-500 text-xs"></i>
+                                            <i class="fas fa-users text-amber-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_task_title">定时任务</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_task_title">用户运营</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_task_text">1分钟后提醒我检查服务器</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_task_text">管理投研服务用户与权限状态</p>
                                 </div>
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center">
-                                            <i class="fas fa-code text-emerald-500 text-xs"></i>
+                                            <i class="fas fa-table-list text-emerald-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_code_title">编程助手</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_code_title">业务记录</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_code_text">搜索AI资讯并生成可视化网页报告</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_code_text">查看请求、内容和操作留痕</p>
                                 </div>
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center">
-                                            <i class="fas fa-book text-violet-500 text-xs"></i>
+                                            <i class="fas fa-images text-violet-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_knowledge_title">知识库</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_knowledge_title">历史内容</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_knowledge_text">查看知识库当前文档情况</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_knowledge_text">检索历史投研图片和素材包</p>
                                 </div>
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/30 flex items-center justify-center">
-                                            <i class="fas fa-puzzle-piece text-rose-500 text-xs"></i>
+                                            <i class="fas fa-shield-halved text-rose-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_skill_title">技能系统</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_skill_title">系统配置</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_skill_text">查看所有支持的工具和技能</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_skill_text">配置投研服务参数和回复词</p>
                                 </div>
                                 <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4
                                             cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200"
                                      data-send="/help">
                                     <div class="flex items-center gap-2 mb-2">
                                         <div class="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                                            <i class="fas fa-terminal text-slate-500 text-xs"></i>
+                                            <i class="fas fa-heart-pulse text-slate-500 text-xs"></i>
                                         </div>
-                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_web_title">指令中心</span>
+                                        <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_web_title">健康检查</span>
                                     </div>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_web_text">查看全部命令</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_web_text">检查服务配置和上线状态</p>
                                 </div>
                             </div>
                         </div>
@@ -676,11 +643,6 @@
                                     <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="skills_title">技能管理</h2>
                                     <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="skills_desc">查看、启用或禁用 Agent 技能</p>
                                 </div>
-                                <a href="https://skills.cowagent.ai/" target="_blank"
-                                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-primary-500 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors">
-                                    <i class="fas fa-puzzle-piece text-[10px]"></i>
-                                    <span data-i18n="skills_hub_btn">探索技能广场</span>
-                                </a>
                             </div>
 
                             <!-- Built-in Tools Section -->
@@ -716,180 +678,6 @@
                 </div>
 
                 <!-- ====================================================== -->
-                <!-- VIEW: Memory                                            -->
-                <!-- ====================================================== -->
-                <div id="view-memory" class="view">
-                    <div class="flex-1 overflow-y-auto p-6">
-                        <div class="max-w-4xl mx-auto">
-
-                            <!-- Panel: list -->
-                            <div id="memory-panel-list">
-                                <div class="flex items-center justify-between mb-6">
-                                    <div>
-                                        <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="memory_title">记忆管理</h2>
-                                        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="memory_desc">查看 Agent 记忆文件和内容</p>
-                                    </div>
-                                    <div class="flex items-center bg-slate-100 dark:bg-white/10 rounded-lg p-0.5">
-                                        <button id="memory-tab-files" onclick="switchMemoryTab('files')"
-                                                class="memory-tab px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors duration-150 active">
-                                            <i class="fas fa-file-lines mr-1.5"></i><span data-i18n="memory_tab_files">记忆文件</span>
-                                        </button>
-                                        <button id="memory-tab-dreams" onclick="switchMemoryTab('dreams')"
-                                                class="memory-tab px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors duration-150">
-                                            <i class="fas fa-moon mr-1.5"></i><span data-i18n="memory_tab_dreams">梦境日记</span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="memory-empty" class="flex flex-col items-center justify-center py-20">
-                                    <div class="w-16 h-16 rounded-2xl bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center mb-4">
-                                        <i class="fas fa-brain text-purple-400 text-xl"></i>
-                                    </div>
-                                    <p class="text-slate-500 dark:text-slate-400 font-medium" data-i18n="memory_loading">加载记忆文件中...</p>
-                                    <p class="text-sm text-slate-400 dark:text-slate-500 mt-1" data-i18n="memory_loading_desc">记忆文件将显示在此处</p>
-                                </div>
-                                <div id="memory-list" class="hidden">
-                                    <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden">
-                                        <table class="w-full">
-                                            <thead>
-                                                <tr class="border-b border-slate-200 dark:border-white/10">
-                                                    <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" data-i18n="memory_col_name">文件名</th>
-                                                    <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" data-i18n="memory_col_type">类型</th>
-                                                    <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" data-i18n="memory_col_size">大小</th>
-                                                    <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" data-i18n="memory_col_updated">更新时间</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="memory-table-body"></tbody>
-                                        </table>
-                                    </div>
-                                    <div id="memory-pagination" class="flex items-center justify-between mt-4 text-sm text-slate-500 dark:text-slate-400"></div>
-                                </div>
-                            </div>
-
-                            <!-- Panel: file viewer (replaces list) -->
-                            <div id="memory-panel-viewer" class="hidden">
-                                <div class="flex items-center gap-3 mb-6">
-                                    <button onclick="closeMemoryViewer()"
-                                            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm
-                                                   text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
-                                                   border border-slate-200 dark:border-white/10 transition-colors cursor-pointer">
-                                        <i class="fas fa-arrow-left text-xs"></i>
-                                        <span data-i18n="memory_back">返回列表</span>
-                                    </button>
-                                    <h2 id="memory-viewer-title"
-                                        class="text-base font-semibold text-slate-800 dark:text-slate-100 font-mono truncate"></h2>
-                                </div>
-                                <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden">
-                                    <div id="memory-viewer-content"
-                                         class="p-5 overflow-y-auto text-sm msg-content text-slate-700 dark:text-slate-200"
-                                         style="max-height: calc(100vh - 220px)"></div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====================================================== -->
-                <!-- VIEW: Knowledge                                         -->
-                <!-- ====================================================== -->
-                <div id="view-knowledge" class="view">
-                    <div class="flex-1 overflow-y-auto p-4 md:p-8 lg:p-10">
-                        <div class="w-full max-w-[1600px] mx-auto">
-
-                            <!-- Header -->
-                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="knowledge_title">知识库</h2>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="knowledge_desc">浏览和探索你的知识库</p>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <span id="knowledge-stats" class="text-xs text-slate-400 dark:text-slate-500 hidden sm:inline"></span>
-                                    <div class="flex items-center bg-slate-100 dark:bg-white/10 rounded-lg p-0.5">
-                                        <button id="knowledge-tab-docs" onclick="switchKnowledgeTab('docs')"
-                                                class="knowledge-tab px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors duration-150 active">
-                                            <i class="fas fa-folder-tree mr-1.5"></i><span data-i18n="knowledge_tab_docs">文档</span>
-                                        </button>
-                                        <button id="knowledge-tab-graph" onclick="switchKnowledgeTab('graph')"
-                                                class="knowledge-tab px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors duration-150">
-                                            <i class="fas fa-diagram-project mr-1.5"></i><span data-i18n="knowledge_tab_graph">图谱</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Empty state -->
-                            <div id="knowledge-empty" class="flex flex-col items-center justify-center py-20">
-                                <div class="w-16 h-16 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center mb-4">
-                                    <i class="fas fa-book text-emerald-400 text-xl"></i>
-                                </div>
-                                <p class="text-slate-500 dark:text-slate-400 font-medium" data-i18n="knowledge_loading">加载知识库中...</p>
-                                <p class="text-sm text-slate-400 dark:text-slate-500 mt-1" data-i18n="knowledge_loading_desc">知识页面将显示在这里</p>
-                                <div id="knowledge-empty-guide" class="hidden mt-6 max-w-sm text-center">
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-4" data-i18n="knowledge_empty_guide">在对话中发送文档、链接或主题给 Agent，它会自动整理到你的知识库中。</p>
-                                    <button onclick="navigateTo('chat')"
-                                            class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600
-                                                   text-white text-sm font-medium cursor-pointer transition-colors duration-150">
-                                        <i class="fas fa-message text-xs"></i>
-                                        <span data-i18n="knowledge_go_chat">开始对话</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Documents panel -->
-                            <div id="knowledge-panel-docs" class="hidden">
-                                <div class="flex flex-col md:flex-row gap-4 md:gap-6" style="min-height: calc(100vh - 220px)">
-                                    <!-- File tree -->
-                                    <div id="knowledge-sidebar" class="w-full md:w-72 lg:w-80 flex-shrink-0">
-                                        <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden">
-                                            <div class="px-4 py-3 border-b border-slate-200 dark:border-white/10">
-                                                <div class="relative">
-                                                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-                                                    <input id="knowledge-search" type="text" placeholder="Search..."
-                                                           class="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-primary-400/50"
-                                                           oninput="filterKnowledgeTree(this.value)">
-                                                </div>
-                                            </div>
-                                            <div id="knowledge-tree" class="p-2 overflow-y-auto max-h-[50vh] md:max-h-[calc(100vh-300px)]"></div>
-                                        </div>
-                                    </div>
-                                    <!-- Content viewer -->
-                                    <div class="flex-1 min-w-0">
-                                        <div id="knowledge-content-placeholder"
-                                             class="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-500">
-                                            <i class="fas fa-file-lines text-3xl mb-3 opacity-40"></i>
-                                            <p class="text-sm" data-i18n="knowledge_select_hint">选择一个文档查看</p>
-                                        </div>
-                                        <div id="knowledge-content-viewer" class="hidden">
-                                            <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden">
-                                                <div class="flex items-center gap-3 px-4 md:px-5 py-3 border-b border-slate-200 dark:border-white/10">
-                                                    <button onclick="knowledgeMobileBack()" class="md:hidden p-1 -ml-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer">
-                                                        <i class="fas fa-arrow-left text-xs"></i>
-                                                    </button>
-                                                    <i class="fas fa-file-lines text-slate-400 text-sm hidden md:inline"></i>
-                                                    <span id="knowledge-viewer-title" class="text-sm font-medium text-slate-700 dark:text-slate-200 truncate"></span>
-                                                    <span id="knowledge-viewer-path" class="text-xs text-slate-400 dark:text-slate-500 ml-auto font-mono truncate hidden md:inline"></span>
-                                                </div>
-                                                <div id="knowledge-viewer-body"
-                                                     class="p-4 md:p-5 overflow-y-auto text-sm msg-content text-slate-700 dark:text-slate-200"
-                                                     style="max-height: calc(100vh - 280px)"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Graph panel -->
-                            <div id="knowledge-panel-graph" class="hidden">
-                                <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden">
-                                    <div id="knowledge-graph-container" class="w-full h-[60vh] md:h-[calc(100vh-220px)]"></div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====================================================== -->
                 <!-- VIEW: Channels                                          -->
                 <!-- ====================================================== -->
                 <div id="view-channels" class="view">
@@ -909,29 +697,6 @@
                             </div>
                             <div id="channels-content" class="grid gap-4"></div>
                             <div id="channels-add-panel" class="hidden mt-4"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====================================================== -->
-                <!-- VIEW: Tasks                                             -->
-                <!-- ====================================================== -->
-                <div id="view-tasks" class="view">
-                    <div class="flex-1 overflow-y-auto p-6">
-                        <div class="max-w-4xl mx-auto">
-                            <div class="flex items-center justify-between mb-6">
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="tasks_title">定时任务</h2>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="tasks_desc">查看和管理定时任务</p>
-                                </div>
-                            </div>
-                            <div id="tasks-empty" class="flex flex-col items-center justify-center py-20">
-                                <div class="w-16 h-16 rounded-2xl bg-rose-50 dark:bg-rose-900/20 flex items-center justify-center mb-4">
-                                    <i class="fas fa-clock text-rose-400 text-xl"></i>
-                                </div>
-                                <p class="text-slate-500 dark:text-slate-400 font-medium">Loading...</p>
-                            </div>
-                            <div id="tasks-list" class="grid gap-4 hidden"></div>
                         </div>
                     </div>
                 </div>
@@ -984,7 +749,7 @@
                 <div id="view-invest-skills" class="view">
                     <div class="flex-1 overflow-y-auto p-6">
                         <div class="max-w-6xl mx-auto">
-                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资Skill</h2>
+                            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投研组件</h2>
                             <div id="invest-skills-content" class="grid gap-3 text-sm text-slate-600 dark:text-slate-300">Loading...</div>
                         </div>
                     </div>

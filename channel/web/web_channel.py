@@ -1408,7 +1408,7 @@ class ConfigHandler:
         try:
             local_config = conf()
             use_agent = local_config.get("agent", True)
-            title = "CowAgent" if use_agent else "AI Assistant"
+            title = "智能投研辅助系统"
 
             api_bases = {}
             api_keys_masked = {}

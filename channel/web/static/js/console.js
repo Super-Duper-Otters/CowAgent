@@ -9424,9 +9424,8 @@ function initApp() {
 
     fetch('/api/version').then(r => r.json()).then(data => {
         APP_VERSION = `v${data.version}`;
-        document.getElementById('sidebar-version').textContent = `智能投研辅助系统 ${APP_VERSION}`;
     }).catch(() => {
-        document.getElementById('sidebar-version').textContent = '智能投研辅助系统';
+        APP_VERSION = '';
     });
     chatInput.focus();
 }

@@ -31,13 +31,18 @@ def test_web_console_uses_investment_assistant_branding():
     html = CHAT_HTML.read_text(encoding="utf-8")
     login_html = LOGIN_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
+    web_channel = WEB_CHANNEL.read_text(encoding="utf-8")
 
     assert "智能投研辅助系统" in html
     assert "智能投研辅助系统" in login_html
     assert "智能投研辅助系统" in js
+    assert '"智能投研辅助系统"' in web_channel
     assert "CowAgent" not in html
     assert "CowAgent" not in login_html
     assert "CowAgent" not in js
+    assert '"CowAgent" if use_agent else "AI Assistant"' not in web_channel
+    assert "sidebar-version" not in html
+    assert "chatgpt-on-wechat/releases" not in html
 
 
 def test_non_investment_management_pages_are_removed_from_frontend_navigation():
