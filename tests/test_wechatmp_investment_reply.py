@@ -986,6 +986,45 @@ def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(mo
     assert produced_contexts == []
 
 
+def test_wechatmp_passive_technical_analysis_events_share_original_request_id(monkeypatch):
+    import business.business_records as business_records
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+    from business.investment.constants import ServiceType
+
+    produced_contexts = []
+    events = []
+    channel = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
+    channel.cache_dict.append_result(
+        "openid",
+        "300502.SZ 技术分析",
+        [("image", "media-1")],
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        request_id="request-ta-1",
+    )
+    current_message = {"content": "新请求", "msg_id": "msg-ta-prompt"}
+
+    class FakeImageReply:
+        def __init__(self, message):
+            self.message = message
+            self.media_id = ""
+
+        def render(self):
+            return f"<image>{self.media_id}</image>"
+
+    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
+    monkeypatch.setattr(business_records, "mark_request_delivered", lambda _request_id: None, raising=False)
+    monkeypatch.setattr(business_records, "record_request_event", lambda **kwargs: events.append(kwargs), raising=False)
+
+    assert "回复 1" in passive_reply.Query().POST()
+    current_message.update({"content": "1", "msg_id": "msg-ta-confirm"})
+    assert passive_reply.Query().POST() == "<image>media-1</image>"
+
+    assert [event["request_id"] for event in events] == ["request-ta-1", "request-ta-1", "request-ta-1"]
+    assert [event["event_type"] for event in events] == ["pending_prompt_sent", "customer_confirm", "reply_image_sent"]
+
+
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_unauthorized_user_confirm_keeps_pending_result(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply

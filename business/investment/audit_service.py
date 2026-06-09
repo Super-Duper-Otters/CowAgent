@@ -74,11 +74,28 @@ def actor_from_admin(admin: Any | None) -> AdminActor | None:
 def _infer_operation_category(action: str, target_type: str) -> str:
     action_text = str(action or "")
     target_text = str(target_type or "")
-    if target_text == "customer" or action_text.startswith("customer."):
-        return "customer"
-    if target_text == "daily_content" or action_text.startswith("content."):
+    category_targets = {
+        "customer": "customer",
+        "admin": "admin",
+        "skill": "skill",
+        "daily_content": "content",
+        "content": "content",
+        "generation": "generation",
+        "config": "config",
+        "cache": "cache",
+        "stock": "stock",
+        "export": "export",
+        "health": "health",
+        "system": "system",
+    }
+    if target_text in category_targets:
+        return category_targets[target_text]
+    for prefix in ("customer", "admin", "skill", "content", "generation", "config", "cache", "stock", "export", "health", "system"):
+        if action_text.startswith(f"{prefix}."):
+            return prefix
+    if action_text.startswith("content."):
         return "content"
-    return "backoffice"
+    return "system"
 
 
 def record_operation_audit(

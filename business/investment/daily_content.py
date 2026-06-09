@@ -452,7 +452,10 @@ def generate_content(
     content_id: str,
     ai_generator: AIGenerator | None = None,
     renderer: Renderer | None = None,
+    actor: Any | None = None,
 ) -> DailyContentResult:
+    started_at = datetime.now(UTC)
+    generation_id = ""
     with connect() as conn:
         row = conn.execute(
             select(investment_daily_contents).where(investment_daily_contents.c.content_id == content_id)
@@ -462,16 +465,44 @@ def generate_content(
     item = row_to_dict(row)
     service_type = ServiceType(item["service_type"])
     _ensure_content_service_type(service_type)
-    _mark_generation_started(content_id)
     source_files = _load_source_files(item.get("source_files"))
+    operator, audit_actor = _actor_identity(actor, item.get("operator") or "")
+    try:
+        from .generation_records import start_generation_record
+
+        generation_id = start_generation_record(
+            content_id=content_id,
+            service_type=service_type,
+            operator_id=getattr(audit_actor, "admin_id", None) if audit_actor else None,
+            operator_name=operator,
+            operator_role=getattr(audit_actor, "role", "") if audit_actor else "",
+            input_text=item["source_text"] or "",
+            sources=source_files,
+        )
+    except Exception:
+        generation_id = ""
+    _mark_generation_started(content_id, actor=actor)
     if ai_generator is None:
         ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
     else:
-        ai_result = ai_generator(service_type, item["source_text"] or "")
+        try:
+            ai_result = ai_generator(service_type, item["source_text"] or "", source_files)
+        except TypeError:
+            ai_result = ai_generator(service_type, item["source_text"] or "")
     if not ai_result.success:
         detail = sanitize_sensitive_text(getattr(ai_result, "detail", "AI generation failed"))
         code = getattr(ai_result, "error_code", None) or ErrorCode.SYSTEM_ERROR
         update_generation_failure(content_id, detail)
+        if generation_id:
+            from .generation_records import finish_generation_record
+
+            finish_generation_record(
+                generation_id,
+                result="failed",
+                error_code=str(code),
+                error=detail,
+                elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+            )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     generated_text = str(getattr(ai_result, "text", ""))
     if renderer is None:
@@ -486,9 +517,30 @@ def generate_content(
         detail = sanitize_sensitive_text(getattr(render_result, "detail", "render failed"))
         code = getattr(render_result, "error_code", None) or ErrorCode.IMAGE_GENERATION_FAILED
         update_generation_failure(content_id, detail)
+        if generation_id:
+            from .generation_records import finish_generation_record
+
+            finish_generation_record(
+                generation_id,
+                result="failed",
+                error_code=str(code),
+                error=detail,
+                output_text=generated_text,
+                elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+            )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     output_image = str(getattr(render_result, "image_path", ""))
     output_image = update_generation_success(content_id, generated_text, output_image)
+    if generation_id:
+        from .generation_records import finish_generation_record
+
+        finish_generation_record(
+            generation_id,
+            result="success",
+            output_text=generated_text,
+            outputs=[output_image],
+            elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+        )
     return DailyContentResult(
         True,
         content_id=content_id,

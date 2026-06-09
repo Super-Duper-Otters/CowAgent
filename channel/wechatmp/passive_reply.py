@@ -277,6 +277,40 @@ def _mark_cached_result_delivered(cached_result, rendered_reply):
         logger.debug("[wechatmp] mark investment request delivered failed: {}".format(exc))
 
 
+def _record_request_event_safe(
+    request_id="",
+    openid="",
+    event_type="",
+    message_type="",
+    content="",
+    media_id="",
+    file_path="",
+    result="",
+    error="",
+):
+    if not request_id or not event_type:
+        return
+    try:
+        from business import business_records
+
+        business_records.record_request_event(
+            request_id=request_id,
+            openid=openid,
+            channel="wechatmp",
+            event_type=event_type,
+            message_type=message_type,
+            content=content,
+            media_id=media_id,
+            file_path=file_path,
+            source_type="request",
+            source_id=request_id,
+            result=result,
+            error=error,
+        )
+    except Exception as exc:
+        logger.debug("[wechatmp] record request event failed: {}".format(exc))
+
+
 def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, content, request_cnt, cached_item, cache_title="", service_type="", request_id=""):
     if cached_item is None:
         return "success"
@@ -304,6 +338,14 @@ def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, cont
             )
         )
         replyPost = create_reply(reply_text, msg)
+        _record_request_event_safe(
+            request_id=request_id,
+            openid=from_user,
+            event_type="reply_text_sent",
+            message_type="text",
+            content=reply_text,
+            result="success",
+        )
         return encrypt_func(replyPost.render())
 
     if reply_type == "voice":
@@ -335,6 +377,15 @@ def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, cont
         )
         replyPost = ImageReply(message=msg)
         replyPost.media_id = media_id
+        _record_request_event_safe(
+            request_id=request_id,
+            openid=from_user,
+            event_type="reply_image_sent",
+            message_type="image",
+            content=cache_title,
+            media_id=media_id,
+            result="success",
+        )
         return encrypt_func(replyPost.render())
 
     if reply_type == "video":
@@ -391,6 +442,14 @@ class Query:
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
                     if content == "1":
+                        _record_request_event_safe(
+                            request_id=getattr(pending_result, "request_id", ""),
+                            openid=from_user,
+                            event_type="customer_confirm",
+                            message_type="text",
+                            content=content,
+                            result="accepted",
+                        )
                         if not _cached_result_source_is_valid(pending_result):
                             _discard_cached_result(channel.cache_dict, from_user)
                             _pop_pending_command(channel.cache_dict, from_user)
@@ -415,6 +474,14 @@ class Query:
                         _mark_cached_result_delivered(pending_result, rendered_reply)
                         return rendered_reply
                     if content == "0":
+                        _record_request_event_safe(
+                            request_id=getattr(pending_result, "request_id", ""),
+                            openid=from_user,
+                            event_type="customer_cancel",
+                            message_type="text",
+                            content=content,
+                            result="accepted",
+                        )
                         _discard_cached_result(channel.cache_dict, from_user)
                         pending_command = _pop_pending_command(channel.cache_dict, from_user)
                         if pending_command:
@@ -425,6 +492,14 @@ class Query:
                     else:
                         _set_pending_command(channel.cache_dict, from_user, content)
                         replyPost = create_reply(_pending_result_prompt(pending_result.title), msg)
+                        _record_request_event_safe(
+                            request_id=getattr(pending_result, "request_id", ""),
+                            openid=from_user,
+                            event_type="pending_prompt_sent",
+                            message_type="text",
+                            content=content,
+                            result="success",
+                        )
                         return encrypt_func(replyPost.render())
 
                 if content == "1" and from_user in channel.running:

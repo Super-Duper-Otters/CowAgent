@@ -3234,7 +3234,10 @@ class InvestmentDailyContentGenerateHandler:
             if result.success:
                 def run_generation_task():
                     try:
-                        generate_content(content_id)
+                        try:
+                            generate_content(content_id, actor=admin)
+                        except TypeError:
+                            generate_content(content_id)
                     except Exception as task_error:
                         logger.error(f"[Investment] background content generate error: {task_error}", exc_info=True)
                         update_generation_failure(content_id, str(task_error))
@@ -3328,6 +3331,7 @@ class InvestmentRequestRecordsHandler:
         try:
             from business.business_records import list_output_files, list_request_records_page
             from business.constants import ServiceType, normalize_service
+            from business.investment.event_service import list_request_events
 
             params = web.input(
                 limit='50',
@@ -3360,6 +3364,10 @@ class InvestmentRequestRecordsHandler:
                 start_date=_investment_date_bound(getattr(params, "start_date", "")),
                 end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
             )
+            events_by_request = {
+                record.request_id: [event.__dict__ for event in list_request_events(request_id=record.request_id, limit=200)]
+                for record in records
+            }
             return _investment_json_response({
                 "status": "success",
                 "records": [record.__dict__ | {
@@ -3367,6 +3375,7 @@ class InvestmentRequestRecordsHandler:
                     "status": str(record.status),
                     "error_code": str(record.error_code) if record.error_code else "",
                     "output_artifacts": list_output_files(record.request_id),
+                    "events": events_by_request.get(record.request_id, []),
                 } for record in records],
                 "pagination": _investment_pagination_payload(page, page_size, total),
             })
@@ -3381,6 +3390,7 @@ class InvestmentContentRecordsHandler:
         try:
             from business.constants import ServiceType, normalize_service
             from business.business_records import list_content_records_page, list_output_files
+            from business.investment.generation_records import list_generation_records_page
 
             params = web.input(limit='50', page='1', page_size='', service_type='', effective_date='', status='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3393,6 +3403,23 @@ class InvestmentContentRecordsHandler:
                     "pagination": _investment_pagination_payload(page, page_size, 0),
                 })
             page, page_size = _investment_safe_pagination(params, 80)
+            generation_result = getattr(params, "status", "") or ""
+            generations, generation_total = list_generation_records_page(
+                page=page,
+                page_size=page_size,
+                service_type=service_type,
+                result=generation_result,
+            )
+            if generation_total:
+                return _investment_json_response({
+                    "status": "success",
+                    "records": [record.__dict__ | {
+                        "record_type": "generation",
+                        "service_type": str(record.service_type),
+                        "status": record.result,
+                    } for record in generations],
+                    "pagination": _investment_pagination_payload(page, page_size, generation_total),
+                })
             records, total = list_content_records_page(
                 page=page,
                 page_size=page_size,
@@ -3489,9 +3516,9 @@ class InvestmentArtifactFoldersHandler:
                 service_type=service_type,
                 year=getattr(params, "year", "") or "",
                 month=getattr(params, "month", "") or "",
-                date=_investment_date_bound(getattr(params, "date", "")),
-                start_date=_investment_date_bound(getattr(params, "start_date", "")),
-                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
+                date=getattr(params, "date", "") or "",
+                start_date=getattr(params, "start_date", "") or "",
+                end_date=getattr(params, "end_date", "") or "",
                 keyword=getattr(params, "keyword", "") or "",
             )
             return _investment_json_response({
@@ -3625,21 +3652,26 @@ class InvestmentConfigHandler:
     def POST(self):
         admin = _require_investment_permission("config.write")
         try:
-            from business.config_service import save_configs
-            from business.audit_service import record_operation_audit
+            from business.config_service import get_configs, save_configs
 
             body = _investment_json_body()
+            configs = body.get("configs", {}) or {}
+            keys = sorted(configs.keys())
+            before_state = get_configs(keys, masked=True) if keys else {}
             save_configs(
-                body.get("configs", {}),
+                configs,
                 operator_role=admin.role,
                 operator=admin.username,
                 actor=admin,
             )
+            after_state = get_configs(keys, masked=True) if keys else {}
             _record_investment_operation(
                 "config.update",
                 "investment_config",
                 admin=admin,
-                detail={"keys": sorted((body.get("configs", {}) or {}).keys())},
+                detail={"keys": keys},
+                before_state=before_state,
+                after_state=after_state,
             )
             return _investment_json_response({"status": "success"})
         except Exception as e:
@@ -3666,12 +3698,18 @@ class InvestmentSkillSettingsHandler:
     def POST(self, skill_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.config_service import save_config
+            from business.config_service import get_configs, save_config
             from business.skill_registry import get_skill_definition
             from business.skill_versions import list_all_skills
 
             definition = get_skill_definition(skill_key)
             body = _investment_json_body()
+            audit_keys = []
+            if "enabled" in body:
+                audit_keys.append(definition.enabled_config_key)
+            if "triggers" in body:
+                audit_keys.append(definition.triggers_config_key)
+            before_state = get_configs(audit_keys, masked=True) if audit_keys else {}
 
             if "enabled" in body:
                 save_config(
@@ -3697,12 +3735,15 @@ class InvestmentSkillSettingsHandler:
                     actor=admin,
                 )
 
+            after_state = get_configs(audit_keys, masked=True) if audit_keys else {}
             _record_investment_operation(
                 "skill.settings.update",
                 "investment_skill",
                 skill_key,
                 admin=admin,
                 detail={"keys": [key for key in ("enabled", "triggers") if key in body]},
+                before_state=before_state,
+                after_state=after_state,
             )
             return _investment_json_response({"status": "success", "skills": list_all_skills()})
         except Exception as e:

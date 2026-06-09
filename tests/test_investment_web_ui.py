@@ -214,6 +214,8 @@ def test_investment_generated_content_uses_shared_artifact_file_tree():
     assert "intermediate" in js
     assert "data-artifact-level" in js
     assert "data-artifact-loaded" in js
+    assert "data-artifact-depth" in js
+    assert "investmentArtifactDepthClass(" in js
     assert "investment-artifact-package open" not in js
     assert "investment-artifact-folder open" not in js
     assert "investment-artifact-package-btn" in js
@@ -222,9 +224,16 @@ def test_investment_generated_content_uses_shared_artifact_file_tree():
     assert ".investment-artifact-package-btn" in css
     assert ".investment-artifact-folder-btn" in css
     assert ".investment-artifact-file-btn" in css
+    assert ".investment-artifact-depth-0-btn" in css
+    assert ".investment-artifact-depth-1-btn" in css
+    assert ".investment-artifact-depth-2-btn" in css
+    assert ".investment-artifact-depth-3-btn" in css
+    assert ".investment-artifact-depth-4-btn" in css
     assert "padding-left: 22px;" in css
     assert "padding-left: 40px;" in css
     assert "padding-left: 58px;" in css
+    assert "padding-left: 76px;" in css
+    assert "padding-left: 94px;" in css
     assert "investment-content-list" in render_body
     assert ".investment-artifact-browser" in css
     assert ".investment-artifact-tree" in css
@@ -1258,7 +1267,8 @@ def test_investment_content_and_records_ui_respect_cache_and_export_permissions(
     assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
     assert "/api/investment/cache" in js
     assert "async function loadInvestmentGeneratedContent()" in js
-    assert "investmentButtonIfCan('records.export', 'fa-file-export', '导出', 'openInvestmentRequestExportDialog()'" in js
+    assert "investmentButtonIfCan('records.export', 'fa-download', '导出当前结果', 'exportInvestmentRequestRecordsByCurrentFilters()'" in js
+    assert "investmentButtonIfCan('records.export', 'fa-file-export', '更多导出', 'openInvestmentRequestExportDialog()'" in js
 
 
 def test_investment_records_filters_and_export_share_toolbar_without_title_topbar():
@@ -1276,7 +1286,9 @@ def test_investment_records_filters_and_export_share_toolbar_without_title_topba
     assert "investment-records-toolbar" in filters_body
     assert "investment-records-filter-grid" in filters_body
     assert "investment-records-filter-actions" in filters_body
+    assert "exportInvestmentRequestRecordsByCurrentFilters()" in filters_body
     assert "openInvestmentRequestExportDialog()" in filters_body
+    assert "exportMode: 'range'" in js
     assert ".investment-records-toolbar" in css
     assert ".investment-records-topbar" not in css
     assert ".investment-records-filter-grid {\n    display: grid;" in css
@@ -1295,7 +1307,7 @@ def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
     assert "investmentRecordsSetFilterValues('requests', {resetPage: false})" in dialog_body
     assert "initInvestmentDropdowns(document.getElementById('investment-modal-body'))" in dialog_body
     assert "公众号请求导出" in panel_body
-    assert "导出当前筛选" in panel_body
+    assert "导出当前筛选" not in panel_body
     assert "全量导出" in panel_body
     assert "按时间范围导出" in panel_body
     assert "按月度导出" in panel_body
@@ -1306,10 +1318,10 @@ def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
     assert "investment-request-export-mode-grid" in panel_body
     assert "investment-request-export-form" in panel_body
     assert "investment-request-export-footer" in panel_body
-    assert "renderInvestmentRequestExportCurrentSummary(values)" in panel_body
+    assert "renderInvestmentRequestExportCurrentSummary(values)" not in panel_body
     assert "investmentRequestExportMonthOptions()" in panel_body
     assert "type=\"month\"" not in panel_body
-    assert "导出会应用上方客户/输入/错误、服务、状态和日期筛选。" in panel_body
+    assert "导出会应用上方客户/输入/错误、服务、状态和日期筛选。" not in panel_body
     assert "可按下方条件缩小范围。" in panel_body
     assert "不限制日期，按下方条件导出全部请求记录。" not in panel_body
     assert "投资服务" in panel_body
@@ -1318,16 +1330,15 @@ def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
 
     current_body = _js_function_body(js, "exportInvestmentRequestRecordsByCurrentFilters")
     range_body = _js_function_body(js, "exportInvestmentRequestRecordsByRange")
-    summary_body = _js_function_body(js, "renderInvestmentRequestExportCurrentSummary")
     month_options_body = _js_function_body(js, "investmentRequestExportMonthOptions")
     assert "investmentRecordsQueryParams('requests')" in current_body
+    assert "investmentRecordsSetFilterValues('requests', {resetPage: false})" in current_body
     assert "params.delete('page')" in current_body
     assert "params.delete('page_size')" in current_body
+    assert "investmentExportCustomer()" not in current_body
+    assert "params.set('customer'" not in current_body
     assert "请选择导出开始和结束日期" in range_body
-    assert "当前筛选条件" in summary_body
-    assert "未设置筛选，将导出全部请求记录" in summary_body
-    assert "investmentServiceLabel(filters.service_type)" in summary_body
-    assert "investmentStatusLabel(filters.status)" in summary_body
+    assert "function renderInvestmentRequestExportCurrentSummary" not in js
     assert "`${value}（本月）`" in month_options_body
     assert "本月，最近18个月" not in month_options_body
     assert "function exportInvestmentRequestRecordsFull()" in js
@@ -1335,7 +1346,7 @@ def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
     assert ".investment-request-export-layout" in css
     assert "grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1.45fr);" in css
     assert ".investment-request-export-mode-grid" in css
-    assert "grid-template-columns: repeat(5, minmax(0, 1fr));" in css
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in css
     assert ".investment-request-export-form" in css
     assert ".investment-request-export-fields > .investment-request-export-note" in css
     assert "grid-column: 1 / -1;" in css
@@ -1360,7 +1371,8 @@ def test_investment_request_export_exposes_unauthorized_and_customer_filter():
     assert "id=\"invest-export-customer\"" in panel_body
     assert "客户/机构/OpenID/手机号" in panel_body
     assert "function investmentExportCustomer()" in js
-    assert "params.set('customer', customer)" in current_body
+    assert "params.set('customer'" not in current_body
+    assert "investmentExportCustomer()" not in current_body
     assert "customer: investmentExportCustomer()" in full_body
     assert "customer: investmentExportCustomer()" in range_body
     assert "customer: investmentExportCustomer()" in month_body
@@ -1790,6 +1802,50 @@ def test_investment_request_drawer_keeps_error_details_and_audit_fields():
     assert ".investment-artifact-file" in css
     assert ".investment-artifact-role," in css
     assert "text-overflow: ellipsis;" in css
+
+
+def test_investment_request_drawer_shows_request_event_timeline():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    drawer_body = _js_function_body(js, "renderInvestmentRequestDrawer")
+    timeline_body = _js_function_body(js, "renderInvestmentRequestEventTimeline")
+    open_body = _js_function_body(js, "openInvestmentRecordDrawer")
+
+    assert "renderInvestmentRequestEventTimeline(record.events || [])" in drawer_body
+    assert "请求流程" in timeline_body
+    assert "event.event_type" in timeline_body
+    assert "event.content" in timeline_body
+    assert "investmentFormatBeijingTime(event.created_at)" in timeline_body
+    assert "showInvestmentRequestDetail" not in open_body
+
+
+def test_investment_generation_records_ui_uses_generation_record_fields():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    table_body = _js_function_body(js, "renderInvestmentContentRecordsTable")
+    drawer_body = _js_function_body(js, "renderInvestmentContentDrawer")
+
+    assert "record.record_type === 'generation'" in table_body
+    assert "record.generation_id" in table_body
+    assert "record.operator_name" in table_body
+    assert "record.result" in table_body
+    assert "record.outputs" in table_body
+    assert "record.elapsed_ms" in table_body
+    assert "生成 ID" in drawer_body
+    assert "record.generation_id" in drawer_body
+    assert "record.output_text" in drawer_body
+    assert "record.outputs" in drawer_body
+
+
+def test_investment_audit_drawer_shows_before_and_after_state():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    drawer_body = _js_function_body(js, "renderInvestmentAuditDrawer")
+
+    assert "修改前" in drawer_body
+    assert "修改后" in drawer_body
+    assert "record.before_state" in drawer_body
+    assert "record.after_state" in drawer_body
 
 
 def test_investment_records_times_are_formatted_as_beijing_time():

@@ -11,6 +11,7 @@ from business.investment.business_records import (
     mark_business_failed,
     mark_business_success,
 )
+from business.investment.event_service import record_request_event
 from business.investment.records import (
     append_request_warning,
     build_artifact_package_tree,

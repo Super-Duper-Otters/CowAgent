@@ -4,11 +4,11 @@ from io import BytesIO
 from typing import Iterable
 
 from openpyxl import Workbook
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from .constants import ServiceType, Status
 from .db import connect, row_to_dict
-from .records import _visible_delivery_message, _service_condition
+from .records import _visible_delivery_message, build_request_record_conditions
 from .schema import investment_request_records, investment_users
 from .user_service import _decode_services
 
@@ -76,55 +76,20 @@ def export_request_records_xlsx(
     table = investment_request_records
     users = investment_users
     stmt = select(table).select_from(table.outerjoin(users, table.c.openid == users.c.openid))
-    if start_date:
-        stmt = stmt.where(table.c.created_at >= str(start_date))
-    if end_date:
-        stmt = stmt.where(table.c.created_at <= str(end_date))
-    service_condition, impossible = _service_condition(table, service_type)
+    conditions, impossible = build_request_record_conditions(
+        table,
+        users,
+        service_type=service_type,
+        status=status,
+        keyword=keyword,
+        customer=customer,
+        start_date=start_date,
+        end_date=end_date,
+    )
     if impossible:
         return _workbook_bytes(REQUEST_HEADERS, [], "RequestRecords")
-    if service_condition is not None:
-        stmt = stmt.where(service_condition)
-    if status:
-        try:
-            normalized_status = Status(status)
-        except ValueError:
-            return _workbook_bytes(REQUEST_HEADERS, [], "RequestRecords")
-        stmt = stmt.where(table.c.status == str(normalized_status))
-    keyword_text = str(keyword or "").strip()
-    if keyword_text:
-        pattern = f"%{keyword_text}%"
-        stmt = stmt.where(
-            or_(
-                table.c.request_id.ilike(pattern),
-                table.c.openid.ilike(pattern),
-                table.c.raw_input.ilike(pattern),
-                table.c.service_type.ilike(pattern),
-                table.c.status.ilike(pattern),
-                table.c.error_code.ilike(pattern),
-                table.c.user_prompt.ilike(pattern),
-                table.c.error_message.ilike(pattern),
-                table.c.normalized_target.ilike(pattern),
-                table.c.stock_code.ilike(pattern),
-                table.c.stock_name.ilike(pattern),
-                table.c.customer_name.ilike(pattern),
-                table.c.institution.ilike(pattern),
-                users.c.name.ilike(pattern),
-                users.c.institution.ilike(pattern),
-                users.c.mobile.ilike(pattern),
-            )
-        )
-    customer_text = str(customer or "").strip()
-    if customer_text:
-        customer_pattern = f"%{customer_text}%"
-        stmt = stmt.where(
-            or_(
-                table.c.openid.ilike(customer_pattern),
-                users.c.mobile.ilike(customer_pattern),
-                users.c.name.ilike(customer_pattern),
-                users.c.institution.ilike(customer_pattern),
-            )
-        )
+    if conditions:
+        stmt = stmt.where(*conditions)
     stmt = stmt.order_by(table.c.created_at.asc())
 
     with connect() as conn:

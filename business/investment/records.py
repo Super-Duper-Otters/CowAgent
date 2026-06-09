@@ -1,18 +1,27 @@
 # encoding:utf-8
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, func, insert, or_, select, update
+from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
 from .constants import ErrorCode, ServiceType, Status, normalize_service, user_message
 from .db import connect, row_to_dict
-from .schema import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records, investment_users
+from .schema import (
+    investment_cache_entries,
+    investment_daily_contents,
+    investment_output_files,
+    investment_request_records,
+    investment_users,
+    request_events,
+)
 
 
+logger = logging.getLogger(__name__)
 GENERATING_TIMEOUT_WARNING = "未完成/可能超时"
 GENERATING_TIMEOUT_MINUTES = 30
 DELIVERY_DELIVERED_MARKER = "[delivery:delivered]"
@@ -191,6 +200,51 @@ def _audit_values(**metadata) -> dict[str, object]:
     return values
 
 
+def _record_request_event_safe(
+    *,
+    request_id: str,
+    openid: str = "",
+    channel: str = "business",
+    event_type: str,
+    message_type: str = "",
+    content: str = "",
+    file_path: str = "",
+    source_type: str = "request",
+    source_id: str = "",
+    result: str = "",
+    error: str = "",
+) -> None:
+    try:
+        from .event_service import record_request_event
+
+        record_request_event(
+            request_id=request_id,
+            openid=openid,
+            channel=channel,
+            event_type=event_type,
+            message_type=message_type,
+            content=content,
+            file_path=file_path,
+            source_type=source_type,
+            source_id=source_id or request_id,
+            result=result,
+            error=error,
+        )
+    except Exception as exc:
+        logger.warning("[investment] record request event failed: %s", exc)
+
+
+def _request_identity(request_id: str) -> tuple[str, str]:
+    with connect() as conn:
+        row = conn.execute(
+            select(investment_request_records.c.openid, investment_request_records.c.raw_input).where(
+                investment_request_records.c.request_id == request_id
+            )
+        ).fetchone()
+    item = row_to_dict(row)
+    return item.get("openid") or "", item.get("raw_input") or ""
+
+
 def create_request_record(
     openid: str,
     raw_input: str,
@@ -238,6 +292,14 @@ def create_request_record(
                 updated_at=now,
             )
         )
+    _record_request_event_safe(
+        request_id=request_id,
+        openid=openid,
+        event_type="request_received",
+        message_type="text",
+        content=raw_input,
+        result="accepted",
+    )
     return request_id
 
 
@@ -325,6 +387,15 @@ def succeed_request_record(
             role = stored_artifact_roles.get(file_path, "image")
             version_tag = stored_artifact_versions.get(file_path, "")
             record_output_file(request_id, file_path, None, service_type, artifact_role=role, version_tag=version_tag)
+    openid, raw_input = _request_identity(request_id)
+    _record_request_event_safe(
+        request_id=request_id,
+        openid=openid,
+        event_type="generation_success",
+        message_type="system",
+        content=raw_input,
+        result="success",
+    )
 
 
 def fail_request_record(
@@ -357,6 +428,16 @@ def fail_request_record(
             )
         )
         conn.execute(delete(investment_output_files).where(investment_output_files.c.owner_id == request_id))
+    openid, raw_input = _request_identity(request_id)
+    _record_request_event_safe(
+        request_id=request_id,
+        openid=openid,
+        event_type="generation_failed",
+        message_type="system",
+        content=raw_input,
+        result="failed",
+        error=safe_detail,
+    )
 
 
 def append_request_warning(request_id: str, detail: str) -> None:
@@ -387,6 +468,15 @@ def append_request_warning(request_id: str, detail: str) -> None:
 
 def mark_request_delivered(request_id: str) -> None:
     append_request_warning(request_id, DELIVERY_DELIVERED_MARKER)
+    openid, raw_input = _request_identity(request_id)
+    _record_request_event_safe(
+        request_id=request_id,
+        openid=openid,
+        event_type="delivery_success",
+        message_type="system",
+        content=raw_input,
+        result="success",
+    )
 
 
 def record_success_request(openid: str, raw_input: str, service_type: ServiceType, output_files: list[str], elapsed_ms: int) -> str:
@@ -493,6 +583,98 @@ def list_request_records(
     return records
 
 
+def build_request_record_conditions(
+    table,
+    users,
+    *,
+    service_type: ServiceType | str | None = None,
+    status: Status | str | None = None,
+    keyword: str = "",
+    customer: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> tuple[list, bool]:
+    conditions = []
+    service_condition, impossible = _service_condition(table, service_type)
+    if impossible:
+        return [], True
+    if service_condition is not None:
+        conditions.append(service_condition)
+    if status is not None:
+        try:
+            normalized_status = Status(status)
+        except ValueError:
+            return [], True
+        conditions.append(table.c.status == str(normalized_status))
+    if start_date:
+        conditions.append(table.c.created_at >= str(start_date))
+    if end_date:
+        conditions.append(table.c.created_at <= str(end_date))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        event_match = exists(
+            select(1)
+            .select_from(request_events)
+            .where(request_events.c.request_id == table.c.request_id)
+            .where(
+                or_(
+                    request_events.c.openid.ilike(pattern),
+                    request_events.c.channel.ilike(pattern),
+                    request_events.c.event_type.ilike(pattern),
+                    request_events.c.message_type.ilike(pattern),
+                    request_events.c.content.ilike(pattern),
+                    request_events.c.media_id.ilike(pattern),
+                    request_events.c.file_path.ilike(pattern),
+                    request_events.c.source_type.ilike(pattern),
+                    request_events.c.source_id.ilike(pattern),
+                    request_events.c.result.ilike(pattern),
+                    request_events.c.error.ilike(pattern),
+                )
+            )
+        )
+        conditions.append(
+            or_(
+                table.c.request_id.ilike(pattern),
+                table.c.openid.ilike(pattern),
+                table.c.raw_input.ilike(pattern),
+                table.c.service_type.ilike(pattern),
+                table.c.status.ilike(pattern),
+                table.c.error_code.ilike(pattern),
+                table.c.user_prompt.ilike(pattern),
+                table.c.error_message.ilike(pattern),
+                table.c.output_files.ilike(pattern),
+                table.c.normalized_target.ilike(pattern),
+                table.c.stock_code.ilike(pattern),
+                table.c.stock_name.ilike(pattern),
+                table.c.customer_name.ilike(pattern),
+                table.c.institution.ilike(pattern),
+                table.c.market_date.ilike(pattern),
+                table.c.cache_key.ilike(pattern),
+                table.c.program_version.ilike(pattern),
+                table.c.ta_version.ilike(pattern),
+                table.c.renderer_version.ilike(pattern),
+                table.c.template_version.ilike(pattern),
+                users.c.name.ilike(pattern),
+                users.c.institution.ilike(pattern),
+                users.c.mobile.ilike(pattern),
+                event_match,
+            )
+        )
+    customer_text = str(customer or "").strip()
+    if customer_text:
+        customer_pattern = f"%{customer_text}%"
+        conditions.append(
+            or_(
+                table.c.openid.ilike(customer_pattern),
+                users.c.mobile.ilike(customer_pattern),
+                users.c.name.ilike(customer_pattern),
+                users.c.institution.ilike(customer_pattern),
+            )
+        )
+    return conditions, False
+
+
 def list_request_records_page(
     *,
     page: int = 1,
@@ -509,7 +691,6 @@ def list_request_records_page(
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
     offset = (page - 1) * page_size
-    conditions = []
     stmt = (
         select(
             table,
@@ -522,55 +703,18 @@ def list_request_records_page(
         .limit(page_size)
         .offset(offset)
     )
-    service_condition, impossible = _service_condition(table, service_type)
+    conditions, impossible = build_request_record_conditions(
+        table,
+        users,
+        service_type=service_type,
+        status=status,
+        keyword=keyword,
+        customer=customer,
+        start_date=start_date,
+        end_date=end_date,
+    )
     if impossible:
         return [], 0
-    if service_condition is not None:
-        conditions.append(service_condition)
-    if status is not None:
-        try:
-            normalized_status = Status(status)
-        except ValueError:
-            return [], 0
-        conditions.append(table.c.status == str(normalized_status))
-    if start_date:
-        conditions.append(table.c.created_at >= str(start_date))
-    if end_date:
-        conditions.append(table.c.created_at <= str(end_date))
-    keyword_text = str(keyword or "").strip()
-    if keyword_text:
-        pattern = f"%{keyword_text}%"
-        conditions.append(
-            or_(
-                table.c.request_id.ilike(pattern),
-                table.c.openid.ilike(pattern),
-                table.c.raw_input.ilike(pattern),
-                table.c.service_type.ilike(pattern),
-                table.c.status.ilike(pattern),
-                table.c.error_code.ilike(pattern),
-                table.c.user_prompt.ilike(pattern),
-                table.c.error_message.ilike(pattern),
-                table.c.normalized_target.ilike(pattern),
-                table.c.stock_code.ilike(pattern),
-                table.c.stock_name.ilike(pattern),
-                table.c.customer_name.ilike(pattern),
-                table.c.institution.ilike(pattern),
-                users.c.name.ilike(pattern),
-                users.c.institution.ilike(pattern),
-                users.c.mobile.ilike(pattern),
-            )
-        )
-    customer_text = str(customer or "").strip()
-    if customer_text:
-        customer_pattern = f"%{customer_text}%"
-        conditions.append(
-            or_(
-                table.c.openid.ilike(customer_pattern),
-                users.c.mobile.ilike(customer_pattern),
-                users.c.name.ilike(customer_pattern),
-                users.c.institution.ilike(customer_pattern),
-            )
-        )
     if conditions:
         stmt = stmt.where(*conditions)
     count_stmt = select(func.count()).select_from(table.outerjoin(users, table.c.openid == users.c.openid))

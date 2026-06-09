@@ -2782,7 +2782,7 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .investment-request-export-mode-grid {
     display: grid;
     min-width: 0;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
 }
 
@@ -2972,6 +2972,26 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 .investment-artifact-file-btn {
     padding-left: 58px;
+}
+
+.investment-artifact-depth-0-btn {
+    padding-left: 22px;
+}
+
+.investment-artifact-depth-1-btn {
+    padding-left: 40px;
+}
+
+.investment-artifact-depth-2-btn {
+    padding-left: 58px;
+}
+
+.investment-artifact-depth-3-btn {
+    padding-left: 76px;
+}
+
+.investment-artifact-depth-4-btn {
+    padding-left: 94px;
 }
 
 .investment-artifact-viewer {

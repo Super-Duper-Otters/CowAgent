@@ -173,6 +173,20 @@ class WechatMPChannel(ChatChannel):
             append_delivery_warning(request_id, detail)
         except Exception as exc:
             logger.warning("[wechatmp] record investment delivery warning failed: {}".format(exc))
+        try:
+            from business import business_records
+
+            business_records.record_request_event(
+                request_id=request_id,
+                openid="",
+                channel="wechatmp",
+                event_type="delivery_failed",
+                message_type="image",
+                result="failed",
+                error=detail,
+            )
+        except Exception as exc:
+            logger.debug("[wechatmp] record investment delivery event failed: {}".format(exc))
 
     async def delete_media(self, media_id):
         logger.debug("[wechatmp] permanent media {} will be deleted in 10s".format(media_id))
