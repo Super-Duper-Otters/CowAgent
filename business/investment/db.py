@@ -62,8 +62,24 @@ def row_to_dict(row) -> dict:
     if row is None:
         return {}
     if isinstance(row, Mapping):
-        return dict(row)
-    return dict(row._mapping)
+        item = dict(row)
+    else:
+        item = dict(row._mapping)
+    compatibility_keys = {
+        "service": "service_type",
+        "outputs": "output_files",
+        "error": "error_message",
+        "sources": "source_files",
+        "input_text": "source_text",
+        "output_text": "generated_text",
+        "output_image_path": "output_image",
+        "category": "operation_category",
+        "result": "result_status",
+    }
+    for physical_name, legacy_name in compatibility_keys.items():
+        if physical_name in item and legacy_name not in item:
+            item[legacy_name] = item[physical_name]
+    return item
 
 
 def upsert_config(

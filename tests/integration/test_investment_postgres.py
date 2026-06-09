@@ -76,21 +76,21 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
 
     storage.initialize_storage()
     inspector = inspect(get_engine())
-    assert inspector.has_table("investment_configs")
-    assert inspector.has_table("investment_users")
-    assert inspector.has_table("investment_request_records")
-    assert inspector.has_table("investment_daily_contents")
-    assert inspector.has_table("investment_output_files")
-    assert inspector.has_table("investment_cache_entries")
-    assert inspector.has_table("investment_operation_audits")
-    assert inspector.has_table("investment_stock_symbols")
+    assert inspector.has_table("configs")
+    assert inspector.has_table("customers")
+    assert inspector.has_table("request_records")
+    assert inspector.has_table("content_records")
+    assert inspector.has_table("artifacts")
+    assert inspector.has_table("cache_entries")
+    assert inspector.has_table("operation_audits")
+    assert inspector.has_table("stock_symbols")
     assert inspector.has_table("alembic_version")
     with get_engine().connect() as conn:
         alembic_versions = [row[0] for row in conn.exec_driver_sql("select version_num from alembic_version").fetchall()]
     assert "20260527_0008" in alembic_versions
-    request_record_columns = {column["name"] for column in inspector.get_columns("investment_request_records")}
+    request_record_columns = {column["name"] for column in inspector.get_columns("request_records")}
     assert {"normalized_target", "stock_code", "stock_name", "cache_key", "cache_hit"}.issubset(request_record_columns)
-    daily_content_columns = {column["name"] for column in inspector.get_columns("investment_daily_contents")}
+    daily_content_columns = {column["name"] for column in inspector.get_columns("content_records")}
     assert {
         "effective_date",
         "expires_at",
@@ -99,9 +99,9 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
         "auto_effective_after_generate",
         "archived_at",
     }.issubset(daily_content_columns)
-    output_file_columns = {column["name"] for column in inspector.get_columns("investment_output_files")}
+    output_file_columns = {column["name"] for column in inspector.get_columns("artifacts")}
     assert {"artifact_role", "file_size", "file_hash", "version_tag"}.issubset(output_file_columns)
-    cache_columns = {column["name"] for column in inspector.get_columns("investment_cache_entries")}
+    cache_columns = {column["name"] for column in inspector.get_columns("cache_entries")}
     assert {
         "cache_key",
         "service_type",
@@ -113,23 +113,23 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
         "status",
         "hit_count",
     }.issubset(cache_columns)
-    cache_indexes = {index["name"]: tuple(index.get("column_names") or []) for index in inspector.get_indexes("investment_cache_entries")}
-    assert cache_indexes["idx_investment_cache_lookup"] == (
+    cache_indexes = {index["name"]: tuple(index.get("column_names") or []) for index in inspector.get_indexes("cache_entries")}
+    assert cache_indexes["idx_cache_entries_lookup"] == (
         "service_type",
         "normalized_target",
         "market_date",
         "version_fingerprint",
         "status",
     )
-    assert cache_indexes["idx_investment_cache_service_date"] == ("service_type", "market_date", "status")
-    stock_pk = inspector.get_pk_constraint("investment_stock_symbols").get("constrained_columns") or []
+    assert cache_indexes["idx_cache_entries_service_date"] == ("service_type", "market_date", "status")
+    stock_pk = inspector.get_pk_constraint("stock_symbols").get("constrained_columns") or []
     stock_unique_columns = {
         tuple(item.get("column_names") or [])
-        for item in inspector.get_unique_constraints("investment_stock_symbols")
+        for item in inspector.get_unique_constraints("stock_symbols")
     }
     stock_unique_columns.update(
         tuple(index.get("column_names") or [])
-        for index in inspector.get_indexes("investment_stock_symbols")
+        for index in inspector.get_indexes("stock_symbols")
         if index.get("unique")
     )
     assert stock_pk == ["code"] or ("code",) in stock_unique_columns

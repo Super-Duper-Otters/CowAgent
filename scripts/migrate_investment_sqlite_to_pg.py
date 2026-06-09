@@ -21,6 +21,15 @@ from business.investment import migrations as investment_migrations  # noqa: E40
 from business.investment import schema  # noqa: E402
 
 TABLE_NAMES = (
+    "customers",
+    "request_records",
+    "content_records",
+    "artifacts",
+    "configs",
+    "stock_symbols",
+)
+
+LEGACY_TABLE_NAMES = (
     "investment_users",
     "investment_request_records",
     "investment_daily_contents",
@@ -30,22 +39,24 @@ TABLE_NAMES = (
 )
 
 TABLES = {
-    "investment_users": schema.investment_users,
-    "investment_request_records": schema.investment_request_records,
-    "investment_daily_contents": schema.investment_daily_contents,
-    "investment_output_files": schema.investment_output_files,
+    "customers": schema.customers,
+    "request_records": schema.request_records,
+    "content_records": schema.content_records,
+    "artifacts": schema.artifacts,
 }
 
 CONFLICT_COLUMNS = {
-    "investment_request_records": ["request_id"],
-    "investment_daily_contents": ["content_id"],
-    "investment_output_files": ["id"],
+    "request_records": ["request_id"],
+    "content_records": ["content_id"],
+    "artifacts": ["id"],
 }
 
 SEQUENCE_TABLES = (
-    ("investment_users", "id"),
-    ("investment_output_files", "id"),
+    ("customers", "id"),
+    ("artifacts", "id"),
 )
+
+LEGACY_TO_CURRENT_TABLES = dict(zip(LEGACY_TABLE_NAMES, TABLE_NAMES, strict=True))
 
 SKIPPED_CONFIG_PREFIXES = ("model.", "wechatmp.")
 
@@ -62,8 +73,19 @@ def read_sqlite_tables(sqlite_path: str | Path) -> OrderedDict[str, list[dict]]:
     rows_by_table: OrderedDict[str, list[dict]] = OrderedDict()
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
+        existing_tables = {
+            row["name"]
+            for row in conn.execute("select name from sqlite_master where type = 'table'").fetchall()
+        }
         for table_name in TABLE_NAMES:
-            rows = conn.execute(f"select * from {table_name}").fetchall()
+            source_table = table_name
+            if source_table not in existing_tables:
+                legacy_table = next(
+                    (legacy for legacy, current in LEGACY_TO_CURRENT_TABLES.items() if current == table_name),
+                    "",
+                )
+                source_table = legacy_table if legacy_table in existing_tables else table_name
+            rows = conn.execute(f"select * from {source_table}").fetchall()
             rows_by_table[table_name] = [dict(row) for row in rows]
     return rows_by_table
 
@@ -73,7 +95,7 @@ def _upsert_rows(conn, table_name: str, rows: list[dict]) -> None:
         return
 
     table = TABLES[table_name]
-    if table_name == "investment_users":
+    if table_name == "customers":
         conflict_columns = ["id"] if rows[0].get("id") is not None else ["openid"]
     else:
         conflict_columns = CONFLICT_COLUMNS[table_name]
@@ -82,9 +104,9 @@ def _upsert_rows(conn, table_name: str, rows: list[dict]) -> None:
     primary_key_columns = {column.name for column in table.primary_key.columns}
     excluded_columns = set(conflict_columns) | primary_key_columns
     set_mapping = {
-        column.name: getattr(stmt.excluded, column.name)
+        column.name: stmt.excluded[column.key]
         for column in table.columns
-        if column.name not in excluded_columns and column.name in rows[0]
+        if column.name not in excluded_columns and (column.name in rows[0] or column.key in rows[0])
     }
     stmt = stmt.on_conflict_do_update(
         index_elements=[table.c[name] for name in conflict_columns],
@@ -123,7 +145,7 @@ def copy_tables_to_postgres(
     with engine.begin() as conn:
         for table_name in TABLE_NAMES:
             rows = tables.get(table_name, [])
-            if table_name == "investment_configs":
+            if table_name == "configs":
                 copied = 0
                 for row in rows:
                     key = row["config_key"]
@@ -138,7 +160,7 @@ def copy_tables_to_postgres(
                     )
                     copied += 1
                 copied_counts[table_name] = copied
-            elif table_name == "investment_stock_symbols":
+            elif table_name == "stock_symbols":
                 if rows:
                     investment_db.upsert_stock_symbols(conn, rows)
                 copied_counts[table_name] = len(rows)

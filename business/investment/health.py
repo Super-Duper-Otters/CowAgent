@@ -17,7 +17,7 @@ from .render_service import (
     DEFAULT_TEMPLATE_CB_PATH,
     DEFAULT_TEMPLATE_TA_PATH,
 )
-from .schema import investment_stock_symbols
+from .schema import stock_symbols
 from .storage import get_storage_dirs
 from .stock_resolver import get_tushare_token, stock_dictionary_stats
 
@@ -212,7 +212,7 @@ def _wechatmp_health_items() -> list[HealthItem]:
 
 def _check_stock_dictionary_table() -> HealthItem:
     try:
-        exists = inspect(get_engine()).has_table("investment_stock_symbols")
+        exists = inspect(get_engine()).has_table("stock_symbols")
         return HealthItem("stock_dictionary_table", exists, "exists" if exists else "missing")
     except Exception as exc:
         return HealthItem("stock_dictionary_table", False, str(exc))
@@ -230,7 +230,7 @@ def _stock_dictionary_health_items() -> list[HealthItem]:
 
     try:
         stats = stock_dictionary_stats()
-        symbol_table = investment_stock_symbols
+        symbol_table = stock_symbols
         latest_updated_at = select(symbol_table.c.updated_at).order_by(symbol_table.c.updated_at.desc()).limit(1).scalar_subquery()
         stmt = (
             select(symbol_table.c.source)

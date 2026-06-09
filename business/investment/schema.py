@@ -4,7 +4,7 @@ from sqlalchemy import Column, Index, Integer, MetaData, Table, Text
 metadata = MetaData()
 
 investment_users = Table(
-    "investment_users",
+    "customers",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("openid", Text, nullable=False),
@@ -26,11 +26,11 @@ investment_users = Table(
     Column("delete_reason", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    Index("idx_investment_users_openid", "openid", unique=True),
+    Index("idx_customers_openid", "openid", unique=True),
 )
 
 investment_admin_users = Table(
-    "investment_admin_users",
+    "admins",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("username", Text, nullable=False),
@@ -40,33 +40,33 @@ investment_admin_users = Table(
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("last_login_at", Text),
-    Index("idx_investment_admin_users_username", "username", unique=True),
+    Index("idx_admins_username", "username", unique=True),
 )
 
 investment_admin_sessions = Table(
-    "investment_admin_sessions",
+    "admin_sessions",
     metadata,
     Column("session_id", Text, primary_key=True),
     Column("user_id", Integer, nullable=False),
     Column("token_hash", Text, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("expires_at", Text, nullable=False),
-    Index("idx_investment_admin_sessions_token", "token_hash", unique=True),
-    Index("idx_investment_admin_sessions_user", "user_id"),
+    Index("idx_admin_sessions_token", "token_hash", unique=True),
+    Index("idx_admin_sessions_user", "user_id"),
 )
 
 investment_request_records = Table(
-    "investment_request_records",
+    "request_records",
     metadata,
     Column("request_id", Text, primary_key=True),
     Column("openid", Text, nullable=False),
     Column("raw_input", Text, nullable=False),
-    Column("service_type", Text),
+    Column("service", Text, key="service_type"),
     Column("status", Text, nullable=False),
     Column("error_code", Text),
     Column("user_prompt", Text),
-    Column("error_message", Text),
-    Column("output_files", Text),
+    Column("error", Text, key="error_message"),
+    Column("outputs", Text, key="output_files"),
     Column("normalized_target", Text),
     Column("stock_code", Text),
     Column("stock_name", Text),
@@ -82,21 +82,21 @@ investment_request_records = Table(
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Column("elapsed_ms", Integer),
-    Index("idx_investment_request_records_created", "created_at"),
-    Index("idx_investment_request_records_service_status", "service_type", "status"),
+    Index("idx_request_records_created", "created_at"),
+    Index("idx_request_records_service_status", "service_type", "status"),
 )
 
 investment_daily_contents = Table(
-    "investment_daily_contents",
+    "content_records",
     metadata,
     Column("content_id", Text, primary_key=True),
-    Column("service_type", Text, nullable=False),
-    Column("source_files", Text),
-    Column("source_text", Text),
-    Column("generated_text", Text),
-    Column("output_image", Text),
+    Column("service", Text, nullable=False, key="service_type"),
+    Column("sources", Text, key="source_files"),
+    Column("input_text", Text, key="source_text"),
+    Column("output_text", Text, key="generated_text"),
+    Column("output_image_path", Text, key="output_image"),
     Column("status", Text, nullable=False),
-    Column("error_message", Text),
+    Column("error", Text, key="error_message"),
     Column("operator", Text),
     Column("created_by_admin_id", Integer),
     Column("created_by_username", Text),
@@ -116,48 +116,48 @@ investment_daily_contents = Table(
     Column("direct_output_mode", Integer, nullable=False, server_default="0"),
     Column("auto_effective_after_generate", Integer, nullable=False, server_default="0"),
     Column("archived_at", Text),
-    Index("idx_investment_daily_contents_service_status", "service_type", "status"),
-    Index("idx_investment_daily_contents_effective", "service_type", "effective_at"),
-    Index("idx_investment_daily_contents_effective_date", "service_type", "effective_date", "status"),
+    Index("idx_content_records_service_status", "service_type", "status"),
+    Index("idx_content_records_effective", "service_type", "effective_at"),
+    Index("idx_content_records_effective_date", "service_type", "effective_date", "status"),
 )
 
 investment_output_files = Table(
-    "investment_output_files",
+    "artifacts",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("owner_id", Text),
     Column("owner_type", Text),
     Column("file_path", Text, nullable=False),
     Column("file_type", Text),
-    Column("service_type", Text),
+    Column("service", Text, key="service_type"),
     Column("artifact_role", Text),
     Column("file_size", Integer),
     Column("file_hash", Text),
     Column("version_tag", Text),
     Column("created_at", Text, nullable=False),
-    Index("idx_investment_output_files_owner", "owner_id"),
+    Index("idx_artifacts_owner", "owner_id"),
 )
 
 investment_cache_entries = Table(
-    "investment_cache_entries",
+    "cache_entries",
     metadata,
     Column("cache_key", Text, primary_key=True),
-    Column("service_type", Text, nullable=False),
+    Column("service", Text, nullable=False, key="service_type"),
     Column("normalized_target", Text, nullable=False),
     Column("market_date", Text, nullable=False),
     Column("version_fingerprint", Text, nullable=False),
-    Column("output_files", Text, nullable=False),
+    Column("outputs", Text, nullable=False, key="output_files"),
     Column("artifact_owner_id", Text),
     Column("status", Text, nullable=False),
     Column("hit_count", Integer, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    Index("idx_investment_cache_lookup", "service_type", "normalized_target", "market_date", "version_fingerprint", "status"),
-    Index("idx_investment_cache_service_date", "service_type", "market_date", "status"),
+    Index("idx_cache_entries_lookup", "service_type", "normalized_target", "market_date", "version_fingerprint", "status"),
+    Index("idx_cache_entries_service_date", "service_type", "market_date", "status"),
 )
 
 investment_configs = Table(
-    "investment_configs",
+    "configs",
     metadata,
     Column("config_key", Text, primary_key=True),
     Column("config_value", Text),
@@ -169,17 +169,17 @@ investment_configs = Table(
 )
 
 investment_operation_audits = Table(
-    "investment_operation_audits",
+    "operation_audits",
     metadata,
     Column("audit_id", Text, primary_key=True),
     Column("operator", Text),
     Column("operator_admin_id", Integer),
     Column("operator_username", Text),
     Column("operator_role", Text),
-    Column("operation_category", Text),
-    Column("result_status", Text),
+    Column("category", Text, key="operation_category"),
+    Column("result", Text, key="result_status"),
     Column("error_code", Text),
-    Column("error_message", Text),
+    Column("error", Text, key="error_message"),
     Column("elapsed_ms", Integer),
     Column("before_state", Text),
     Column("after_state", Text),
@@ -190,12 +190,12 @@ investment_operation_audits = Table(
     Column("request_ip", Text),
     Column("user_agent", Text),
     Column("created_at", Text, nullable=False),
-    Index("idx_investment_operation_audits_created", "created_at"),
-    Index("idx_investment_operation_audits_target", "target_type", "target_id"),
+    Index("idx_operation_audits_created", "created_at"),
+    Index("idx_operation_audits_target", "target_type", "target_id"),
 )
 
 investment_stock_symbols = Table(
-    "investment_stock_symbols",
+    "stock_symbols",
     metadata,
     Column("code", Text, primary_key=True),
     Column("name", Text, nullable=False),
@@ -203,6 +203,66 @@ investment_stock_symbols = Table(
     Column("ts_code", Text),
     Column("source", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    Index("idx_investment_stock_symbols_name", "name"),
-    Index("idx_investment_stock_symbols_updated", "updated_at"),
+    Index("idx_stock_symbols_name", "name"),
+    Index("idx_stock_symbols_updated", "updated_at"),
 )
+
+request_events = Table(
+    "request_events",
+    metadata,
+    Column("event_id", Text, primary_key=True),
+    Column("request_id", Text, nullable=False),
+    Column("openid", Text, nullable=False),
+    Column("channel", Text, nullable=False),
+    Column("event_type", Text, nullable=False),
+    Column("message_type", Text),
+    Column("content", Text),
+    Column("media_id", Text),
+    Column("file_path", Text),
+    Column("source_type", Text),
+    Column("source_id", Text),
+    Column("result", Text),
+    Column("error", Text),
+    Column("created_at", Text, nullable=False),
+    Index("idx_request_events_request_created", "request_id", "created_at"),
+    Index("idx_request_events_openid_created", "openid", "created_at"),
+    Index("idx_request_events_type_created", "event_type", "created_at"),
+)
+
+generation_records = Table(
+    "generation_records",
+    metadata,
+    Column("generation_id", Text, primary_key=True),
+    Column("content_id", Text, nullable=False),
+    Column("service", Text, nullable=False),
+    Column("operator_id", Integer),
+    Column("operator_name", Text),
+    Column("operator_role", Text),
+    Column("input_text", Text),
+    Column("sources", Text, nullable=False),
+    Column("result", Text, nullable=False),
+    Column("error_code", Text),
+    Column("error", Text),
+    Column("output_text", Text),
+    Column("outputs", Text, nullable=False),
+    Column("elapsed_ms", Integer),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index("idx_generation_records_content_created", "content_id", "created_at"),
+    Index("idx_generation_records_service_created", "service", "created_at"),
+    Index("idx_generation_records_operator_created", "operator_name", "created_at"),
+)
+
+# New concise table aliases. Keep the legacy Python names above so existing
+# service modules can continue importing them while the physical table names
+# are simplified.
+customers = investment_users
+admins = investment_admin_users
+admin_sessions = investment_admin_sessions
+request_records = investment_request_records
+content_records = investment_daily_contents
+artifacts = investment_output_files
+cache_entries = investment_cache_entries
+configs = investment_configs
+operation_audits = investment_operation_audits
+stock_symbols = investment_stock_symbols
