@@ -1574,7 +1574,8 @@ def test_investment_content_page_defaults_to_history_overview():
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in js
     assert "const dateRange = investmentNormalizeCacheDateFilters();" in cache_body
     assert "const selectedDate = dateRange.marketDate;" in cache_body
-    assert "const visibleEntries = selectedDate ? values.filter" in cache_body
+    assert "const visibleEntries = values;" in cache_body
+    assert "selectedDate ? values.filter(entry => (entry.market_date || '') === selectedDate) : values" not in cache_body
     assert "haystack.includes(keyword)" not in cache_body
     assert "renderInvestmentGeneratedContentHome(categories, visibleEntries)" in cache_body
     assert "selectedCategory ? renderInvestmentRecordsPagination('cache') : ''" in cache_body

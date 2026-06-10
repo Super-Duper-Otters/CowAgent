@@ -3854,7 +3854,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const dateRange = investmentNormalizeCacheDateFilters();
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
-    const visibleEntries = selectedDate ? values.filter(entry => (entry.market_date || '') === selectedDate) : values;
+    const visibleEntries = values;
     const categories = ['technical_analysis', 'rate', 'convertible_bond'];
     const selectedCategory = categories.includes(investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
     const body = selectedCategory
