@@ -1501,6 +1501,9 @@
     color: #1e293b;
     text-align: left;
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .investment-date-value-button.empty {
@@ -2096,12 +2099,14 @@
     display: grid;
     width: 100%;
     min-width: 0;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) !important;
     gap: 14px;
-    align-items: start;
+    align-items: stretch;
 }
 
 .investment-records-list {
+    display: flex;
+    flex-direction: column;
     height: var(--investment-records-list-max-height);
     width: 100%;
     min-width: 0;
@@ -2199,6 +2204,8 @@
 }
 
 .investment-records-table-shell {
+    flex: 1 1 auto;
+    width: 100%;
     height: 100%;
     min-height: 0;
     min-width: 0;
@@ -3153,6 +3160,124 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     min-width: 0;
 }
 
+.investment-records-toolbar.investment-request-records-toolbar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 12px;
+}
+
+.investment-records-filter-grid.investment-request-records-filter-grid {
+    display: grid !important;
+    grid-template-columns: minmax(190px, 0.85fr) minmax(220px, 0.86fr) minmax(460px, 1.55fr) !important;
+    gap: 12px;
+}
+
+.investment-request-search-slot,
+.investment-request-filter-selects,
+.investment-request-date-panel,
+.investment-request-date-controls {
+    min-width: 0;
+}
+
+.investment-request-filter-selects {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(108px, 1fr));
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-request-date-panel {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.34fr) minmax(320px, 1fr);
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-request-date-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-request-date-controls .record-month-field {
+    grid-column: 1 / -1;
+}
+
+.investment-request-date-controls > .hidden {
+    display: none;
+}
+
+.investment-records-toolbar.investment-content-records-toolbar,
+.investment-records-toolbar.investment-audit-records-toolbar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 12px;
+}
+
+.investment-records-filter-grid.investment-content-records-filter-grid {
+    display: grid !important;
+    grid-template-columns: minmax(190px, 0.82fr) minmax(220px, 0.86fr) minmax(460px, 1.55fr) !important;
+    gap: 12px;
+}
+
+.investment-records-filter-grid.investment-audit-records-filter-grid {
+    display: grid !important;
+    grid-template-columns: minmax(180px, 0.72fr) minmax(330px, 1.12fr) minmax(460px, 1.55fr) !important;
+    gap: 12px;
+}
+
+.investment-content-search-slot,
+.investment-content-filter-selects,
+.investment-content-date-panel,
+.investment-content-date-controls,
+.investment-audit-search-slot,
+.investment-audit-meta-fields,
+.investment-audit-date-panel,
+.investment-audit-date-controls {
+    min-width: 0;
+}
+
+.investment-content-filter-selects {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(108px, 1fr));
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-audit-meta-fields {
+    display: grid;
+    grid-template-columns: minmax(96px, 0.9fr) minmax(108px, 1fr) minmax(100px, 0.9fr);
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-content-date-panel,
+.investment-audit-date-panel {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.34fr) minmax(320px, 1fr);
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-content-date-controls,
+.investment-audit-date-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+    gap: 10px;
+    align-items: end;
+}
+
+.investment-content-date-controls .content-record-month-field,
+.investment-audit-date-controls .audit-record-month-field {
+    grid-column: 1 / -1;
+}
+
+.investment-content-date-controls > .hidden,
+.investment-audit-date-controls > .hidden {
+    display: none;
+}
+
 .investment-records-pagination {
     display: flex;
     flex-wrap: wrap;
@@ -3318,6 +3443,14 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     .investment-records-filter-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .investment-records-filter-grid.investment-request-records-filter-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .investment-request-date-panel {
+        grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+    }
 }
 
 @media (max-width: 768px) {
@@ -3367,6 +3500,12 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     }
 
     .investment-records-filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .investment-request-filter-selects,
+    .investment-request-date-panel,
+    .investment-request-date-controls {
         grid-template-columns: 1fr;
     }
 

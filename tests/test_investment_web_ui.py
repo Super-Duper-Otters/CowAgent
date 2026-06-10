@@ -1388,14 +1388,88 @@ def test_investment_records_default_to_beijing_today_filters():
     default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
 
-    assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
+    assert "requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
-    assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
+    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "start_date: investmentTodayDate()" in default_body
     assert "end_date: investmentTodayDate()" in default_body
     assert "market_date: investmentTodayDate()" in default_body
     assert "data.market_dates[0]" not in load_body
     assert "timeZone: 'Asia/Shanghai'" in _js_function_body(js, "investmentTodayDate")
+
+
+def test_investment_request_records_support_day_month_date_filter_modes():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    query_body = _js_function_body(js, "investmentRecordsQueryParams")
+    set_filter_body = _js_function_body(js, "investmentRecordsSetFilterValues")
+    export_body = _js_function_body(js, "exportInvestmentRequestRecordsByCurrentFilters")
+
+    assert "select('date_mode', '日期方式'" in filters_body
+    assert "['day', '日']" in filters_body
+    assert "['month', '月']" in filters_body
+    assert "investmentRequestRecordMonthOptions()" in filters_body
+    assert "record-month-field" in filters_body
+    assert "request-date-range-field" in filters_body
+    assert "changeInvestmentRequestDateMode(value)" in filters_body
+    assert "function changeInvestmentRequestDateMode(" in js
+    assert "function investmentRequestRecordMonthOptions(" in js
+    assert "investmentRecordMonthBounds(tab, filters.record_month || investmentTodayDate().slice(0, 7))" in query_body
+    assert "params.set('start_date', bounds.start)" in query_body
+    assert "params.set('end_date', bounds.end)" in query_body
+    assert "if (key === 'date_mode' || key === 'record_month' || key === 'effective_date') return;" in query_body
+    assert "filters.date_mode === 'month'" in set_filter_body
+    assert "investmentRecordsQueryParams('requests')" in export_body
+
+
+def test_investment_request_records_filter_toolbar_uses_grouped_layout():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+
+    assert "investment-request-records-toolbar" in filters_body
+    assert "investment-request-records-filter-grid" in filters_body
+    assert "investment-request-search-slot" in filters_body
+    assert "investment-request-filter-selects" in filters_body
+    assert "investment-request-date-panel" in filters_body
+    assert "investment-request-date-controls" in filters_body
+    assert ".investment-records-toolbar.investment-request-records-toolbar {" in css
+    assert ".investment-records-filter-grid.investment-request-records-filter-grid {" in css
+    assert ".investment-request-date-panel {" in css
+    assert ".investment-request-date-controls {" in css
+
+
+def test_investment_content_and_audit_records_filter_toolbars_use_grouped_layouts():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    query_body = _js_function_body(js, "investmentRecordsQueryParams")
+    default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
+    set_filter_body = _js_function_body(js, "investmentRecordsSetFilterValues")
+
+    assert "investment-content-records-toolbar" in filters_body
+    assert "investment-content-records-filter-grid" in filters_body
+    assert "investment-content-search-slot" in filters_body
+    assert "investment-content-date-panel" in filters_body
+    assert "investment-content-date-controls" in filters_body
+    assert "investment-audit-records-toolbar" in filters_body
+    assert "investment-audit-records-filter-grid" in filters_body
+    assert "investment-audit-search-slot" in filters_body
+    assert "investment-audit-date-panel" in filters_body
+    assert "investment-audit-date-controls" in filters_body
+    assert "changeInvestmentRecordDateMode('contents', value)" in filters_body
+    assert "changeInvestmentRecordDateMode('audits', value)" in filters_body
+    assert "investmentRecordMonthBounds(tab, filters.record_month || investmentTodayDate().slice(0, 7))" in query_body
+    assert "if (key === 'date_mode' || key === 'record_month' || key === 'effective_date') return;" in query_body
+    assert "tab === 'contents' || tab === 'audits'" in set_filter_body
+    assert "date_mode: 'day'" in default_body
+    assert ".investment-records-toolbar.investment-content-records-toolbar" in css
+    assert ".investment-records-filter-grid.investment-content-records-filter-grid" in css
+    assert ".investment-records-toolbar.investment-audit-records-toolbar" in css
+    assert ".investment-records-filter-grid.investment-audit-records-filter-grid" in css
 
 
 def test_investment_cache_empty_date_falls_back_to_today_before_loading():
@@ -1418,6 +1492,7 @@ def test_investment_records_page_uses_tab_workspace_without_side_drawer():
     assert "investment-records-workspace" in js
     assert "investment-records-board" in js
     assert "investment-records-tabs" in js
+    assert 'id="investment-records-pagination"' in _js_function_body(js, "renderInvestmentRecordsShell")
     assert 'id="investment-records-drawer"' not in js
     assert "选择记录查看详情" not in _js_function_body(js, "renderInvestmentRecordsShell")
     assert "选择内容查看详情" not in _js_function_body(js, "renderInvestmentGeneratedContent")
@@ -1428,7 +1503,7 @@ def test_investment_records_page_uses_tab_workspace_without_side_drawer():
     assert ".investment-records-main" in css
     assert ".investment-content-shell" in css
     assert "grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);" not in css
-    assert "grid-template-columns: minmax(0, 1fr);" in css
+    assert "grid-template-columns: minmax(0, 1fr) !important;" in css
 
 
 def test_investment_records_page_uses_human_filters_customer_display_and_compact_tables():
@@ -1459,8 +1534,10 @@ def test_investment_records_page_uses_human_filters_customer_display_and_compact
     assert "height: var(--investment-records-list-max-height);" in css
     assert ".investment-record-clamp" in css
     assert "-webkit-line-clamp" in css
-    assert ".investment-records-list {\n    height: var(--investment-records-list-max-height);" in css
-    assert ".investment-records-table-shell {\n    height: 100%;" in css
+    assert ".investment-records-list {" in css
+    assert "display: flex;" in css
+    assert "height: var(--investment-records-list-max-height);" in css
+    assert ".investment-records-table-shell {\n    flex: 1 1 auto;" in css
     assert "field('keyword', '关键字')" in js
     assert "field('action', '动作')" in js
     assert "field('operator', '操作人')" in js
@@ -1920,10 +1997,10 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     state_start = js.index("let investmentRecordsState =")
     state_end = js.index("const INVEST_VIEW_PERMISSIONS")
     state_body = js[state_start:state_end]
-    assert "requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
-    assert "contents: {page: '1', page_size: '80'}" in state_body
+    assert "requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
-    assert "audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()}" in state_body
+    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
 
     switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
     assert "investmentRecordsState.filters[tab]" in switch_body
@@ -1945,6 +2022,9 @@ def test_investment_records_filters_reset_page_and_queries_page_size():
     assert "investmentRecordsSetFilterValues(tab, {resetPage: true})" in apply_body
     assert "investmentRecordsDefaultFilters(tab)" in reset_body
     assert "data.pagination" in load_body
+    assert "const pagination = document.getElementById('investment-records-pagination')" in load_body
+    assert "if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination(tab);" in load_body
+    assert "html = `${renderInvestmentRequestRecordsTable" not in load_body
     assert "investmentRecordsState.pagination[tab]" in load_body
     assert "renderInvestmentRecordsPagination(tab)" in load_body
 

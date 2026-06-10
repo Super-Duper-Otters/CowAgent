@@ -470,10 +470,10 @@ let investmentRecordsState = {
     cacheCategory: '',
     exportMode: 'range',
     filters: {
-        requests: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
-        contents: {page: '1', page_size: '80'},
+        requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
+        contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
         cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()},
-        audits: {page: '1', page_size: '80', start_date: investmentTodayDate(), end_date: investmentTodayDate()},
+        audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
     },
     pagination: {
         requests: {page: 1, page_size: 80, total: 0, total_pages: 1},
@@ -3094,8 +3094,15 @@ function investmentRecordsQueryParams(tab) {
     const filters = investmentRecordsState.filters[tab] || {};
     params.set('page', filters.page || '1');
     params.set('page_size', filters.page_size || investmentRecordsDefaultPageSize(tab));
+    if ((tab === 'requests' || tab === 'contents' || tab === 'audits') && filters.date_mode === 'month') {
+        const bounds = investmentRecordMonthBounds(tab, filters.record_month || investmentTodayDate().slice(0, 7));
+        params.set('start_date', bounds.start);
+        params.set('end_date', bounds.end);
+    }
     Object.entries(filters).forEach(([key, value]) => {
         if (key === 'page' || key === 'page_size') return;
+        if (key === 'date_mode' || key === 'record_month' || key === 'effective_date') return;
+        if ((tab === 'requests' || tab === 'contents' || tab === 'audits') && filters.date_mode === 'month' && (key === 'start_date' || key === 'end_date')) return;
         if (value !== undefined && value !== null && String(value) !== '') {
             params.set(key, value);
         }
@@ -3109,13 +3116,38 @@ function investmentRecordsDefaultPageSize(tab) {
 
 function investmentRecordsDefaultFilters(tab) {
     if (tab === 'requests') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
+        return {
+            page: '1',
+            page_size: investmentRecordsDefaultPageSize(tab),
+            date_mode: 'day',
+            start_date: investmentTodayDate(),
+            end_date: investmentTodayDate(),
+            record_month: investmentTodayDate().slice(0, 7),
+        };
     }
     if (tab === 'cache') {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: investmentTodayDate()};
     }
     if (tab === 'audits') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), start_date: investmentTodayDate(), end_date: investmentTodayDate()};
+        return {
+            page: '1',
+            page_size: investmentRecordsDefaultPageSize(tab),
+            date_mode: 'day',
+            start_date: investmentTodayDate(),
+            end_date: investmentTodayDate(),
+            record_month: investmentTodayDate().slice(0, 7),
+        };
+    }
+    if (tab === 'contents') {
+        return {
+            page: '1',
+            page_size: investmentRecordsDefaultPageSize(tab),
+            keyword: '',
+            date_mode: 'day',
+            start_date: investmentTodayDate(),
+            end_date: investmentTodayDate(),
+            record_month: investmentTodayDate().slice(0, 7),
+        };
     }
     return {page: '1', page_size: investmentRecordsDefaultPageSize(tab)};
 }
@@ -3130,12 +3162,63 @@ function investmentRecordsSetFilterValues(tab, options = {}) {
     document.querySelectorAll('[data-investment-records-filter]').forEach(input => {
         filters[input.dataset.investmentRecordsFilter] = input.value || '';
     });
+    if (tab === 'requests' || tab === 'contents' || tab === 'audits') {
+        filters.date_mode = filters.date_mode === 'month' ? 'month' : 'day';
+        if (!filters.record_month) filters.record_month = investmentTodayDate().slice(0, 7);
+        if (filters.date_mode === 'day') {
+            if (!filters.start_date) filters.start_date = investmentTodayDate();
+            if (!filters.end_date) filters.end_date = filters.start_date;
+        }
+    }
     if (!filters.page_size) filters.page_size = investmentRecordsDefaultPageSize(tab);
     if (options.resetPage) {
         filters.page = '1';
     }
     if (!filters.page) filters.page = '1';
     investmentRecordsState.filters[tab] = filters;
+}
+
+function investmentRequestRecordMonthOptions() {
+    return investmentRecordMonthOptions();
+}
+
+function investmentRecordMonthOptions() {
+    return investmentRequestExportMonthOptions();
+}
+
+function investmentRecordMonthBounds(tab, monthValue) {
+    const value = /^\d{4}-\d{2}$/.test(String(monthValue || '')) ? String(monthValue) : investmentTodayDate().slice(0, 7);
+    const [year, month] = value.split('-').map(item => Number(item));
+    const lastDay = new Date(year, month, 0).getDate();
+    return {
+        start: `${value}-01`,
+        end: `${value}-${String(lastDay).padStart(2, '0')}`,
+    };
+}
+
+function investmentRequestMonthBounds(monthValue) {
+    return investmentRecordMonthBounds('requests', monthValue);
+}
+
+function changeInvestmentRecordDateMode(tab, mode) {
+    if (!['requests', 'contents', 'audits'].includes(tab)) tab = 'requests';
+    const filters = investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab);
+    investmentRecordsState.filters[tab] = {
+        ...filters,
+        date_mode: mode === 'month' ? 'month' : 'day',
+        record_month: filters.record_month || investmentTodayDate().slice(0, 7),
+        start_date: filters.start_date || investmentTodayDate(),
+        end_date: filters.end_date || filters.start_date || investmentTodayDate(),
+    };
+    const container = document.getElementById('investment-records-filters');
+    if (container) {
+        container.innerHTML = renderInvestmentRecordsFilters(tab);
+        initInvestmentDropdowns(container);
+    }
+}
+
+function changeInvestmentRequestDateMode(mode) {
+    changeInvestmentRecordDateMode('requests', mode);
 }
 
 function investmentCacheMarketDate() {
@@ -3322,6 +3405,7 @@ function renderInvestmentRecordsShell() {
                 <div class="investment-records-main">
                     <div class="investment-records-list" id="investment-records-list"></div>
                 </div>
+                <div id="investment-records-pagination"></div>
             </section>
         </div>`;
 }
@@ -3463,43 +3547,83 @@ function renderInvestmentRecordsFilters(tab) {
                 ? investmentRenderDateControl(`investment-records-filter-${key}`, filters[key] || '', {placeholder: '选择日期', attrs: `data-investment-records-filter="${key}"`})
                 : `<input id="investment-records-filter-${key}" data-investment-records-filter="${key}" type="${type}" value="${escapeHtml(filters[key] || '')}">`}
         </label>`;
-    const select = (key, label, options) => `
+    const select = (key, label, options, attrs = '', onChange = '') => `
         <label class="investment-field">
             <span>${label}</span>
-            ${investmentDropdown(`investment-records-filter-${key}`, options, filters[key] || '', `data-investment-records-filter="${key}"`)}
+            ${investmentDropdown(`investment-records-filter-${key}`, options, filters[key] || '', `data-investment-records-filter="${key}" ${attrs}`, onChange)}
         </label>`;
     let controls = '';
     if (tab === 'requests') {
-        controls = [
-            field('keyword', '客户/输入/错误'),
-            select('service_type', '服务', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']]),
-            select('status', '状态', [['', '全部'], ['success', '成功'], ['failed', '失败'], ['generating', '生成中']]),
-            field('start_date', '开始日期', 'date'),
-            field('end_date', '结束日期', 'date'),
-        ].join('');
+        const isMonthMode = (filters.date_mode || 'day') === 'month';
+        controls = `
+            <div class="investment-request-search-slot">${field('keyword', '客户/输入/错误')}</div>
+            <div class="investment-request-filter-selects">
+                ${select('service_type', '服务', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']])}
+                ${select('status', '状态', [['', '全部'], ['success', '成功'], ['failed', '失败'], ['generating', '生成中']])}
+            </div>
+            <div class="investment-request-date-panel">
+                ${select('date_mode', '日期方式', [['day', '日'], ['month', '月']], '', 'changeInvestmentRequestDateMode(value)')}
+                <div class="investment-request-date-controls">
+                    <div class="request-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('start_date', '开始日期', 'date')}</div>
+                    <div class="request-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('end_date', '结束日期', 'date')}</div>
+                    <div class="record-month-field ${isMonthMode ? '' : 'hidden'}">${select('record_month', '月份', investmentRequestRecordMonthOptions())}</div>
+                </div>
+            </div>`;
     } else if (tab === 'contents') {
-        controls = [
-            select('service_type', '服务', [['', '全部'], ['rate', '利率'], ['convertible_bond', '转债']]),
-            select('status', '状态', [['', '全部'], ['draft', '草稿'], ['generating', '生成中'], ['generated', '已生成'], ['generate_failed', '生成失败'], ['effective', '已生效'], ['archived', '已归档'], ['invalidated', '已失效']]),
-            field('effective_date', '生效日期', 'date'),
-        ].join('');
+        const isMonthMode = (filters.date_mode || 'day') === 'month';
+        controls = `
+            <div class="investment-content-search-slot">${field('keyword', '内容/输入/输出/错误')}</div>
+            <div class="investment-content-filter-selects">
+                ${select('service_type', '服务', [['', '全部'], ['rate', '利率'], ['convertible_bond', '转债']])}
+                ${select('status', '状态', [['', '全部'], ['running', '生成中'], ['success', '成功'], ['failed', '失败'], ['draft', '草稿'], ['generating', '旧生成中'], ['generated', '已生成'], ['generate_failed', '旧生成失败'], ['effective', '已生效'], ['archived', '已归档'], ['invalidated', '已失效']])}
+            </div>
+            <div class="investment-content-date-panel">
+                ${select('date_mode', '日期方式', [['day', '日'], ['month', '月']], '', "changeInvestmentRecordDateMode('contents', value)")}
+                <div class="investment-content-date-controls">
+                    <div class="content-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('start_date', '开始日期', 'date')}</div>
+                    <div class="content-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('end_date', '结束日期', 'date')}</div>
+                    <div class="content-record-month-field ${isMonthMode ? '' : 'hidden'}">${select('record_month', '月份', investmentRecordMonthOptions())}</div>
+                </div>
+            </div>`;
     } else if (tab === 'cache') {
         controls = [
             select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']]),
         ].join('');
     } else {
-        controls = [
-            field('keyword', '关键字'),
-            field('action', '动作'),
-            field('operator', '操作人'),
-            field('target_type', '对象类型'),
-            field('start_date', '开始日期', 'date'),
-            field('end_date', '结束日期', 'date'),
-        ].join('');
+        const isMonthMode = (filters.date_mode || 'day') === 'month';
+        controls = `
+            <div class="investment-audit-search-slot">${field('keyword', '关键字')}</div>
+            <div class="investment-audit-meta-fields">
+                ${field('action', '动作')}
+                ${field('target_type', '对象类型')}
+                ${field('operator', '操作人')}
+            </div>
+            <div class="investment-audit-date-panel">
+                ${select('date_mode', '日期方式', [['day', '日'], ['month', '月']], '', "changeInvestmentRecordDateMode('audits', value)")}
+                <div class="investment-audit-date-controls">
+                    <div class="audit-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('start_date', '开始日期', 'date')}</div>
+                    <div class="audit-date-range-field ${isMonthMode ? 'hidden' : ''}">${field('end_date', '结束日期', 'date')}</div>
+                    <div class="audit-record-month-field ${isMonthMode ? '' : 'hidden'}">${select('record_month', '月份', investmentRecordMonthOptions())}</div>
+                </div>
+            </div>`;
     }
+    const toolbarClass = tab === 'requests'
+        ? 'investment-records-toolbar investment-request-records-toolbar'
+        : tab === 'contents'
+            ? 'investment-records-toolbar investment-content-records-toolbar'
+            : tab === 'audits'
+                ? 'investment-records-toolbar investment-audit-records-toolbar'
+                : 'investment-records-toolbar';
+    const gridClass = tab === 'requests'
+        ? 'investment-records-filter-grid investment-request-records-filter-grid'
+        : tab === 'contents'
+            ? 'investment-records-filter-grid investment-content-records-filter-grid'
+            : tab === 'audits'
+                ? 'investment-records-filter-grid investment-audit-records-filter-grid'
+                : 'investment-records-filter-grid';
     return `
-        <div class="investment-records-toolbar">
-            <div class="investment-records-filter-grid">${controls}</div>
+        <div class="${toolbarClass}">
+            <div class="${gridClass}">${controls}</div>
             <div class="investment-records-filter-actions">
                 ${investmentButton('fa-filter', '筛选', 'applyInvestmentRecordsFilters()', 'primary')}
                 ${investmentButton('fa-rotate-right', '重置', 'resetInvestmentRecordsFilters()')}
@@ -3613,30 +3737,33 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
     investmentRecordsState.tab = tab;
     const currentPagination = investmentRecordsState.pagination[tab] || {};
     const list = document.getElementById('investment-records-list');
+    const pagination = document.getElementById('investment-records-pagination');
     const filters = document.getElementById('investment-records-filters');
     if (filters) filters.innerHTML = renderInvestmentRecordsFilters(tab);
     if (list) investmentLoading(list);
+    if (pagination) pagination.innerHTML = '';
     try {
         let html = '';
         if (tab === 'requests') {
             const data = await investmentFetchJson(`/api/investment/records/requests?${investmentRecordsQueryParams('requests').toString()}`);
             investmentRecordsState.data.requests = data.records || [];
             investmentRecordsApplyPagination('requests', data.pagination);
-            html = `${renderInvestmentRequestRecordsTable(investmentRecordsState.data.requests)}${renderInvestmentRecordsPagination(tab)}`;
+            html = renderInvestmentRequestRecordsTable(investmentRecordsState.data.requests);
             const summary = document.getElementById('investment-records-summary');
             if (summary) summary.innerHTML = renderInvestmentRecordsSummary();
         } else if (tab === 'contents') {
             const data = await investmentFetchJson(`/api/investment/records/contents?${investmentRecordsQueryParams('contents').toString()}`);
             investmentRecordsState.data.contents = data.records || [];
             investmentRecordsApplyPagination('contents', data.pagination);
-            html = `${renderInvestmentContentRecordsTable(investmentRecordsState.data.contents)}${renderInvestmentRecordsPagination(tab)}`;
+            html = renderInvestmentContentRecordsTable(investmentRecordsState.data.contents);
         } else {
             const data = await investmentFetchJson(`/api/investment/audits?${investmentRecordsQueryParams('audits').toString()}`);
             investmentRecordsState.data.audits = data.audits || [];
             investmentRecordsApplyPagination('audits', data.pagination);
-            html = `${renderInvestmentOperationAuditsTable(investmentRecordsState.data.audits)}${renderInvestmentRecordsPagination(tab)}`;
+            html = renderInvestmentOperationAuditsTable(investmentRecordsState.data.audits);
         }
         if (list) list.innerHTML = html;
+        if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination(tab);
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
