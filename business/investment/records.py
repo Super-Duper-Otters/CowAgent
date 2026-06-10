@@ -1189,6 +1189,9 @@ def list_content_records(
     service_type: ServiceType | None = None,
     effective_date: str | None = None,
     status: Status | str | None = None,
+    keyword: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> list[ContentRecord]:
     records, _total = list_content_records_page(
         page=1,
@@ -1196,6 +1199,9 @@ def list_content_records(
         service_type=service_type,
         effective_date=effective_date,
         status=status,
+        keyword=keyword,
+        start_date=start_date,
+        end_date=end_date,
     )
     return records
 
@@ -1207,6 +1213,9 @@ def list_content_records_page(
     service_type: ServiceType | None = None,
     effective_date: str | None = None,
     status: Status | str | None = None,
+    keyword: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> tuple[list[ContentRecord], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -1218,12 +1227,34 @@ def list_content_records_page(
         conditions.append(investment_daily_contents.c.service_type == str(service_type))
     if effective_date:
         conditions.append(investment_daily_contents.c.effective_date == effective_date)
+    if start_date:
+        conditions.append(investment_daily_contents.c.created_at >= str(start_date))
+    if end_date:
+        conditions.append(investment_daily_contents.c.created_at <= str(end_date))
     if status is not None:
         try:
             normalized_status = Status(status)
         except ValueError:
             return [], 0
         conditions.append(investment_daily_contents.c.status == str(normalized_status))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                investment_daily_contents.c.content_id.ilike(pattern),
+                investment_daily_contents.c.service_type.ilike(pattern),
+                investment_daily_contents.c.source_text.ilike(pattern),
+                investment_daily_contents.c.generated_text.ilike(pattern),
+                investment_daily_contents.c.output_image.ilike(pattern),
+                investment_daily_contents.c.status.ilike(pattern),
+                investment_daily_contents.c.error_message.ilike(pattern),
+                investment_daily_contents.c.operator.ilike(pattern),
+                investment_daily_contents.c.created_by_username.ilike(pattern),
+                investment_daily_contents.c.updated_by_username.ilike(pattern),
+                investment_daily_contents.c.effective_date.ilike(pattern),
+            )
+        )
     if conditions:
         stmt = stmt.where(*conditions)
         count_stmt = count_stmt.where(*conditions)

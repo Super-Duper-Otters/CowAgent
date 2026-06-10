@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
 from .constants import ServiceType
@@ -144,7 +144,15 @@ def get_generation_record(generation_id: str) -> GenerationRecord | None:
     return _row_to_record(row)
 
 
-def _generation_conditions(*, content_id: str = "", service_type: ServiceType | str | None = None, result: str = ""):
+def _generation_conditions(
+    *,
+    content_id: str = "",
+    service_type: ServiceType | str | None = None,
+    result: str = "",
+    keyword: str = "",
+    start_date: str = "",
+    end_date: str = "",
+):
     conditions = []
     if content_id:
         conditions.append(generation_records.c.content_id == str(content_id))
@@ -152,6 +160,29 @@ def _generation_conditions(*, content_id: str = "", service_type: ServiceType | 
         conditions.append(generation_records.c.service == str(ServiceType(service_type)))
     if result:
         conditions.append(generation_records.c.result == str(result))
+    if start_date:
+        conditions.append(generation_records.c.created_at >= str(start_date))
+    if end_date:
+        conditions.append(generation_records.c.created_at <= str(end_date))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                generation_records.c.generation_id.ilike(pattern),
+                generation_records.c.content_id.ilike(pattern),
+                generation_records.c.service.ilike(pattern),
+                generation_records.c.operator_name.ilike(pattern),
+                generation_records.c.operator_role.ilike(pattern),
+                generation_records.c.input_text.ilike(pattern),
+                generation_records.c.sources.ilike(pattern),
+                generation_records.c.result.ilike(pattern),
+                generation_records.c.error_code.ilike(pattern),
+                generation_records.c.error.ilike(pattern),
+                generation_records.c.output_text.ilike(pattern),
+                generation_records.c.outputs.ilike(pattern),
+            )
+        )
     return conditions
 
 
@@ -173,12 +204,22 @@ def list_generation_records_page(
     content_id: str = "",
     service_type: ServiceType | str | None = None,
     result: str = "",
+    keyword: str = "",
+    start_date: str = "",
+    end_date: str = "",
 ) -> tuple[list[GenerationRecord], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
     stmt = select(generation_records)
     count_stmt = select(func.count()).select_from(generation_records)
-    conditions = _generation_conditions(content_id=content_id, service_type=service_type, result=result)
+    conditions = _generation_conditions(
+        content_id=content_id,
+        service_type=service_type,
+        result=result,
+        keyword=keyword,
+        start_date=start_date,
+        end_date=end_date,
+    )
     if conditions:
         stmt = stmt.where(*conditions)
         count_stmt = count_stmt.where(*conditions)

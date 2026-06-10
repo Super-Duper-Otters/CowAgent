@@ -3392,7 +3392,17 @@ class InvestmentContentRecordsHandler:
             from business.business_records import list_content_records_page, list_output_files
             from business.investment.generation_records import list_generation_records_page
 
-            params = web.input(limit='50', page='1', page_size='', service_type='', effective_date='', status='')
+            params = web.input(
+                limit='50',
+                page='1',
+                page_size='',
+                service_type='',
+                effective_date='',
+                status='',
+                keyword='',
+                start_date='',
+                end_date='',
+            )
             service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
@@ -3404,11 +3414,17 @@ class InvestmentContentRecordsHandler:
                 })
             page, page_size = _investment_safe_pagination(params, 80)
             generation_result = getattr(params, "status", "") or ""
+            keyword = getattr(params, "keyword", "") or ""
+            start_date = _investment_date_bound(getattr(params, "start_date", ""))
+            end_date = _investment_date_bound(getattr(params, "end_date", ""), end=True)
             generations, generation_total = list_generation_records_page(
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
                 result=generation_result,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
             )
             if generation_total:
                 return _investment_json_response({
@@ -3426,6 +3442,9 @@ class InvestmentContentRecordsHandler:
                 service_type=service_type,
                 effective_date=getattr(params, "effective_date", "") or None,
                 status=getattr(params, "status", "") or None,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
             )
             return _investment_json_response({
                 "status": "success",

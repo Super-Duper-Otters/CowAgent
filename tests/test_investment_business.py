@@ -3283,6 +3283,70 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
     assert audits_payload["pagination"]["total"] == 1
 
 
+def test_content_records_api_filters_generation_by_keyword_and_date_range(investment_env, monkeypatch):
+    from business.investment.constants import ServiceType
+    from business.investment.db import connect
+    from business.investment.generation_records import finish_generation_record, start_generation_record
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentContentRecordsHandler
+
+    included = start_generation_record(
+        content_id="content-rate",
+        service_type=ServiceType.RATE,
+        operator_name="Alice",
+        input_text="monthly-liquidity-input",
+        sources=["/tmp/source.xlsx"],
+    )
+    finish_generation_record(
+        included,
+        result="success",
+        output_text="monthly-liquidity-output",
+        outputs=["/tmp/rate.png"],
+        elapsed_ms=12,
+    )
+    excluded = start_generation_record(
+        content_id="content-rate-other",
+        service_type=ServiceType.RATE,
+        operator_name="Bob",
+        input_text="other-rate-input",
+    )
+    finish_generation_record(excluded, result="success", output_text="other-rate-output", outputs=["/tmp/other-rate.png"])
+
+    with connect() as conn:
+        conn.execute(
+            text("update generation_records set created_at = :created_at, updated_at = :created_at where generation_id = :generation_id"),
+            {"created_at": "2026-05-15T02:00:00+00:00", "generation_id": included},
+        )
+        conn.execute(
+            text("update generation_records set created_at = :created_at, updated_at = :created_at where generation_id = :generation_id"),
+            {"created_at": "2026-06-15T02:00:00+00:00", "generation_id": excluded},
+        )
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **defaults: SimpleNamespace(
+            **{
+                **defaults,
+                "service_type": "rate",
+                "keyword": "monthly-liquidity",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-31",
+                "page": "1",
+                "page_size": "80",
+            }
+        ),
+    )
+
+    payload = json.loads(InvestmentContentRecordsHandler().GET())
+
+    assert payload["pagination"]["total"] == 1
+    assert [record["generation_id"] for record in payload["records"]] == [included]
+    assert excluded not in {record.get("generation_id") for record in payload["records"]}
+
+
 def test_operation_audits_api_filters_by_operator_action_keyword_and_date(investment_env, monkeypatch):
     from business.investment.audit_service import record_operation_audit
     from business.investment.db import connect
