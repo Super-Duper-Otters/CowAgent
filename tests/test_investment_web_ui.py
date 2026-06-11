@@ -799,7 +799,7 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert "investmentRenderTimeControl('invest-content-expires-time', '00:00')" in upload_body
     assert 'type="time"' not in upload_body
     assert "指定失效时间" in upload_body
-    assert "不指定失效时间" in upload_body
+    assert "长期有效" in upload_body
     assert 'onchange="syncInvestmentDefaultExpiresAt()"' not in upload_body
     assert 'onchange="toggleInvestmentExpiresAt(this.checked)"' in upload_body
     assert "investment-upload-mode-bar" in upload_body
@@ -1004,7 +1004,8 @@ def test_daily_content_upload_confirms_auto_effective_when_today_has_no_record()
     assert "effective_date=${encodeURIComponent(investmentTodayDate())}" in helper_body
     assert "response.contents" in helper_body
     assert "records.length > 0" in helper_body
-    assert "window.confirm" in helper_body
+    assert "showInvestmentConfirmDialog" in helper_body
+    assert "window.confirm" not in helper_body
     assert "作为 ${investmentTodayDate()} 生效${label}图" in helper_body
     assert "return confirmed ? true : null;" in helper_body
     assert "await investmentShouldAutoEffectiveAfterGenerate(serviceType)" in create_body
@@ -1028,21 +1029,89 @@ def test_daily_content_upload_expires_at_defaults_to_next_beijing_midnight():
     assert "investmentSetTimePickerValue('invest-content-expires-time', '00:00');" in sync_body
     assert "const disabled = !enabled;" in toggle_body
     assert "fields?.classList.toggle('hidden', disabled);" in toggle_body
-    assert "hint.textContent = enabled ? '指定失效时间' : '不指定失效时间';" in toggle_body
+    assert "hint.textContent = enabled ? '指定失效时间' : '长期有效';" in toggle_body
     assert "if (!enabled) return '';" in value_body
     assert "return `${dateValue}T${timeValue}`;" in value_body
     assert 'type="hidden"' in time_body
     assert "investment-time-popover hidden" in time_body
-    assert "investmentFormatBeijingTime(record.expires_at) || '不失效'" in detail_body
-    assert "investmentFormatBeijingTime(record?.expires_at) || '不失效'" in current_body
+    assert "investmentFormatBeijingTime(record.expires_at) || '长期有效'" in detail_body
+    assert "investmentFormatBeijingTime(record?.expires_at) || '长期有效'" in current_body
 
 
 def test_daily_content_effective_action_refreshes_current_preview():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     effective_body = _js_function_body(js, "effectiveInvestmentContent")
+    dialog_body = _js_function_body(js, "openInvestmentContentEffectiveDialog")
+    history_body = _js_function_body(js, "renderInvestmentContentHistoryGroups")
 
-    assert "await renderInvestmentContent(targetServiceType, {effective_date: investmentContentHistoryEffectiveDate(targetServiceType)})" in effective_body
+    save_body = _js_function_body(js, "saveInvestmentEffectiveDialog")
+    assert "await renderInvestmentContent(targetServiceType, {effective_date: investmentContentHistoryEffectiveDate(targetServiceType)})" in save_body
     assert "await refreshInvestmentContentRecords(targetServiceType);" not in effective_body
+    assert "window.prompt" not in effective_body
+    assert "openInvestmentContentEffectiveDialog" in effective_body
+    assert "const expiresDate = document.getElementById('investment-content-effective-expires-date')?.value || investmentAddDays(investmentTodayDate(), 1);" in save_body
+    assert "const expiresAt = `${expiresDate}T00:00`;" in save_body
+    assert "body: JSON.stringify({operator: 'admin', effective_date: investmentTodayDate(), expires_at: expiresAt})" in save_body
+    assert "effectiveInvestmentContent('${record.content_id}', '${actionServiceType}')" in history_body
+    assert "失效日期" in dialog_body
+    assert "investment-content-effective-expires-date" in dialog_body
+    assert "investmentAddDays(investmentTodayDate(), 1)" in dialog_body
+    assert "生效日期" not in dialog_body
+    assert "设置结果图片生效日期" not in dialog_body
+    assert "investment-effective-help" in dialog_body
+    assert "默认次日 00:00 失效" in dialog_body
+
+
+def test_daily_content_current_effective_exposes_manual_expiry_actions():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    current_body = _js_function_body(js, "renderInvestmentCurrentEffective")
+    invalidate_body = _js_function_body(js, "invalidateInvestmentContent")
+    update_body = _js_function_body(js, "updateInvestmentContentExpiresAt")
+    clear_body = _js_function_body(js, "clearInvestmentContentExpiresAt")
+    dialog_body = _js_function_body(js, "openInvestmentContentExpiryDialog")
+    confirm_body = _js_function_body(js, "showInvestmentConfirmDialog")
+    auto_body = _js_function_body(js, "investmentShouldAutoEffectiveAfterGenerate")
+
+    assert "investment-current-actions" in current_body
+    assert "立即失效" in current_body
+    assert "修改失效时间" in current_body
+    assert "设为长期有效" in current_body
+    assert "/api/investment/daily-content/${encodeURIComponent(contentId)}/invalidate" in invalidate_body
+    assert "/api/investment/daily-content/${encodeURIComponent(contentId)}/expires-at" in update_body
+    assert "body: JSON.stringify({expires_at: expiresAt})" in update_body
+    assert "await updateInvestmentContentExpiresAt(contentId, '', serviceType)" in clear_body
+    assert "showInvestmentConfirmDialog" in clear_body
+    assert "window.confirm" not in clear_body
+    assert "showInvestmentConfirmDialog" in auto_body
+    assert "window.confirm" not in auto_body
+    assert "investment-content-expiry-date" in dialog_body
+    assert "investment-content-expiry-time" in dialog_body
+    assert "investmentContentExpiryDialogDefaultValue(expiresAt)" in dialog_body
+    assert "investment-confirm-dialog" in confirm_body
+    assert ".investment-current-actions" in css
+    assert ".investment-expiry-dialog" in css
+    assert ".investment-confirm-dialog" in css
+
+
+def test_daily_content_expiry_dialog_defaults_to_next_midnight_when_empty_or_past():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    default_body = _js_function_body(js, "investmentContentExpiryDialogDefaultValue")
+
+    assert "const fallback = {date: investmentAddDays(investmentTodayDate(), 1), time: '00:00'};" in default_body
+    assert "if (!local) return fallback;" in default_body
+    assert "if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return fallback;" in default_body
+    assert "return {date: local.slice(0, 10), time: local.slice(11, 16) || '00:00'};" in default_body
+
+
+def test_investment_modal_date_picker_opens_upward_without_clipping():
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    assert ".investment-modal .investment-date-popover" in css
+    assert "bottom: calc(100% + 6px);" in css
+    assert ".investment-modal:has(.investment-date-popover:not(.hidden))" in css
+    assert ".investment-modal-body:has(.investment-date-popover:not(.hidden))" in css
+    assert "overflow: visible !important;" in css
 
 
 def test_investment_console_hides_actions_by_admin_role():
@@ -1460,11 +1529,11 @@ def test_investment_content_and_audit_records_filter_toolbars_use_grouped_layout
     assert "investment-audit-search-slot" in filters_body
     assert "investment-audit-date-panel" in filters_body
     assert "investment-audit-date-controls" in filters_body
-    assert "changeInvestmentRecordDateMode('contents', value)" in filters_body
+    assert "`changeInvestmentRecordDateMode('${tab}', value)`" in filters_body
     assert "changeInvestmentRecordDateMode('audits', value)" in filters_body
     assert "investmentRecordMonthBounds(tab, filters.record_month || investmentTodayDate().slice(0, 7))" in query_body
     assert "if (key === 'date_mode' || key === 'record_month' || key === 'effective_date') return;" in query_body
-    assert "tab === 'contents' || tab === 'audits'" in set_filter_body
+    assert "tab === 'backendRequests' || tab === 'contents' || tab === 'audits'" in set_filter_body
     assert "date_mode: 'day'" in default_body
     assert ".investment-records-toolbar.investment-content-records-toolbar" in css
     assert ".investment-records-filter-grid.investment-content-records-filter-grid" in css
@@ -1897,22 +1966,24 @@ def test_investment_request_drawer_shows_request_event_timeline():
     assert "showInvestmentRequestDetail" not in open_body
 
 
-def test_investment_generation_records_ui_uses_generation_record_fields():
+def test_investment_backend_request_records_ui_uses_internal_call_fields():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    table_body = _js_function_body(js, "renderInvestmentContentRecordsTable")
-    drawer_body = _js_function_body(js, "renderInvestmentContentDrawer")
+    table_body = _js_function_body(js, "renderInvestmentBackendRequestRecordsTable")
+    drawer_body = _js_function_body(js, "renderInvestmentBackendRequestDrawer")
+    content_table_body = _js_function_body(js, "renderInvestmentContentRecordsTable")
 
-    assert "record.record_type === 'generation'" in table_body
-    assert "record.generation_id" in table_body
-    assert "record.operator_name" in table_body
-    assert "record.result" in table_body
+    assert "record.call_id" in table_body
+    assert "record.actor_name" in table_body
+    assert "record.status" in table_body
     assert "record.outputs" in table_body
     assert "record.elapsed_ms" in table_body
-    assert "生成 ID" in drawer_body
-    assert "record.generation_id" in drawer_body
+    assert "调用 ID" in drawer_body
+    assert "record.call_id" in drawer_body
+    assert "record.actor_role" in drawer_body
     assert "record.output_text" in drawer_body
     assert "record.outputs" in drawer_body
+    assert "record.record_type === 'internal_call'" not in content_table_body
 
 
 def test_investment_audit_drawer_shows_before_and_after_state():
@@ -1985,11 +2056,16 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
     content_load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     assert "/api/investment/records/requests" in load_body
+    assert "/api/investment/records/internal-calls" in load_body
     assert "/api/investment/records/contents" in load_body
     assert "/api/investment/artifact-folders" in content_load_body
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
     assert "['invalidated', '已失效']" in filters_body
+    assert "renderInvestmentRecordsTabButton('requests', '公众号请求'" in js
+    assert "renderInvestmentRecordsTabButton('backendRequests', '后台请求'" in js
+    assert "renderInvestmentRecordsTabButton('contents', '后台内容生成'" in js
+    assert "renderInvestmentRecordsTabButton('audits', '操作流水'" in js
 
 
 def test_investment_records_tabs_keep_independent_pagination_state():
@@ -1999,6 +2075,7 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     state_end = js.index("const INVEST_VIEW_PERMISSIONS")
     state_body = js[state_start:state_end]
     assert "requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "backendRequests: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
     assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body

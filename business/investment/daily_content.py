@@ -10,7 +10,7 @@ from sqlalchemy import and_, insert, or_, select, update
 
 from .audit_service import AdminActor, actor_from_admin, record_operation_audit
 from .config_service import sanitize_sensitive_text
-from .constants import ErrorCode, ServiceType, Status, user_message
+from .constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from .db import connect, row_to_dict
 from .records import record_output_file
 from .render_service import DEFAULT_RENDERER_PATH, template_for_service
@@ -455,7 +455,8 @@ def generate_content(
     actor: Any | None = None,
 ) -> DailyContentResult:
     started_at = datetime.now(UTC)
-    generation_id = ""
+    internal_call_id = ""
+    ai_audit_id = ""
     with connect() as conn:
         row = conn.execute(
             select(investment_daily_contents).where(investment_daily_contents.c.content_id == content_id)
@@ -467,21 +468,43 @@ def generate_content(
     _ensure_content_service_type(service_type)
     source_files = _load_source_files(item.get("source_files"))
     operator, audit_actor = _actor_identity(actor, item.get("operator") or "")
+    actor_id = str(getattr(audit_actor, "admin_id", "") or "")
+    actor_role = str(getattr(audit_actor, "role", "") or "")
+    actor_type = ActorType.ADMIN if audit_actor is not None else ActorType.SYSTEM
     try:
-        from .generation_records import start_generation_record
+        from .internal_call_records import start_internal_call_record
 
-        generation_id = start_generation_record(
-            content_id=content_id,
+        internal_call_id = start_internal_call_record(
             service_type=service_type,
-            operator_id=getattr(audit_actor, "admin_id", None) if audit_actor else None,
-            operator_name=operator,
-            operator_role=getattr(audit_actor, "role", "") if audit_actor else "",
+            action_type=ActionType.GENERATE,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=operator,
+            actor_role=actor_role,
             input_text=item["source_text"] or "",
             sources=source_files,
         )
     except Exception:
-        generation_id = ""
+        internal_call_id = ""
     _mark_generation_started(content_id, actor=actor)
+    try:
+        from .ai_generation_audit import start_ai_generation_audit
+
+        ai_audit_id = start_ai_generation_audit(
+            entry_type=EntryType.INTERNAL_CALL,
+            service_type=service_type,
+            action_type=ActionType.GENERATE,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=operator,
+            actor_role=actor_role,
+            business_record_type="internal_call",
+            business_record_id=internal_call_id,
+            input_text=item["source_text"] or "",
+            sources=source_files,
+        )
+    except Exception:
+        ai_audit_id = ""
     if ai_generator is None:
         ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
     else:
@@ -493,11 +516,21 @@ def generate_content(
         detail = sanitize_sensitive_text(getattr(ai_result, "detail", "AI generation failed"))
         code = getattr(ai_result, "error_code", None) or ErrorCode.SYSTEM_ERROR
         update_generation_failure(content_id, detail)
-        if generation_id:
-            from .generation_records import finish_generation_record
+        if internal_call_id:
+            from .internal_call_records import finish_internal_call_record
 
-            finish_generation_record(
-                generation_id,
+            finish_internal_call_record(
+                internal_call_id,
+                status=Status.FAILED,
+                error_code=str(code),
+                error=detail,
+                elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+            )
+        if ai_audit_id:
+            from .ai_generation_audit import finish_ai_generation_audit
+
+            finish_ai_generation_audit(
+                ai_audit_id,
                 result="failed",
                 error_code=str(code),
                 error=detail,
@@ -505,6 +538,15 @@ def generate_content(
             )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     generated_text = str(getattr(ai_result, "text", ""))
+    if ai_audit_id:
+        from .ai_generation_audit import finish_ai_generation_audit
+
+        finish_ai_generation_audit(
+            ai_audit_id,
+            result="success",
+            output_text=generated_text,
+            elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+        )
     if renderer is None:
         render_result = _default_renderer(
             service_type,
@@ -517,12 +559,12 @@ def generate_content(
         detail = sanitize_sensitive_text(getattr(render_result, "detail", "render failed"))
         code = getattr(render_result, "error_code", None) or ErrorCode.IMAGE_GENERATION_FAILED
         update_generation_failure(content_id, detail)
-        if generation_id:
-            from .generation_records import finish_generation_record
+        if internal_call_id:
+            from .internal_call_records import finish_internal_call_record
 
-            finish_generation_record(
-                generation_id,
-                result="failed",
+            finish_internal_call_record(
+                internal_call_id,
+                status=Status.FAILED,
                 error_code=str(code),
                 error=detail,
                 output_text=generated_text,
@@ -531,12 +573,12 @@ def generate_content(
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     output_image = str(getattr(render_result, "image_path", ""))
     output_image = update_generation_success(content_id, generated_text, output_image)
-    if generation_id:
-        from .generation_records import finish_generation_record
+    if internal_call_id:
+        from .internal_call_records import finish_internal_call_record
 
-        finish_generation_record(
-            generation_id,
-            result="success",
+        finish_internal_call_record(
+            internal_call_id,
+            status=Status.SUCCESS,
             output_text=generated_text,
             outputs=[output_image],
             elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
@@ -585,7 +627,13 @@ def set_content_effective(
         service_type = item["service_type"]
         final_image = output_image or item["output_image"]
         normalized_effective_date = _normalize_effective_date(effective_date or item.get("effective_date"))
-        normalized_expires_at = _normalize_expires_at(expires_at) if expires_at is not None else (item.get("expires_at") or "")
+        original_effective_date = item.get("effective_date") or ""
+        if expires_at is not None:
+            normalized_expires_at = _normalize_expires_at(expires_at)
+        elif effective_date is not None and normalized_effective_date != original_effective_date:
+            normalized_expires_at = ""
+        else:
+            normalized_expires_at = item.get("expires_at") or ""
         final_service_type = ServiceType(service_type)
         if final_image:
             from .artifact_service import archive_artifact_file
@@ -664,6 +712,101 @@ def set_content_effective(
             "output_image": final_image,
         },
     )
+
+
+def update_content_expires_at(
+    content_id: str,
+    expires_at: str | None,
+    *,
+    operator: str = "",
+    actor: Any | None = None,
+) -> str:
+    normalized_expires_at = _normalize_expires_at(expires_at)
+    now = _now()
+    operator, audit_actor = _actor_identity(actor, operator)
+    actor_values = _content_actor_values(actor, prefix="updated")
+    with connect() as conn:
+        row = conn.execute(
+            select(
+                investment_daily_contents.c.service_type,
+                investment_daily_contents.c.expires_at,
+            ).where(investment_daily_contents.c.content_id == content_id)
+        ).fetchone()
+        if row is None:
+            raise KeyError(content_id)
+        item = row_to_dict(row)
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == content_id)
+            .values(
+                expires_at=normalized_expires_at,
+                updated_at=now,
+                operator=operator,
+                **actor_values,
+            )
+        )
+    record_operation_audit(
+        "content.update_expiry",
+        "daily_content",
+        content_id,
+        operator=operator,
+        actor=audit_actor,
+        detail={
+            "service_type": item.get("service_type", ""),
+            "previous_expires_at": item.get("expires_at", ""),
+            "expires_at": normalized_expires_at,
+        },
+    )
+    return normalized_expires_at
+
+
+def invalidate_content(
+    content_id: str,
+    *,
+    operator: str = "",
+    actor: Any | None = None,
+) -> bool:
+    now = _now()
+    operator, audit_actor = _actor_identity(actor, operator)
+    actor_values = _content_actor_values(actor, prefix="updated")
+    with connect() as conn:
+        row = conn.execute(
+            select(
+                investment_daily_contents.c.service_type,
+                investment_daily_contents.c.status,
+            ).where(investment_daily_contents.c.content_id == content_id)
+        ).fetchone()
+        if row is None:
+            raise KeyError(content_id)
+        item = row_to_dict(row)
+        if item.get("status") == str(Status.INVALIDATED):
+            invalidated = False
+        else:
+            result = conn.execute(
+                update(investment_daily_contents)
+                .where(investment_daily_contents.c.content_id == content_id)
+                .values(
+                    status=str(Status.INVALIDATED),
+                    archived_at=now,
+                    updated_at=now,
+                    operator=operator,
+                    **actor_values,
+                )
+            )
+            invalidated = bool(result.rowcount)
+    record_operation_audit(
+        "content.invalidate",
+        "daily_content",
+        content_id,
+        operator=operator,
+        actor=audit_actor,
+        detail={
+            "service_type": item.get("service_type", ""),
+            "previous_status": item.get("status", ""),
+            "invalidated": invalidated,
+        },
+    )
+    return invalidated
 
 
 def get_latest_effective_content(service_type: ServiceType) -> DailyContentResult:

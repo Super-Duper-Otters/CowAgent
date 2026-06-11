@@ -11,6 +11,25 @@ class ServiceType(StrEnum):
     ALL = "all"
 
 
+class EntryType(StrEnum):
+    EXTERNAL_REQUEST = "external_request"
+    INTERNAL_CALL = "internal_call"
+
+
+class ActorType(StrEnum):
+    CUSTOMER = "customer"
+    ADMIN = "admin"
+    SYSTEM = "system"
+
+
+class ActionType(StrEnum):
+    GENERATE = "generate"
+    DELIVER_EFFECTIVE_CONTENT = "deliver_effective_content"
+    PUBLISH = "publish"
+    UPLOAD = "upload"
+    FETCH_CACHE = "fetch_cache"
+
+
 CUSTOMER_SERVICE_TYPES = (
     ServiceType.TECHNICAL_ANALYSIS,
     ServiceType.RATE,

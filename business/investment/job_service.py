@@ -7,7 +7,15 @@ from sqlalchemy import bindparam, insert, select, text, update
 
 from .constants import ErrorCode, ServiceType, Status, user_message
 from .db import connect
-from .records import GENERATING_TIMEOUT_MINUTES, RequestRecord, _audit_values, _json_list, _now, _row_to_request
+from .records import (
+    GENERATING_TIMEOUT_MINUTES,
+    RequestRecord,
+    _audit_values,
+    _json_list,
+    _now,
+    _row_to_request,
+    external_request_identity_values,
+)
 from .schema import investment_request_records
 
 
@@ -151,6 +159,7 @@ def start_job_if_absent_with_metadata(
                 openid=openid,
                 raw_input=raw_input,
                 service_type=str(service_type),
+                **external_request_identity_values(openid, service_type),
                 status=str(Status.GENERATING),
                 output_files=_json_list([]),
                 **_audit_values(**metadata),
@@ -200,6 +209,7 @@ def start_cache_job_if_absent(
                 openid=openid,
                 raw_input=raw_input,
                 service_type=str(service_type),
+                **external_request_identity_values(openid, service_type),
                 status=str(Status.GENERATING),
                 output_files=_json_list([]),
                 **_audit_values(**audit_metadata),

@@ -51,35 +51,9 @@ def upgrade() -> None:
     op.create_index("idx_request_events_request_created", "request_events", ["request_id", "created_at"])
     op.create_index("idx_request_events_openid_created", "request_events", ["openid", "created_at"])
     op.create_index("idx_request_events_type_created", "request_events", ["event_type", "created_at"])
-    op.create_table(
-        "generation_records",
-        sa.Column("generation_id", sa.Text(), primary_key=True),
-        sa.Column("content_id", sa.Text(), nullable=False),
-        sa.Column("service", sa.Text(), nullable=False),
-        sa.Column("operator_id", sa.Integer(), nullable=True),
-        sa.Column("operator_name", sa.Text(), nullable=True),
-        sa.Column("operator_role", sa.Text(), nullable=True),
-        sa.Column("input_text", sa.Text(), nullable=True),
-        sa.Column("sources", sa.Text(), nullable=False),
-        sa.Column("result", sa.Text(), nullable=False),
-        sa.Column("error_code", sa.Text(), nullable=True),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("output_text", sa.Text(), nullable=True),
-        sa.Column("outputs", sa.Text(), nullable=False),
-        sa.Column("elapsed_ms", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.Text(), nullable=False),
-        sa.Column("updated_at", sa.Text(), nullable=False),
-    )
-    op.create_index("idx_generation_records_content_created", "generation_records", ["content_id", "created_at"])
-    op.create_index("idx_generation_records_service_created", "generation_records", ["service", "created_at"])
-    op.create_index("idx_generation_records_operator_created", "generation_records", ["operator_name", "created_at"])
 
 
 def downgrade() -> None:
-    op.drop_index("idx_generation_records_operator_created", table_name="generation_records")
-    op.drop_index("idx_generation_records_service_created", table_name="generation_records")
-    op.drop_index("idx_generation_records_content_created", table_name="generation_records")
-    op.drop_table("generation_records")
     op.drop_index("idx_request_events_type_created", table_name="request_events")
     op.drop_index("idx_request_events_openid_created", table_name="request_events")
     op.drop_index("idx_request_events_request_created", table_name="request_events")

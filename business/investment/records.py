@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
-from .constants import ErrorCode, ServiceType, Status, normalize_service, user_message
+from .constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
 from .db import connect, row_to_dict
 from .schema import (
     investment_cache_entries,
@@ -17,6 +17,7 @@ from .schema import (
     investment_output_files,
     investment_request_records,
     investment_users,
+    internal_call_records,
     request_events,
 )
 
@@ -41,6 +42,12 @@ class RequestRecord:
     raw_input: str
     service_type: ServiceType | None
     status: Status
+    entry_type: EntryType = EntryType.EXTERNAL_REQUEST
+    action_type: ActionType = ActionType.GENERATE
+    actor_type: ActorType = ActorType.CUSTOMER
+    actor_id: str = ""
+    actor_name: str = ""
+    actor_role: str = ""
     error_code: ErrorCode | None = None
     user_prompt: str = ""
     error_message: str = ""
@@ -200,6 +207,33 @@ def _audit_values(**metadata) -> dict[str, object]:
     return values
 
 
+def _external_action_type(service_type: ServiceType | None) -> ActionType:
+    if service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
+        return ActionType.DELIVER_EFFECTIVE_CONTENT
+    if service_type == ServiceType.TECHNICAL_ANALYSIS:
+        return ActionType.GENERATE
+    return ActionType.GENERATE
+
+
+def external_request_identity_values(openid: str, service_type: ServiceType | None) -> dict[str, str]:
+    return {
+        "entry_type": str(EntryType.EXTERNAL_REQUEST),
+        "action_type": str(_external_action_type(service_type)),
+        "actor_type": str(ActorType.CUSTOMER),
+        "actor_id": str(openid or ""),
+        "actor_name": "",
+        "actor_role": "",
+    }
+
+
+def _request_action_type(item: dict) -> ActionType:
+    if item.get("action_type"):
+        return ActionType(item["action_type"])
+    if item.get("service_type"):
+        return _external_action_type(ServiceType(item["service_type"]))
+    return ActionType.GENERATE
+
+
 def _record_request_event_safe(
     *,
     request_id: str,
@@ -272,6 +306,7 @@ def create_request_record(
                 openid=openid,
                 raw_input=raw_input,
                 service_type=str(service_type) if service_type else None,
+                **external_request_identity_values(openid, service_type),
                 status=str(Status.GENERATING),
                 output_files="[]",
                 **_audit_values(
@@ -523,6 +558,12 @@ def _row_to_request(row) -> RequestRecord:
         openid=item["openid"],
         raw_input=item["raw_input"],
         service_type=ServiceType(item["service_type"]) if item["service_type"] else None,
+        entry_type=EntryType(item.get("entry_type") or EntryType.EXTERNAL_REQUEST),
+        action_type=_request_action_type(item),
+        actor_type=ActorType(item.get("actor_type") or ActorType.CUSTOMER),
+        actor_id=item.get("actor_id") or item["openid"],
+        actor_name=item.get("actor_name") or "",
+        actor_role=item.get("actor_role") or "",
         status=status,
         error_code=ErrorCode(item["error_code"]) if item["error_code"] else None,
         user_prompt=item["user_prompt"] or "",
@@ -760,6 +801,32 @@ def _artifact_target_label(item: dict) -> str:
     return target or stock_name or "全市场"
 
 
+def _content_target_label(service_type: ServiceType | str) -> str:
+    normalized = normalize_service(service_type)
+    if normalized == ServiceType.RATE:
+        return "利率内容"
+    if normalized == ServiceType.CONVERTIBLE_BOND:
+        return "转债内容"
+    return "后台内容"
+
+
+def _date_part(value: str, length: int = 10) -> str:
+    text = str(value or "")
+    return text[:length] if len(text) >= length else ""
+
+
+def _content_generated_at_expr():
+    artifact_created_at = (
+        select(func.min(investment_output_files.c.created_at))
+        .where(
+            investment_output_files.c.owner_id == investment_daily_contents.c.content_id,
+            investment_output_files.c.owner_type == "content",
+        )
+        .scalar_subquery()
+    )
+    return func.coalesce(artifact_created_at, investment_daily_contents.c.updated_at, investment_daily_contents.c.created_at)
+
+
 def _artifact_bucket(role: str, owner_type: str = "") -> str:
     role = str(role or "").strip()
     if role in {"signal_card", "output_image"}:
@@ -822,6 +889,18 @@ def _virtual_input_file(raw_input: str) -> dict:
     }
 
 
+def _virtual_generated_text_file(generated_text: str) -> dict:
+    return {
+        "kind": "virtual_text",
+        "group": "intermediate",
+        "virtual_path": "intermediate/generated_text.txt",
+        "file_name": "generated_text.txt",
+        "file_type": "text",
+        "artifact_role": "generated_text",
+        "content": generated_text or "",
+    }
+
+
 def _dedupe_files(files: list[dict]) -> list[dict]:
     seen = set()
     result = []
@@ -878,6 +957,84 @@ def _artifact_files_for_owner(owner_id: str, output_files: list[str]) -> list[di
     return fallback
 
 
+def _row_to_content_artifact_package(content_item: dict) -> dict:
+    content_id = str(content_item.get("content_id") or "")
+    service_type = str(content_item.get("service_type") or "")
+    effective_date = str(content_item.get("effective_date") or "")
+    output_image = str(content_item.get("output_image") or "")
+    source_text = str(content_item.get("source_text") or "")
+    generated_text = str(content_item.get("generated_text") or "")
+    generated_at = str(content_item.get("generated_at") or content_item.get("updated_at") or content_item.get("created_at") or "")
+    generated_date = _date_part(generated_at)
+    output_files = [output_image] if output_image else []
+    files = [_virtual_input_file(source_text)] if source_text else []
+    files.extend(_artifact_files_for_owner(content_id, output_files))
+    if generated_text:
+        files.append(_virtual_generated_text_file(generated_text))
+    display_name = _content_target_label(service_type)
+    return {
+        "package_id": content_id,
+        "source_type": "content",
+        "service_type": service_type,
+        "service_label": _artifact_service_label(service_type),
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "effective_date": effective_date,
+        "normalized_target": display_name,
+        "stock_name": "",
+        "display_name": display_name,
+        "display_path": [_artifact_service_label(service_type), effective_date, display_name],
+        "version_fingerprint": f"v{int(content_item.get('content_version') or 1)}",
+        "created_from_request_id": "",
+        "content_id": content_id,
+        "related_request_ids": [],
+        "request_count": 0,
+        "hit_count": 0,
+        "created_at": content_item.get("created_at") or "",
+        "updated_at": content_item.get("updated_at") or "",
+        "status": content_item.get("status") or "",
+        "files": _dedupe_files(files),
+    }
+
+
+def _row_to_internal_call_artifact_package(call_item: dict) -> dict:
+    call_id = str(call_item.get("call_id") or "")
+    service_type = str(call_item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS)
+    generated_at = str(call_item.get("created_at") or call_item.get("updated_at") or "")
+    generated_date = _date_part(generated_at)
+    output_files = _load_list(call_item.get("outputs"))
+    raw_input = str(call_item.get("input_text") or "")
+    output_text = str(call_item.get("output_text") or "")
+    files = [_virtual_input_file(raw_input)] if raw_input else []
+    files.extend(_artifact_files_for_owner(call_id, output_files))
+    if output_text:
+        files.append(_virtual_generated_text_file(output_text))
+    display_name = raw_input or _artifact_service_label(service_type)
+    return {
+        "package_id": call_id,
+        "source_type": "internal_call",
+        "service_type": service_type,
+        "service_label": _artifact_service_label(service_type),
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "normalized_target": display_name,
+        "stock_name": "",
+        "display_name": display_name,
+        "display_path": [_artifact_service_label(service_type), generated_date, display_name],
+        "version_fingerprint": "",
+        "created_from_request_id": call_id,
+        "related_request_ids": [],
+        "request_count": 0,
+        "hit_count": 0,
+        "created_at": call_item.get("created_at") or "",
+        "updated_at": call_item.get("updated_at") or "",
+        "status": call_item.get("status") or "",
+        "files": _dedupe_files(files),
+    }
+
+
 def _row_to_artifact_package(cache_item: dict) -> dict:
     cache_key = str(cache_item.get("cache_key") or "")
     owner_id = str(cache_item.get("artifact_owner_id") or "")
@@ -887,6 +1044,8 @@ def _row_to_artifact_package(cache_item: dict) -> dict:
         owner_id = str(created_from.get("request_id") or "")
     service_type = str(cache_item.get("service_type") or created_from.get("service_type") or "")
     market_date = str(cache_item.get("market_date") or created_from.get("market_date") or "")
+    generated_at = str(cache_item.get("created_at") or "")
+    generated_date = _date_part(generated_at)
     target = str(cache_item.get("normalized_target") or created_from.get("normalized_target") or "")
     stock_name = str(created_from.get("stock_name") or "")
     target_item = {"normalized_target": target, "stock_name": stock_name}
@@ -901,10 +1060,12 @@ def _row_to_artifact_package(cache_item: dict) -> dict:
         "service_type": service_type,
         "service_label": _artifact_service_label(service_type),
         "market_date": market_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
         "normalized_target": target,
         "stock_name": stock_name,
         "display_name": _artifact_target_label(target_item),
-        "display_path": [_artifact_service_label(service_type), market_date, _artifact_target_label(target_item)],
+        "display_path": [_artifact_service_label(service_type), generated_date or market_date, _artifact_target_label(target_item)],
         "version_fingerprint": cache_item.get("version_fingerprint") or "",
         "created_from_request_id": owner_id,
         "related_request_ids": related_request_ids,
@@ -924,9 +1085,9 @@ def _artifact_package_conditions(table, service_type: ServiceType | str | None, 
     if service_condition is not None:
         conditions.append(service_condition)
     if start_date:
-        conditions.append(table.c.market_date >= str(start_date))
+        conditions.append(func.substr(table.c.created_at, 1, 10) >= str(start_date))
     if end_date:
-        conditions.append(table.c.market_date <= str(end_date))
+        conditions.append(func.substr(table.c.created_at, 1, 10) <= str(end_date))
     keyword_text = str(keyword or "").strip()
     if keyword_text:
         pattern = f"%{keyword_text}%"
@@ -942,6 +1103,140 @@ def _artifact_package_conditions(table, service_type: ServiceType | str | None, 
     return conditions
 
 
+def _content_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+    conditions = []
+    if service_type is not None and str(service_type or "").strip():
+        normalized_service = normalize_service(service_type)
+        valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
+        if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
+            return None
+        if normalized_service == ServiceType.TECHNICAL_ANALYSIS:
+            return None
+        conditions.append(investment_daily_contents.c.service_type == str(normalized_service))
+    else:
+        conditions.append(
+            investment_daily_contents.c.service_type.in_(
+                [str(ServiceType.RATE), str(ServiceType.CONVERTIBLE_BOND)]
+            )
+        )
+    generated_at = _content_generated_at_expr()
+    if start_date:
+        conditions.append(func.substr(generated_at, 1, 10) >= str(start_date))
+    if end_date:
+        conditions.append(func.substr(generated_at, 1, 10) <= str(end_date))
+    conditions.append(investment_daily_contents.c.effective_date != "")
+    conditions.append(investment_daily_contents.c.status.in_([str(Status.GENERATED), str(Status.EFFECTIVE)]))
+    now = _now()
+    conditions.append(
+        investment_daily_contents.c.expires_at.is_(None)
+        | (investment_daily_contents.c.expires_at == "")
+        | (investment_daily_contents.c.expires_at > now)
+    )
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                investment_daily_contents.c.content_id.ilike(pattern),
+                investment_daily_contents.c.service_type.ilike(pattern),
+                investment_daily_contents.c.source_text.ilike(pattern),
+                investment_daily_contents.c.generated_text.ilike(pattern),
+                investment_daily_contents.c.output_image.ilike(pattern),
+                investment_daily_contents.c.effective_date.ilike(pattern),
+            )
+        )
+    return conditions
+
+
+def _internal_call_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+    conditions = []
+    if service_type is not None and str(service_type or "").strip():
+        normalized_service = normalize_service(service_type)
+        valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
+        if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
+            return None
+        if normalized_service != ServiceType.TECHNICAL_ANALYSIS:
+            return None
+    conditions.append(internal_call_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS))
+    conditions.append(internal_call_records.c.status == str(Status.SUCCESS))
+    conditions.append(
+        ~exists(
+            select(investment_cache_entries.c.cache_key).where(
+                investment_cache_entries.c.artifact_owner_id == internal_call_records.c.call_id
+            )
+        )
+    )
+    if start_date:
+        conditions.append(func.substr(internal_call_records.c.created_at, 1, 10) >= str(start_date))
+    if end_date:
+        conditions.append(func.substr(internal_call_records.c.created_at, 1, 10) <= str(end_date))
+    keyword_text = str(keyword or "").strip()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                internal_call_records.c.call_id.ilike(pattern),
+                internal_call_records.c.service_type.ilike(pattern),
+                internal_call_records.c.input_text.ilike(pattern),
+                internal_call_records.c.output_text.ilike(pattern),
+                internal_call_records.c.outputs.ilike(pattern),
+            )
+        )
+    return conditions
+
+
+def _artifact_package_sources(
+    *,
+    service_type: ServiceType | str | None,
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    package_id: str = "",
+) -> tuple[list[dict], int]:
+    rows: list[dict] = []
+    total = 0
+    cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
+    if cache_conditions is not None:
+        if package_id:
+            cache_conditions.append(investment_cache_entries.c.cache_key == str(package_id))
+        cache_stmt = select(investment_cache_entries)
+        cache_count = select(func.count()).select_from(investment_cache_entries)
+        if cache_conditions:
+            cache_stmt = cache_stmt.where(*cache_conditions)
+            cache_count = cache_count.where(*cache_conditions)
+        with connect() as conn:
+            total += int(conn.execute(cache_count).scalar_one() or 0)
+            rows.extend({"kind": "cache", "item": row_to_dict(row)} for row in conn.execute(cache_stmt).fetchall())
+
+    content_conditions = _content_artifact_conditions(service_type, start_date, end_date, keyword)
+    if content_conditions is not None:
+        if package_id:
+            content_conditions.append(investment_daily_contents.c.content_id == str(package_id))
+        generated_at = _content_generated_at_expr().label("generated_at")
+        content_stmt = select(investment_daily_contents, generated_at)
+        content_count = select(func.count()).select_from(investment_daily_contents)
+        if content_conditions:
+            content_stmt = content_stmt.where(*content_conditions)
+            content_count = content_count.where(*content_conditions)
+        with connect() as conn:
+            total += int(conn.execute(content_count).scalar_one() or 0)
+            rows.extend({"kind": "content", "item": row_to_dict(row)} for row in conn.execute(content_stmt).fetchall())
+
+    internal_conditions = _internal_call_artifact_conditions(service_type, start_date, end_date, keyword)
+    if internal_conditions is not None:
+        if package_id:
+            internal_conditions.append(internal_call_records.c.call_id == str(package_id))
+        internal_stmt = select(internal_call_records)
+        internal_count = select(func.count()).select_from(internal_call_records)
+        if internal_conditions:
+            internal_stmt = internal_stmt.where(*internal_conditions)
+            internal_count = internal_count.where(*internal_conditions)
+        with connect() as conn:
+            total += int(conn.execute(internal_count).scalar_one() or 0)
+            rows.extend({"kind": "internal_call", "item": row_to_dict(row)} for row in conn.execute(internal_stmt).fetchall())
+    return rows, total
+
+
 def list_artifact_packages_page(
     *,
     page: int = 1,
@@ -954,21 +1249,24 @@ def list_artifact_packages_page(
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
-    table = investment_cache_entries
-    conditions = _artifact_package_conditions(table, service_type, start_date, end_date, keyword)
-    if conditions is None:
-        return [], 0
-    if package_id:
-        conditions.append(table.c.cache_key == str(package_id))
-    stmt = select(table).order_by(table.c.market_date.desc(), table.c.updated_at.desc()).limit(page_size).offset((page - 1) * page_size)
-    count_stmt = select(func.count()).select_from(table)
-    if conditions:
-        stmt = stmt.where(*conditions)
-        count_stmt = count_stmt.where(*conditions)
-    with connect() as conn:
-        total = int(conn.execute(count_stmt).scalar_one() or 0)
-        rows = conn.execute(stmt).fetchall()
-    return [_row_to_artifact_package(row_to_dict(row)) for row in rows], total
+    source_rows, total = _artifact_package_sources(
+        service_type=service_type,
+        start_date=start_date,
+        end_date=end_date,
+        keyword=keyword,
+        package_id=package_id,
+    )
+    packages = [
+        _row_to_artifact_package(item["item"])
+        if item["kind"] == "cache"
+        else _row_to_content_artifact_package(item["item"])
+        if item["kind"] == "content"
+        else _row_to_internal_call_artifact_package(item["item"])
+        for item in source_rows
+    ]
+    packages.sort(key=lambda item: (str(item.get("generated_date") or item.get("market_date") or ""), str(item.get("updated_at") or "")), reverse=True)
+    offset = (page - 1) * page_size
+    return packages[offset : offset + page_size], total
 
 
 def _artifact_period_bounds(*, year: str = "", month: str = "", date: str = "", start_date: str = "", end_date: str = "") -> tuple[str, str]:
@@ -991,18 +1289,73 @@ def _artifact_period_bounds(*, year: str = "", month: str = "", date: str = "", 
 
 def _artifact_package_summary(item: dict) -> dict:
     output_files = _load_list(item.get("output_files"))
+    generated_date = _date_part(str(item.get("created_at") or ""))
     return {
         "level": "package",
         "key": str(item.get("cache_key") or ""),
         "package_id": str(item.get("cache_key") or ""),
         "label": str(item.get("normalized_target") or "产物包"),
         "service_type": str(item.get("service_type") or ""),
-        "market_date": str(item.get("market_date") or ""),
+        "market_date": generated_date,
+        "generated_at": str(item.get("created_at") or ""),
+        "generated_date": generated_date,
+        "business_date": str(item.get("market_date") or ""),
         "normalized_target": str(item.get("normalized_target") or ""),
         "version_fingerprint": str(item.get("version_fingerprint") or ""),
         "artifact_owner_id": str(item.get("artifact_owner_id") or ""),
         "file_count": len(output_files),
         "hit_count": int(item.get("hit_count") or 0),
+        "updated_at": str(item.get("updated_at") or ""),
+    }
+
+
+def _content_artifact_package_summary(item: dict) -> dict:
+    content_id = str(item.get("content_id") or "")
+    output_image = str(item.get("output_image") or "")
+    label = _content_target_label(item.get("service_type") or "")
+    generated_at = str(item.get("generated_at") or item.get("updated_at") or item.get("created_at") or "")
+    generated_date = _date_part(generated_at)
+    return {
+        "level": "package",
+        "key": content_id,
+        "package_id": content_id,
+        "source_type": "content",
+        "label": label,
+        "service_type": str(item.get("service_type") or ""),
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "effective_date": str(item.get("effective_date") or ""),
+        "normalized_target": label,
+        "version_fingerprint": f"v{int(item.get('content_version') or 1)}",
+        "artifact_owner_id": content_id,
+        "content_id": content_id,
+        "file_count": 1 if output_image else 0,
+        "hit_count": 0,
+        "updated_at": str(item.get("updated_at") or ""),
+    }
+
+
+def _internal_call_artifact_package_summary(item: dict) -> dict:
+    call_id = str(item.get("call_id") or "")
+    generated_at = str(item.get("created_at") or item.get("updated_at") or "")
+    generated_date = _date_part(generated_at)
+    output_files = _load_list(item.get("outputs"))
+    return {
+        "level": "package",
+        "key": call_id,
+        "package_id": call_id,
+        "source_type": "internal_call",
+        "label": str(item.get("input_text") or "技术分析内容"),
+        "service_type": str(item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS),
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "normalized_target": str(item.get("input_text") or "技术分析内容"),
+        "version_fingerprint": "",
+        "artifact_owner_id": call_id,
+        "file_count": len(output_files),
+        "hit_count": 0,
         "updated_at": str(item.get("updated_at") or ""),
     }
 
@@ -1023,52 +1376,134 @@ def list_artifact_folder_nodes(
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 100))
     normalized_level = str(level or "").strip().lower()
-    table = investment_cache_entries
     bounded_start, bounded_end = _artifact_period_bounds(year=year, month=month, date=date, start_date=start_date, end_date=end_date)
-    conditions = _artifact_package_conditions(table, service_type, bounded_start, bounded_end, keyword)
-    if conditions is None:
-        return [], 0
-    conditions.append(table.c.market_date != "")
     if normalized_level == "package":
-        stmt = (
-            select(table)
-            .where(*conditions)
-            .order_by(table.c.market_date.desc(), table.c.normalized_target.asc(), table.c.updated_at.desc())
-            .limit(page_size)
-            .offset((page - 1) * page_size)
+        source_rows, total = _artifact_package_sources(
+            service_type=service_type,
+            start_date=bounded_start,
+            end_date=bounded_end,
+            keyword=keyword,
         )
-        count_stmt = select(func.count()).select_from(table).where(*conditions)
+        nodes = [
+            _artifact_package_summary(item["item"])
+            if item["kind"] == "cache"
+            else _content_artifact_package_summary(item["item"])
+            if item["kind"] == "content"
+            else _internal_call_artifact_package_summary(item["item"])
+            for item in source_rows
+        ]
+        nodes.sort(
+            key=lambda item: (
+                str(item.get("generated_date") or item.get("market_date") or ""),
+                str(item.get("normalized_target") or ""),
+                str(item.get("updated_at") or ""),
+            ),
+            reverse=True,
+        )
+        offset = (page - 1) * page_size
+        return nodes[offset : offset + page_size], total
+
+    grouped: dict[str, dict] = {}
+    cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, bounded_start, bounded_end, keyword)
+    if cache_conditions is not None:
+        cache_conditions.append(investment_cache_entries.c.market_date != "")
+        if normalized_level == "service":
+            cache_key_expr = investment_cache_entries.c.service_type
+        else:
+            slices = {"year": 4, "month": 7, "date": 10, "day": 10}
+            length = slices.get(normalized_level)
+            if not length:
+                return [], 0
+            cache_key_expr = func.substr(investment_cache_entries.c.created_at, 1, length)
+        cache_grouped = (
+            select(
+                cache_key_expr.label("key"),
+                func.count().label("count"),
+                func.max(investment_cache_entries.c.updated_at).label("updated_at"),
+            )
+            .where(*cache_conditions)
+            .group_by(cache_key_expr)
+        )
         with connect() as conn:
-            total = int(conn.execute(count_stmt).scalar_one() or 0)
-            rows = conn.execute(stmt).fetchall()
-        return [_artifact_package_summary(row_to_dict(row)) for row in rows], total
+            for row in conn.execute(cache_grouped).fetchall():
+                item = row_to_dict(row)
+                key = str(item.get("key") or "")
+                grouped[key] = {
+                    "key": key,
+                    "count": int(item.get("count") or 0),
+                    "updated_at": str(item.get("updated_at") or ""),
+                }
 
     if normalized_level == "service":
-        key_expr = table.c.service_type
+        content_key_expr = investment_daily_contents.c.service_type
     else:
         slices = {"year": 4, "month": 7, "date": 10, "day": 10}
         length = slices.get(normalized_level)
         if not length:
             return [], 0
-        key_expr = func.substr(table.c.market_date, 1, length)
-    grouped = (
-        select(key_expr.label("key"), func.count().label("count"), func.max(table.c.updated_at).label("updated_at"))
-        .where(*conditions)
-        .group_by(key_expr)
-    )
-    count_stmt = select(func.count()).select_from(grouped.subquery())
-    stmt = grouped.order_by(key_expr.desc()).limit(page_size).offset((page - 1) * page_size)
-    with connect() as conn:
-        total = int(conn.execute(count_stmt).scalar_one() or 0)
-        rows = conn.execute(stmt).fetchall()
+        content_key_expr = func.substr(_content_generated_at_expr(), 1, length)
+    content_conditions = _content_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
+    if content_conditions is not None:
+        content_grouped = (
+            select(
+                content_key_expr.label("key"),
+                func.count().label("count"),
+                func.max(investment_daily_contents.c.updated_at).label("updated_at"),
+            )
+            .where(*content_conditions)
+            .group_by(content_key_expr)
+        )
+        with connect() as conn:
+            for row in conn.execute(content_grouped).fetchall():
+                item = row_to_dict(row)
+                key = str(item.get("key") or "")
+                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
+                current["count"] += int(item.get("count") or 0)
+                updated_at = str(item.get("updated_at") or "")
+                if updated_at > str(current.get("updated_at") or ""):
+                    current["updated_at"] = updated_at
+
+    internal_conditions = _internal_call_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
+    if internal_conditions is not None:
+        if normalized_level == "service":
+            internal_key_expr = internal_call_records.c.service_type
+        else:
+            slices = {"year": 4, "month": 7, "date": 10, "day": 10}
+            length = slices.get(normalized_level)
+            if not length:
+                return [], 0
+            internal_key_expr = func.substr(internal_call_records.c.created_at, 1, length)
+        internal_grouped = (
+            select(
+                internal_key_expr.label("key"),
+                func.count().label("count"),
+                func.max(internal_call_records.c.updated_at).label("updated_at"),
+            )
+            .where(*internal_conditions)
+            .group_by(internal_key_expr)
+        )
+        with connect() as conn:
+            for row in conn.execute(internal_grouped).fetchall():
+                item = row_to_dict(row)
+                key = str(item.get("key") or "")
+                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
+                current["count"] += int(item.get("count") or 0)
+                updated_at = str(item.get("updated_at") or "")
+                if updated_at > str(current.get("updated_at") or ""):
+                    current["updated_at"] = updated_at
+
+    rows = sorted(grouped.values(), key=lambda item: str(item.get("key") or ""), reverse=True)
+    total = len(rows)
+    offset = (page - 1) * page_size
+    rows = rows[offset : offset + page_size]
     node_level = "date" if normalized_level == "day" else normalized_level
     return [
         {
             "level": node_level,
-            "key": str(row_to_dict(row).get("key") or ""),
-            "label": str(row_to_dict(row).get("key") or ""),
-            "count": int(row_to_dict(row).get("count") or 0),
-            "updated_at": str(row_to_dict(row).get("updated_at") or ""),
+            "key": str(row.get("key") or ""),
+            "label": str(row.get("key") or ""),
+            "count": int(row.get("count") or 0),
+            "updated_at": str(row.get("updated_at") or ""),
         }
         for row in rows
     ], total

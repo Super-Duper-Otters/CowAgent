@@ -29,7 +29,7 @@ INVESTMENT_REPLY_DEFINITIONS = [
 
 WECHATMP_REPLY_DEFINITIONS = [
     ReplyTextDefinition("reply.wechatmp.immediate_ack", "收到请求提示", "非技术分析投资指令开始处理时返回。", "收到，正在运行，请稍候。"),
-    ReplyTextDefinition("reply.wechatmp.technical_ack", "技术分析开始生成提示", "技术分析未命中缓存、开始后台生成时返回。保留 `{}`，系统会替换为股票或标题。", "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。", ("target",)),
+    ReplyTextDefinition("reply.wechatmp.technical_ack", "技术分析开始生成提示", "技术分析未命中缓存、开始后台内容生成时返回。保留 `{}`，系统会替换为股票或标题。", "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。", ("target",)),
     ReplyTextDefinition("reply.wechatmp.technical_cache_hit", "技术分析缓存命中提示", "技术分析命中缓存时返回。保留 `{}`，系统会替换为股票或标题。", "已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。", ("target",)),
     ReplyTextDefinition("reply.wechatmp.cancel_pending_result", "放弃待领取结果提示", "客户回复 0 放弃待领取结果时返回。", "已放弃本次技术分析结果。"),
     ReplyTextDefinition("reply.wechatmp.running_technical_analysis", "技术分析仍在运行提示", "客户在技术分析仍运行时回复 1。保留 `{}`，系统会替换为股票或标题。", "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。", ("target",)),
