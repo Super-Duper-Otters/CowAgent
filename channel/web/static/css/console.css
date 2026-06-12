@@ -424,7 +424,14 @@
 .dark .msg-content th, .dark .msg-content td { border-color: rgba(255,255,255,0.1); }
 .msg-content th { background: #f1f5f9; font-weight: 600; }
 .dark .msg-content th { background: #111111; }
-.msg-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.5em 0; }
+.msg-content img {
+    max-width: min(100%, 360px);
+    max-height: 420px;
+    height: auto;
+    object-fit: contain;
+    border-radius: 8px;
+    margin: 0.5em 0;
+}
 .msg-content a { color: #35A85B; text-decoration: underline; }
 .msg-content a:hover { color: #228547; }
 

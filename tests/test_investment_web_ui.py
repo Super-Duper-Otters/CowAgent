@@ -70,6 +70,15 @@ def test_non_investment_management_pages_are_removed_from_frontend_navigation():
     assert 'data-view="invest-health"' in manage_group
 
 
+def test_chat_message_images_are_scaled_inside_reply_bubbles():
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+
+    assert ".msg-content img" in css
+    assert "max-width: min(100%, 360px);" in css
+    assert "max-height: 420px;" in css
+    assert "object-fit: contain;" in css
+
+
 def test_channels_page_defines_wechatmp_service_for_configured_service_accounts():
     web_channel = WEB_CHANNEL.read_text(encoding="utf-8")
     defs_start = web_channel.index("CHANNEL_DEFS = OrderedDict([")
