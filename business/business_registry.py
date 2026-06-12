@@ -38,6 +38,10 @@ class BusinessDefinition:
     script_name: str = ""
     storage_name: str = ""
     copy_assets_from: str = ""
+    component_type: str = ""
+    prompt_key: str = ""
+    renderer_component_key: str = ""
+    template_key: str = ""
 
     @property
     def enabled_config_key(self) -> str:
@@ -50,6 +54,14 @@ class BusinessDefinition:
     @property
     def script_relative_path(self) -> Path:
         return Path("scripts") / self.script_name
+
+    @property
+    def uses_triggers(self) -> bool:
+        return self.component_type in {"active_script", "active_prompt"}
+
+    @property
+    def versioned(self) -> bool:
+        return bool(self.script_name and self.config_key)
 
     def as_dict(self) -> dict:
         return {
@@ -70,6 +82,12 @@ class BusinessDefinition:
             "script_name": self.script_name,
             "storage_name": self.storage_name,
             "base_dir": self.base_dir,
+            "component_type": self.component_type,
+            "prompt_key": self.prompt_key,
+            "renderer_component_key": self.renderer_component_key,
+            "template_key": self.template_key,
+            "uses_triggers": self.uses_triggers,
+            "versioned": self.versioned,
         }
 
 
@@ -116,6 +134,10 @@ def _definition(
     script_name: str = "",
     storage_name: str = "",
     copy_assets_from: str = "",
+    component_type: str = "",
+    prompt_key: str = "",
+    renderer_component_key: str = "",
+    template_key: str = "",
 ) -> BusinessDefinition:
     return BusinessDefinition(
         business_key=business_key,
@@ -137,6 +159,10 @@ def _definition(
         script_name=script_name,
         storage_name=storage_name,
         copy_assets_from=copy_assets_from,
+        component_type=component_type,
+        prompt_key=prompt_key,
+        renderer_component_key=renderer_component_key,
+        template_key=template_key,
     )
 
 
@@ -154,6 +180,10 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
         default_script_path="skills/技术分析/scripts/analyze_universal.py",
         script_name="analyze_universal.py",
         storage_name="technical-analysis",
+        component_type="active_script",
+        prompt_key="prompt.technical_analysis",
+        renderer_component_key="signal-card-renderer",
+        template_key="technical_analysis",
     ),
     _definition(
         business_key="rate",
@@ -164,6 +194,10 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
         default_triggers=("利率",),
         handler_type="daily_content",
         storage_name="rate",
+        component_type="active_prompt",
+        prompt_key="prompt.rate",
+        renderer_component_key="signal-card-renderer",
+        template_key="rate",
     ),
     _definition(
         business_key="convertible-bond",
@@ -174,6 +208,10 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
         default_triggers=("转债",),
         handler_type="daily_content",
         storage_name="convertible-bond",
+        component_type="active_prompt",
+        prompt_key="prompt.convertible_bond",
+        renderer_component_key="signal-card-renderer",
+        template_key="convertible_bond",
     ),
     _definition(
         business_key="signal-card-renderer",
@@ -191,6 +229,7 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
         script_name="render_card.py",
         storage_name="signal-card-renderer",
         copy_assets_from="skills/signal-card-renderer/assets",
+        component_type="passive_script",
     ),
 )
 
@@ -239,6 +278,10 @@ def read_uploaded_business_definition(skill_dir: Path) -> BusinessDefinition | N
     business_key = validate_business_key(frontmatter.get("name") or skill_dir.name)
     entry = str(investment.get("entry") or "").strip()
     handler_type = str(investment.get("handler_type") or "script")
+    routable = _bool_value(investment.get("routable"), True)
+    component_type = str(investment.get("component_type") or "").strip()
+    if not component_type and handler_type == "script":
+        component_type = "active_script" if routable else "passive_script"
     return _definition(
         business_key=business_key,
         label=str(investment.get("label") or business_key),
@@ -249,12 +292,13 @@ def read_uploaded_business_definition(skill_dir: Path) -> BusinessDefinition | N
         handler_type=handler_type,
         entry=entry,
         output_mode=str(investment.get("output_mode") or "mixed"),
-        routable=_bool_value(investment.get("routable"), True),
+        routable=routable,
         base_dir=str(skill_dir),
         config_key=str(investment.get("config_key") or ""),
         default_script_path=str((skill_dir / entry).resolve()) if entry else "",
         script_name=Path(entry).name if entry else "",
         storage_name=business_key,
+        component_type=component_type,
     )
 
 

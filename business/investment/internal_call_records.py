@@ -23,6 +23,7 @@ class InternalCallRecord:
     actor_name: str = ""
     actor_role: str = ""
     input_text: str = ""
+    input_prompt: str = ""
     sources: list[str] | None = None
     status: Status = Status.GENERATING
     error_code: str = ""
@@ -61,6 +62,7 @@ def start_internal_call_record(
     actor_name: str = "",
     actor_role: str = "",
     input_text: str = "",
+    input_prompt: str = "",
     sources: list[str] | None = None,
 ) -> str:
     call_id = str(uuid.uuid4())
@@ -77,6 +79,7 @@ def start_internal_call_record(
                 actor_name=str(actor_name or ""),
                 actor_role=str(actor_role or ""),
                 input_text=str(input_text or ""),
+                input_prompt=str(input_prompt or ""),
                 sources=_json_list(sources),
                 status=str(Status.GENERATING),
                 error_code="",
@@ -98,22 +101,26 @@ def finish_internal_call_record(
     error_code: str = "",
     error: str = "",
     output_text: str = "",
+    input_prompt: str = "",
     outputs: list[str] | None = None,
     elapsed_ms: int | None = None,
 ) -> None:
+    values = {
+        "status": str(status),
+        "error_code": str(error_code or ""),
+        "error": sanitize_sensitive_text(error),
+        "output_text": str(output_text or ""),
+        "outputs": _json_list(outputs),
+        "elapsed_ms": elapsed_ms,
+        "updated_at": _now(),
+    }
+    if input_prompt:
+        values["input_prompt"] = str(input_prompt or "")
     with connect() as conn:
         conn.execute(
             update(internal_call_records)
             .where(internal_call_records.c.call_id == call_id)
-            .values(
-                status=str(status),
-                error_code=str(error_code or ""),
-                error=sanitize_sensitive_text(error),
-                output_text=str(output_text or ""),
-                outputs=_json_list(outputs),
-                elapsed_ms=elapsed_ms,
-                updated_at=_now(),
-            )
+            .values(**values)
         )
 
 
@@ -131,6 +138,7 @@ def _row_to_record(row) -> InternalCallRecord | None:
         actor_name=item.get("actor_name") or "",
         actor_role=item.get("actor_role") or "",
         input_text=item.get("input_text") or "",
+        input_prompt=item.get("input_prompt") or "",
         sources=_load_list(item.get("sources")),
         status=Status(item.get("status") or Status.GENERATING),
         error_code=item.get("error_code") or "",
@@ -182,6 +190,7 @@ def _conditions(
                 internal_call_records.c.actor_name.ilike(pattern),
                 internal_call_records.c.actor_role.ilike(pattern),
                 internal_call_records.c.input_text.ilike(pattern),
+                internal_call_records.c.input_prompt.ilike(pattern),
                 internal_call_records.c.sources.ilike(pattern),
                 internal_call_records.c.status.ilike(pattern),
                 internal_call_records.c.error_code.ilike(pattern),

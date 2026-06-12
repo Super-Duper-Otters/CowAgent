@@ -58,6 +58,7 @@ def test_investment_schema_declares_all_tables():
         "published_by_role",
         "expires_at",
         "auto_effective_after_generate",
+        "input_prompt",
     }.issubset(metadata.tables["content_records"].columns.keys())
     assert {
         "operator_admin_id",
@@ -97,6 +98,7 @@ def test_investment_schema_declares_all_tables():
         "actor_id",
         "actor_name",
         "actor_role",
+        "input_prompt",
         "status",
     }.issubset({column.name for column in metadata.tables["internal_call_records"].columns})
     assert {
@@ -109,6 +111,7 @@ def test_investment_schema_declares_all_tables():
         "business_record_id",
         "provider",
         "model",
+        "input_prompt",
         "result",
     }.issubset({column.name for column in metadata.tables["ai_generation_audits"].columns})
 
@@ -401,7 +404,13 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     monkeypatch.setattr(
         web_channel.web,
         "data",
-        lambda: json.dumps({"openid": "openid-a", "name": "Alice", "allowed_services": ["全部"]}).encode("utf-8"),
+        lambda: json.dumps({
+            "openid": "openid-a",
+            "name": "Alice",
+            "allowed_services": ["全部"],
+            "auth_start_at": "2026-01-01T00:00:00",
+            "auth_end_at": "2099-12-31T23:59:59",
+        }).encode("utf-8"),
     )
     use_token(operator_token)
     monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
@@ -1095,6 +1104,7 @@ def test_generate_content_creates_generation_record_with_actor(investment_env, t
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.ai_generation_audit import list_ai_generation_audits_for_business
     from business.investment.internal_call_records import list_internal_call_records_page
+    from business.investment.records import get_content_record
 
     content_id = create_rate_content_draft(source_text="rate input", source_files=["/tmp/source.png"])
     actor = SimpleNamespace(id=8, username="ops-generate", role="content_operator")
@@ -1104,7 +1114,7 @@ def test_generate_content_creates_generation_record_with_actor(investment_env, t
         assert service_type == ServiceType.RATE
         assert source_text == "rate input"
         assert source_files == ["/tmp/source.png"]
-        return SimpleNamespace(success=True, text="rate output")
+        return SimpleNamespace(success=True, text="rate output", prompt="rate input prompt v2")
 
     def fake_renderer(service_type, generated_text):
         assert service_type == ServiceType.RATE
@@ -1114,20 +1124,25 @@ def test_generate_content_creates_generation_record_with_actor(investment_env, t
 
     result = generate_content(content_id, ai_generator=fake_ai, renderer=fake_renderer, actor=actor)
     internal_calls, total = list_internal_call_records_page(service_type=ServiceType.RATE)
+    content = get_content_record(content_id)
 
     assert result.success is True
+    assert result.input_prompt == "rate input prompt v2"
+    assert content.input_prompt == "rate input prompt v2"
     assert total == 1
     internal_call = internal_calls[0]
     ai_audits = list_ai_generation_audits_for_business("internal_call", internal_call.call_id)
     assert internal_call.service_type == ServiceType.RATE
     assert internal_call.actor_name == "ops-generate"
     assert internal_call.status.value == "success"
+    assert internal_call.input_prompt == "rate input prompt v2"
     assert internal_call.output_text == "rate output"
     assert internal_call.outputs == result.output_files
     assert len(ai_audits) == 1
     assert ai_audits[0].business_record_id == internal_call.call_id
     assert ai_audits[0].actor_name == "ops-generate"
     assert ai_audits[0].input_text == "rate input"
+    assert ai_audits[0].input_prompt == "rate input prompt v2"
     assert ai_audits[0].output_text == "rate output"
 
 
@@ -1399,6 +1414,51 @@ def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_sk
     assert {"technical-analysis", "rate", "convertible-bond", "signal-card-renderer"} <= keys
     assert "image-generation" not in keys
     assert "knowledge-wiki" not in keys
+
+
+def test_investment_builtin_components_have_explicit_component_types(investment_env):
+    from business.business_registry import get_business_definition
+
+    assert get_business_definition("technical-analysis").component_type == "active_script"
+    assert get_business_definition("rate").component_type == "active_prompt"
+    assert get_business_definition("convertible-bond").component_type == "active_prompt"
+    assert get_business_definition("signal-card-renderer").component_type == "passive_script"
+
+
+def test_investment_component_trigger_ownership(investment_env):
+    from business.business_registry import get_business_definition
+
+    assert get_business_definition("technical-analysis").uses_triggers is True
+    assert get_business_definition("rate").uses_triggers is True
+    assert get_business_definition("convertible-bond").uses_triggers is True
+    assert get_business_definition("signal-card-renderer").uses_triggers is False
+
+
+def test_component_service_lists_components_by_type(investment_env):
+    from business.investment.component_service import list_components
+
+    items = {item["component_key"]: item for item in list_components()}
+
+    assert items["technical-analysis"]["component_type"] == "active_script"
+    assert items["technical-analysis"]["uses_triggers"] is True
+    assert items["technical-analysis"]["versioned"] is True
+    assert items["rate"]["component_type"] == "active_prompt"
+    assert items["rate"]["versioned"] is False
+    assert items["signal-card-renderer"]["component_type"] == "passive_script"
+    assert items["signal-card-renderer"]["uses_triggers"] is False
+
+
+def test_component_service_includes_prompt_and_version_data(investment_env):
+    from business.investment.component_service import list_components
+    from business.investment.config_service import save_config
+
+    save_config("prompt.rate", "rate prompt v1", operator_role="admin")
+    items = {item["component_key"]: item for item in list_components()}
+
+    assert items["rate"]["settings"]["prompt"] == "rate prompt v1"
+    assert items["rate"]["versions"] == []
+    assert items["technical-analysis"]["versions"]
+    assert items["signal-card-renderer"]["versions"]
 
 
 def test_investment_skill_loader_applies_web_trigger_override(investment_env):
@@ -1771,6 +1831,8 @@ def test_web_customer_create_audit_binds_session_admin_not_body_operator(investm
             "openid": "actor-openid",
             "name": "Actor Customer",
             "allowed_services": ["全部"],
+            "auth_start_at": "2026-01-01T00:00:00",
+            "auth_end_at": "2099-12-31T23:59:59",
             "operator": "spoofed-operator",
         }).encode("utf-8"),
     )
@@ -1976,6 +2038,8 @@ def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeyp
                 "institution": "Edited Inst",
                 "enabled": True,
                 "allowed_services": ["利率"],
+                "auth_start_at": "2026-01-01T00:00:00",
+                "auth_end_at": "2099-12-31T23:59:59",
             },
             ensure_ascii=False,
         ).encode("utf-8"),
@@ -2016,6 +2080,54 @@ def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_
     assert payload["status"] == "success"
     assert get_config("skill.rate.enabled") is False
     assert get_config("skill.rate.triggers") == ["今日利率", "利率观察"]
+
+
+def test_component_settings_save_updates_active_prompt_component(investment_env, monkeypatch):
+    from business.business_registry import get_business_definition, resolve_triggers
+    from business.investment.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "enabled": False,
+                "triggers": ["今日利率", "利率观察"],
+                "prompt": "updated rate prompt",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("rate"))
+
+    assert payload["status"] == "success"
+    assert payload["component"]["component_key"] == "rate"
+    assert get_config("skill.rate.enabled") is False
+    assert resolve_triggers(get_business_definition("rate")) == ("今日利率", "利率观察")
+    assert get_config("prompt.rate") == "updated rate prompt"
+
+
+def test_component_settings_rejects_triggers_for_passive_component(investment_env, monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"triggers": ["渲染"]}, ensure_ascii=False).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("signal-card-renderer"))
+
+    assert payload["status"] == "error"
+    assert "triggers" in payload["message"]
 
 
 def test_investment_skill_settings_audit_records_before_and_after_values(investment_env, monkeypatch):
@@ -3924,6 +4036,15 @@ def test_user_service_permission_edges_and_upsert(investment_env):
     )
     assert verify_permission("expired", ServiceType.RATE).error_code == ErrorCode.AUTH_EXPIRED
 
+    create_user(
+        "not-started",
+        enabled=True,
+        allowed_services=[ServiceType.ALL],
+        auth_start_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1),
+        auth_end_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+    )
+    assert verify_permission("not-started", ServiceType.RATE).error_code == ErrorCode.UNAUTHORIZED
+
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     assert verify_permission("ok", ServiceType.TECHNICAL_ANALYSIS).allowed is True
 
@@ -4074,8 +4195,8 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
     from business.investment.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
 
     payload = _xlsx_bytes(
-        ["手机号", "服务权限", "授权结束日期"],
-        [["13800138000", "利率", "2026-12-31"]],
+        ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
+        [["13800138000", "利率", "2026-06-01", "2026-12-31"]],
     )
 
     rows = parse_users_excel(payload)
@@ -4084,9 +4205,7 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
     assert rows[0].openid.startswith("pending-mobile-13800138000-")
     assert rows[0].mobile == "13800138000"
     assert rows[0].allowed_services == "利率"
-    assert rows[0].auth_start_at is not None
-    assert rows[0].auth_start_at.hour == 16
-    assert rows[0].auth_start_at.minute == 0
+    assert rows[0].auth_start_at == datetime(2026, 5, 31, 16, 0)
     assert rows[0].auth_end_at == datetime(2026, 12, 30, 16, 0)
 
     result = import_users_from_excel(payload)
@@ -4119,8 +4238,8 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(inves
     from business.investment.user_service import parse_users_excel
 
     payload = _xlsx_bytes(
-        ["手机号", "服务权限", "授权结束日期"],
-        [["13800138000", "利率", "2026-6-122"]],
+        ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
+        [["13800138000", "利率", "2026-06-01", "2026-6-122"]],
     )
 
     with pytest.raises(ValueError) as error:
@@ -4132,8 +4251,8 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(inves
     assert "unconverted data remains" not in message
 
     invalid_month_payload = _xlsx_bytes(
-        ["手机号", "服务权限", "授权结束日期"],
-        [["13800138000", "利率", "2026-13-01"]],
+        ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
+        [["13800138000", "利率", "2026-06-01", "2026-13-01"]],
     )
     with pytest.raises(ValueError) as month_error:
         parse_users_excel(invalid_month_payload)
@@ -4141,13 +4260,42 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(inves
     assert "Excel row 2 invalid date field: auth_end_at" in str(month_error.value)
 
     short_number_payload = _xlsx_bytes(
-        ["手机号", "服务权限", "授权结束日期"],
-        [["13800138000", "利率", "1"]],
+        ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
+        [["13800138000", "利率", "2026-06-01", "1"]],
     )
     with pytest.raises(ValueError) as number_error:
         parse_users_excel(short_number_payload)
 
     assert "Excel row 2 invalid date field: auth_end_at" in str(number_error.value)
+
+
+def test_user_service_excel_import_requires_authorization_start_end_and_services(investment_env):
+    from business.investment.user_service import parse_users_excel
+
+    missing_start = _xlsx_bytes(
+        ["手机号", "服务权限", "授权结束日期"],
+        [["13800138000", "利率", "2026-12-31"]],
+    )
+    with pytest.raises(ValueError) as start_error:
+        parse_users_excel(missing_start)
+    assert "auth_start_at" in str(start_error.value)
+
+    missing_service = _xlsx_bytes(
+        ["手机号", "授权开始日期", "授权结束日期"],
+        [["13800138000", "2026-06-01", "2026-12-31"]],
+    )
+    with pytest.raises(ValueError) as service_error:
+        parse_users_excel(missing_service)
+    assert "allowed_services" in str(service_error.value)
+
+    blank_values = _xlsx_bytes(
+        ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
+        [["13800138000", "", "", ""]],
+    )
+    with pytest.raises(ValueError) as blank_error:
+        parse_users_excel(blank_values)
+    message = str(blank_error.value)
+    assert "allowed_services" in message or "auth_start_at" in message or "auth_end_at" in message
 
 
 def test_user_import_template_headers_are_parseable(investment_env):
@@ -4181,8 +4329,8 @@ def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, 
             "remark",
         ],
         [
-            ["existing-import", "Existing New", "Inst A", "13800000000", "启用", "全部", "", "2026-12-31", "updated"],
-            ["new-import", "New User", "Inst B", "13900000000", "启用", "利率", "", "2026-12-31", "created"],
+            ["existing-import", "Existing New", "Inst A", "13800000000", "启用", "全部", "2026-06-01", "2026-12-31", "updated"],
+            ["new-import", "New User", "Inst B", "13900000000", "启用", "利率", "2026-06-01", "2026-12-31", "created"],
         ],
     )
 
@@ -9750,10 +9898,10 @@ def test_render_service_validates_output_files(investment_env, tmp_path):
     assert failed.error_code == ErrorCode.IMAGE_GENERATION_FAILED
 
 
-def test_render_service_contract_uses_configured_templates_and_output_dir(investment_env, tmp_path):
+def test_render_service_contract_uses_skill_templates_and_configured_output_dir(investment_env, tmp_path):
     from business.investment.config_service import save_configs
     from business.investment.constants import ServiceType, Status
-    from business.investment.render_service import RenderRequest, render_card
+    from business.investment.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
 
     template_ta = tmp_path / "template_ta.html"
     template_bond = tmp_path / "template_bond.html"
@@ -9795,7 +9943,7 @@ def test_render_service_contract_uses_configured_templates_and_output_dir(invest
             "cb standard text",
             str(output_dir),
             result.output_path,
-            str(template_cb),
+            DEFAULT_TEMPLATE_CB_PATH,
             result.output_path,
         )
     ]
@@ -9806,15 +9954,12 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
     from business.investment.config_service import save_configs
 
     missing_renderer = tmp_path / "missing-render-card.py"
-    missing_ta = tmp_path / "missing-template-ta.html"
-    missing_bond = tmp_path / "missing-template-bond.html"
-    missing_cb = tmp_path / "missing-template-cb.html"
     save_configs(
         {
             "render.renderer_path": str(missing_renderer),
-            "render.template_ta_path": str(missing_ta),
-            "render.template_rate_path": str(missing_bond),
-            "render.template_cb_path": str(missing_cb),
+            "render.template_ta_path": str(tmp_path / "missing-template-ta.html"),
+            "render.template_rate_path": str(tmp_path / "missing-template-bond.html"),
+            "render.template_cb_path": str(tmp_path / "missing-template-cb.html"),
         },
         operator_role="admin",
     )
@@ -9829,12 +9974,9 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
 
     assert items["signal_card_renderer"].ok is False
     assert str(missing_renderer) in items["signal_card_renderer"].detail
-    assert items["template_ta"].ok is False
-    assert str(missing_ta) in items["template_ta"].detail
-    assert items["template_bond"].ok is False
-    assert str(missing_bond) in items["template_bond"].detail
-    assert items["template_cb"].ok is False
-    assert str(missing_cb) in items["template_cb"].detail
+    assert items["template_ta"].ok is True
+    assert items["template_bond"].ok is True
+    assert items["template_cb"].ok is True
     assert items["playwright_chromium"].ok is False
     assert "chromium executable missing" in items["playwright_chromium"].detail
 
@@ -10009,9 +10151,6 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     files = {
         "technical_analysis.skill_path": tmp_path / "analyze_universal.py",
         "render.renderer_path": tmp_path / "render_card.py",
-        "render.template_ta_path": tmp_path / "template_ta.html",
-        "render.template_rate_path": tmp_path / "template_bond.html",
-        "render.template_cb_path": tmp_path / "template_cb.html",
     }
     for path in files.values():
         path.write_text("ok", encoding="utf-8")

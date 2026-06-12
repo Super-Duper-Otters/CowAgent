@@ -25,6 +25,7 @@ class AIGenerationAudit:
     business_record_type: str = ""
     business_record_id: str = ""
     input_text: str = ""
+    input_prompt: str = ""
     sources: list[str] | None = None
     provider: str = ""
     model: str = ""
@@ -68,6 +69,7 @@ def start_ai_generation_audit(
     business_record_type: str = "",
     business_record_id: str = "",
     input_text: str = "",
+    input_prompt: str = "",
     sources: list[str] | None = None,
     provider: str = "",
     model: str = "",
@@ -88,6 +90,7 @@ def start_ai_generation_audit(
                 business_record_type=str(business_record_type or ""),
                 business_record_id=str(business_record_id or ""),
                 input_text=str(input_text or ""),
+                input_prompt=str(input_prompt or ""),
                 sources=_json_list(sources),
                 provider=str(provider or ""),
                 model=str(model or ""),
@@ -111,22 +114,26 @@ def finish_ai_generation_audit(
     error_code: str = "",
     error: str = "",
     output_text: str = "",
+    input_prompt: str = "",
     outputs: list[str] | None = None,
     elapsed_ms: int | None = None,
 ) -> None:
+    values = {
+        "result": str(result or ""),
+        "error_code": str(error_code or ""),
+        "error": sanitize_sensitive_text(error),
+        "output_text": str(output_text or ""),
+        "outputs": _json_list(outputs),
+        "elapsed_ms": elapsed_ms,
+        "updated_at": _now(),
+    }
+    if input_prompt:
+        values["input_prompt"] = str(input_prompt or "")
     with connect() as conn:
         conn.execute(
             update(ai_generation_audits)
             .where(ai_generation_audits.c.audit_id == audit_id)
-            .values(
-                result=str(result or ""),
-                error_code=str(error_code or ""),
-                error=sanitize_sensitive_text(error),
-                output_text=str(output_text or ""),
-                outputs=_json_list(outputs),
-                elapsed_ms=elapsed_ms,
-                updated_at=_now(),
-            )
+            .values(**values)
         )
 
 
@@ -146,6 +153,7 @@ def _row_to_record(row) -> AIGenerationAudit | None:
         business_record_type=item.get("business_record_type") or "",
         business_record_id=item.get("business_record_id") or "",
         input_text=item.get("input_text") or "",
+        input_prompt=item.get("input_prompt") or "",
         sources=_load_list(item.get("sources")),
         provider=item.get("provider") or "",
         model=item.get("model") or "",

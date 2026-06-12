@@ -3167,6 +3167,12 @@ class InvestmentUsersHandler:
             openid = body.get("openid", "").strip()
             if not openid:
                 return _investment_json_response({"status": "error", "message": "openid required"})
+            if not body.get("allowed_services"):
+                return _investment_json_response({"status": "error", "message": "allowed_services required"})
+            if not body.get("auth_start_at"):
+                return _investment_json_response({"status": "error", "message": "auth_start_at required"})
+            if not body.get("auth_end_at"):
+                return _investment_json_response({"status": "error", "message": "auth_end_at required"})
             values = {
                 "name": body.get("name", ""),
                 "institution": body.get("institution", ""),
@@ -3970,6 +3976,68 @@ class InvestmentSkillVersionsHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] skill versions GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentComponentsHandler:
+    def GET(self):
+        _require_investment_permission("skills.read")
+        try:
+            from business.investment.component_service import list_components
+
+            return _investment_json_response({
+                "status": "success",
+                "components": list_components(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] components GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentComponentSettingsHandler:
+    def POST(self, component_key):
+        admin = _require_investment_permission("skills.write")
+        try:
+            from business.config_service import get_configs
+            from business.business_registry import get_business_definition
+            from business.investment.component_service import list_components, save_component_settings
+
+            definition = get_business_definition(component_key)
+            body = _investment_json_body()
+            audit_keys = []
+            if "enabled" in body:
+                audit_keys.append(definition.enabled_config_key)
+            if "triggers" in body and definition.uses_triggers:
+                audit_keys.append(definition.triggers_config_key)
+            if "prompt" in body and definition.prompt_key:
+                audit_keys.append(definition.prompt_key)
+            before_state = get_configs(audit_keys, masked=True) if audit_keys else {}
+
+            component = save_component_settings(
+                component_key,
+                body,
+                operator_role=admin.role,
+                operator=admin.username,
+                actor=admin,
+            )
+
+            after_state = get_configs(audit_keys, masked=True) if audit_keys else {}
+            _record_investment_operation(
+                "component.settings.update",
+                "investment_component",
+                component_key,
+                admin=admin,
+                detail={"keys": [key for key in ("enabled", "triggers", "prompt") if key in body]},
+                before_state=before_state,
+                after_state=after_state,
+            )
+            return _investment_json_response({
+                "status": "success",
+                "component": component,
+                "components": list_components(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] component settings error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

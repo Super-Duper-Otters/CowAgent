@@ -26,6 +26,8 @@ INVESTMENT_API_URLS = (
     '/api/investment/cache', 'InvestmentCacheHandler',
     '/api/investment/cache/clear', 'InvestmentCacheClearHandler',
     '/api/investment/cache/(.*)/invalidate', 'InvestmentCacheEntryInvalidateHandler',
+    '/api/investment/components', 'InvestmentComponentsHandler',
+    '/api/investment/components/(.*)/settings', 'InvestmentComponentSettingsHandler',
     '/api/investment/skills/versions', 'InvestmentSkillVersionsHandler',
     '/api/investment/skills/packages/upload', 'InvestmentSkillPackageUploadHandler',
     '/api/investment/skills/(.*)/settings', 'InvestmentSkillSettingsHandler',

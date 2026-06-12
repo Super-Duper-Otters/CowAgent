@@ -30,6 +30,10 @@ class InvestmentSkillDefinition:
     script_name: str = ""
     storage_name: str = ""
     copy_assets_from: str = ""
+    component_type: str = ""
+    prompt_key: str = ""
+    renderer_component_key: str = ""
+    template_key: str = ""
 
     @property
     def enabled_config_key(self) -> str:
@@ -42,6 +46,14 @@ class InvestmentSkillDefinition:
     @property
     def script_relative_path(self) -> Path:
         return Path("scripts") / self.script_name
+
+    @property
+    def uses_triggers(self) -> bool:
+        return self.component_type in {"active_script", "active_prompt"}
+
+    @property
+    def versioned(self) -> bool:
+        return bool(self.script_name and self.config_key)
 
     def as_dict(self) -> dict:
         return {
@@ -61,6 +73,12 @@ class InvestmentSkillDefinition:
             "script_name": self.script_name,
             "storage_name": self.storage_name,
             "base_dir": self.base_dir,
+            "component_type": self.component_type,
+            "prompt_key": self.prompt_key,
+            "renderer_component_key": self.renderer_component_key,
+            "template_key": self.template_key,
+            "uses_triggers": self.uses_triggers,
+            "versioned": self.versioned,
         }
 
 
@@ -86,6 +104,10 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
         default_script_path="skills/技术分析/scripts/analyze_universal.py",
         script_name="analyze_universal.py",
         storage_name="technical-analysis",
+        component_type="active_script",
+        prompt_key="prompt.technical_analysis",
+        renderer_component_key="signal-card-renderer",
+        template_key="technical_analysis",
     ),
     InvestmentSkillDefinition(
         skill_key="rate",
@@ -96,6 +118,10 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
         default_triggers=("利率",),
         handler_type="daily_content",
         storage_name="rate",
+        component_type="active_prompt",
+        prompt_key="prompt.rate",
+        renderer_component_key="signal-card-renderer",
+        template_key="rate",
     ),
     InvestmentSkillDefinition(
         skill_key="convertible-bond",
@@ -106,6 +132,10 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
         default_triggers=("转债",),
         handler_type="daily_content",
         storage_name="convertible-bond",
+        component_type="active_prompt",
+        prompt_key="prompt.convertible_bond",
+        renderer_component_key="signal-card-renderer",
+        template_key="convertible_bond",
     ),
     InvestmentSkillDefinition(
         skill_key="signal-card-renderer",
@@ -123,6 +153,7 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
         script_name="render_card.py",
         storage_name="signal-card-renderer",
         copy_assets_from="skills/signal-card-renderer/assets",
+        component_type="passive_script",
     ),
 )
 
@@ -186,6 +217,10 @@ def _from_business_definition(definition) -> InvestmentSkillDefinition:
         script_name=str(getattr(definition, "script_name", "") or ""),
         storage_name=str(getattr(definition, "storage_name", "") or ""),
         copy_assets_from=str(getattr(definition, "copy_assets_from", "") or ""),
+        component_type=str(getattr(definition, "component_type", "") or ""),
+        prompt_key=str(getattr(definition, "prompt_key", "") or ""),
+        renderer_component_key=str(getattr(definition, "renderer_component_key", "") or ""),
+        template_key=str(getattr(definition, "template_key", "") or ""),
     )
 
 

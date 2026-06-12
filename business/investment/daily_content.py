@@ -25,6 +25,7 @@ class DailyContentResult:
     content_id: str = ""
     output_image: str = ""
     generated_text: str = ""
+    input_prompt: str = ""
     error_code: ErrorCode | None = None
     user_prompt: str = ""
     detail: str = ""
@@ -344,7 +345,7 @@ def mark_generation_started(content_id: str, *, actor: Any | None = None) -> Dai
     return DailyContentResult(True, content_id=content_id)
 
 
-def update_generation_success(content_id: str, generated_text: str, output_image: str) -> str:
+def update_generation_success(content_id: str, generated_text: str, output_image: str, input_prompt: str = "") -> str:
     service_type: ServiceType | None = None
     operator = ""
     audit_actor = None
@@ -373,6 +374,7 @@ def update_generation_success(content_id: str, generated_text: str, output_image
             update(investment_daily_contents)
             .where(investment_daily_contents.c.content_id == content_id)
             .values(
+                input_prompt=str(input_prompt or ""),
                 generated_text=generated_text,
                 output_image=stored_output_image,
                 status=str(Status.GENERATED),
@@ -410,7 +412,7 @@ def update_generation_success(content_id: str, generated_text: str, output_image
     return stored_output_image
 
 
-def update_generation_failure(content_id: str, detail: str) -> None:
+def update_generation_failure(content_id: str, detail: str, input_prompt: str = "") -> None:
     safe_detail = sanitize_sensitive_text(detail)
     operator = ""
     audit_actor = None
@@ -424,7 +426,12 @@ def update_generation_failure(content_id: str, detail: str) -> None:
         conn.execute(
             update(investment_daily_contents)
             .where(investment_daily_contents.c.content_id == content_id)
-            .values(status=str(Status.GENERATE_FAILED), error_message=safe_detail, updated_at=_now())
+            .values(
+                status=str(Status.GENERATE_FAILED),
+                error_message=safe_detail,
+                input_prompt=str(input_prompt or ""),
+                updated_at=_now(),
+            )
         )
     record_operation_audit(
         "content.generate",
@@ -514,8 +521,9 @@ def generate_content(
             ai_result = ai_generator(service_type, item["source_text"] or "")
     if not ai_result.success:
         detail = sanitize_sensitive_text(getattr(ai_result, "detail", "AI generation failed"))
+        input_prompt = str(getattr(ai_result, "prompt", "") or "")
         code = getattr(ai_result, "error_code", None) or ErrorCode.SYSTEM_ERROR
-        update_generation_failure(content_id, detail)
+        update_generation_failure(content_id, detail, input_prompt=input_prompt)
         if internal_call_id:
             from .internal_call_records import finish_internal_call_record
 
@@ -524,6 +532,7 @@ def generate_content(
                 status=Status.FAILED,
                 error_code=str(code),
                 error=detail,
+                input_prompt=input_prompt,
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         if ai_audit_id:
@@ -534,10 +543,12 @@ def generate_content(
                 result="failed",
                 error_code=str(code),
                 error=detail,
+                input_prompt=input_prompt,
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     generated_text = str(getattr(ai_result, "text", ""))
+    input_prompt = str(getattr(ai_result, "prompt", "") or "")
     if ai_audit_id:
         from .ai_generation_audit import finish_ai_generation_audit
 
@@ -545,6 +556,7 @@ def generate_content(
             ai_audit_id,
             result="success",
             output_text=generated_text,
+            input_prompt=input_prompt,
             elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
         )
     if renderer is None:
@@ -572,13 +584,14 @@ def generate_content(
             )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     output_image = str(getattr(render_result, "image_path", ""))
-    output_image = update_generation_success(content_id, generated_text, output_image)
+    output_image = update_generation_success(content_id, generated_text, output_image, input_prompt=input_prompt)
     if internal_call_id:
         from .internal_call_records import finish_internal_call_record
 
         finish_internal_call_record(
             internal_call_id,
             status=Status.SUCCESS,
+            input_prompt=input_prompt,
             output_text=generated_text,
             outputs=[output_image],
             elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
@@ -588,6 +601,7 @@ def generate_content(
         content_id=content_id,
         output_image=output_image,
         generated_text=generated_text,
+        input_prompt=input_prompt,
         output_files=[output_image],
     )
 

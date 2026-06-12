@@ -81,6 +81,7 @@ class ContentRecord:
     status: Status
     source_files: list[str] | None = None
     source_text: str = ""
+    input_prompt: str = ""
     generated_text: str = ""
     output_image: str = ""
     error_message: str = ""
@@ -1594,6 +1595,7 @@ def _row_to_content(row) -> ContentRecord:
         status=status,
         source_files=_load_list(item["source_files"]),
         source_text=item["source_text"] or "",
+        input_prompt=item.get("input_prompt") or "",
         generated_text=item["generated_text"] or "",
         output_image=item["output_image"] or "",
         error_message=item["error_message"] or "",
@@ -1680,6 +1682,7 @@ def list_content_records_page(
                 investment_daily_contents.c.content_id.ilike(pattern),
                 investment_daily_contents.c.service_type.ilike(pattern),
                 investment_daily_contents.c.source_text.ilike(pattern),
+                investment_daily_contents.c.input_prompt.ilike(pattern),
                 investment_daily_contents.c.generated_text.ilike(pattern),
                 investment_daily_contents.c.output_image.ilike(pattern),
                 investment_daily_contents.c.status.ilike(pattern),
