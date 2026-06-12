@@ -62,6 +62,10 @@ def test_non_investment_management_pages_are_removed_from_frontend_navigation():
     monitor_group_start = html.index('data-group="monitor"')
     manage_group = html[manage_group_start:monitor_group_start]
     assert 'data-group="investment"' not in html
+    assert 'data-view="config"' not in html
+    assert 'id="view-config"' not in html
+    assert "config:   { group: 'nav_manage',  page: 'menu_config' }" not in js
+    assert "if (viewId === 'config') loadConfigView();" not in js
     assert 'data-view="channels"' not in html
     assert 'id="view-channels"' not in html
     assert "channels: { group: 'nav_manage',  page: 'menu_channels' }" not in js
@@ -127,6 +131,29 @@ def test_channel_management_is_system_config_subpage():
     assert 'id="channels-add-panel"' not in html
 
 
+def test_ai_model_config_is_system_config_subpage():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    config_body = _js_function_body(js, "renderInvestmentConfig")
+    tabs_body = _js_function_body(js, "investmentConfigTabDefinitions")
+    panel_body = _js_function_body(js, "renderInvestmentConfigPanel")
+    switch_body = _js_function_body(js, "switchInvestmentConfigPanel")
+    ai_panel_body = _js_function_body(js, "renderInvestmentConfigAiModelPanel")
+
+    assert "key: 'ai-model'" in tabs_body
+    assert "label: 'AI模型配置'" in tabs_body
+    assert "renderInvestmentConfigAiModelPanel()" in panel_body
+    assert "'ai-model'" in switch_body
+    assert "currentInvestmentConfigPanel === 'ai-model'" in config_body
+    assert "loadConfigView();" in config_body
+    assert "cfg-provider" in ai_panel_body
+    assert "cfg-agent-save" in ai_panel_body
+    assert "cfg-password-save" not in ai_panel_body
+    assert "cfg-password" not in ai_panel_body
+    assert "config_security" not in ai_panel_body
+    assert 'id="cfg-provider"' not in html
+
+
 def test_investment_tables_are_bounded_and_have_sticky_headers():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -157,7 +184,8 @@ def test_investment_selects_reuse_cowagent_dropdown_ui():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     dropdown_body = _js_function_body(js, "investmentDropdown")
     filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
-    skill_row_body = _js_function_body(js, "renderInvestmentSkillConfigRow")
+    component_card_body = _js_function_body(js, "renderInvestmentComponentCard")
+    skill_dialog_body = _js_function_body(js, "renderInvestmentSkillDialogBody")
 
     assert "cfg-dropdown-selected" in dropdown_body
     assert "cfg-dropdown-menu" in dropdown_body
@@ -180,6 +208,7 @@ def test_investment_selects_reuse_cowagent_dropdown_ui():
     assert "querySelector('.cfg-dropdown-selected')" in position_body
     assert "minWidth = `${menuWidth}px`" in position_body
     assert "maxWidth = `${menuWidth}px`" in position_body
+    assert "investmentDropdown('invest-skill-dialog-version'" in skill_dialog_body
     assert "initInvestmentDropdowns" in js
     init_body = _js_function_body(js, "initInvestmentDropdowns")
     assert "root.matches('.cfg-dropdown[data-investment-dropdown]')" in init_body
@@ -187,8 +216,7 @@ def test_investment_selects_reuse_cowagent_dropdown_ui():
     assert "data-investment-dropdown-options" not in dropdown_body
     assert "investmentDropdown(`investment-records-filter-${key}`" in filters_body
     assert "<select" not in filters_body
-    assert "investmentDropdown(`invest-skill-version-${escapeHtml(skillKey)}`" in skill_row_body
-    assert "<select" not in skill_row_body
+    assert "<select" not in component_card_body
     assert ".investment-cow-dropdown" in css
     assert ".investment-cow-dropdown .cfg-dropdown-menu" in css
     assert "min-width: 0;" in css
@@ -315,7 +343,6 @@ def test_rate_and_convertible_bond_content_are_merged_under_investment_content_p
     assert 'data-view="invest-cb"' not in sidebar_body
     assert 'id="view-invest-rate"' not in html
     assert 'id="view-invest-cb"' not in html
-
     assert '<h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资内容</h2>' in daily_view_body
     assert 'id="invest-daily-content-content"' in daily_view_body
     assert "let currentInvestmentContentPanel = 'rate';" in js
@@ -327,6 +354,15 @@ def test_rate_and_convertible_bond_content_are_merged_under_investment_content_p
     assert "利率内容" in daily_render_body
     assert "转债内容" in daily_render_body
     assert "renderInvestmentContent(currentInvestmentContentPanel)" in daily_render_body
+
+
+def test_general_skills_page_is_hidden_from_sidebar():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert 'data-view="skills"' not in html
+    assert 'data-view="invest-skills"' in html
+    assert "new Set(['memory', 'knowledge', 'tasks', 'skills'])" in js
 
 
 def test_backend_login_page_matches_console_auth_flow():
@@ -436,20 +472,18 @@ def test_investment_skill_has_own_navigation_page():
     assert "'invest-skills':" in js
     assert "renderInvestmentSkills()" in js
     assert "invest-skills-content" in js
-    assert "renderInvestmentSkillManager(" in js
-    assert "loadInvestmentSkillVersions(" in js
-    assert "renderInvestmentSkillConfigTable(" in js
+    assert "renderInvestmentComponentManager(" in js
+    assert "loadInvestmentComponents(" in js
+    assert "renderInvestmentComponentCard(" in js
     assert "uploadInvestmentSkill(" in js
     assert "uploadInvestmentSkillPackage(" in js
-    assert "saveInvestmentSkillSettings(" in js
+    assert "saveInvestmentComponentSettings(" in js
     assert "activateInvestmentSkillVersion(" in js
     assert "deleteInvestmentSkillVersion(" in js
-    assert "skill配置" in js
-    assert "technical-analysis" in js
-    assert "signal-card-renderer" in js
-    assert "/api/investment/skills/versions" in js
+    assert "组件配置" in js
+    assert "/api/investment/components" in js
     assert "/api/investment/skills/packages/upload" in js
-    assert "/api/investment/skills/${encodeURIComponent(skillKey)}/settings" in js
+    assert "/api/investment/components/${encodeURIComponent(componentKey)}/settings" in js
     assert "/api/investment/skills/${encodeURIComponent(skillKey)}/upload" in js
     assert "/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/activate" in js
     assert "/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/delete" in js
@@ -457,34 +491,69 @@ def test_investment_skill_has_own_navigation_page():
     assert "investment-skill-card" not in js
 
 
-def test_investment_skill_actions_are_moved_into_edit_dialog():
+def test_investment_components_page_uses_wide_container():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    start = html.index('id="view-invest-skills"')
+    end = html.index('id="view-invest-health"')
+    body = html[start:end]
+
+    assert "w-full max-w-[1600px] mx-auto" in body
+    assert "max-w-6xl mx-auto" not in body
+
+
+def test_investment_components_page_groups_component_types():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    row_start = js.index("function renderInvestmentSkillConfigRow(")
-    row_end = js.index("function investmentSkillDialogItem(")
-    row_body = js[row_start:row_end]
+    assert "/api/investment/components" in js
+    assert "active_script" in js
+    assert "active_prompt" in js
+    assert "passive_script" in js
+    assert "renderInvestmentComponentCard" in js
+    assert "investment-component-board" in js
+    assert "renderInvestmentSkillConfigTable" not in js
 
-    assert "openInvestmentSkillDialog(" in row_body
-    assert "fa-pen" in row_body
-    assert "保存设置" not in row_body
-    assert "切换版本" not in row_body
-    assert "删除版本" not in row_body
-    assert "invest-skill-file-${escapeHtml(skillKey)}" not in row_body
 
-    assert "function openInvestmentSkillDialog(" in js
-    assert "showInvestmentModal('编辑投资Skill'" in js
-    assert "function saveInvestmentSkillDialog(" in js
-    assert "saveInvestmentSkillDialog('${escapeHtml(skillKey)}')" in js
-    assert "saveInvestmentSkillSettings(" in js
-    assert "uploadInvestmentSkill(" in js
-    assert "activateInvestmentSkillVersion(" in js
-    assert "deleteInvestmentSkillVersion(" in js
-    dialog_start = js.index("function renderInvestmentSkillDialogBody(")
-    dialog_end = js.index("function openInvestmentSkillDialog(")
-    dialog_body = js[dialog_start:dialog_end]
-    assert "关闭', 'hideInvestmentModal()')" not in dialog_body
-    assert "保存', `saveInvestmentSkillDialog" in dialog_body
-    assert "切换版本" not in dialog_body
+def test_investment_component_cards_scope_controls_by_type():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    card_body = _js_function_body(js, "renderInvestmentComponentCard")
+    config_dialog_body = _js_function_body(js, "renderInvestmentComponentConfigDialogBody")
+    tag_body = _js_function_body(js, "investmentComponentTags")
+
+    assert "component.uses_triggers" in tag_body
+    assert "component.versioned" in card_body
+    assert "被动组件" in js
+    assert "主动组件" in js
+    assert "包含脚本" in js
+    assert "settings.prompt_key" in config_dialog_body
+    assert "invest-component-modal-triggers" in config_dialog_body
+    assert "invest-component-modal-prompt" in config_dialog_body
+
+
+def test_investment_component_cards_hide_business_details():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    card_body = _js_function_body(js, "renderInvestmentComponentCard")
+
+    assert "触发词" not in card_body
+    assert "提示词" not in card_body
+    assert "运行方式" not in card_body
+    assert "输出" not in card_body
+    assert "上传时间" not in card_body
+    assert "调用方" not in card_body
+    assert "openInvestmentComponentConfigDialog" in card_body
+    assert "openInvestmentComponentVersionDialog" in card_body
+
+
+def test_only_versioned_components_show_upload_controls():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    card_body = _js_function_body(js, "renderInvestmentComponentCard")
+    skill_dialog_body = _js_function_body(js, "renderInvestmentSkillDialogBody")
+
+    assert "component.versioned" in card_body
+    assert "openInvestmentComponentVersionDialog" in card_body
+    assert "uploadInvestmentSkill" in js
+    assert "activateInvestmentSkillVersion" in js
+    assert "当前版本" in skill_dialog_body
+    assert "该组件无脚本版本" not in card_body
 
 
 def test_investment_user_and_skill_edit_buttons_call_write_apis():
@@ -494,9 +563,27 @@ def test_investment_user_and_skill_edit_buttons_call_write_apis():
     assert "await investmentFetchJson(`/api/investment/users/${encodeURIComponent(openid)}/status/${action}`, {method: 'POST'})" in js
     assert "saveInvestmentUser('invest-user-modal')" in js
     assert "await investmentFetchJson('/api/investment/users', {" in js
-    assert "openInvestmentSkillDialog('${escapeHtml(skillKey)}')" in js
-    assert "await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/settings`, {" in js
+    assert "saveInvestmentComponentSettings('${escapeHtml(componentKey)}', 'modal')" in js
+    assert "saveInvestmentComponentEnabled('${escapeHtml(componentKey)}')" in js
+    assert "await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/settings`, {" in js
     assert "await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(selectedVersion)}/activate`, {" in js
+
+
+def test_investment_user_save_requires_authorization_fields():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    save_user_body = _js_function_body(js, "saveInvestmentUser")
+    user_dialog_body = _js_function_body(js, "openInvestmentUserDialog")
+
+    assert "investmentRenderDateControl('invest-user-modal-auth-start-date'" in user_dialog_body
+    assert "investmentRenderDateControl('invest-user-modal-auth-end-date'" in user_dialog_body
+    assert "investmentRenderTimeControl('invest-user-modal-auth-start-time'" not in user_dialog_body
+    assert "investmentRenderTimeControl('invest-user-modal-auth-end-time'" not in user_dialog_body
+    assert "'datetime-local'" not in user_dialog_body
+    assert "请选择授权服务" in save_user_body
+    assert "请填写授权开始日期" in save_user_body
+    assert "请填写授权结束日期" in save_user_body
+    assert "auth_start_at: investmentBeijingDateTimeToUtc(authStartDate, '00:00')" in save_user_body
+    assert "auth_end_at: investmentBeijingDateTimeToUtc(authEndDate, '00:00')" in save_user_body
 
 
 def test_investment_users_page_splits_customers_and_admin_staff():
@@ -551,6 +638,7 @@ def test_investment_boolean_controls_use_green_switches():
     config_field_body = _js_function_body(js, "renderInvestmentConfigField")
     service_checks_body = _js_function_body(js, "investmentUserServiceChecks")
     channel_fields_body = _js_function_body(js, "buildChannelFieldsHtml")
+    ai_model_panel_body = _js_function_body(js, "renderInvestmentConfigAiModelPanel")
 
     assert "function investmentSwitch(" in js
     assert "class=\"investment-switch" in js
@@ -563,8 +651,8 @@ def test_investment_boolean_controls_use_green_switches():
     assert "investmentSwitch('', inputId, Boolean(f.value)" in channel_fields_body
     assert "class=\"investment-check" not in js
     assert "<label><input" not in js
-    assert '<label class="investment-switch">' in html
-    assert '<input id="cfg-enable-thinking" type="checkbox">' in html
+    assert '<label class="investment-switch">' in ai_model_panel_body
+    assert '<input id="cfg-enable-thinking" type="checkbox">' in ai_model_panel_body
     assert "log-filter-switch" in html
     assert "peer-checked" not in html
 
@@ -775,11 +863,20 @@ def test_investment_config_no_longer_embeds_skill_manager():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     config_start = js.index("async function renderInvestmentConfig()")
-    config_end = js.index("function renderInvestmentSkillManager()")
+    config_end = js.index("async function renderInvestmentSkills()")
     config_body = js[config_start:config_end]
 
-    assert "renderInvestmentSkillManager()" not in config_body
-    assert "loadInvestmentSkillVersions()" not in config_body
+    assert "renderInvestmentComponentManager()" not in config_body
+    assert "loadInvestmentComponents()" not in config_body
+
+
+def test_component_prompts_are_not_in_system_config_page():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    config_groups = js[js.index("const INVEST_CONFIG_GROUPS"):js.index("const INVEST_ADMIN_ONLY_CONFIG_KEYS")]
+
+    assert "prompt.technical_analysis" not in config_groups
+    assert "prompt.rate" not in config_groups
+    assert "prompt.convertible_bond" not in config_groups
 
 
 def test_daily_content_ui_exposes_effective_date_and_audits_without_direct_png():
@@ -1267,6 +1364,8 @@ def test_investment_config_page_uses_task_based_tabs():
     shell_body = _js_function_body(js, "renderInvestmentConfigShell")
     stock_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
     generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
+    directories_body = _js_function_body(js, "renderInvestmentConfigDirectoriesPanel")
+    directories_group = js[js.index("title: '目录配置'"):js.index("const INVEST_ADMIN_ONLY_CONFIG_KEYS")]
 
     assert "let currentInvestmentConfigPanel = 'stock-data';" in js
     assert "function switchInvestmentConfigPanel(" in js
@@ -1277,18 +1376,31 @@ def test_investment_config_page_uses_task_based_tabs():
     assert "key: 'stock-data'" in js
     assert "key: 'reply-texts'" in js
     assert "key: 'generation'" in js
+    assert "key: 'directories'" in js
     assert "key: 'web-chat'" in js
     assert "switchInvestmentConfigPanel('${escapeHtml(tab.key)}')" in shell_body
     assert "股票数据" in js
     assert "公众号回复词" in js
     assert "业务生成配置" in js
+    assert "目录配置" in js
     assert "后台 Web 对话" in js
 
     assert "renderInvestmentConfigGroupByTitle('股票字典'" not in stock_body
     assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in stock_body
-    assert "renderInvestmentConfigGroupByTitle('技术分析参数', configs, {sectionClass: 'investment-config-section'})" in generation_body
-    assert "renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})" in generation_body
-    assert "renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})" in generation_body
+    assert "renderInvestmentConfigGroupByTitle('技术分析参数'" not in generation_body
+    assert "title: '技术分析参数'" not in js
+    assert "technical_analysis.default_chart_days" not in js
+    assert "默认图表天数" not in js
+    assert "renderInvestmentConfigGroupByTitle('图片生成模板'" not in generation_body
+    assert "提示词已迁移到“投研组件”页面" in generation_body
+    assert "renderInvestmentConfigGroupByTitle('目录配置', configs, {sectionClass: 'investment-config-section investment-workbench-full'})" in directories_body
+    assert "technical_analysis.output_dir" in directories_group
+    assert "storage.files_dir" in directories_group
+    assert "storage.tmp_dir" in directories_group
+    assert "render.template_ta_path" not in js
+    assert "render.template_rate_path" not in js
+    assert "render.template_cb_path" not in js
+    assert "render.output_dir" not in js
     assert ".investment-config-page" in css
     assert ".investment-config-nav" in css
     assert ".investment-config-tab" in css
@@ -1302,6 +1414,7 @@ def test_investment_config_subpages_use_aligned_section_layouts():
     stock_body = _js_function_body(js, "investmentStockTools")
     stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
     generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
+    directories_body = _js_function_body(js, "renderInvestmentConfigDirectoriesPanel")
     web_chat_body = _js_function_body(js, "renderInvestmentConfigWebChatPanel")
 
     assert "investment-config-panel" in stock_panel_body
@@ -1309,6 +1422,8 @@ def test_investment_config_subpages_use_aligned_section_layouts():
     assert "investment-config-section" in stock_body
     assert "investment-config-panel" in generation_body
     assert "investment-config-section" in generation_body
+    assert "investment-config-panel" in directories_body
+    assert "investment-config-section" in directories_body
     assert "investment-config-panel" in web_chat_body
     assert "investment-config-section" in web_chat_body
 
@@ -2038,9 +2153,29 @@ def test_investment_backend_request_records_ui_uses_internal_call_fields():
     assert "调用 ID" in drawer_body
     assert "record.call_id" in drawer_body
     assert "record.actor_role" in drawer_body
+    assert "输入提示词" in drawer_body
+    assert "record.input_prompt" in drawer_body
     assert "record.output_text" in drawer_body
     assert "record.outputs" in drawer_body
     assert "record.record_type === 'internal_call'" not in content_table_body
+
+
+def test_investment_content_records_show_input_prompt():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    history_body = _js_function_body(js, "renderInvestmentContentHistoryGroups")
+    content_table_body = _js_function_body(js, "renderInvestmentContentRecordsTable")
+    content_detail_body = _js_function_body(js, "showInvestmentContentDetail")
+    records_drawer_body = _js_function_body(js, "renderInvestmentContentDrawer")
+
+    assert "输入提示词" not in history_body
+    assert "record.input_prompt" not in history_body
+    assert "输入提示词" not in content_table_body
+    assert "record.input_prompt" not in content_table_body
+    assert "输入提示词" in content_detail_body
+    assert "record.input_prompt" in content_detail_body
+    assert "输入提示词" in records_drawer_body
+    assert "record.input_prompt" in records_drawer_body
 
 
 def test_investment_audit_drawer_shows_before_and_after_state():
@@ -2081,17 +2216,20 @@ def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
     content_table_body = _js_function_body(js, "renderInvestmentContentTable")
     content_detail_body = _js_function_body(js, "showInvestmentContentDetail")
     content_audits_body = _js_function_body(js, "renderInvestmentOperationAudits")
-    skill_row_body = _js_function_body(js, "renderInvestmentSkillConfigRow")
+    component_card_body = _js_function_body(js, "renderInvestmentComponentCard")
 
     assert "investmentFormatBeijingTime(stats.latest_updated_at || '')" in stock_stats_body
     assert "investmentFormatBeijingTime(stock.updated_at || '')" in stock_rows_body
     assert "investmentFormatBeijingDate(user.auth_end_at || '')" in users_body
-    assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in user_dialog_body
-    assert "investmentUtcToBeijingDatetimeLocal(user.auth_end_at || '')" in user_dialog_body
+    assert "investmentUtcToBeijingDateTimeParts(user.auth_start_at || '')" not in user_dialog_body
+    assert "investmentUtcToBeijingDateTimeParts(user.auth_end_at || '')" not in user_dialog_body
+    assert "investmentFormatBeijingDate(user.auth_start_at || '')" in user_dialog_body
+    assert "investmentFormatBeijingDate(user.auth_end_at || '')" in user_dialog_body
     assert "investmentUtcToBeijingDatetimeLocal(user.auth_start_at || '')" in fill_user_body
     assert "investmentUtcToBeijingDatetimeLocal(user.auth_end_at || '')" in fill_user_body
-    assert "investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-start`).value)" in save_user_body
-    assert "investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-end`).value)" in save_user_body
+    assert "investmentBeijingDateTimeToUtc(authStartDate, '00:00')" in save_user_body
+    assert "investmentBeijingDateTimeToUtc(authEndDate, '00:00')" in save_user_body
+    assert "investmentFormatBeijingTime(row.auth_start_at || '')" in import_result_body
     assert "investmentFormatBeijingTime(row.auth_end_at || '')" in import_result_body
     assert "investmentFormatBeijingTime(record?.effective_at)" in current_content_body
     assert "investmentFormatBeijingTime(record.created_at)" in content_table_body
@@ -2099,7 +2237,7 @@ def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
     assert "investmentFormatBeijingTime(record.effective_at)" in content_detail_body
     assert "investmentFormatBeijingTime(record.archived_at)" in content_detail_body
     assert "investmentFormatBeijingTime(audit.created_at)" in content_audits_body
-    assert "investmentFormatBeijingTime(active.uploaded_at)" in skill_row_body
+    assert "investmentFormatBeijingTime(active.uploaded_at)" not in component_card_body
 
 
 def test_investment_records_tabs_use_independent_loaders_and_filters():

@@ -340,7 +340,6 @@ function toggleTheme() {
 // =====================================================================
 const VIEW_META = {
     chat:     { group: 'nav_chat',    page: 'menu_chat' },
-    config:   { group: 'nav_manage',  page: 'menu_config' },
     skills:   { group: 'nav_manage',  page: 'menu_skills' },
     'invest-users':   { group: 'nav_manage', page: 'menu_invest_users' },
     'invest-daily-content': { group: 'nav_manage', page: 'menu_invest_daily_content' },
@@ -355,7 +354,7 @@ const VIEW_META = {
 let currentView = 'chat';
 
 function navigateTo(viewId) {
-    const removedViews = new Set(['memory', 'knowledge', 'tasks']);
+    const removedViews = new Set(['memory', 'knowledge', 'tasks', 'skills']);
     if (removedViews.has(viewId)) {
         viewId = 'chat';
     }
@@ -549,29 +548,11 @@ const INVEST_CONFIG_GROUPS = [
         ],
     },
     {
-        title: '技术分析参数',
+        title: '目录配置',
         keys: [
             ['technical_analysis.output_dir', '技术分析输出目录', 'text'],
-            ['technical_analysis.default_chart_days', '默认图表天数', 'number'],
-        ],
-    },
-    {
-        title: '图片生成模板',
-        keys: [
-            ['render.template_ta_path', '技术分析模板', 'text'],
-            ['render.template_rate_path', '利率模板', 'text'],
-            ['render.template_cb_path', '转债模板', 'text'],
-            ['render.output_dir', '渲染输出目录', 'text'],
-        ],
-    },
-    {
-        title: '存储与提示词',
-        keys: [
             ['storage.files_dir', '统一文件目录', 'text'],
             ['storage.tmp_dir', '临时工作目录', 'text'],
-            ['prompt.technical_analysis', '技术分析摘要 prompt', 'textarea'],
-            ['prompt.rate', '利率文本生成 prompt', 'textarea'],
-            ['prompt.convertible_bond', '转债文本生成 prompt', 'textarea'],
         ],
     },
 ];
@@ -1127,6 +1108,12 @@ function investmentBeijingDatetimeLocalToUtc(value) {
         Number(second),
     ));
     return utc.toISOString().slice(0, 19);
+}
+
+function investmentBeijingDateTimeToUtc(dateValue, timeValue = '00:00') {
+    const dateText = String(dateValue || '').trim();
+    if (!dateText) return null;
+    return investmentBeijingDatetimeLocalToUtc(`${dateText}T${investmentNormalizeTimeValue(timeValue)}`);
 }
 
 function investmentTodayDate() {
@@ -2143,7 +2130,7 @@ function renderInvestmentUserImportSection() {
             <section class="investment-import-template">
                 <div>
                     <div class="investment-panel-title"><i class="fas fa-table"></i><span>存在用户名单示例模板</span></div>
-                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权结束日期。OpenID 可空，系统会生成待绑定用户。</div>
+                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权开始日期、授权结束日期。OpenID 可空，系统会生成待绑定用户。</div>
                 </div>
                 <a class="investment-btn" href="/api/investment/users/import-template.xlsx" target="_blank" download>
                     <i class="fas fa-download"></i><span>下载模板</span>
@@ -2151,8 +2138,8 @@ function renderInvestmentUserImportSection() {
             </section>
             <div class="investment-import-sample">
                 <table class="investment-table compact">
-                    <thead><tr><th>手机号</th><th>服务权限</th><th>授权结束日期</th><th>OpenID</th><th>姓名</th></tr></thead>
-                    <tbody><tr><td>13800000000</td><td>全部</td><td>2026-12-31</td><td>可空</td><td>张三</td></tr></tbody>
+                    <thead><tr><th>手机号</th><th>服务权限</th><th>授权开始日期</th><th>授权结束日期</th><th>OpenID</th><th>姓名</th></tr></thead>
+                    <tbody><tr><td>13800000000</td><td>全部</td><td>2026-06-01</td><td>2026-12-31</td><td>可空</td><td>张三</td></tr></tbody>
                 </table>
             </div>
             <label class="investment-field">
@@ -2174,8 +2161,8 @@ function openInvestmentUserDialog(encoded = '') {
             ${investmentField('姓名', 'invest-user-modal-name', user.name || '')}
             ${investmentField('机构', 'invest-user-modal-institution', user.institution || '')}
             ${investmentField('手机号', 'invest-user-modal-mobile', user.mobile || '')}
-            ${investmentField('授权开始', 'invest-user-modal-auth-start', investmentUtcToBeijingDatetimeLocal(user.auth_start_at || ''), 'datetime-local')}
-            ${investmentField('授权结束', 'invest-user-modal-auth-end', investmentUtcToBeijingDatetimeLocal(user.auth_end_at || ''), 'datetime-local')}
+            <label class="investment-field"><span>授权开始日期</span>${investmentRenderDateControl('invest-user-modal-auth-start-date', investmentFormatBeijingDate(user.auth_start_at || ''), {placeholder: '选择授权开始日期'})}</label>
+            <label class="investment-field"><span>授权结束日期</span>${investmentRenderDateControl('invest-user-modal-auth-end-date', investmentFormatBeijingDate(user.auth_end_at || ''), {placeholder: '选择授权结束日期'})}</label>
         </div>
         <div class="investment-service-row">
             ${investmentUserServiceChecks('invest-user-modal', user)}
@@ -2213,6 +2200,20 @@ async function saveInvestmentUser(prefix = 'invest-user') {
     const serviceClass = prefix === 'invest-user-modal' ? '.invest-user-modal-service:checked' : '.invest-user-service:checked';
     const selectedServices = Array.from(document.querySelectorAll(serviceClass)).map(item => item.value);
     const services = investmentNormalizeCustomerServices(selectedServices);
+    const authStartDate = document.getElementById(`${prefix}-auth-start-date`)?.value || document.getElementById(`${prefix}-auth-start`)?.value?.slice(0, 10) || '';
+    const authEndDate = document.getElementById(`${prefix}-auth-end-date`)?.value || document.getElementById(`${prefix}-auth-end`)?.value?.slice(0, 10) || '';
+    if (!services.length) {
+        showInvestmentToast('请选择授权服务', 'error');
+        return;
+    }
+    if (!authStartDate) {
+        showInvestmentToast('请填写授权开始日期', 'error');
+        return;
+    }
+    if (!authEndDate) {
+        showInvestmentToast('请填写授权结束日期', 'error');
+        return;
+    }
     const body = {
         openid: document.getElementById(`${prefix}-openid`).value.trim(),
         name: document.getElementById(`${prefix}-name`).value.trim(),
@@ -2220,8 +2221,8 @@ async function saveInvestmentUser(prefix = 'invest-user') {
         mobile: document.getElementById(`${prefix}-mobile`).value.trim(),
         enabled: document.getElementById(`${prefix}-enabled`).checked,
         allowed_services: services,
-        auth_start_at: investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-start`).value),
-        auth_end_at: investmentBeijingDatetimeLocalToUtc(document.getElementById(`${prefix}-auth-end`).value),
+        auth_start_at: investmentBeijingDateTimeToUtc(authStartDate, '00:00'),
+        auth_end_at: investmentBeijingDateTimeToUtc(authEndDate, '00:00'),
         remark: document.getElementById(`${prefix}-remark`).value.trim(),
     };
     try {
@@ -2269,6 +2270,7 @@ function renderInvestmentImportResult(data, committed = false) {
             <td>${escapeHtml(row.mobile || '')}</td>
             <td>${row.enabled === false ? '停用' : '启用'}</td>
             <td>${escapeHtml(row.allowed_services || '')}</td>
+            <td>${escapeHtml(String(investmentFormatBeijingTime(row.auth_start_at || '') || '').slice(0, 10) || '-')}</td>
             <td>${escapeHtml(String(investmentFormatBeijingTime(row.auth_end_at || '') || '').slice(0, 10) || '-')}</td>
         </tr>`).join('');
     return `
@@ -2280,7 +2282,7 @@ function renderInvestmentImportResult(data, committed = false) {
             <span>更新 ${Number(data.updated || 0)}</span>
         </div>
         ${rows ? `<div class="investment-import-preview">${investmentTableWrap(`<table class="investment-table compact">
-            <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>状态</th><th>服务权限</th><th>授权结束</th></tr></thead>
+            <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>状态</th><th>服务权限</th><th>授权开始</th><th>授权结束</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>`)}</div>` : ''}
         ${!committed ? `<div class="investment-actions investment-modal-actions">
@@ -2751,6 +2753,10 @@ function showInvestmentContentDetail(encoded) {
         <div class="investment-detail-block">
             <span>资料文本</span>
             <pre>${escapeHtml(record.source_text || '无')}</pre>
+        </div>
+        <div class="investment-detail-block">
+            <span>输入提示词</span>
+            <pre>${escapeHtml(record.input_prompt || '无')}</pre>
         </div>
         <div class="investment-detail-block">
             <span>生成文本</span>
@@ -4620,6 +4626,7 @@ function renderInvestmentBackendRequestDrawer(record) {
         ${investmentDrawerSection('输入文件', `<div class="investment-detail-links">${investmentFileLinks(record.sources || [])}</div>`)}
         ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.outputs || [])}</div>`)}
         ${investmentDrawerPre('输入文本', record.input_text || '')}
+        ${investmentDrawerPre('输入提示词', record.input_prompt || '')}
         ${investmentDrawerPre('生成文本', record.output_text || '')}
         ${investmentDrawerPre('错误详情', record.error || '')}
     `;
@@ -4641,6 +4648,7 @@ function renderInvestmentContentDrawer(record) {
         ${investmentDrawerSection('输出图片', investmentContentOutputImage(record) ? renderInvestmentFilePreview(investmentContentOutputImage(record), '输出图片') : '<span class="investment-muted-inline">未生成</span>')}
         ${investmentDrawerPre('错误/警告', record.status_warning || record.error_message || '')}
         ${investmentDrawerPre('资料文本', record.source_text || '')}
+        ${investmentDrawerPre('输入提示词', record.input_prompt || '')}
         ${investmentDrawerPre('生成文本', record.generated_text || '')}
     `;
 }
@@ -4701,6 +4709,9 @@ async function renderInvestmentConfig() {
             canReadStocks ? investmentFetchJson('/api/investment/stocks?limit=5') : Promise.resolve({stats: {}}),
         ]);
         element.innerHTML = renderInvestmentConfigShell(data, stockData);
+        if (currentInvestmentConfigPanel === 'ai-model') {
+            loadConfigView();
+        }
         if (currentInvestmentConfigPanel === 'channels') {
             loadChannelsView();
         }
@@ -4711,9 +4722,11 @@ async function renderInvestmentConfig() {
 
 function investmentConfigTabDefinitions(canReadConfig, canReadStocks) {
     return [
+        {key: 'ai-model', label: 'AI模型配置', icon: 'fa-microchip', visible: canReadConfig},
         {key: 'stock-data', label: '股票数据', icon: 'fa-chart-line', visible: canReadConfig || canReadStocks},
         {key: 'reply-texts', label: '公众号回复词', icon: 'fa-comments', visible: canReadConfig},
         {key: 'generation', label: '业务生成配置', icon: 'fa-wand-magic-sparkles', visible: canReadConfig},
+        {key: 'directories', label: '目录配置', icon: 'fa-folder-open', visible: canReadConfig},
         {key: 'web-chat', label: '后台 Web 对话', icon: 'fa-message', visible: canReadConfig},
         {key: 'channels', label: '通道管理', icon: 'fa-tower-broadcast', visible: canReadConfig},
     ].filter(tab => tab.visible);
@@ -4742,11 +4755,17 @@ function renderInvestmentConfigShell(data = {}, stockData = {}) {
 }
 
 function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadConfig, canReadStocks) {
+    if (panel === 'ai-model') {
+        return canReadConfig ? renderInvestmentConfigAiModelPanel() : '<div class="investment-empty">暂无配置权限</div>';
+    }
     if (panel === 'reply-texts') {
         return canReadConfig ? renderInvestmentConfigReplyTextsPanel(data, configs) : '<div class="investment-empty">暂无配置权限</div>';
     }
     if (panel === 'generation') {
         return canReadConfig ? renderInvestmentConfigGenerationPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
+    }
+    if (panel === 'directories') {
+        return canReadConfig ? renderInvestmentConfigDirectoriesPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
     }
     if (panel === 'web-chat') {
         return canReadConfig ? renderInvestmentConfigWebChatPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
@@ -4774,9 +4793,17 @@ function renderInvestmentConfigReplyTextsPanel(data, configs) {
 function renderInvestmentConfigGenerationPanel(configs) {
     return `
         <div class="investment-config-grid investment-config-panel investment-settings-panel">
-            ${renderInvestmentConfigGroupByTitle('技术分析参数', configs, {sectionClass: 'investment-config-section'})}
-            ${renderInvestmentConfigGroupByTitle('图片生成模板', configs, {sectionClass: 'investment-config-section'})}
-            ${renderInvestmentConfigGroupByTitle('存储与提示词', configs, {sectionClass: 'investment-config-section'})}
+            <section class="investment-panel investment-config-section investment-workbench-full">
+                <div class="investment-panel-title"><i class="fas fa-cubes"></i><span>组件生成配置</span></div>
+                <div class="investment-subtitle">技术分析、利率和转债的提示词已迁移到“投研组件”页面，由各组件单独维护。</div>
+            </section>
+        </div>`;
+}
+
+function renderInvestmentConfigDirectoriesPanel(configs) {
+    return `
+        <div class="investment-config-grid investment-config-panel investment-settings-panel">
+            ${renderInvestmentConfigGroupByTitle('目录配置', configs, {sectionClass: 'investment-config-section investment-workbench-full'})}
         </div>`;
 }
 
@@ -4784,6 +4811,86 @@ function renderInvestmentConfigWebChatPanel(configs) {
     return `
         <div class="investment-config-grid investment-config-panel investment-settings-panel">
             ${renderInvestmentConfigGroupByTitle('后台Web对话', configs, {sectionClass: 'investment-config-section investment-workbench-full'})}
+        </div>`;
+}
+
+function renderInvestmentConfigAiModelPanel() {
+    const fieldClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500 font-mono transition-colors';
+    return `
+        <div class="investment-config-grid investment-config-panel investment-settings-panel">
+            <section class="investment-panel investment-config-section">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-microchip"></i><span data-i18n="config_model">模型配置</span></div>
+                    <div class="investment-subtitle">配置业务 AI 调用使用的模型、API Key 和接口地址。</div>
+                </div>
+                <div class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5" data-i18n="config_provider">模型厂商</label>
+                        <div id="cfg-provider" class="cfg-dropdown" tabindex="0">
+                            <div class="cfg-dropdown-selected">
+                                <span class="cfg-dropdown-text">--</span>
+                                <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+                            </div>
+                            <div class="cfg-dropdown-menu"></div>
+                        </div>
+                        <div id="cfg-custom-tip" class="mt-1.5 text-xs text-slate-400 dark:text-slate-500 hidden">
+                            <i class="fas fa-info-circle mr-1"></i><span data-i18n="config_custom_tip">接口需遵循 OpenAI API 协议</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5" data-i18n="config_model_name">模型</label>
+                        <div id="cfg-model-select" class="cfg-dropdown" tabindex="0">
+                            <div class="cfg-dropdown-selected">
+                                <span class="cfg-dropdown-text">--</span>
+                                <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+                            </div>
+                            <div class="cfg-dropdown-menu"></div>
+                        </div>
+                        <div id="cfg-model-custom-wrap" class="mt-2 hidden">
+                            <input id="cfg-model-custom" type="text" class="${fieldClass}" data-i18n-placeholder="config_custom_model_hint" placeholder="输入自定义模型名称">
+                        </div>
+                    </div>
+                    <div id="cfg-api-key-wrap">
+                        <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">API Key</label>
+                        <div class="relative">
+                            <input id="cfg-api-key" type="text" autocomplete="off" data-1p-ignore data-lpignore="true" class="${fieldClass} pr-10 cfg-key-masked" placeholder="sk-...">
+                            <button type="button" id="cfg-api-key-toggle" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer transition-colors p-1" onclick="toggleApiKeyVisibility()">
+                                <i class="fas fa-eye text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="cfg-api-base-wrap" class="hidden">
+                        <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">API Base</label>
+                        <input id="cfg-api-base" type="text" class="${fieldClass}" placeholder="https://...">
+                    </div>
+                    <div class="flex items-center justify-end gap-3 pt-1">
+                        <span id="cfg-model-status" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300"></span>
+                        <button id="cfg-model-save" class="investment-btn" onclick="saveModelConfig()" data-i18n="config_save"><i class="fas fa-floppy-disk"></i><span>保存</span></button>
+                    </div>
+                </div>
+            </section>
+            <section class="investment-panel investment-config-section">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-robot"></i><span data-i18n="config_agent">Agent 配置</span></div>
+                    <div class="investment-subtitle">控制上下文长度、记忆轮次、执行步数和思考模式。</div>
+                </div>
+                <div class="space-y-4">
+                    <label class="investment-field"><span data-i18n="config_max_tokens">最大上下文 Token</span><input id="cfg-max-tokens" type="number" min="1000" max="200000" step="1000" class="${fieldClass}"></label>
+                    <label class="investment-field"><span data-i18n="config_max_turns">最大记忆轮次</span><input id="cfg-max-turns" type="number" min="1" max="100" step="1" class="${fieldClass}"></label>
+                    <label class="investment-field"><span data-i18n="config_max_steps">最大执行步数</span><input id="cfg-max-steps" type="number" min="1" max="50" step="1" class="${fieldClass}"></label>
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-slate-600 dark:text-slate-400" data-i18n="config_enable_thinking">Deep Thinking</span>
+                        <label class="investment-switch">
+                            <input id="cfg-enable-thinking" type="checkbox">
+                            <span class="investment-switch-track" aria-hidden="true"><span class="investment-switch-thumb"></span></span>
+                        </label>
+                    </div>
+                    <div class="flex items-center justify-end gap-3 pt-1">
+                        <span id="cfg-agent-status" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300"></span>
+                        <button id="cfg-agent-save" class="investment-btn" onclick="saveAgentConfig()" data-i18n="config_save"><i class="fas fa-floppy-disk"></i><span>保存</span></button>
+                    </div>
+                </div>
+            </section>
         </div>`;
 }
 
@@ -4810,87 +4917,159 @@ function renderInvestmentConfigChannelsPanel() {
 }
 
 function switchInvestmentConfigPanel(panel) {
-    currentInvestmentConfigPanel = ['stock-data', 'reply-texts', 'generation', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
+    currentInvestmentConfigPanel = ['ai-model', 'stock-data', 'reply-texts', 'generation', 'directories', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
     renderInvestmentConfig();
 }
 
 async function renderInvestmentSkills() {
     const element = investmentContentEl('invest-skills-content');
     if (!element) return;
-    const manager = renderInvestmentSkillManager;
-    const loader = loadInvestmentSkillVersions;
     element.innerHTML = `
-        <div class="investment-workbench">
-            ${manager()}
+        <div class="investment-component-page">
+            ${renderInvestmentComponentManager()}
         </div>`;
-    await loader();
+    await loadInvestmentComponents();
 }
 
-function renderInvestmentSkillManager() {
+function renderInvestmentComponentManager() {
     return `
-        <section class="investment-panel investment-workbench-full investment-skill-manager">
+        <section class="investment-component-shell">
             <div class="investment-panel-heading">
                 <div>
-                    <div class="investment-panel-title"><i class="fas fa-code-branch"></i><span>skill配置</span></div>
-                    <div class="investment-subtitle">当前仅启用 technical-analysis 和 signal-card-renderer 两个投研组件，可上传版本、切换版本或删除上传版本。</div>
+                    <div class="investment-panel-title"><i class="fas fa-cubes"></i><span>组件配置</span></div>
+                    <div class="investment-subtitle">组件以卡片方式管理，配置项在对话框内编辑。</div>
                 </div>
                 <div class="investment-panel-actions">
-                    ${investmentButton('fa-arrows-rotate', '刷新版本', 'loadInvestmentSkillVersions()')}
+                    ${investmentButton('fa-arrows-rotate', '刷新组件', 'loadInvestmentComponents()')}
+                    <input id="invest-skill-package-file" class="hidden" type="file" accept=".zip" onchange="uploadInvestmentSkillPackage()">
+                    ${investmentButtonIfCan('skills.write', 'fa-upload', '上传组件包', "document.getElementById('invest-skill-package-file')?.click()", 'primary')}
                 </div>
             </div>
             <div id="invest-skill-result" class="investment-muted"></div>
-            <div id="invest-skill-versions" class="investment-skill-version-list">
-                <div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载版本中...</span></div>
+            <div id="invest-components-list" class="investment-component-list">
+                <div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载组件中...</span></div>
             </div>
         </section>`;
 }
 
-async function loadInvestmentSkillVersions() {
-    const target = document.getElementById('invest-skill-versions');
+async function loadInvestmentComponents() {
+    const target = document.getElementById('invest-components-list');
     if (!target) return;
-    target.innerHTML = '<div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载版本中...</span></div>';
+    target.innerHTML = '<div class="investment-empty"><i class="fas fa-spinner fa-spin"></i><span>加载组件中...</span></div>';
     try {
-        const data = await investmentFetchJson('/api/investment/skills/versions');
-        currentInvestmentSkills = data.skills || [];
-        target.innerHTML = renderInvestmentSkillConfigTable(data.skills || []);
+        const data = await investmentFetchJson('/api/investment/components');
+        currentInvestmentSkills = data.components || [];
+        target.innerHTML = renderInvestmentComponentSections(currentInvestmentSkills);
     } catch (error) {
         target.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error.message || error))}</div>`;
     }
 }
 
-function renderInvestmentSkillConfigTable(skills = []) {
-    if (!skills.length) return '<div class="investment-empty">暂无投研组件</div>';
-    const rows = skills.map(item => renderInvestmentSkillConfigRow(item.skill || {}, item.versions || [])).join('');
-    return investmentTableWrap(`<table class="investment-table investment-skill-config-table">
-        <thead><tr><th>Skill 名字</th><th>状态</th><th>版本</th><th>来源</th><th>文件</th><th>上传时间</th><th>操作</th></tr></thead>
-        <tbody>${rows}</tbody>
-    </table>`);
+function investmentComponentTypeLabel(type) {
+    return {
+        active_script: '主动组件',
+        active_prompt: '主动组件',
+        passive_script: '被动组件',
+    }[type] || '其他组件';
 }
 
-function renderInvestmentSkillConfigRow(skill, versions = []) {
-    const skillKey = skill.skill_key || '';
+function investmentComponentTypeIcon(type) {
+    return {
+        active_script: 'fa-terminal',
+        active_prompt: 'fa-message',
+        passive_script: 'fa-gears',
+    }[type] || 'fa-cube';
+}
+
+function renderInvestmentComponentSections(components = []) {
+    if (!components.length) return '<div class="investment-empty">暂无投研组件</div>';
+    const ordered = ['technical-analysis', 'rate', 'convertible-bond', 'signal-card-renderer'];
+    const sorted = [...components].sort((a, b) => {
+        const aKey = a.component_key || a.skill_key || '';
+        const bKey = b.component_key || b.skill_key || '';
+        const aIndex = ordered.indexOf(aKey);
+        const bIndex = ordered.indexOf(bKey);
+        return (aIndex < 0 ? 99 : aIndex) - (bIndex < 0 ? 99 : bIndex);
+    });
+    return `<section class="investment-component-board">
+        <div class="investment-component-board-head">
+            <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>投研组件</span></div>
+        </div>
+        <div class="investment-component-grid">${sorted.map(renderInvestmentComponentCard).join('')}</div>
+    </section>`;
+}
+
+function investmentComponentTags(component) {
+    const tags = [];
+    tags.push(component.uses_triggers ? '主动组件' : '被动组件');
+    if (component.versioned) tags.push('包含脚本');
+    return tags;
+}
+
+function investmentComponentCurrentVersionText(component) {
+    if (!component.versioned) return '';
+    const versions = component.versions || [];
     const active = versions.find(version => version.active) || versions[0] || {};
-    const source = active.source === 'builtin' ? '内置' : '上传';
-    const versionOptions = versions.map(version => [
-        version.version_id || '',
-        `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`,
-    ]);
-    return `<tr data-skill-key="${escapeHtml(skillKey)}">
-        <td>
-            <strong>${escapeHtml(skill.label || skillKey)}</strong>
-            <div class="investment-muted">${escapeHtml(skillKey)}</div>
-        </td>
-        <td><span class="investment-badge ${active.active ? 'ok' : 'fail'}">${active.active ? '生效中' : '未生效'}</span></td>
-        <td>
-            ${investmentDropdown(`invest-skill-version-${escapeHtml(skillKey)}`, versionOptions, active.version_id || '', '', '')}
-        </td>
-        <td>${escapeHtml(source)}</td>
-        <td>${investmentCompactText(active.original_filename || '', 34)}</td>
-        <td>${escapeHtml(investmentFormatBeijingTime(active.uploaded_at) || '-')}</td>
-        <td class="investment-row-actions investment-skill-config-actions">
-            ${investmentIconButtonIfCan('skills.write', 'fa-pen', '编辑', `openInvestmentSkillDialog('${escapeHtml(skillKey)}')`, 'primary')}
-        </td>
-    </tr>`;
+    return active.version_id ? `当前版本：${active.version_id}` : '当前版本：-';
+}
+
+function renderInvestmentComponentCard(component) {
+    const componentKey = component.component_key || component.skill_key || '';
+    const settings = component.settings || {};
+    const currentVersionText = investmentComponentCurrentVersionText(component);
+    const tags = investmentComponentTags(component).map(tag => `<span class="investment-component-tag">${escapeHtml(tag)}</span>`).join('');
+    return `<article class="investment-component-card" data-component-key="${escapeHtml(componentKey)}" data-component-type="${escapeHtml(component.component_type || '')}">
+        <div class="investment-component-card-head">
+            <div class="investment-component-title-wrap">
+                <div class="investment-component-title">${escapeHtml(component.label || componentKey)}</div>
+                ${currentVersionText ? `<div class="investment-component-version-caption">${escapeHtml(currentVersionText)}</div>` : ''}
+            </div>
+            ${investmentSwitch('', `invest-component-enabled-${escapeHtml(componentKey)}`, settings.enabled !== false, {
+                className: 'investment-component-enable-switch',
+                attrs: `onchange="saveInvestmentComponentEnabled('${escapeHtml(componentKey)}')"`,
+            })}
+        </div>
+        <div class="investment-component-tags">${tags}</div>
+        <div class="investment-component-actions">
+            ${investmentButtonIfCan('skills.write', 'fa-sliders', '配置', `openInvestmentComponentConfigDialog('${escapeHtml(componentKey)}')`, 'primary')}
+            ${component.versioned ? investmentButtonIfCan('skills.write', 'fa-code-branch', '切换版本', `openInvestmentComponentVersionDialog('${escapeHtml(componentKey)}')`) : ''}
+        </div>
+    </article>`;
+}
+
+function renderInvestmentComponentConfigDialogBody(component) {
+    const componentKey = component.component_key || component.skill_key || '';
+    const settings = component.settings || {};
+    const triggerValue = (settings.triggers || []).join('，');
+    const triggerEditor = component.uses_triggers ? `
+        <label class="investment-field">
+            <span>触发词</span>
+            <input id="invest-component-modal-triggers-${escapeHtml(componentKey)}" value="${escapeHtml(triggerValue)}" placeholder="多个触发词用逗号分隔">
+        </label>` : '';
+    const promptEditor = settings.prompt_key ? `
+        <label class="investment-field textarea">
+            <span>提示词</span>
+            <textarea id="invest-component-modal-prompt-${escapeHtml(componentKey)}" rows="8">${escapeHtml(settings.prompt || '')}</textarea>
+        </label>` : '';
+    return `
+        <div class="investment-component-dialog">
+            <div class="investment-component-dialog-title">
+                <strong>${escapeHtml(component.label || componentKey)}</strong>
+                <span>${investmentComponentTags(component).map(escapeHtml).join(' / ')}</span>
+            </div>
+            ${investmentSwitch('启用', `invest-component-modal-enabled-${escapeHtml(componentKey)}`, settings.enabled !== false)}
+            ${triggerEditor}
+            ${promptEditor}
+        </div>
+        <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存配置', `saveInvestmentComponentSettings('${escapeHtml(componentKey)}', 'modal')`, 'primary')}
+        </div>
+    `;
+}
+
+function openInvestmentComponentConfigDialog(componentKey) {
+    const item = currentInvestmentSkills.find(row => (row.component_key || row.skill_key) === componentKey) || {component_key: componentKey, settings: {}};
+    showInvestmentModal('组件配置', renderInvestmentComponentConfigDialogBody(item));
 }
 
 function investmentSkillDialogItem(label, body) {
@@ -4898,25 +5077,30 @@ function investmentSkillDialogItem(label, body) {
 }
 
 function renderInvestmentSkillDialogBody(skill, versions = []) {
-    const skillKey = skill.skill_key || currentInvestmentSkillDialogKey;
+    const skillKey = skill.component_key || skill.skill_key || currentInvestmentSkillDialogKey;
     const active = versions.find(version => version.active) || versions[0] || {};
     const versionOptions = versions.map(version => [
         version.version_id || '',
         `${version.version_id || ''} / ${version.source === 'builtin' ? '内置' : '上传'}`,
     ]);
     return `
-        ${investmentSkillDialogItem('Skill', `<strong>${escapeHtml(skill.label || skillKey)}</strong><div class="investment-muted">${escapeHtml(skillKey)}</div>`)}
-        ${investmentSkillDialogItem('版本', investmentDropdown('invest-skill-dialog-version', versionOptions, active.version_id || '', '', ''))}
+        ${investmentSkillDialogItem('组件', `<strong>${escapeHtml(skill.label || skillKey)}</strong>`)}
+        ${investmentSkillDialogItem('当前版本', `<strong>${escapeHtml(active.version_id || '-')}</strong>`)}
+        ${investmentSkillDialogItem('切换版本', investmentDropdown('invest-skill-dialog-version', versionOptions, active.version_id || '', '', ''))}
         ${investmentSkillDialogItem('上传', `<input id="invest-skill-dialog-file" type="file" accept=".py,.zip">`)}
         <div class="investment-actions investment-modal-actions">
-            ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存', `saveInvestmentSkillDialog('${escapeHtml(skillKey)}')`, 'primary')}
+            ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存版本', `saveInvestmentSkillDialog('${escapeHtml(skillKey)}')`, 'primary')}
         </div>`;
 }
 
 function openInvestmentSkillDialog(skillKey) {
     currentInvestmentSkillDialogKey = skillKey;
-    const item = currentInvestmentSkills.find(row => (row.skill || {}).skill_key === skillKey) || {skill: {skill_key: skillKey}, versions: []};
-    showInvestmentModal('编辑投资Skill', renderInvestmentSkillDialogBody(item.skill || {}, item.versions || []));
+    const item = currentInvestmentSkills.find(row => (row.component_key || row.skill_key) === skillKey) || {component_key: skillKey, versions: []};
+    showInvestmentModal('编辑投资组件', renderInvestmentSkillDialogBody(item, item.versions || []));
+}
+
+function openInvestmentComponentVersionDialog(componentKey) {
+    openInvestmentSkillDialog(componentKey);
 }
 
 async function saveInvestmentSkillDialog(skillKey) {
@@ -4932,12 +5116,34 @@ async function saveInvestmentSkillDialog(skillKey) {
     hideInvestmentModal();
 }
 
-async function saveInvestmentSkillSettings(skillKey) {
-    await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/settings`, {
+function investmentComponentSettingsBody(componentKey, source = '') {
+    const body = {};
+    const prefix = source === 'modal' ? 'invest-component-modal' : 'invest-component';
+    const enabled = document.getElementById(`${prefix}-enabled-${componentKey}`);
+    const triggers = document.getElementById(`${prefix}-triggers-${componentKey}`);
+    const prompt = document.getElementById(`${prefix}-prompt-${componentKey}`);
+    if (enabled) body.enabled = enabled.checked;
+    if (triggers) body.triggers = triggers.value;
+    if (prompt) body.prompt = prompt.value;
+    return body;
+}
+
+async function saveInvestmentComponentSettings(componentKey, source = '') {
+    await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/settings`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({}),
+        body: JSON.stringify(investmentComponentSettingsBody(componentKey, source)),
     });
+    await loadInvestmentComponents();
+    if (source === 'modal') hideInvestmentModal();
+}
+
+async function saveInvestmentComponentEnabled(componentKey) {
+    await saveInvestmentComponentSettings(componentKey);
+}
+
+async function saveInvestmentSkillSettings(skillKey) {
+    await saveInvestmentComponentSettings(skillKey);
 }
 
 function investmentSkillVersionActivateUrl(skillKey, versionId) {
@@ -4964,7 +5170,7 @@ async function uploadInvestmentSkill(skillKey, fileInput = null) {
         input.value = '';
         if (result) result.textContent = 'Skill 已上传并设为生效';
         showInvestmentToast('Skill 已上传并生效');
-        await loadInvestmentSkillVersions();
+        await loadInvestmentComponents();
     } catch (error) {
         if (result) result.textContent = String(error.message || error);
         showInvestmentToast('Skill 上传失败', 'error');
@@ -4977,7 +5183,7 @@ async function uploadInvestmentSkillPackage() {
     const form = new FormData();
     form.append('file', input.files[0]);
     await investmentFetchJson('/api/investment/skills/packages/upload', {method: 'POST', body: form});
-    await loadInvestmentSkillVersions();
+    await loadInvestmentComponents();
 }
 
 async function activateInvestmentSkillVersion(skillKey, selectedVersion) {
@@ -4987,7 +5193,7 @@ async function activateInvestmentSkillVersion(skillKey, selectedVersion) {
             method: 'POST',
         });
         showInvestmentToast('Skill 版本已生效');
-        await loadInvestmentSkillVersions();
+        await loadInvestmentComponents();
     } catch (error) {
         showInvestmentToast(`切换版本失败：${String(error.message || error)}`, 'error');
     }
@@ -5004,7 +5210,7 @@ async function deleteInvestmentSkillVersion(skillKey, versionId) {
             method: 'POST',
         });
         showInvestmentToast('Skill 版本已删除');
-        await loadInvestmentSkillVersions();
+        await loadInvestmentComponents();
     } catch (error) {
         showInvestmentToast(`删除版本失败：${String(error.message || error)}`, 'error');
     }
@@ -5326,10 +5532,14 @@ window.saveInvestmentConfig = saveInvestmentConfig;
 window.switchInvestmentConfigPanel = switchInvestmentConfigPanel;
 window.markInvestmentConfigDirty = markInvestmentConfigDirty;
 window.saveInvestmentConfigKey = saveInvestmentConfigKey;
-window.loadInvestmentSkillVersions = loadInvestmentSkillVersions;
+window.loadInvestmentComponents = loadInvestmentComponents;
 window.uploadInvestmentSkill = uploadInvestmentSkill;
 window.uploadInvestmentSkillPackage = uploadInvestmentSkillPackage;
 window.openInvestmentSkillDialog = openInvestmentSkillDialog;
+window.openInvestmentComponentConfigDialog = openInvestmentComponentConfigDialog;
+window.openInvestmentComponentVersionDialog = openInvestmentComponentVersionDialog;
+window.saveInvestmentComponentSettings = saveInvestmentComponentSettings;
+window.saveInvestmentComponentEnabled = saveInvestmentComponentEnabled;
 window.saveInvestmentSkillSettings = saveInvestmentSkillSettings;
 window.saveInvestmentSkillDialog = saveInvestmentSkillDialog;
 window.activateInvestmentSkillVersion = activateInvestmentSkillVersion;
@@ -7486,6 +7696,7 @@ function initConfigView(data) {
     configCurrentModel = data.model || '';
 
     const providerEl = document.getElementById('cfg-provider');
+    if (!providerEl) return;
     const providerOpts = Object.entries(configProviders).map(([pid, p]) => ({ value: pid, label: p.label }));
 
     // if use_linkai is enabled, always select linkai as the provider
@@ -7505,30 +7716,32 @@ function initConfigView(data) {
     document.getElementById('cfg-enable-thinking').checked = data.enable_thinking === true;
 
     const pwdInput = document.getElementById('cfg-password');
-    const maskedPwd = data.web_password_masked || '';
-    pwdInput.value = maskedPwd;
-    pwdInput.dataset.masked = maskedPwd ? '1' : '';
-    pwdInput.dataset.maskedVal = maskedPwd;
-    pwdInput.classList.toggle('cfg-key-masked', !!maskedPwd);
+    if (pwdInput) {
+        const maskedPwd = data.web_password_masked || '';
+        pwdInput.value = maskedPwd;
+        pwdInput.dataset.masked = maskedPwd ? '1' : '';
+        pwdInput.dataset.maskedVal = maskedPwd;
+        pwdInput.classList.toggle('cfg-key-masked', !!maskedPwd);
 
-    if (maskedPwd) {
-        pwdInput.placeholder = '••••••••';
-    } else {
-        pwdInput.placeholder = '';
-    }
+        if (maskedPwd) {
+            pwdInput.placeholder = '••••••••';
+        } else {
+            pwdInput.placeholder = '';
+        }
 
-    if (!pwdInput._cfgBound) {
-        pwdInput.addEventListener('focus', function() {
-            if (this.dataset.masked === '1') {
-                this.value = '';
+        if (!pwdInput._cfgBound) {
+            pwdInput.addEventListener('focus', function() {
+                if (this.dataset.masked === '1') {
+                    this.value = '';
+                    this.dataset.masked = '';
+                    this.classList.remove('cfg-key-masked');
+                }
+            });
+            pwdInput.addEventListener('input', function() {
                 this.dataset.masked = '';
-                this.classList.remove('cfg-key-masked');
-            }
-        });
-        pwdInput.addEventListener('input', function() {
-            this.dataset.masked = '';
-        });
-        pwdInput._cfgBound = true;
+            });
+            pwdInput._cfgBound = true;
+        }
     }
 }
 
@@ -9236,8 +9449,7 @@ navigateTo = function(viewId) {
     _origNavigateTo(viewId);
 
     // Lazy-load view data
-    if (viewId === 'config') loadConfigView();
-    else if (viewId === 'skills') loadSkillsView();
+    if (viewId === 'skills') loadSkillsView();
     else if (viewId === 'logs') startLogStream();
 };
 
