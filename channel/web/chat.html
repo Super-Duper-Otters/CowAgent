@@ -151,11 +151,6 @@
                             <i class="fas fa-bolt item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_skills">技能</span>
                         </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="channels">
-                            <i class="fas fa-tower-broadcast item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="menu_channels">通道</span>
-                        </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]" data-view="invest-users">
                             <i class="fas fa-users item-icon text-xs w-5 text-center"></i><span>用户管理</span>
                         </a>
@@ -673,30 +668,6 @@
                                 </div>
                                 <div id="skills-list" class="grid gap-4 sm:grid-cols-2"></div>
                             </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====================================================== -->
-                <!-- VIEW: Channels                                          -->
-                <!-- ====================================================== -->
-                <div id="view-channels" class="view">
-                    <div class="flex-1 overflow-y-auto p-6">
-                        <div class="max-w-4xl mx-auto">
-                            <div class="flex items-center justify-between mb-6">
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="channels_title">通道管理</h2>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="channels_desc">管理已接入的消息通道</p>
-                                </div>
-                                <button id="add-channel-btn" onclick="openAddChannelPanel()"
-                                        class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600
-                                               text-white text-sm font-medium cursor-pointer transition-colors duration-150">
-                                    <i class="fas fa-plus text-xs"></i>
-                                    <span data-i18n="channels_add">接入通道</span>
-                                </button>
-                            </div>
-                            <div id="channels-content" class="grid gap-4"></div>
-                            <div id="channels-add-panel" class="hidden mt-4"></div>
                         </div>
                     </div>
                 </div>

@@ -63,7 +63,7 @@ const I18N = {
         memory_back: '返回列表',
         memory_col_name: '文件名', memory_col_type: '类型', memory_col_size: '大小', memory_col_updated: '更新时间',
         channels_title: '通道管理', channels_desc: '管理已接入的消息通道',
-        channels_add: '接入通道', channels_disconnect: '断开',
+        channels_add: '接入通道', channels_disconnect: '取消接入',
         channels_save: '保存配置', channels_saved: '已保存', channels_save_error: '保存失败',
         channels_restarted: '已保存并重启',
         channels_connect_btn: '接入', channels_cancel: '取消',
@@ -342,7 +342,6 @@ const VIEW_META = {
     chat:     { group: 'nav_chat',    page: 'menu_chat' },
     config:   { group: 'nav_manage',  page: 'menu_config' },
     skills:   { group: 'nav_manage',  page: 'menu_skills' },
-    channels: { group: 'nav_manage',  page: 'menu_channels' },
     'invest-users':   { group: 'nav_manage', page: 'menu_invest_users' },
     'invest-daily-content': { group: 'nav_manage', page: 'menu_invest_daily_content' },
     'invest-content': { group: 'nav_manage', page: 'menu_invest_content' },
@@ -4702,6 +4701,9 @@ async function renderInvestmentConfig() {
             canReadStocks ? investmentFetchJson('/api/investment/stocks?limit=5') : Promise.resolve({stats: {}}),
         ]);
         element.innerHTML = renderInvestmentConfigShell(data, stockData);
+        if (currentInvestmentConfigPanel === 'channels') {
+            loadChannelsView();
+        }
     } catch (error) {
         investmentError(element, error);
     }
@@ -4713,6 +4715,7 @@ function investmentConfigTabDefinitions(canReadConfig, canReadStocks) {
         {key: 'reply-texts', label: '公众号回复词', icon: 'fa-comments', visible: canReadConfig},
         {key: 'generation', label: '业务生成配置', icon: 'fa-wand-magic-sparkles', visible: canReadConfig},
         {key: 'web-chat', label: '后台 Web 对话', icon: 'fa-message', visible: canReadConfig},
+        {key: 'channels', label: '通道管理', icon: 'fa-tower-broadcast', visible: canReadConfig},
     ].filter(tab => tab.visible);
 }
 
@@ -4748,6 +4751,9 @@ function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadCon
     if (panel === 'web-chat') {
         return canReadConfig ? renderInvestmentConfigWebChatPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
     }
+    if (panel === 'channels') {
+        return canReadConfig ? renderInvestmentConfigChannelsPanel() : '<div class="investment-empty">暂无配置权限</div>';
+    }
     return renderInvestmentConfigStockDataPanel(configs, stockData, canReadConfig, canReadStocks);
 }
 
@@ -4781,8 +4787,30 @@ function renderInvestmentConfigWebChatPanel(configs) {
         </div>`;
 }
 
+function renderInvestmentConfigChannelsPanel() {
+    return `
+        <div class="investment-config-panel investment-settings-panel">
+            <section class="investment-panel investment-config-section investment-workbench-full">
+                <div class="flex items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h3 class="font-semibold text-slate-800 dark:text-slate-100" data-i18n="channels_title">通道管理</h3>
+                        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="channels_desc">管理已接入的消息通道</p>
+                    </div>
+                    <button id="add-channel-btn" onclick="openAddChannelPanel()"
+                            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600
+                                   text-white text-sm font-medium cursor-pointer transition-colors duration-150">
+                        <i class="fas fa-plus text-xs"></i>
+                        <span data-i18n="channels_add">接入通道</span>
+                    </button>
+                </div>
+                <div id="channels-content" class="grid gap-4"></div>
+                <div id="channels-add-panel" class="hidden mt-4"></div>
+            </section>
+        </div>`;
+}
+
 function switchInvestmentConfigPanel(panel) {
-    currentInvestmentConfigPanel = ['stock-data', 'reply-texts', 'generation', 'web-chat'].includes(panel) ? panel : 'stock-data';
+    currentInvestmentConfigPanel = ['stock-data', 'reply-texts', 'generation', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
     renderInvestmentConfig();
 }
 
@@ -8068,6 +8096,7 @@ let channelsData = [];
 
 function loadChannelsView() {
     const container = document.getElementById('channels-content');
+    if (!container) return;
     container.innerHTML = `<div class="flex items-center gap-2 py-8 justify-center text-slate-400 dark:text-slate-500 text-sm">
         <i class="fas fa-spinner fa-spin text-xs"></i><span>Loading...</span></div>`;
 
@@ -8141,13 +8170,6 @@ function renderActiveChannels() {
                     </div>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">${escapeHtml(ch.name)}</p>
                 </div>
-                <button onclick="disconnectChannel('${ch.name}')"
-                    class="px-3 py-1.5 rounded-lg text-xs font-medium
-                           bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400
-                           hover:bg-red-100 dark:hover:bg-red-900/40
-                           cursor-pointer transition-colors flex-shrink-0">
-                    ${t('channels_disconnect')}
-                </button>
             </div>
             ${weixinWaiting ? `<div id="weixin-active-qr" class="flex flex-col items-center py-2">
                 <button onclick="showWeixinActiveQr()"
@@ -8169,12 +8191,21 @@ function renderActiveChannels() {
                 ${fieldsHtml}
                 <div class="flex items-center justify-end gap-3 pt-1">
                     <span id="ch-status-${ch.name}" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300"></span>
+                    <button onclick="disconnectChannel('${ch.name}')"
+                        class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium
+                               cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                        ${t('channels_disconnect')}</button>
                     <button onclick="saveChannelConfig('${ch.name}')"
                         class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
                                cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                         id="ch-save-${ch.name}">${t('channels_save')}</button>
                 </div>
-            </div>` : '')}`;
+            </div>` : `<div class="flex items-center justify-end gap-3 pt-1">
+                <button onclick="disconnectChannel('${ch.name}')"
+                    class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium
+                           cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                    ${t('channels_disconnect')}</button>
+            </div>`)}`;
 
         container.appendChild(card);
         bindSecretFieldEvents(card);
@@ -8912,6 +8943,10 @@ function switchFeishuMode(mode) {
                     ${fieldsHtml}
                     <div class="flex items-center justify-end gap-3 pt-1">
                         <span id="ch-status-feishu" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300"></span>
+                        <button onclick="disconnectChannel('feishu')"
+                            class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium
+                                   cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                            ${t('channels_disconnect')}</button>
                         <button onclick="saveChannelConfig('feishu')"
                             class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
                                    cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -9203,7 +9238,6 @@ navigateTo = function(viewId) {
     // Lazy-load view data
     if (viewId === 'config') loadConfigView();
     else if (viewId === 'skills') loadSkillsView();
-    else if (viewId === 'channels') loadChannelsView();
     else if (viewId === 'logs') startLogStream();
 };
 

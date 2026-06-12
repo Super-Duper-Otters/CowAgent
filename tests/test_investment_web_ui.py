@@ -62,12 +62,60 @@ def test_non_investment_management_pages_are_removed_from_frontend_navigation():
     monitor_group_start = html.index('data-group="monitor"')
     manage_group = html[manage_group_start:monitor_group_start]
     assert 'data-group="investment"' not in html
-    assert 'data-view="channels"' in html
-    assert 'id="view-channels"' in html
-    assert "channels: { group: 'nav_manage',  page: 'menu_channels' }" in js
-    assert "else if (viewId === 'channels') loadChannelsView();" in js
+    assert 'data-view="channels"' not in html
+    assert 'id="view-channels"' not in html
+    assert "channels: { group: 'nav_manage',  page: 'menu_channels' }" not in js
+    assert "else if (viewId === 'channels') loadChannelsView();" not in js
     assert 'data-view="invest-users"' in manage_group
     assert 'data-view="invest-health"' in manage_group
+
+
+def test_channels_page_defines_wechatmp_service_for_configured_service_accounts():
+    web_channel = WEB_CHANNEL.read_text(encoding="utf-8")
+    defs_start = web_channel.index("CHANNEL_DEFS = OrderedDict([")
+    defs_end = web_channel.index("    @staticmethod", defs_start)
+    channel_defs = web_channel[defs_start:defs_end]
+
+    assert '("wechatmp_service",' in channel_defs
+    assert '"wechatmp_app_id"' in channel_defs
+    assert '"wechatmp_app_secret"' in channel_defs
+    assert '"wechatmp_token"' in channel_defs
+    assert '"wechatmp_aes_key"' in channel_defs
+    assert '"wechatmp_port"' in channel_defs
+
+
+def test_channel_disconnect_action_is_next_to_save_with_cancel_copy():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    render_body = _js_function_body(js, "renderActiveChannels")
+
+    assert "channels_disconnect: '取消接入'" in js
+
+    footer_start = render_body.index('<div class="flex items-center justify-end gap-3 pt-1">')
+    footer_end = render_body.index('</div>', footer_start)
+    footer = render_body[footer_start:footer_end]
+
+    assert "disconnectChannel('${ch.name}')" in footer
+    assert "saveChannelConfig('${ch.name}')" in footer
+    assert footer.index("disconnectChannel('${ch.name}')") < footer.index("saveChannelConfig('${ch.name}')")
+
+
+def test_channel_management_is_system_config_subpage():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    config_body = _js_function_body(js, "renderInvestmentConfig")
+    tabs_body = _js_function_body(js, "investmentConfigTabDefinitions")
+    panel_body = _js_function_body(js, "renderInvestmentConfigPanel")
+    switch_body = _js_function_body(js, "switchInvestmentConfigPanel")
+
+    assert "key: 'channels'" in tabs_body
+    assert "label: '通道管理'" in tabs_body
+    assert "renderInvestmentConfigChannelsPanel()" in panel_body
+    assert "'channels'" in switch_body
+    assert "currentInvestmentConfigPanel === 'channels'" in config_body
+    assert "loadChannelsView();" in config_body
+    assert "function renderInvestmentConfigChannelsPanel(" in js
+    assert 'id="channels-content"' not in html
+    assert 'id="channels-add-panel"' not in html
 
 
 def test_investment_tables_are_bounded_and_have_sticky_headers():

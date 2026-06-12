@@ -1768,6 +1768,18 @@ class ChannelsHandler:
                 {"key": "wechatmp_port", "label": "Port", "type": "number", "default": 8080},
             ],
         }),
+        ("wechatmp_service", {
+            "label": {"zh": "企业公众号", "en": "WeChat MP Service"},
+            "icon": "fa-comment-dots",
+            "color": "emerald",
+            "fields": [
+                {"key": "wechatmp_app_id", "label": "App ID", "type": "text"},
+                {"key": "wechatmp_app_secret", "label": "App Secret", "type": "secret"},
+                {"key": "wechatmp_token", "label": "Token", "type": "secret"},
+                {"key": "wechatmp_aes_key", "label": "AES Key", "type": "secret"},
+                {"key": "wechatmp_port", "label": "Port", "type": "number", "default": 8080},
+            ],
+        }),
     ])
 
     @staticmethod
