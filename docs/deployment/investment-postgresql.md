@@ -1,10 +1,10 @@
 # Investment PostgreSQL Deployment Runbook
 
-This runbook covers deployment, migration, rollback, and Navicat connection notes for the investment database. The existing agent and memory SQLite stores are out of scope and remain unchanged.
+This runbook covers deployment, migration, rollback, and Navicat connection notes for the shared PostgreSQL database used by investment data and Agent conversation history.
 
 ## Deployment Modes
 
-By default, investment data uses the local SQLite database at `investment/investment.db`. No PostgreSQL service is required for this mode.
+Investment data and Agent conversation history use PostgreSQL. The legacy local SQLite investment database at `investment/investment.db` is only a migration source for older deployments.
 
 To use PostgreSQL, set `COWAGENT_INVESTMENT_DATABASE_URL` in the runtime environment:
 
@@ -18,7 +18,7 @@ Use placeholder credentials in examples, local scripts, and shared docs. Do not 
 
 ## Schema Upgrade
 
-After selecting PostgreSQL, run the investment Alembic migrations:
+After selecting PostgreSQL, run the Alembic migrations. These create the investment tables plus `agent_sessions` and `agent_messages` for normal Agent conversation persistence:
 
 ```powershell
 alembic -c migrations/investment/alembic.ini upgrade head
@@ -35,6 +35,16 @@ py scripts/migrate_investment_sqlite_to_pg.py --sqlite investment/investment.db 
 ```
 
 After migration, run the application against PostgreSQL and verify the expected investment records are present before changing operational traffic.
+
+Agent conversation history is intentionally not migrated from the old SQLite memory index. New conversations are written to PostgreSQL table `agent_messages` through the existing Agent conversation store API.
+
+Long-term memory indexing is disabled by default with:
+
+```json
+"agent_memory_index": false
+```
+
+When disabled, the application does not initialize the SQLite-backed long-term memory index. This does not affect recent per-user conversation context, which is restored from PostgreSQL `agent_messages`.
 
 ## Optional Local PostgreSQL
 
@@ -79,4 +89,4 @@ Keep `investment/investment.db` unchanged unless you intentionally migrated writ
 
 Generated image and file paths stored by investment features are local paths, not shared storage. Moving metadata to PostgreSQL does not make generated images or files available across machines. Use shared object storage or another explicit file distribution mechanism if multiple machines need to read the same generated assets.
 
-The agent and memory SQLite stores are not part of this migration. Do not migrate or reconfigure `agent/memory` data as part of investment PostgreSQL deployment work.
+The long-term memory index is not part of this migration. Do not migrate `agent/memory` index data unless you explicitly plan a separate PostgreSQL memory-index implementation.
