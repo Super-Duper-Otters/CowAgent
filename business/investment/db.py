@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from . import storage
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55432/cowagent_investment"
+DEFAULT_DATABASE_URL = "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 _ENGINE: Engine | None = None
 _ENGINE_URL: str | None = None
 _STOCK_SYMBOL_UPSERT_BATCH_SIZE = 1000

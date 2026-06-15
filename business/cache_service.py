@@ -29,4 +29,4 @@ from business.investment.cache_service import (
     version_fingerprint,
     write_cache_entry,
 )
-
+from business.investment.cache_policy import technical_analysis_cache_expired_after_close

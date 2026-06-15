@@ -807,7 +807,7 @@ def test_investment_database_url_defaults_to_docker_postgres(monkeypatch):
 
     url = db.get_database_url()
 
-    assert url == "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55432/cowagent_investment"
+    assert url == "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 
 
 def test_investment_database_url_prefers_postgres_env(investment_env, monkeypatch):
@@ -2210,20 +2210,32 @@ def test_web_investment_config_returns_reply_text_metadata(investment_env, monke
     assert payload["status"] == "success"
     assert "reply_texts" in payload
     assert any(group["title"] == "公众号处理状态" for group in payload["reply_texts"]["groups"])
-    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_ack"]["label"] == "技术分析开始生成提示"
-    assert "reply.wechatmp.technical_ack" in payload["configs"]
-    assert payload["configs"]["reply.wechatmp.technical_ack"].startswith("已收到，正在运行")
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.pending_result_invalidated"]["label"] == "待领取内容失效提示"
+    assert "reply.wechatmp.pending_result_invalidated" in payload["configs"]
+    assert payload["configs"]["reply.wechatmp.pending_result_invalidated"] == "内容已失效，请重新发起请求。"
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.immediate_ack"]["label"] == "收到请求提示"
+    assert payload["configs"]["reply.wechatmp.immediate_ack"] == "收到，正在处理，请稍候。请等待30-40s后回复1获取\n{pending_summary}"
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.immediate_ack"]["placeholders"] == ["pending_summary"]
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_running_new_request"]["label"] == "运行中重复技术分析提示"
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_running_new_request"]["placeholders"] == ["running_title"]
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_ready"]["label"] == "技术分析可领取提示"
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_ready"]["placeholders"] == ["target"]
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.pending_summary"]["label"] == "待领取内容摘要"
+    assert payload["reply_texts"]["definitions"]["reply.wechatmp.pending_summary"]["placeholders"] == ["items"]
+    assert "reply.wechatmp.technical_ack" not in payload["reply_texts"]["definitions"]
+    assert "reply.wechatmp.technical_cache_hit" not in payload["reply_texts"]["definitions"]
+    assert "reply.wechatmp.unmatched" not in payload["reply_texts"]["definitions"]
 
 
 def test_web_investment_config_saves_reply_text_values(investment_env, monkeypatch):
     from business.investment.config_service import get_config
     from channel.web.web_channel import InvestmentConfigHandler
 
-    body = {"configs": {"reply.wechatmp.immediate_ack": "已收到，请稍候。"}}
+    body = {"configs": {"reply.wechatmp.pending_result_invalidated": "结果已失效，请重新发起。"}}
     payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().POST, body=body)
 
     assert payload["status"] == "success"
-    assert get_config("reply.wechatmp.immediate_ack") == "已收到，请稍候。"
+    assert get_config("reply.wechatmp.pending_result_invalidated") == "结果已失效，请重新发起。"
 
 
 def test_web_investment_config_audit_records_before_and_after_values(investment_env, monkeypatch):
@@ -2231,18 +2243,18 @@ def test_web_investment_config_audit_records_before_and_after_values(investment_
     from business.investment.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
-    save_config("reply.wechatmp.immediate_ack", "旧提示", operator_role="admin", operator="seed")
+    save_config("reply.wechatmp.pending_result_invalidated", "旧提示", operator_role="admin", operator="seed")
 
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentConfigHandler().POST,
-        body={"configs": {"reply.wechatmp.immediate_ack": "新提示"}},
+        body={"configs": {"reply.wechatmp.pending_result_invalidated": "新提示"}},
     )
     audits = list_operation_audits(action="config.update", target_type="investment_config", limit=5)
 
     assert payload["status"] == "success"
-    assert audits[0].before_state == {"reply.wechatmp.immediate_ack": "旧提示"}
-    assert audits[0].after_state == {"reply.wechatmp.immediate_ack": "新提示"}
+    assert audits[0].before_state == {"reply.wechatmp.pending_result_invalidated": "旧提示"}
+    assert audits[0].after_state == {"reply.wechatmp.pending_result_invalidated": "新提示"}
     assert audits[0].operator_username == "admin"
 
 
@@ -6276,7 +6288,7 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
     ("raw_input", "expected_detail"),
     [
         ("不存在 技术分析", "cannot resolve stock name"),
-        ("重名 技术分析", "ambiguous stock name"),
+        ("重名 技术分析", "匹配到多个标的"),
     ],
 )
 def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
@@ -6302,6 +6314,33 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
     assert result.error_code in {ErrorCode.STOCK_NOT_FOUND, ErrorCode.STOCK_AMBIGUOUS}
     assert "股票代码" in result.user_prompt
     assert expected_detail in result.detail
+
+
+def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env, monkeypatch):
+    from business.investment import technical_analysis
+    from business.investment.constants import ErrorCode
+    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.investment.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [
+            {"code": "601398.SH", "name": "工商银行", "market": "SH", "source": "tushare_a"},
+            {"code": "01398.HK", "name": "工商银行", "market": "HK", "source": "tushare_hk"},
+        ],
+        source="pytest",
+    )
+    monkeypatch.setattr(technical_analysis, "_run_skill", lambda *_args, **_kwargs: pytest.fail("ambiguous names must not enter skill"))
+
+    result = run_technical_analysis("ok", "工商银行 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
+    assert result.detail == (
+        "股票名称“工商银行”匹配到多个标的，请改用股票代码重新发送：\n"
+        "1. 01398.HK 工商银行（HK）\n"
+        "2. 601398.SH 工商银行（SH）\n"
+        "例如：601398.SH 技术分析"
+    )
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
@@ -8085,7 +8124,7 @@ def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
             datetime(2026, 5, 31, 7, 0, tzinfo=UTC),
-            now=datetime(2026, 5, 31, 15, 29),
+            now=datetime(2026, 5, 31, 17, 29),
         )
         is False
     )
@@ -8097,8 +8136,8 @@ def test_technical_analysis_cache_policy_expires_today_cache_written_before_clos
     assert (
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
-            datetime(2026, 5, 31, 15, 29, 59),
-            now=datetime(2026, 5, 31, 15, 30),
+            datetime(2026, 5, 31, 17, 29, 59),
+            now=datetime(2026, 5, 31, 17, 30),
         )
         is True
     )
@@ -8111,9 +8150,31 @@ def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close
         technical_analysis_cache_expired_after_close(
             "2026-05-30",
             datetime(2026, 5, 30, 15, 0),
-            now=datetime(2026, 5, 31, 15, 30),
+            now=datetime(2026, 5, 31, 17, 30),
         )
         is False
+    )
+
+
+def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff_even_without_probe_update(monkeypatch):
+    import business.investment.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class UnknownResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            return SimpleNamespace(market_date="", known=False)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", UnknownResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T17:30:00+08:00",
+            normalized_target="600519.SH",
+        )
+        is True
     )
 
 
@@ -8123,8 +8184,8 @@ def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_c
     assert (
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
-            datetime(2026, 5, 31, 15, 30),
-            now=datetime(2026, 5, 31, 15, 31),
+            datetime(2026, 5, 31, 17, 30),
+            now=datetime(2026, 5, 31, 17, 31),
         )
         is False
     )
@@ -8136,16 +8197,16 @@ def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing
     assert (
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
-            "2026-05-31T07:29:59+00:00",
-            now="2026-05-31T07:30:00+00:00",
+            "2026-05-31T09:29:59+00:00",
+            now="2026-05-31T09:30:00+00:00",
         )
         is True
     )
     assert (
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
-            "2026-05-31T15:30:00+08:00",
-            now="2026-05-31T07:30:00+00:00",
+            "2026-05-31T17:30:00+08:00",
+            now="2026-05-31T09:30:00+00:00",
         )
         is False
     )
@@ -8157,8 +8218,8 @@ def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing
     assert (
         technical_analysis_cache_expired_after_close(
             "2026-05-31",
-            datetime(2026, 5, 31, 15, 29, 59),
-            now=datetime(2026, 5, 31, 15, 30),
+            datetime(2026, 5, 31, 17, 29, 59),
+            now=datetime(2026, 5, 31, 17, 30),
         )
         is True
     )
@@ -8226,6 +8287,108 @@ def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_
         )
         is False
     )
+
+
+def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
+    from business.investment.cache_policy import market_from_symbol
+
+    assert market_from_symbol("600519.SH") == "a_share"
+    assert market_from_symbol("000001.SZ") == "a_share"
+    assert market_from_symbol("00700.HK") == "hk"
+    assert market_from_symbol("AAPL.US") == "us"
+    assert market_from_symbol("UNKNOWN") == ""
+
+
+def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
+    import business.investment.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T15:31:00+08:00",
+            normalized_target="600519.SH",
+        )
+        is True
+    )
+    assert calls == ["600519.SH"]
+
+
+def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
+    import business.investment.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FailResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            raise AssertionError("probe should not run before 15:30")
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FailResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T15:29:00+08:00",
+            normalized_target="600519.SH",
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monkeypatch):
+    import business.investment.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    for minute in (31, 40):
+        assert (
+            cache_policy.technical_analysis_cache_expired_after_close(
+                "2026-06-14",
+                "2026-06-14T18:00:00+08:00",
+                now=f"2026-06-15T15:{minute}:00+08:00",
+                normalized_target="600519.SH",
+            )
+            is True
+        )
+    assert calls == ["600519.SH"]
+
+
+def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
+    import business.investment.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("00700.HK", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("AAPL.US", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US"]
 
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):
@@ -10351,6 +10514,36 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     context["session_id"] = "business-openid"
 
     assert build_business_reply(context) is None
+
+
+def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(investment_env):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from business.investment.user_service import create_user
+    from business.investment.constants import ServiceType
+    from business.business_router import build_business_reply
+
+    create_user("wechatmp-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    context = Context(ContextType.TEXT, "普通聊天")
+    context["session_id"] = "wechatmp-openid"
+    context["channel_type"] = "wechatmp_service"
+
+    reply = build_business_reply(context)
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert reply.content == DEFAULT_UNMATCHED_PROMPT
+
+
+def test_context_kwargs_are_not_shared_between_instances():
+    from bridge.context import Context, ContextType
+
+    first = Context(ContextType.TEXT, "first")
+    first["channel_type"] = "wechatmp_service"
+    second = Context(ContextType.TEXT, "second")
+
+    assert "channel_type" not in second
 
 
 def test_business_router_ignores_unmatched_text_without_auth_or_handler(investment_env, monkeypatch):

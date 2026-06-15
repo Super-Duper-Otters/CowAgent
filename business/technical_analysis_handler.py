@@ -30,6 +30,60 @@ def _failure_reply_with_detail(prompt: str, detail: str) -> str:
     return f"{prompt}\n原因：{safe_detail}"
 
 
+def validate_technical_analysis_request(raw_input: str, route) -> str:
+    """Return a user-facing error when a technical-analysis request cannot start."""
+    from business.investment.technical_analysis import (
+        _target_and_requested_market_date,
+        _technical_analysis_target_from_input,
+        parse_target,
+    )
+
+    target_text = getattr(route, "target_text", "") or parse_target(raw_input)
+    target, _requested_market_date = _target_and_requested_market_date(target_text)
+    target_info, error, detail = _technical_analysis_target_from_input(target)
+    if error:
+        return _failure_reply_with_detail(user_message(error), detail)
+    if not target_info.normalized_target:
+        return _failure_reply_with_detail(
+            user_message(ErrorCode.STOCK_NOT_FOUND),
+            f"cannot resolve stock: {target}",
+        )
+    return ""
+
+
+def get_ready_technical_analysis_reply(
+    openid: str,
+    raw_input: str,
+    route,
+    *,
+    customer_metadata: dict[str, str] | None = None,
+    elapsed=lambda: 0,
+):
+    from business.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
+
+    cache_context = prepare_technical_analysis_business_context(raw_input, route.target_text)
+    if not cache_context.cache_key:
+        return None
+    entry = find_cache_entry_by_key(cache_context.cache_key, require_files=True)
+    if entry is None:
+        return None
+    if technical_analysis_cache_expired_after_close(
+        entry.market_date,
+        entry.updated_at,
+        normalized_target=entry.normalized_target,
+    ):
+        invalidate_cache_entry(entry.cache_key)
+        return None
+    return handle_technical_analysis(
+        openid,
+        raw_input,
+        route,
+        customer_metadata=customer_metadata,
+        elapsed=elapsed,
+        cache_context=cache_context,
+    )
+
+
 def handle_technical_analysis(
     openid: str,
     raw_input: str,
@@ -38,11 +92,12 @@ def handle_technical_analysis(
     customer_metadata: dict[str, str] | None = None,
     elapsed=lambda: 0,
     technical_analysis_handler=None,
+    cache_context=None,
 ):
     from business.router import BusinessReply
 
     customer_metadata = customer_metadata or {}
-    cache_context = prepare_technical_analysis_business_context(raw_input, route.target_text)
+    cache_context = cache_context or prepare_technical_analysis_business_context(raw_input, route.target_text)
     if cache_context.cache_key:
         job = start_cache_job_if_absent(
             openid,

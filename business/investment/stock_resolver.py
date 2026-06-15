@@ -92,6 +92,20 @@ def _resolve_name_from_local(value: str) -> tuple[str | None, ErrorCode | None]:
     return None, ErrorCode.STOCK_NOT_FOUND
 
 
+def list_exact_stock_name_matches(value: str, limit: int = 10) -> list[dict[str, str]]:
+    table = investment_stock_symbols
+    limit_value = max(1, min(int(limit or 10), 50))
+    stmt = (
+        select(table.c.code, table.c.name, table.c.market, table.c.ts_code, table.c.source)
+        .where(table.c.name == str(value or "").strip(), table.c.source.in_(("tushare_a", "tushare_hk", "tushare_us")))
+        .order_by(table.c.code)
+        .limit(limit_value)
+    )
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
 def get_tushare_token(masked: bool = False) -> str:
     token = str(get_config("tushare.token", "") or "").strip()
     if not token:

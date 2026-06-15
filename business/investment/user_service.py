@@ -579,7 +579,7 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
 
     headers = [_normalize_header(value) for value in rows[0]]
     indexes = {header: index for index, header in enumerate(headers) if header}
-    missing_headers = [key for key in ("mobile", "allowed_services", "auth_end_at") if key not in indexes]
+    missing_headers = [key for key in ("mobile", "allowed_services", "auth_start_at", "auth_end_at") if key not in indexes]
     if missing_headers:
         raise ValueError(f"Excel missing required field: {', '.join(missing_headers)}")
 
@@ -588,11 +588,14 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
         openid = _cell(row, indexes, "openid")
         mobile = _cell(row, indexes, "mobile")
         allowed_services = _cell(row, indexes, "allowed_services")
+        auth_start_at = _cell(row, indexes, "auth_start_at")
         auth_end_at = _cell(row, indexes, "auth_end_at")
         if not mobile:
             raise ValueError(f"Excel row {row_number} missing required field: mobile")
         if not allowed_services:
             raise ValueError(f"Excel row {row_number} missing required field: allowed_services")
+        if not auth_start_at:
+            raise ValueError(f"Excel row {row_number} missing required field: auth_start_at")
         if not auth_end_at:
             raise ValueError(f"Excel row {row_number} missing required field: auth_end_at")
         openid_generated = not bool(openid)
@@ -606,7 +609,7 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
                 mobile=mobile,
                 enabled=_parse_enabled(_cell(row, indexes, "enabled")),
                 allowed_services=allowed_services,
-                auth_start_at=_parse_optional_import_date(_cell(row, indexes, "auth_start_at"), row_number, "auth_start_at") or _beijing_today_start_utc_naive(),
+                auth_start_at=_parse_required_import_date(auth_start_at, row_number, "auth_start_at"),
                 auth_end_at=_parse_required_import_date(auth_end_at, row_number, "auth_end_at"),
                 remark=_cell(row, indexes, "remark"),
                 openid_generated=openid_generated,

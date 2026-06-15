@@ -42,12 +42,24 @@ def _reply_from_business(business_reply) -> Reply | None:
     return reply
 
 
+def _is_wechatmp_context(context: Context) -> bool:
+    channel_type = str(context.get("channel_type", "") if context else "")
+    return channel_type in {"wechatmp", "wechatmp_service"}
+
+
 def build_business_reply(context: Context, *, skip_permission: bool = False) -> Reply | None:
     if context is None or not isinstance(context.content, str):
         return None
     try:
         route = business_route.parse_route(context.content)
         if not route.matched:
+            if _is_wechatmp_context(context):
+                business_reply = business_route.handle_text_message(
+                    _openid_from_context(context),
+                    context.content,
+                    skip_permission=skip_permission,
+                )
+                return _reply_from_business(business_reply)
             return None
         if route.service_type == ServiceType.TECHNICAL_ANALYSIS:
             from business.technical_analysis_handler import handle_technical_analysis

@@ -74,11 +74,11 @@ def _default_renderer(request: RenderRequest, target: str) -> None:
 
 def template_for_service(service_type: ServiceType) -> str:
     if service_type == ServiceType.TECHNICAL_ANALYSIS:
-        return str(get_config("render.template_ta_path") or DEFAULT_TEMPLATE_TA_PATH)
+        return DEFAULT_TEMPLATE_TA_PATH
     if service_type == ServiceType.RATE:
-        return str(get_config("render.template_rate_path") or DEFAULT_TEMPLATE_BOND_PATH)
+        return DEFAULT_TEMPLATE_BOND_PATH
     if service_type == ServiceType.CONVERTIBLE_BOND:
-        return str(get_config("render.template_cb_path") or DEFAULT_TEMPLATE_CB_PATH)
+        return DEFAULT_TEMPLATE_CB_PATH
     raise ValueError(f"unsupported service type: {service_type}")
 
 

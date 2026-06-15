@@ -1,6 +1,9 @@
 import asyncio
+import os
 import threading
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import web
 from wechatpy import parse_message
@@ -8,6 +11,7 @@ from wechatpy.replies import ImageReply, VideoReply, VoiceReply, create_reply
 from bridge.context import *
 from bridge.reply import *
 from channel.wechatmp.common import *
+from channel.wechatmp.media_cache import image_media_cache, local_image_media_key
 from channel.wechatmp.wechatmp_channel import WechatMPChannel
 from channel.wechatmp.wechatmp_message import WeChatMPMessage
 from common.log import logger
@@ -15,14 +19,19 @@ from common.utils import split_string_by_utf8_length
 from config import conf, subscribe_msg
 
 
-CANCEL_PENDING_RESULT_KEY = "reply.wechatmp.cancel_pending_result"
+IMMEDIATE_ACK_KEY = "reply.wechatmp.immediate_ack"
+INPUT_ERROR_KEY = "reply.investment.input_error"
+PENDING_SUMMARY_KEY = "reply.wechatmp.pending_summary"
 RUNNING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.running_technical_analysis"
+TECHNICAL_RUNNING_NEW_REQUEST_KEY = "reply.wechatmp.technical_running_new_request"
+TECHNICAL_READY_KEY = "reply.wechatmp.technical_ready"
 PENDING_TECHNICAL_ANALYSIS_KEY = "reply.wechatmp.pending_technical_analysis"
 THINKING_TIMEOUT_KEY = "reply.wechatmp.thinking_timeout"
 CHAT_PREFIX_HINT_KEY = "reply.wechatmp.chat_prefix_hint"
 DEFAULT_CHAT_HINT_KEY = "reply.wechatmp.default_chat_hint"
 UNKNOWN_ERROR_KEY = "reply.wechatmp.unknown_error"
 RUNNING_STALE_SECONDS = 15 * 60
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _reply_text(key: str, default: str = "") -> str:
@@ -49,6 +58,30 @@ def _running_technical_analysis_text(title: str) -> str:
         title,
         default="「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。",
     )
+
+
+def _technical_running_new_request_text(title: str) -> str:
+    default = "「{running_title}」技术分析仍在运行中，请稍后回复1获取结果。\n当前暂不接受新的技术分析请求，请在结果领取后再发起新的技术分析。"
+    text = _reply_text(TECHNICAL_RUNNING_NEW_REQUEST_KEY, default)
+    try:
+        return text.format(running_title=title)
+    except Exception:
+        try:
+            return text.format(title)
+        except Exception:
+            return default.format(running_title=title)
+
+
+def _technical_ready_text(title: str) -> str:
+    default = "「{target}」技术分析结果已准备好，回复1获取。"
+    text = _reply_text(TECHNICAL_READY_KEY, default)
+    try:
+        return text.format(target=title)
+    except Exception:
+        try:
+            return text.format(title)
+        except Exception:
+            return default.format(target=title)
 
 
 def _cleanup_expired(cache):
@@ -91,6 +124,16 @@ def _discard_cached_result(cache, receiver):
         del cache[receiver]
 
 
+def _discard_cached_result_source(cache, cached_result):
+    source_type = str(getattr(cached_result, "source_type", "") or "")
+    source_id = str(getattr(cached_result, "source_id", "") or "")
+    if not source_type or not source_id:
+        return
+    discard = getattr(cache, "discard_by_source", None)
+    if discard:
+        discard(source_type, source_id)
+
+
 def _set_pending_command(cache, receiver, content):
     setter = getattr(cache, "set_pending_command", None)
     if setter:
@@ -109,10 +152,161 @@ def _pending_result_prompt(title):
         return _reply_format(
             PENDING_TECHNICAL_ANALYSIS_KEY,
             _technical_analysis_title(title or ""),
-            default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。",
+            default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表。",
         )
     prefix = title or ""
-    return "{}结果已生成完成，是否需要返回？无需则回复 0，需要则回复 1。".format(prefix)
+    return "{}结果已生成完成，回复 1 获取。".format(prefix)
+
+
+def _pending_technical_summary(cache, receiver) -> str:
+    summary_func = getattr(cache, "pending_technical_summary", None)
+    if not summary_func:
+        return ""
+    summary = summary_func(receiver)
+    if not summary:
+        return ""
+    items = "\n".join(_pending_summary_item_text(index, item) for index, item in enumerate(summary, start=1))
+    template = _reply_text(
+        PENDING_SUMMARY_KEY,
+        "您当前还有技术分析结果待领取：\n{items}\n回复1获取或回复股票名称获取对应报告",
+    )
+    try:
+        return template.format(items=items)
+    except Exception:
+        return "您当前还有技术分析结果待领取：\n{}\n回复1获取或回复股票名称获取对应报告".format(items)
+
+
+def _pending_summary_item_text(index: int, item) -> str:
+    target, count, created_at = _unpack_pending_summary_item(item)
+    created_text = _format_pending_created_at(created_at)
+    if created_text:
+        return f"{index}.{target} {count}条（生成时间：{created_text}）"
+    return f"{index}.{target} {count}条"
+
+
+def _unpack_pending_summary_item(item):
+    if len(item) >= 3:
+        return item[0], item[1], item[2]
+    return item[0], item[1], None
+
+
+def _format_pending_created_at(created_at) -> str:
+    if created_at in (None, ""):
+        return ""
+    try:
+        return datetime.fromtimestamp(float(created_at), BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
+def _append_pending_technical_summary(text: str, cache, receiver) -> str:
+    summary = _pending_technical_summary(cache, receiver)
+    if not summary:
+        if "{pending_summary}" in text:
+            return text.replace("{pending_summary}", "").strip()
+        return text
+    if "{pending_summary}" in text:
+        return text.replace("{pending_summary}", summary)
+    if not text:
+        return summary
+    return "{}\n\n{}".format(text.rstrip(), summary)
+
+
+def _input_error_text(cache, receiver) -> str:
+    return _append_pending_technical_summary(
+        _reply_text(INPUT_ERROR_KEY, "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。"),
+        cache,
+        receiver,
+    )
+
+
+def _immediate_ack_text(cache, receiver) -> str:
+    return _append_pending_technical_summary(
+        _reply_text(IMMEDIATE_ACK_KEY, "收到，正在处理，请稍候。请等待30-40s后回复1获取"),
+        cache,
+        receiver,
+    )
+
+
+def _parse_business_route(content):
+    try:
+        from business.router import parse_route
+
+        return parse_route(content)
+    except Exception as exc:
+        logger.debug("[wechatmp] parse business route failed: {}".format(exc))
+        return None
+
+
+def _route_is_matched(route) -> bool:
+    return bool(getattr(route, "matched", False))
+
+
+def _route_is_technical_analysis(route) -> bool:
+    return _is_technical_analysis_service_type(getattr(route, "service_type", ""))
+
+
+def _technical_analysis_precheck_error(route) -> str:
+    if not _route_is_technical_analysis(route):
+        return ""
+    try:
+        from business.technical_analysis_handler import validate_technical_analysis_request
+
+        return validate_technical_analysis_request(getattr(route, "raw_input", ""), route)
+    except Exception as exc:
+        logger.warning("[wechatmp] technical analysis precheck failed: {}".format(exc))
+        return ""
+
+
+def _queue_ready_technical_result(channel, wechatmp_msg, route) -> bool:
+    if not _route_is_technical_analysis(route):
+        return False
+    try:
+        from business import router as business_route
+        from business.technical_analysis_handler import get_ready_technical_analysis_reply
+
+        openid = str(getattr(wechatmp_msg, "from_user_id", "") or "")
+        business_reply = get_ready_technical_analysis_reply(
+            openid,
+            getattr(route, "raw_input", "") or str(getattr(wechatmp_msg, "content", "") or ""),
+            route,
+            customer_metadata=business_route._customer_metadata(openid),
+        )
+        if business_reply is None or not getattr(business_reply, "success", False) or not getattr(business_reply, "output_files", None):
+            return False
+
+        title = getattr(route, "raw_input", "") or str(getattr(wechatmp_msg, "content", "") or "")
+        for path in business_reply.output_files:
+            if not path:
+                continue
+            _append_cached_reply(
+                channel.cache_dict,
+                openid,
+                "image_file",
+                path,
+                title,
+                service_type=business_reply.service_type,
+                request_id=getattr(business_reply, "request_id", ""),
+                source_type=getattr(business_reply, "source_type", ""),
+                source_id=getattr(business_reply, "source_id", ""),
+            )
+        return _peek_cached_result(channel.cache_dict, openid) is not None
+    except Exception as exc:
+        logger.warning("[wechatmp] queue ready technical result failed: {}".format(exc))
+        return False
+
+
+def _pop_cached_reply_by_title(cache, receiver, title):
+    pop_for_title = getattr(cache, "pop_result_for_title", None)
+    if pop_for_title:
+        selected = pop_for_title(receiver, title)
+        if selected is None:
+            return None, None
+        return selected
+    pop_by_title = getattr(cache, "pop_result_by_title", None)
+    if pop_by_title:
+        return pop_by_title(receiver, title), None
+    return None, None
 
 
 def _is_technical_analysis_service_type(service_type) -> bool:
@@ -244,9 +438,19 @@ def _cached_result_source_is_valid(cached_result):
     if not source_type or not source_id:
         return True
     if source_type == "cache":
-        from business.cache_service import find_cache_entry_by_key
+        from business.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
 
-        return find_cache_entry_by_key(source_id, require_files=False) is not None
+        entry = find_cache_entry_by_key(source_id, require_files=True)
+        if entry is None:
+            return False
+        if _is_technical_analysis_service_type(getattr(entry, "service_type", "")) and technical_analysis_cache_expired_after_close(
+            entry.market_date,
+            entry.updated_at,
+            normalized_target=entry.normalized_target,
+        ):
+            invalidate_cache_entry(source_id)
+            return False
+        return True
     if source_type == "content":
         from business.constants import Status
         from business.daily_content import mark_expired_daily_contents_invalidated
@@ -309,6 +513,30 @@ def _record_request_event_safe(
         )
     except Exception as exc:
         logger.debug("[wechatmp] record request event failed: {}".format(exc))
+
+
+def _upload_image_file_for_passive_reply(channel, from_user, message_id, image_content):
+    media_cache_key = local_image_media_key(image_content)
+    cached_media_id = image_media_cache.get(media_cache_key)
+    if cached_media_id:
+        logger.info("[wechatmp] image media cache hit, receiver {}, media_id {}".format(from_user, cached_media_id))
+        return cached_media_id
+
+    image_storage = None
+    try:
+        image_storage, image_type = channel._image_storage_from_path_or_url(image_content)
+        filename = from_user + "-" + str(message_id) + "." + image_type
+        content_type = "image/" + image_type
+        response = channel.client.media.upload("image", (filename, image_storage, content_type))
+    finally:
+        local_image_path = image_content[7:] if isinstance(image_content, str) and image_content.startswith("file://") else image_content
+        if image_storage is not None and isinstance(local_image_path, str) and os.path.exists(local_image_path):
+            image_storage.close()
+
+    media_id = response["media_id"]
+    image_media_cache.set(media_cache_key, media_id)
+    logger.info("[wechatmp] image uploaded on passive claim, receiver {}, media_id {}".format(from_user, media_id))
+    return media_id
 
 
 def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, content, request_cnt, cached_item, cache_title="", service_type="", request_id=""):
@@ -388,6 +616,45 @@ def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, cont
         )
         return encrypt_func(replyPost.render())
 
+    if reply_type == "image_file":
+        try:
+            media_id = _upload_image_file_for_passive_reply(channel, from_user, message_id, reply_content)
+        except Exception as exc:
+            logger.error("[wechatmp] upload cached image file failed: {}".format(exc))
+            _record_request_event_safe(
+                request_id=request_id,
+                openid=from_user,
+                event_type="reply_image_failed",
+                message_type="image",
+                content=cache_title,
+                file_path=reply_content,
+                result="failed",
+                error=str(exc),
+            )
+            return _pending_result_invalidated_prompt()
+        logger.info(
+            "[wechatmp] Request {} do send to {} {}: {} image file {}".format(
+                request_cnt,
+                from_user,
+                message_id,
+                content,
+                reply_content,
+            )
+        )
+        replyPost = ImageReply(message=msg)
+        replyPost.media_id = media_id
+        _record_request_event_safe(
+            request_id=request_id,
+            openid=from_user,
+            event_type="reply_image_sent",
+            message_type="image",
+            content=cache_title,
+            media_id=media_id,
+            file_path=reply_content,
+            result="success",
+        )
+        return encrypt_func(replyPost.render())
+
     if reply_type == "video":
         media_id = reply_content
         logger.info(
@@ -432,6 +699,9 @@ class Query:
                 from_user = wechatmp_msg.from_user_id
                 content = wechatmp_msg.content
                 message_id = wechatmp_msg.msg_id
+                parsed_route = None
+                allow_new_request_with_pending_result = False
+                reply_immediate_ack_after_start = False
 
                 supported = True
                 if "【收到不支持的消息类型，暂无法显示】" in content:
@@ -473,25 +743,31 @@ class Query:
                         )
                         _mark_cached_result_delivered(pending_result, rendered_reply)
                         return rendered_reply
-                    if content == "0":
-                        _record_request_event_safe(
-                            request_id=getattr(pending_result, "request_id", ""),
-                            openid=from_user,
-                            event_type="customer_cancel",
-                            message_type="text",
-                            content=content,
-                            result="accepted",
-                        )
-                        _discard_cached_result(channel.cache_dict, from_user)
-                        pending_command = _pop_pending_command(channel.cache_dict, from_user)
-                        if pending_command:
-                            content = pending_command
-                        else:
-                            replyPost = create_reply(_reply_text(CANCEL_PENDING_RESULT_KEY, "已放弃本次技术分析结果。"), msg)
+                    cached_item, selected_result = _pop_cached_reply_by_title(channel.cache_dict, from_user, content)
+                    if cached_item is not None:
+                        selected_result = selected_result or pending_result
+                        if not _cached_result_source_is_valid(selected_result):
+                            _discard_cached_result_source(channel.cache_dict, selected_result)
+                            replyPost = create_reply(_pending_result_invalidated_prompt(), msg)
                             return encrypt_func(replyPost.render())
-                    else:
-                        _set_pending_command(channel.cache_dict, from_user, content)
-                        replyPost = create_reply(_pending_result_prompt(pending_result.title), msg)
+                        rendered_reply = _render_cached_reply(
+                            channel,
+                            msg,
+                            encrypt_func,
+                            from_user,
+                            message_id,
+                            content,
+                            1,
+                            cached_item,
+                            getattr(selected_result, "title", ""),
+                            getattr(selected_result, "service_type", ""),
+                            getattr(selected_result, "request_id", ""),
+                        )
+                        _mark_cached_result_delivered(selected_result, rendered_reply)
+                        return rendered_reply
+
+                    parsed_route = _parse_business_route(content)
+                    if not _route_is_matched(parsed_route):
                         _record_request_event_safe(
                             request_id=getattr(pending_result, "request_id", ""),
                             openid=from_user,
@@ -500,21 +776,52 @@ class Query:
                             content=content,
                             result="success",
                         )
+                        replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
                         return encrypt_func(replyPost.render())
+                    precheck_error = _technical_analysis_precheck_error(parsed_route)
+                    if precheck_error:
+                        replyPost = create_reply(_append_pending_technical_summary(precheck_error, channel.cache_dict, from_user), msg)
+                        return encrypt_func(replyPost.render())
+                    if _queue_ready_technical_result(channel, wechatmp_msg, parsed_route):
+                        replyPost = create_reply(_technical_ready_text(_technical_analysis_title(content)), msg)
+                        return encrypt_func(replyPost.render())
+                    allow_new_request_with_pending_result = True
+                    if _route_is_technical_analysis(parsed_route):
+                        _pop_pending_command(channel.cache_dict, from_user)
+                        reply_immediate_ack_after_start = True
+                    else:
+                        _set_pending_command(channel.cache_dict, from_user, content)
 
                 if content == "1" and from_user in channel.running:
                     technical_title = _get_running_technical_title(channel, from_user)
                     if technical_title:
                         replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
                         return encrypt_func(replyPost.render())
+                if from_user in channel.running:
+                    parsed_route = parsed_route or _parse_business_route(content)
+                    if _route_is_technical_analysis(parsed_route):
+                        technical_title = _get_running_technical_title(channel, from_user) or getattr(parsed_route, "target_text", "") or content
+                        replyPost = create_reply(_technical_running_new_request_text(technical_title), msg)
+                        return encrypt_func(replyPost.render())
 
                 # New request
                 if (
-                    _peek_cached_result(channel.cache_dict, from_user) is None
+                    (_peek_cached_result(channel.cache_dict, from_user) is None or allow_new_request_with_pending_result)
                     and from_user not in channel.running
                     or content.startswith("#")
                     and message_id not in channel.request_cnt  # insert the godcmd
                 ):
+                    if parsed_route is None:
+                        parsed_route = _parse_business_route(content)
+                    precheck_error = _technical_analysis_precheck_error(parsed_route)
+                    if precheck_error:
+                        replyPost = create_reply(_append_pending_technical_summary(precheck_error, channel.cache_dict, from_user), msg)
+                        return encrypt_func(replyPost.render())
+                    if _queue_ready_technical_result(channel, wechatmp_msg, parsed_route):
+                        replyPost = create_reply(_technical_ready_text(_technical_analysis_title(content)), msg)
+                        return encrypt_func(replyPost.render())
+                    if _route_is_technical_analysis(parsed_route):
+                        reply_immediate_ack_after_start = True
                     # The first query begin
                     if msg.type == "voice" and wechatmp_msg.ctype == ContextType.TEXT and conf().get("voice_reply_voice", False):
                         context = channel._compose_context(wechatmp_msg.ctype, content, isgroup=False, desire_rtype=ReplyType.VOICE, msg=wechatmp_msg)
@@ -523,8 +830,16 @@ class Query:
                     logger.debug("[wechatmp] context: {} {} {}".format(context, wechatmp_msg, supported))
 
                     if supported and context:
-                        _mark_running(channel, from_user)
+                        _mark_running(
+                            channel,
+                            from_user,
+                            is_technical_analysis=_route_is_technical_analysis(parsed_route),
+                            content=content,
+                        )
                         channel.produce(context)
+                        if reply_immediate_ack_after_start:
+                            replyPost = create_reply(_immediate_ack_text(channel.cache_dict, from_user), msg)
+                            return encrypt_func(replyPost.render())
                     else:
                         trigger_prefix = conf().get("single_chat_prefix", [""])[0]
                         if trigger_prefix or not supported:
@@ -584,6 +899,31 @@ class Query:
                     return "success"
 
                 # Only one request can access to the cached data
+                if allow_new_request_with_pending_result:
+                    cached_item, selected_result = _pop_cached_reply_by_title(channel.cache_dict, from_user, content)
+                    if cached_item is None:
+                        return "success"
+                    if selected_result is not None and not _cached_result_source_is_valid(selected_result):
+                        _discard_cached_result_source(channel.cache_dict, selected_result)
+                        replyPost = create_reply(_pending_result_invalidated_prompt(), msg)
+                        return encrypt_func(replyPost.render())
+                    rendered_reply = _render_cached_reply(
+                        channel,
+                        msg,
+                        encrypt_func,
+                        from_user,
+                        message_id,
+                        content,
+                        request_cnt,
+                        cached_item,
+                        getattr(selected_result, "title", content),
+                        getattr(selected_result, "service_type", ""),
+                        getattr(selected_result, "request_id", ""),
+                    )
+                    if selected_result is not None:
+                        _mark_cached_result_delivered(selected_result, rendered_reply)
+                    return rendered_reply
+
                 pending_result = _peek_cached_result(channel.cache_dict, from_user)
                 if pending_result is not None:
                     if _is_technical_analysis_service_type(getattr(pending_result, "service_type", "")):

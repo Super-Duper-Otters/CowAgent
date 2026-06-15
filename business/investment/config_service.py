@@ -21,7 +21,6 @@ CONFIG_FALLBACK_KEYS = {
     "router.enable_web_open_chat": "investment_enable_web_open_chat",
     "technical_analysis.skill_path": "investment_ta_skill_path",
     "technical_analysis.output_dir": "investment_ta_output_dir",
-    "technical_analysis.default_chart_days": "investment_ta_default_chart_days",
     "render.renderer_path": "investment_renderer_path",
     "render.template_ta_path": "investment_template_ta_path",
     "render.template_rate_path": "investment_template_rate_path",

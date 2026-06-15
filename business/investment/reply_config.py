@@ -28,14 +28,14 @@ INVESTMENT_REPLY_DEFINITIONS = [
 ]
 
 WECHATMP_REPLY_DEFINITIONS = [
-    ReplyTextDefinition("reply.wechatmp.immediate_ack", "收到请求提示", "非技术分析投资指令开始处理时返回。", "收到，正在运行，请稍候。"),
-    ReplyTextDefinition("reply.wechatmp.technical_ack", "技术分析开始生成提示", "技术分析未命中缓存、开始后台内容生成时返回。保留 `{}`，系统会替换为股票或标题。", "已收到，正在运行「{}」技术分析，生成过程大概30s。\n生成完成后回复 1 获取技术分析主图、技术指标表。", ("target",)),
-    ReplyTextDefinition("reply.wechatmp.technical_cache_hit", "技术分析缓存命中提示", "技术分析命中缓存时返回。保留 `{}`，系统会替换为股票或标题。", "已命中「{}」技术分析缓存，正在直接交付。\n回复 1 获取技术分析主图、技术指标表。", ("target",)),
-    ReplyTextDefinition("reply.wechatmp.cancel_pending_result", "放弃待领取结果提示", "客户回复 0 放弃待领取结果时返回。", "已放弃本次技术分析结果。"),
+    ReplyTextDefinition("reply.wechatmp.immediate_ack", "收到请求提示", "客户触发需要等待的业务后立即返回。保留 `{pending_summary}`，系统会替换为待领取摘要。", "收到，正在处理，请稍候。请等待30-40s后回复1获取\n{pending_summary}", ("pending_summary",)),
+    ReplyTextDefinition("reply.wechatmp.pending_summary", "待领取内容摘要", "客户有技术分析结果待领取时追加返回。保留 `{items}`，系统会替换为股票列表。", "您当前还有技术分析结果待领取：\n{items}\n回复1获取或回复股票名称获取对应报告", ("items",)),
+    ReplyTextDefinition("reply.wechatmp.pending_result_invalidated", "待领取内容失效提示", "客户领取结果时，原内容或缓存已失效时返回。", "内容已失效，请重新发起请求。"),
     ReplyTextDefinition("reply.wechatmp.running_technical_analysis", "技术分析仍在运行提示", "客户在技术分析仍运行时回复 1。保留 `{}`，系统会替换为股票或标题。", "「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。", ("target",)),
-    ReplyTextDefinition("reply.wechatmp.pending_technical_analysis", "技术分析待领取提示", "客户有技术分析结果待领取又输入新内容时返回。保留 `{}`，系统会替换为股票或标题。", "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表；回复 0 放弃并继续处理新指令。", ("target",)),
+    ReplyTextDefinition("reply.wechatmp.technical_running_new_request", "运行中重复技术分析提示", "客户已有技术分析运行中又发起新的技术分析时返回。保留 `{running_title}`，系统会替换为正在运行的股票或标题。", "「{running_title}」技术分析仍在运行中，请稍后回复1获取结果。\n当前暂不接受新的技术分析请求，请在结果领取后再发起新的技术分析。", ("running_title",)),
+    ReplyTextDefinition("reply.wechatmp.technical_ready", "技术分析可领取提示", "客户发起技术分析时，结果已准备好可直接领取时返回。保留 `{target}`，系统会替换为股票或标题。", "「{target}」技术分析结果已准备好，回复1获取。", ("target",)),
+    ReplyTextDefinition("reply.wechatmp.pending_technical_analysis", "技术分析待领取提示", "客户有技术分析结果待领取又输入新内容时返回。保留 `{}`，系统会替换为股票或标题。", "「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表。", ("target",)),
     ReplyTextDefinition("reply.wechatmp.thinking_timeout", "微信重试超时提示", "微信第三次请求时后台仍未完成时返回。", "【正在思考中，回复任意文字尝试获取回复】"),
-    ReplyTextDefinition("reply.wechatmp.unmatched", "投资指令无法识别提示", "投资路由无法识别输入时返回。", "请输入以下格式之一："),
     ReplyTextDefinition("reply.wechatmp.chat_prefix_hint", "聊天前缀提示", "系统设置聊天前缀时，引导客户按前缀输入。保留 `{}`，系统会替换为前缀。", "请输入'{}'接你想说的话跟我说话。\n例如:\n{}你好，很高兴见到你。", ("prefix", "prefix")),
     ReplyTextDefinition("reply.wechatmp.default_chat_hint", "普通聊天引导提示", "没有聊天前缀时的默认聊天引导。", "你好，很高兴见到你。\n请跟我说话吧。"),
     ReplyTextDefinition("reply.wechatmp.unknown_error", "公众号未知错误提示", "公众号链路兜底错误提示。", "未知错误，请稍后再试"),

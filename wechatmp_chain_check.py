@@ -35,7 +35,7 @@ import psycopg
 import requests
 
 
-DEFAULT_DATABASE_URL = "postgresql://cowagent:cowagent@127.0.0.1:55432/cowagent_investment"
+DEFAULT_DATABASE_URL = "postgresql://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 DEFAULT_TECHNICAL_ANALYSIS_QUERY = "天娱数科 技术分析"
 DEFAULT_CONVERTIBLE_BOND_QUERY = "转债"
 SMOKE_UNMATCHED_QUERY = "技术分析"

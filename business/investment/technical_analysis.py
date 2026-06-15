@@ -27,7 +27,7 @@ from .market_date_resolver import MarketDateResolution, MarketDateResolver, norm
 from .render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from .schema import investment_cache_entries, investment_request_records
 from .storage import get_storage_dirs
-from .stock_resolver import resolve_stock
+from .stock_resolver import list_exact_stock_name_matches, resolve_stock
 from .versioning import file_fingerprint
 
 
@@ -159,7 +159,7 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
 
     symbol, error = resolve_stock(value, auto_refresh_on_miss=False)
     if error == ErrorCode.STOCK_AMBIGUOUS:
-        return TechnicalAnalysisTarget(), error, f"ambiguous stock name: {value}"
+        return TechnicalAnalysisTarget(), error, _ambiguous_stock_detail(value)
     if error or not symbol:
         return TechnicalAnalysisTarget(), ErrorCode.STOCK_NOT_FOUND, f"cannot resolve stock name: {value}"
 
@@ -176,6 +176,23 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
     )
 
 
+def _ambiguous_stock_detail(value: str) -> str:
+    matches = list_exact_stock_name_matches(value)
+    if not matches:
+        return f"股票名称“{value}”匹配到多个标的，请改用股票代码重新发送。"
+    lines = [f"股票名称“{value}”匹配到多个标的，请改用股票代码重新发送："]
+    for index, row in enumerate(matches, start=1):
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or value).strip()
+        market = str(row.get("market") or "").strip().upper()
+        suffix = f"（{market}）" if market else ""
+        lines.append(f"{index}. {code} {name}{suffix}".strip())
+    example_code = str(matches[-1].get("code") or matches[0].get("code") or "").strip()
+    if example_code:
+        lines.append(f"例如：{example_code} 技术分析")
+    return "\n".join(lines)
+
+
 def _skill_symbol(symbol: str) -> str:
     return _technical_analysis_target(symbol).skill_symbol or str(symbol or "").strip()
 
@@ -184,12 +201,11 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
     skill_path = Path(str(get_config("technical_analysis.skill_path") or "skills/技术分析/scripts/analyze_universal.py"))
     if not skill_path.is_absolute():
         skill_path = Path.cwd() / skill_path
-    chart_days = str(get_config("technical_analysis.default_chart_days", 120) or 120)
     env = os.environ.copy()
     tushare_token = str(get_config("tushare.token", "") or "").strip()
     if tushare_token:
         env["TUSHARE_TOKEN"] = tushare_token
-    command = [sys.executable, str(skill_path), "--symbol", symbol, "--days", chart_days, "--output", str(output_dir)]
+    command = [sys.executable, str(skill_path), "--symbol", symbol, "--output", str(output_dir)]
     subprocess.run(
         command,
         check=True,
@@ -314,7 +330,7 @@ def _compatible_cache_entry_has_files(entry: cache_service.CacheEntry) -> bool:
 
 
 def _technical_analysis_cache_entry_allowed(entry: cache_service.CacheEntry) -> bool:
-    if technical_analysis_cache_expired_after_close(entry.market_date, entry.updated_at):
+    if technical_analysis_cache_expired_after_close(entry.market_date, entry.updated_at, normalized_target=entry.normalized_target):
         cache_service._invalidate_cache_entry_if_unchanged(entry)
         return False
     return True
