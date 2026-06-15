@@ -1,71 +1,22 @@
 """
-Conversation history persistence using SQLite.
+Conversation history persistence using PostgreSQL.
 
 Design:
-- sessions table: per-session metadata (channel_type, last_active, msg_count)
-- messages table: individual messages stored as JSON, append-only
+- agent_sessions table: per-session metadata (channel_type, last_active, msg_count)
+- agent_messages table: individual messages stored as JSON, append-only
 - Pruning: age-based only (sessions not updated within N days are deleted)
 - Thread-safe via a single in-process lock
-
-Storage path: ~/cow/sessions/conversations.db
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.log import logger
 
-
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id        TEXT    PRIMARY KEY,
-    channel_type      TEXT    NOT NULL DEFAULT '',
-    title             TEXT    NOT NULL DEFAULT '',
-    context_start_seq INTEGER NOT NULL DEFAULT 0,
-    created_at        INTEGER NOT NULL,
-    last_active       INTEGER NOT NULL,
-    msg_count         INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id   TEXT    NOT NULL,
-    seq          INTEGER NOT NULL,
-    role         TEXT    NOT NULL,
-    content      TEXT    NOT NULL,
-    created_at   INTEGER NOT NULL,
-    UNIQUE (session_id, seq)
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_session
-    ON messages (session_id, seq);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_last_active
-    ON sessions (last_active);
-"""
-
-# Migration: add channel_type column to existing databases that predate it.
-_MIGRATION_ADD_CHANNEL_TYPE = """
-ALTER TABLE sessions ADD COLUMN channel_type TEXT NOT NULL DEFAULT '';
-"""
-
-_MIGRATION_ADD_TITLE = """
-ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '';
-"""
-
-_MIGRATION_ADD_CONTEXT_START_SEQ = """
-ALTER TABLE sessions ADD COLUMN context_start_seq INTEGER NOT NULL DEFAULT 0;
-"""
 
 DEFAULT_MAX_AGE_DAYS: int = 30
 
@@ -263,18 +214,16 @@ def _group_into_display_turns(
 
 class ConversationStore:
     """
-    SQLite-backed store for per-session conversation history.
+    PostgreSQL-backed store for per-session conversation history.
 
     Usage:
-        store = ConversationStore(db_path)
+        store = ConversationStore()
         store.append_messages("user_123", new_messages, channel_type="feishu")
         msgs = store.load_messages("user_123", max_turns=30)
     """
 
-    def __init__(self, db_path: Path):
-        self._db_path = db_path
+    def __init__(self, db_path=None):
         self._lock = threading.Lock()
-        self._init_db()
 
     # ------------------------------------------------------------------
     # Public API
@@ -303,26 +252,27 @@ class ConversationStore:
             Chronologically ordered list of message dicts (role, content).
         """
         with self._lock:
-            conn = self._connect()
-            try:
-                # Respect context_start_seq: only load messages at or after the boundary
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
                 ctx_row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    text("SELECT context_start_seq FROM agent_sessions WHERE session_id = :session_id"),
+                    {"session_id": session_id},
                 ).fetchone()
                 ctx_start = ctx_row[0] if ctx_row else 0
 
                 rows = conn.execute(
-                    """
+                    text(
+                        """
                     SELECT seq, role, content
-                    FROM messages
-                    WHERE session_id = ? AND seq >= ?
+                    FROM agent_messages
+                    WHERE session_id = :session_id AND seq >= :ctx_start
                     ORDER BY seq DESC
-                    """,
-                    (session_id, ctx_start),
+                    """
+                    ),
+                    {"session_id": session_id, "ctx_start": ctx_start},
                 ).fetchall()
-            finally:
-                conn.close()
 
         if not rows:
             return []
@@ -380,77 +330,88 @@ class ConversationStore:
 
         now = int(time.time())
         with self._lock:
-            conn = self._connect()
-            try:
-                with conn:
-                    # INSERT OR IGNORE creates the row on first visit;
-                    # the UPDATE always refreshes last_active.
-                    # Avoids ON CONFLICT...DO UPDATE (requires SQLite >= 3.24).
-                    conn.execute(
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                conn.execute(
+                    text(
                         """
-                        INSERT OR IGNORE INTO sessions
+                        INSERT INTO agent_sessions
                             (session_id, channel_type, created_at, last_active, msg_count)
-                        VALUES (?, ?, ?, ?, 0)
+                        VALUES (:session_id, :channel_type, :created_at, :last_active, 0)
+                        ON CONFLICT (session_id) DO NOTHING
                         """,
-                        (session_id, channel_type, now, now),
-                    )
+                    ),
+                    {
+                        "session_id": session_id,
+                        "channel_type": channel_type,
+                        "created_at": now,
+                        "last_active": now,
+                    },
+                )
+                conn.execute(
+                    text("UPDATE agent_sessions SET last_active = :last_active WHERE session_id = :session_id"),
+                    {"last_active": now, "session_id": session_id},
+                )
+
+                row = conn.execute(
+                    text("SELECT COALESCE(MAX(seq), -1) FROM agent_messages WHERE session_id = :session_id"),
+                    {"session_id": session_id},
+                ).fetchone()
+                next_seq = row[0] + 1
+
+                for msg in messages:
+                    role = msg.get("role", "")
+                    content = json.dumps(msg.get("content", ""), ensure_ascii=False)
                     conn.execute(
-                        "UPDATE sessions SET last_active = ? WHERE session_id = ?",
-                        (now, session_id),
-                    )
-
-                    # Determine starting seq for the new batch.
-                    row = conn.execute(
-                        "SELECT COALESCE(MAX(seq), -1) FROM messages WHERE session_id = ?",
-                        (session_id,),
-                    ).fetchone()
-                    next_seq = row[0] + 1
-
-                    for msg in messages:
-                        role = msg.get("role", "")
-                        content = json.dumps(
-                            msg.get("content", ""), ensure_ascii=False
-                        )
-                        conn.execute(
+                        text(
                             """
-                            INSERT OR IGNORE INTO messages
+                            INSERT INTO agent_messages
                                 (session_id, seq, role, content, created_at)
-                            VALUES (?, ?, ?, ?, ?)
+                            VALUES (:session_id, :seq, :role, :content, :created_at)
+                            ON CONFLICT (session_id, seq) DO NOTHING
                             """,
-                            (session_id, next_seq, role, content, now),
-                        )
-                        next_seq += 1
-
-                    conn.execute(
-                        """
-                        UPDATE sessions
-                        SET msg_count = (
-                            SELECT COUNT(*) FROM messages WHERE session_id = ?
-                        )
-                        WHERE session_id = ?
-                        """,
-                        (session_id, session_id),
+                        ),
+                        {
+                            "session_id": session_id,
+                            "seq": next_seq,
+                            "role": role,
+                            "content": content,
+                            "created_at": now,
+                        },
                     )
+                    next_seq += 1
 
-                    # Auto-generate title from the first visible user message
-                    cur_title = conn.execute(
-                        "SELECT title FROM sessions WHERE session_id = ?",
-                        (session_id,),
-                    ).fetchone()
-                    if cur_title and not cur_title[0]:
-                        for msg in messages:
-                            if msg.get("role") == "user":
-                                content = msg.get("content", "")
-                                text = _extract_display_text(content)
-                                if text:
-                                    title = text[:50].split("\n")[0]
-                                    conn.execute(
-                                        "UPDATE sessions SET title = ? WHERE session_id = ?",
-                                        (title, session_id),
-                                    )
-                                    break
-            finally:
-                conn.close()
+                conn.execute(
+                    text(
+                        """
+                        UPDATE agent_sessions
+                        SET msg_count = (
+                            SELECT COUNT(*) FROM agent_messages WHERE session_id = :count_session_id
+                        )
+                        WHERE session_id = :session_id
+                        """,
+                    ),
+                    {"count_session_id": session_id, "session_id": session_id},
+                )
+
+                cur_title = conn.execute(
+                    text("SELECT title FROM agent_sessions WHERE session_id = :session_id"),
+                    {"session_id": session_id},
+                ).fetchone()
+                if cur_title and not cur_title[0]:
+                    for msg in messages:
+                        if msg.get("role") == "user":
+                            content = msg.get("content", "")
+                            title_text = _extract_display_text(content)
+                            if title_text:
+                                title = title_text[:50].split("\n")[0]
+                                conn.execute(
+                                    text("UPDATE agent_sessions SET title = :title WHERE session_id = :session_id"),
+                                    {"title": title, "session_id": session_id},
+                                )
+                                break
 
     def clear_context(self, session_id: str) -> int:
         """
@@ -460,49 +421,43 @@ class ConversationStore:
         Returns the new context_start_seq value.
         """
         with self._lock:
-            conn = self._connect()
-            try:
-                with conn:
-                    row = conn.execute(
-                        "SELECT COALESCE(MAX(seq), -1) FROM messages WHERE session_id = ?",
-                        (session_id,),
-                    ).fetchone()
-                    new_start = row[0] + 1
-                    conn.execute(
-                        "UPDATE sessions SET context_start_seq = ? WHERE session_id = ?",
-                        (new_start, session_id),
-                    )
-                    return new_start
-            finally:
-                conn.close()
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                row = conn.execute(
+                    text("SELECT COALESCE(MAX(seq), -1) FROM agent_messages WHERE session_id = :session_id"),
+                    {"session_id": session_id},
+                ).fetchone()
+                new_start = row[0] + 1
+                conn.execute(
+                    text("UPDATE agent_sessions SET context_start_seq = :new_start WHERE session_id = :session_id"),
+                    {"new_start": new_start, "session_id": session_id},
+                )
+                return new_start
 
     def get_context_start_seq(self, session_id: str) -> int:
         """Return the context_start_seq for a session (0 if not set)."""
         with self._lock:
-            conn = self._connect()
-            try:
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
                 row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    text("SELECT context_start_seq FROM agent_sessions WHERE session_id = :session_id"),
+                    {"session_id": session_id},
                 ).fetchone()
                 return row[0] if row else 0
-            finally:
-                conn.close()
 
     def clear_session(self, session_id: str) -> None:
         """Delete all messages and the session record for a given session_id."""
         with self._lock:
-            conn = self._connect()
-            try:
-                with conn:
-                    conn.execute(
-                        "DELETE FROM messages WHERE session_id = ?", (session_id,)
-                    )
-                    conn.execute(
-                        "DELETE FROM sessions WHERE session_id = ?", (session_id,)
-                    )
-            finally:
-                conn.close()
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                conn.execute(text("DELETE FROM agent_messages WHERE session_id = :session_id"), {"session_id": session_id})
+                conn.execute(text("DELETE FROM agent_sessions WHERE session_id = :session_id"), {"session_id": session_id})
 
     def prune_scheduled_messages(
         self,
@@ -547,16 +502,20 @@ class ConversationStore:
             return any(text.startswith(m) for m in markers)
 
         with self._lock:
-            conn = self._connect()
-            try:
+            from sqlalchemy import bindparam, text
+            from business.investment.db import connect
+
+            with connect() as conn:
                 rows = conn.execute(
-                    """
+                    text(
+                        """
                     SELECT seq, role, content
-                    FROM messages
-                    WHERE session_id = ?
+                    FROM agent_messages
+                    WHERE session_id = :session_id
                     ORDER BY seq ASC
-                    """,
-                    (session_id,),
+                    """
+                    ),
+                    {"session_id": session_id},
                 ).fetchall()
 
                 # Find scheduler pairs: each is (user_seq, assistant_seq?)
@@ -585,25 +544,27 @@ class ConversationStore:
                 if not seqs_to_delete:
                     return 0
 
-                placeholders = ",".join("?" * len(seqs_to_delete))
-                with conn:
-                    conn.execute(
-                        f"DELETE FROM messages WHERE session_id = ? AND seq IN ({placeholders})",
-                        (session_id, *seqs_to_delete),
-                    )
-                    conn.execute(
+                delete_stmt = text(
+                    "DELETE FROM agent_messages "
+                    "WHERE session_id = :session_id AND seq IN :seqs_to_delete"
+                ).bindparams(bindparam("seqs_to_delete", expanding=True))
+                conn.execute(
+                    delete_stmt,
+                    {"session_id": session_id, "seqs_to_delete": seqs_to_delete},
+                )
+                conn.execute(
+                    text(
                         """
-                        UPDATE sessions
+                        UPDATE agent_sessions
                         SET msg_count = (
-                            SELECT COUNT(*) FROM messages WHERE session_id = ?
+                            SELECT COUNT(*) FROM agent_messages WHERE session_id = :count_session_id
                         )
-                        WHERE session_id = ?
+                        WHERE session_id = :session_id
                         """,
-                        (session_id, session_id),
-                    )
+                    ),
+                    {"count_session_id": session_id, "session_id": session_id},
+                )
                 return len(seqs_to_delete)
-            finally:
-                conn.close()
 
     def cleanup_old_sessions(self, max_age_days: Optional[int] = None) -> int:
         """
@@ -628,24 +589,21 @@ class ConversationStore:
         deleted = 0
 
         with self._lock:
-            conn = self._connect()
-            try:
-                with conn:
-                    stale = conn.execute(
-                        "SELECT session_id FROM sessions "
-                        "WHERE last_active < ? AND channel_type != 'web'",
-                        (cutoff,),
-                    ).fetchall()
-                    for (sid,) in stale:
-                        conn.execute(
-                            "DELETE FROM messages WHERE session_id = ?", (sid,)
-                        )
-                        conn.execute(
-                            "DELETE FROM sessions WHERE session_id = ?", (sid,)
-                        )
-                        deleted += 1
-            finally:
-                conn.close()
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                stale = conn.execute(
+                    text(
+                        "SELECT session_id FROM agent_sessions "
+                        "WHERE last_active < :cutoff AND channel_type != 'web'"
+                    ),
+                    {"cutoff": cutoff},
+                ).fetchall()
+                for (sid,) in stale:
+                    conn.execute(text("DELETE FROM agent_messages WHERE session_id = :session_id"), {"session_id": sid})
+                    conn.execute(text("DELETE FROM agent_sessions WHERE session_id = :session_id"), {"session_id": sid})
+                    deleted += 1
 
         if deleted:
             logger.info(f"[ConversationStore] Pruned {deleted} expired sessions")
@@ -690,25 +648,27 @@ class ConversationStore:
         """
         page = max(1, page)
         with self._lock:
-            conn = self._connect()
-            try:
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
                 ctx_row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    text("SELECT context_start_seq FROM agent_sessions WHERE session_id = :session_id"),
+                    {"session_id": session_id},
                 ).fetchone()
                 ctx_start = ctx_row[0] if ctx_row else 0
 
                 rows = conn.execute(
-                    """
+                    text(
+                        """
                     SELECT seq, role, content, created_at
-                    FROM messages
-                    WHERE session_id = ?
+                    FROM agent_messages
+                    WHERE session_id = :session_id
                     ORDER BY seq ASC
-                    """,
-                    (session_id,),
+                    """
+                    ),
+                    {"session_id": session_id},
                 ).fetchall()
-            finally:
-                conn.close()
 
         # Honour the current enable_thinking switch when building display turns
         # so that toggling it off hides previously-saved thinking blocks too.
@@ -777,38 +737,42 @@ class ConversationStore:
         """
         page = max(1, page)
         with self._lock:
-            conn = self._connect()
-            try:
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
                 if channel_type:
                     total = conn.execute(
-                        "SELECT COUNT(*) FROM sessions WHERE channel_type = ?",
-                        (channel_type,),
+                        text("SELECT COUNT(*) FROM agent_sessions WHERE channel_type = :channel_type"),
+                        {"channel_type": channel_type},
                     ).fetchone()[0]
                     rows = conn.execute(
-                        """
+                        text(
+                            """
                         SELECT session_id, title, created_at, last_active, msg_count
-                        FROM sessions
-                        WHERE channel_type = ?
+                        FROM agent_sessions
+                        WHERE channel_type = :channel_type
                         ORDER BY last_active DESC
-                        LIMIT ? OFFSET ?
+                        LIMIT :limit OFFSET :offset
                         """,
-                        (channel_type, page_size, (page - 1) * page_size),
+                        ),
+                        {"channel_type": channel_type, "limit": page_size, "offset": (page - 1) * page_size},
                     ).fetchall()
                 else:
                     total = conn.execute(
-                        "SELECT COUNT(*) FROM sessions",
+                        text("SELECT COUNT(*) FROM agent_sessions"),
                     ).fetchone()[0]
                     rows = conn.execute(
-                        """
+                        text(
+                            """
                         SELECT session_id, title, created_at, last_active, msg_count
-                        FROM sessions
+                        FROM agent_sessions
                         ORDER BY last_active DESC
-                        LIMIT ? OFFSET ?
+                        LIMIT :limit OFFSET :offset
                         """,
-                        (page_size, (page - 1) * page_size),
+                        ),
+                        {"limit": page_size, "offset": (page - 1) * page_size},
                     ).fetchall()
-            finally:
-                conn.close()
 
         sessions = [
             {
@@ -831,91 +795,40 @@ class ConversationStore:
     def rename_session(self, session_id: str, title: str) -> bool:
         """Update the title of a session. Returns True if the session existed."""
         with self._lock:
-            conn = self._connect()
-            try:
-                with conn:
-                    cur = conn.execute(
-                        "UPDATE sessions SET title = ? WHERE session_id = ?",
-                        (title, session_id),
-                    )
-                    return cur.rowcount > 0
-            finally:
-                conn.close()
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                cur = conn.execute(
+                    text("UPDATE agent_sessions SET title = :title WHERE session_id = :session_id"),
+                    {"title": title, "session_id": session_id},
+                )
+                return cur.rowcount > 0
 
     def get_stats(self) -> Dict[str, Any]:
         """Return basic stats keyed by channel_type, for monitoring."""
         with self._lock:
-            conn = self._connect()
-            try:
-                total_sessions = conn.execute(
-                    "SELECT COUNT(*) FROM sessions"
-                ).fetchone()[0]
-                total_messages = conn.execute(
-                    "SELECT COUNT(*) FROM messages"
-                ).fetchone()[0]
+            from sqlalchemy import text
+            from business.investment.db import connect
+
+            with connect() as conn:
+                total_sessions = conn.execute(text("SELECT COUNT(*) FROM agent_sessions")).fetchone()[0]
+                total_messages = conn.execute(text("SELECT COUNT(*) FROM agent_messages")).fetchone()[0]
                 by_channel = conn.execute(
-                    """
+                    text(
+                        """
                     SELECT channel_type, COUNT(*) as cnt
-                    FROM sessions
+                    FROM agent_sessions
                     GROUP BY channel_type
                     ORDER BY cnt DESC
                     """
+                    )
                 ).fetchall()
                 return {
                     "total_sessions": total_sessions,
                     "total_messages": total_messages,
                     "by_channel": {row[0] or "unknown": row[1] for row in by_channel},
                 }
-            finally:
-                conn.close()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _init_db(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = self._connect()
-        try:
-            conn.executescript(_DDL)
-            conn.commit()
-            self._migrate(conn)
-        finally:
-            conn.close()
-
-    def _migrate(self, conn: sqlite3.Connection) -> None:
-        """Apply incremental schema migrations on existing databases."""
-        cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
-        }
-        if "channel_type" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_CHANNEL_TYPE)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added channel_type column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration failed: {e}")
-        if "title" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_TITLE)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added title column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (title) failed: {e}")
-        if "context_start_seq" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_CONTEXT_START_SEQ)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added context_start_seq column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (context_start_seq) failed: {e}")
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
 
 
 # ---------------------------------------------------------------------------
@@ -930,10 +843,8 @@ def get_conversation_store() -> ConversationStore:
     """
     Return the process-wide ConversationStore singleton.
 
-    Reuses the long-term memory database so the project stays with a single
-    SQLite file: ~/cow/memory/long-term/index.db
-    The conversation tables (sessions / messages) are separate from the
-    memory tables (memory_chunks / file_metadata) — no conflicts.
+    Uses the shared business PostgreSQL connection and stores rows in
+    agent_sessions / agent_messages.
     """
     global _store_instance
     if _store_instance is not None:
@@ -943,13 +854,6 @@ def get_conversation_store() -> ConversationStore:
         if _store_instance is not None:
             return _store_instance
 
-        try:
-            from agent.memory.config import get_default_memory_config
-            db_path = get_default_memory_config().get_db_path()
-        except Exception:
-            from common.utils import expand_path
-            db_path = Path(expand_path("~/cow")) / "memory" / "long-term" / "index.db"
-
-        _store_instance = ConversationStore(db_path)
-        logger.debug(f"[ConversationStore] Using shared DB at: {db_path}")
+        _store_instance = ConversationStore()
+        logger.debug("[ConversationStore] Using PostgreSQL agent_messages store")
         return _store_instance

@@ -276,9 +276,14 @@ class AgentInitializer:
         memory_tools = []
         
         try:
+            from config import conf
+            if not conf().get("agent_memory_index", False):
+                if session_id is None:
+                    logger.info("[AgentInitializer] Long-term memory index disabled")
+                return memory_manager, memory_tools
+
             from agent.memory import MemoryManager, MemoryConfig
             from agent.tools import MemorySearchTool, MemoryGetTool
-            from config import conf
 
             memory_config = MemoryConfig(workspace_root=workspace_root)
 

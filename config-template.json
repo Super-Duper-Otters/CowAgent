@@ -35,6 +35,7 @@
   "web_password": "",
   "investment.technical_analysis.cache_close_invalidate_time": "15:30",
   "agent": true,
+  "agent_memory_index": false,
   "agent_max_context_tokens": 50000,
   "agent_max_context_turns": 20,
   "agent_max_steps": 20,

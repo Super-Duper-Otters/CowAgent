@@ -295,6 +295,33 @@ ai_generation_audits = Table(
     Index("idx_ai_generation_audits_actor_created", "actor_name", "created_at"),
 )
 
+agent_sessions = Table(
+    "agent_sessions",
+    metadata,
+    Column("session_id", Text, primary_key=True),
+    Column("channel_type", Text, nullable=False, server_default=""),
+    Column("title", Text, nullable=False, server_default=""),
+    Column("context_start_seq", Integer, nullable=False, server_default="0"),
+    Column("created_at", Integer, nullable=False),
+    Column("last_active", Integer, nullable=False),
+    Column("msg_count", Integer, nullable=False, server_default="0"),
+    Index("idx_agent_sessions_last_active", "last_active"),
+    Index("idx_agent_sessions_channel", "channel_type"),
+)
+
+agent_messages = Table(
+    "agent_messages",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Text, nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("role", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("created_at", Integer, nullable=False),
+    Index("idx_agent_messages_session", "session_id", "seq"),
+    Index("idx_agent_messages_session_seq_unique", "session_id", "seq", unique=True),
+)
+
 # New concise table aliases. Keep the legacy Python names above so existing
 # service modules can continue importing them while the physical table names
 # are simplified.

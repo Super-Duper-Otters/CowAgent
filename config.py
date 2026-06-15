@@ -215,6 +215,7 @@ available_setting = {
     "web_session_expire_days": 30,  # Auth session expiry in days
     "investment.technical_analysis.cache_close_invalidate_time": "15:30",  # 技术分析缓存收盘后软失效检查时间（北京时间，HH:MM）
     "agent": True,  # 是否开启Agent模式
+    "agent_memory_index": False,  # 是否启用长期记忆索引；关闭时不创建 SQLite memory index
     "agent_workspace": "~/cow",  # agent工作空间路径，用于存储skills、memory等
     "agent_max_context_tokens": 50000,  # Agent模式下最大上下文tokens
     "agent_max_context_turns": 20,  # Agent模式下最大上下文记忆轮次
