@@ -4936,7 +4936,6 @@ function renderInvestmentComponentManager() {
         <section class="investment-component-shell">
             <div class="investment-panel-heading">
                 <div>
-                    <div class="investment-panel-title"><i class="fas fa-cubes"></i><span>组件配置</span></div>
                     <div class="investment-subtitle">组件以卡片方式管理，配置项在对话框内编辑。</div>
                 </div>
                 <div class="investment-panel-actions">
@@ -4992,9 +4991,6 @@ function renderInvestmentComponentSections(components = []) {
         return (aIndex < 0 ? 99 : aIndex) - (bIndex < 0 ? 99 : bIndex);
     });
     return `<section class="investment-component-board">
-        <div class="investment-component-board-head">
-            <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>投研组件</span></div>
-        </div>
         <div class="investment-component-grid">${sorted.map(renderInvestmentComponentCard).join('')}</div>
     </section>`;
 }
@@ -5233,37 +5229,103 @@ function renderInvestmentConfigGroupByTitle(title, configs, options = {}) {
     return group ? renderInvestmentConfigGroup(group, configs, options) : '';
 }
 
+const investmentReplyConfigDialogPayloads = {};
+
 function renderInvestmentReplyConfigGroups(replyTexts, configs) {
     const groups = replyTexts.groups || [];
     const definitions = replyTexts.definitions || {};
     if (!groups.length) return '';
-    const renderedGroups = groups.map(group => `
+    return groups.map(group => `
         <section class="investment-panel investment-workbench-full">
             <div class="investment-panel-title"><i class="fas fa-message"></i><span>${escapeHtml(group.title || '公众号回复词')}</span></div>
-            <div class="investment-grid cols-1">
+            <div class="investment-reply-list">
                 ${(group.keys || []).map(key => renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key])).join('')}
             </div>
         </section>`).join('');
-    return `
-        <section class="investment-panel investment-workbench-full">
-            <div class="investment-panel-heading">
-                <div>
-                    <div class="investment-panel-title"><i class="fas fa-comments"></i><span>公众号回复词</span></div>
-                    <div class="investment-subtitle">这些文案会直接展示给公众号客户。带 {} 的文案请保留占位符，系统会自动替换股票或状态名称。</div>
-                </div>
-            </div>
-        </section>
-        ${renderedGroups}`;
 }
 
 function renderInvestmentReplyConfigField(key, definition, value = '') {
     const label = definition.label || key;
     const description = definition.description || '';
+    const placeholders = Array.isArray(definition.placeholders) ? definition.placeholders : [];
+    investmentReplyConfigDialogPayloads[key] = {key, label, description, placeholders, value: value || ''};
+    const canEdit = investmentCanEditConfig(key);
+    const preview = String(value || '').trim() || '未配置回复词';
     return `
-        <div>
-            ${renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})}
-            ${description ? `<div class="investment-config-description">${escapeHtml(description)}</div>` : ''}
+        <div class="investment-reply-row" data-config-key="${escapeHtml(key)}">
+            <div class="investment-reply-row-main">
+                <div class="investment-reply-row-title">
+                    <strong>${escapeHtml(label)}</strong>
+                    ${description ? `<span class="investment-reply-help" data-tooltip="${escapeHtml(description)}" title="${escapeHtml(description)}" aria-label="${escapeHtml(description)}"><i class="fas fa-info"></i></span>` : ''}
+                </div>
+                <div class="investment-reply-row-preview" id="${escapeHtml(investmentReplyPreviewId(key))}">${escapeHtml(preview)}</div>
+            </div>
+            <div class="investment-reply-row-actions">
+                ${canEdit ? `<button class="investment-btn compact" type="button" onclick='openInvestmentReplyConfigDialog(${investmentJsString(key)})'><i class="fas fa-pen"></i><span>编辑</span></button>` : '<span class="investment-muted-inline">只读</span>'}
+            </div>
         </div>`;
+}
+
+function investmentReplyPreviewId(key) {
+    return `${investmentConfigElementId(key)}-preview`;
+}
+
+function openInvestmentReplyConfigDialog(key = '') {
+    const payload = investmentReplyConfigDialogPayloads[key] || {key};
+    const label = payload.label || key;
+    const description = payload.description || '';
+    const placeholders = Array.isArray(payload.placeholders) ? payload.placeholders : [];
+    const id = investmentConfigElementId(key);
+    const safeId = escapeHtml(id);
+    const placeholderTools = placeholders.length ? `
+            <div class="investment-reply-placeholders">
+                <span>可用变量</span>
+                <div class="investment-reply-placeholder-list">
+                    ${placeholders.map(item => `<button class="investment-reply-placeholder" type="button" onclick='insertInvestmentReplyPlaceholder(${investmentJsString(key)}, ${investmentJsString(item)})'>{${escapeHtml(item)}}</button>`).join('')}
+                </div>
+            </div>` : '';
+    const body = `
+        <div class="investment-reply-dialog">
+            <div class="investment-reply-dialog-heading">
+                <strong>${escapeHtml(label)}</strong>
+                ${description ? `<p>${escapeHtml(description)}</p>` : ''}
+            </div>
+            ${placeholderTools}
+            <label class="investment-field textarea investment-reply-dialog-field">
+                <span>回复内容</span>
+                <textarea id="${safeId}" rows="8" oninput='markInvestmentConfigDirty(${investmentJsString(key)})'>${escapeHtml(payload.value || '')}</textarea>
+            </label>
+            <div class="investment-actions investment-modal-actions">
+                <button id="${safeId}-save" class="investment-btn primary investment-config-save hidden" type="button" onclick='saveInvestmentReplyConfigDialog(${investmentJsString(key)})'><i class="fas fa-floppy-disk"></i><span>保存</span></button>
+                <button class="investment-btn" type="button" onclick="hideInvestmentModal()"><i class="fas fa-xmark"></i><span>取消</span></button>
+                <span id="${safeId}-status" class="investment-config-status"></span>
+            </div>
+        </div>`;
+    showInvestmentModal('编辑公众号回复词', body);
+}
+
+function insertInvestmentReplyPlaceholder(key, placeholder) {
+    const id = investmentConfigElementId(key);
+    const textarea = document.getElementById(id);
+    if (!textarea) return;
+    const token = `{${String(placeholder || '')}}`;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    textarea.value = `${textarea.value.slice(0, start)}${token}${textarea.value.slice(end)}`;
+    const nextCursor = start + token.length;
+    textarea.focus();
+    textarea.setSelectionRange(nextCursor, nextCursor);
+    markInvestmentConfigDirty(key);
+}
+
+async function saveInvestmentReplyConfigDialog(key) {
+    const saved = await saveInvestmentConfigKey(key, 'textarea');
+    if (!saved) return;
+    const preview = document.getElementById(investmentReplyPreviewId(key));
+    const value = investmentConfigValue(key, 'textarea');
+    if (investmentReplyConfigDialogPayloads[key]) investmentReplyConfigDialogPayloads[key].value = value;
+    if (preview) preview.textContent = String(value || '').trim() || '未配置回复词';
+    hideInvestmentModal();
 }
 
 function investmentConfigElementId(key) {
@@ -5341,9 +5403,11 @@ async function saveInvestmentConfigKey(key, type) {
         if (button) button.classList.add('hidden');
         if (status) status.textContent = '已保存';
         showInvestmentToast('配置已保存');
+        return true;
     } catch (error) {
         if (status) status.textContent = String(error.message || error);
         showInvestmentToast('配置保存失败', 'error');
+        return false;
     } finally {
         if (button) button.disabled = false;
     }
@@ -5532,6 +5596,9 @@ window.saveInvestmentConfig = saveInvestmentConfig;
 window.switchInvestmentConfigPanel = switchInvestmentConfigPanel;
 window.markInvestmentConfigDirty = markInvestmentConfigDirty;
 window.saveInvestmentConfigKey = saveInvestmentConfigKey;
+window.openInvestmentReplyConfigDialog = openInvestmentReplyConfigDialog;
+window.saveInvestmentReplyConfigDialog = saveInvestmentReplyConfigDialog;
+window.insertInvestmentReplyPlaceholder = insertInvestmentReplyPlaceholder;
 window.loadInvestmentComponents = loadInvestmentComponents;
 window.uploadInvestmentSkill = uploadInvestmentSkill;
 window.uploadInvestmentSkillPackage = uploadInvestmentSkillPackage;

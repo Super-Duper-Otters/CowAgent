@@ -1469,37 +1469,60 @@ def test_investment_config_page_renders_reply_text_section():
     assert "const definitions = replyTexts.definitions || {};" in groups_body
     assert "group.keys || []" in groups_body
     assert "renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key])" in groups_body
+    assert "investment-reply-list" in groups_body
     assert "公众号回复词" in js
     assert "INVEST_REPLY_CONFIG_REFERENCE_KEYS" not in js
 
 
-def test_investment_reply_config_fields_show_descriptions_and_use_textareas():
+def test_investment_reply_config_fields_render_collapsed_edit_rows():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     reply_field_body = _js_function_body(js, "renderInvestmentReplyConfigField")
-    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
 
     assert "function renderInvestmentReplyConfigField(" in js
-    assert "investment-config-description" in js
-    assert "renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})" in reply_field_body
+    assert "investment-reply-row" in reply_field_body
+    assert "标题：当前回复词" not in reply_field_body
+    assert "investment-reply-row-preview" in reply_field_body
+    assert "investment-reply-help" in reply_field_body
+    assert "data-tooltip" in reply_field_body
+    assert "openInvestmentReplyConfigDialog" in reply_field_body
     assert "escapeHtml(description)" in reply_field_body
-    assert "escapeHtml(label)" in config_field_body
-    assert "investmentJsString(key)" in config_field_body
-    assert "const saveHandler = `saveInvestmentConfigKey(${keyArg}, ${typeArg})`;" in config_field_body
-    assert "const dirtyHandler = `markInvestmentConfigDirty(${keyArg})`;" in config_field_body
-    assert "saveInvestmentConfigKey(${keyArg}, ${typeArg})" in config_field_body
-    assert "markInvestmentConfigDirty(${keyArg})" in config_field_body
-    assert ".investment-config-description" in css
+    assert "investment-config-description" not in reply_field_body
+    assert ".investment-reply-list" in css
+    assert ".investment-reply-row" in css
+    assert ".investment-reply-help" in css
+    assert "content: attr(data-tooltip);" in css
+    assert "bottom: calc(100% + 8px);" in css
+    assert "transform: translateX(-50%) translateY(4px);" in css
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in css
 
 
-def test_investment_reply_config_fields_show_save_button_by_default():
+def test_investment_reply_config_dialog_edits_and_saves_single_value():
     js = CONSOLE_JS.read_text(encoding="utf-8")
-    reply_field_body = _js_function_body(js, "renderInvestmentReplyConfigField")
-    config_field_body = _js_function_body(js, "renderInvestmentConfigField")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    dialog_body = _js_function_body(js, "openInvestmentReplyConfigDialog")
+    save_body = _js_function_body(js, "saveInvestmentReplyConfigDialog")
 
-    assert "renderInvestmentConfigField(key, label, 'textarea', value, {showSaveButton: true})" in reply_field_body
-    assert "const showSaveButton = options.showSaveButton === true;" in config_field_body
-    assert "investment-config-save${showSaveButton ? '' : ' hidden'}" in config_field_body
+    assert "function openInvestmentReplyConfigDialog(" in js
+    assert "showInvestmentModal('编辑公众号回复词', body)" in dialog_body
+    assert "textarea id=\"${safeId}\"" in dialog_body
+    assert "const placeholders = Array.isArray(payload.placeholders) ? payload.placeholders : [];" in dialog_body
+    assert "investment-reply-placeholders" in dialog_body
+    assert "insertInvestmentReplyPlaceholder" in dialog_body
+    assert "markInvestmentConfigDirty(${investmentJsString(key)})" in dialog_body
+    assert "saveInvestmentReplyConfigDialog(${investmentJsString(key)})" in dialog_body
+    assert "function insertInvestmentReplyPlaceholder(" in js
+    assert "textarea.setSelectionRange(nextCursor, nextCursor)" in js
+    assert "await saveInvestmentConfigKey(key, 'textarea')" in save_body
+    assert "investmentReplyPreviewId(key)" in save_body
+    assert "hideInvestmentModal()" in save_body
+    assert "window.openInvestmentReplyConfigDialog = openInvestmentReplyConfigDialog;" in js
+    assert "window.saveInvestmentReplyConfigDialog = saveInvestmentReplyConfigDialog;" in js
+    assert "window.insertInvestmentReplyPlaceholder = insertInvestmentReplyPlaceholder;" in js
+    assert ".investment-reply-dialog" in css
+    assert ".investment-reply-placeholders" in css
+    assert ".investment-reply-placeholder" in css
+    assert ".investment-reply-dialog-field textarea" in css
 
 
 def test_investment_content_and_records_ui_respect_cache_and_export_permissions():

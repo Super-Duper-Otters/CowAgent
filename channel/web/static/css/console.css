@@ -722,6 +722,253 @@
 .investment-modal-body {
     min-height: 0;
 }
+
+.investment-reply-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.investment-reply-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    min-height: 64px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.dark .investment-reply-row {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.investment-reply-row-main {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+}
+
+.investment-reply-row-title {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.investment-reply-row-title strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dark .investment-reply-row-title {
+    color: #f8fafc;
+}
+
+.investment-reply-help {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 17px;
+    height: 17px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    color: #64748b;
+    font-size: 10px;
+    line-height: 1;
+    cursor: help;
+}
+
+.dark .investment-reply-help {
+    border-color: #64748b;
+    color: #94a3b8;
+}
+
+.investment-reply-help::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    z-index: 70;
+    width: max-content;
+    max-width: 280px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    white-space: normal;
+}
+
+.investment-reply-help::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 3px);
+    z-index: 71;
+    width: 8px;
+    height: 8px;
+    background: #0f172a;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) rotate(45deg);
+    transition: opacity 0.15s ease;
+}
+
+.investment-reply-help:hover::after,
+.investment-reply-help:focus::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.investment-reply-help:hover::before,
+.investment-reply-help:focus::before {
+    opacity: 1;
+}
+
+.investment-reply-row-preview {
+    overflow: hidden;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dark .investment-reply-row-preview {
+    color: #cbd5e1;
+}
+
+.investment-reply-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.investment-reply-dialog {
+    display: grid;
+    gap: 14px;
+}
+
+.investment-reply-dialog-heading {
+    display: grid;
+    gap: 4px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.dark .investment-reply-dialog-heading {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.investment-reply-dialog-heading span {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.dark .investment-reply-dialog-heading span {
+    color: #94a3b8;
+}
+
+.investment-reply-dialog-heading strong {
+    color: #0f172a;
+    font-size: 15px;
+}
+
+.dark .investment-reply-dialog-heading strong {
+    color: #f8fafc;
+}
+
+.investment-reply-dialog-heading p {
+    margin: 0;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.dark .investment-reply-dialog-heading p {
+    color: #94a3b8;
+}
+
+.investment-reply-placeholders {
+    display: grid;
+    gap: 8px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.dark .investment-reply-placeholders {
+    color: #94a3b8;
+}
+
+.investment-reply-placeholder-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.investment-reply-placeholder {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    cursor: pointer;
+}
+
+.investment-reply-placeholder:hover {
+    border-color: #60a5fa;
+    background: #dbeafe;
+}
+
+.dark .investment-reply-placeholder {
+    border-color: rgba(96, 165, 250, 0.35);
+    background: rgba(37, 99, 235, 0.14);
+    color: #93c5fd;
+}
+
+.dark .investment-reply-placeholder:hover {
+    border-color: rgba(147, 197, 253, 0.55);
+    background: rgba(37, 99, 235, 0.22);
+}
+
+.investment-reply-dialog-field textarea {
+    min-height: 180px;
+    resize: vertical;
+}
+
+@media (max-width: 640px) {
+    .investment-reply-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .investment-reply-row-actions {
+        justify-content: flex-start;
+    }
+}
 .cfg-dropdown-item {
     display: flex;
     align-items: center;
