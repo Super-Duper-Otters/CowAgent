@@ -93,15 +93,15 @@ class InvestmentSkillMatch:
 BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
     InvestmentSkillDefinition(
         skill_key="technical-analysis",
-        label="技术分析 Skill",
+        label="技术分析组件",
         description="根据股票代码或名称生成技术分析报告、图表和信号卡片。",
         service_type=ServiceType.TECHNICAL_ANALYSIS,
         match_type="suffix",
         default_triggers=("技术分析",),
         handler_type="builtin_technical_analysis",
-        entry="skills/技术分析/scripts/analyze_universal.py",
+        entry="builtin/components/technical-analysis/scripts/analyze_universal.py",
         config_key="technical_analysis.skill_path",
-        default_script_path="skills/技术分析/scripts/analyze_universal.py",
+        default_script_path="builtin/components/technical-analysis/scripts/analyze_universal.py",
         script_name="analyze_universal.py",
         storage_name="technical-analysis",
         component_type="active_script",
@@ -111,7 +111,7 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
     ),
     InvestmentSkillDefinition(
         skill_key="rate",
-        label="利率 Skill",
+        label="利率组件",
         description="返回当前生效的利率投研内容图片。",
         service_type=ServiceType.RATE,
         match_type="exact",
@@ -125,7 +125,7 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
     ),
     InvestmentSkillDefinition(
         skill_key="convertible-bond",
-        label="转债 Skill",
+        label="转债组件",
         description="返回当前生效的可转债投研内容图片。",
         service_type=ServiceType.CONVERTIBLE_BOND,
         match_type="exact",
@@ -139,7 +139,7 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
     ),
     InvestmentSkillDefinition(
         skill_key="signal-card-renderer",
-        label="图片生成 Skill",
+        label="图片生成组件",
         description="把标准投研文本渲染为信号卡片图片，作为投资业务内部组件使用。",
         service_type=ServiceType.UNMATCHED,
         match_type="exact",
@@ -152,16 +152,10 @@ BUILTIN_DEFINITIONS: tuple[InvestmentSkillDefinition, ...] = (
         default_script_path=DEFAULT_RENDERER_PATH,
         script_name="render_card.py",
         storage_name="signal-card-renderer",
-        copy_assets_from="skills/signal-card-renderer/assets",
+        copy_assets_from="builtin/components/signal-card-renderer/assets",
         component_type="passive_script",
     ),
 )
-
-
-def _uploaded_skill_root() -> Path:
-    from business.business_registry import uploaded_business_root
-
-    return uploaded_business_root()
 
 
 def _bool_value(value: Any, default: bool = True) -> bool:

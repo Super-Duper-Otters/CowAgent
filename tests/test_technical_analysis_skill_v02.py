@@ -11,16 +11,14 @@ import pytest
 def _load_v02_skill_module():
     script = (
         Path(__file__).resolve().parents[1]
-        / "investment"
-        / "skills"
+        / "builtin"
+        / "components"
         / "technical-analysis"
-        / "skill-20260603091309-8cf8ce6c"
-        / "技术分析v0.2"
         / "scripts"
         / "analyze_universal.py"
     )
     if not script.is_file():
-        pytest.skip(f"technical analysis v0.2 skill script is not tracked in this checkout: {script}")
+        pytest.skip(f"technical analysis component script is not tracked in this checkout: {script}")
     sys.path.insert(0, str(script.parent))
     spec = importlib.util.spec_from_file_location("technical_analysis_v02_under_test", script)
     module = importlib.util.module_from_spec(spec)

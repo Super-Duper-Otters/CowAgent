@@ -1,0 +1,17 @@
+{
+  "component_key": "signal-card-renderer",
+  "label": "图片生成组件",
+  "description": "把标准投研文本渲染为信号卡片图片，作为投资业务内部组件使用。",
+  "service_type": "unmatched",
+  "match_type": "exact",
+  "default_triggers": [],
+  "handler_type": "renderer",
+  "entry": "scripts/render_card.py",
+  "output_mode": "image",
+  "routable": false,
+  "config_key": "render.renderer_path",
+  "script_name": "render_card.py",
+  "storage_name": "signal-card-renderer",
+  "copy_assets_from": "builtin/components/signal-card-renderer/assets",
+  "component_type": "passive_script"
+}

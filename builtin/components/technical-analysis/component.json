@@ -1,0 +1,19 @@
+{
+  "component_key": "technical-analysis",
+  "label": "技术分析组件",
+  "description": "根据股票代码或名称生成技术分析报告、图表和信号卡片。",
+  "service_type": "technical_analysis",
+  "match_type": "suffix",
+  "default_triggers": ["技术分析"],
+  "handler_type": "builtin_technical_analysis",
+  "entry": "scripts/analyze_universal.py",
+  "output_mode": "images",
+  "routable": true,
+  "config_key": "technical_analysis.skill_path",
+  "script_name": "analyze_universal.py",
+  "storage_name": "technical-analysis",
+  "component_type": "active_script",
+  "prompt_key": "prompt.technical_analysis",
+  "renderer_component_key": "signal-card-renderer",
+  "template_key": "technical_analysis"
+}

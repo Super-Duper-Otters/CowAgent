@@ -10,10 +10,10 @@ from .constants import ErrorCode, ServiceType, Status, user_message
 from .storage import get_storage_dirs
 
 
-DEFAULT_RENDERER_PATH = "skills/signal-card-renderer/scripts/render_card.py"
-DEFAULT_TEMPLATE_TA_PATH = "skills/signal-card-renderer/assets/template_ta.html"
-DEFAULT_TEMPLATE_BOND_PATH = "skills/signal-card-renderer/assets/template_bond.html"
-DEFAULT_TEMPLATE_CB_PATH = "skills/signal-card-renderer/assets/template_cb.html"
+DEFAULT_RENDERER_PATH = "builtin/components/signal-card-renderer/scripts/render_card.py"
+DEFAULT_TEMPLATE_TA_PATH = "builtin/components/signal-card-renderer/assets/template_ta.html"
+DEFAULT_TEMPLATE_BOND_PATH = "builtin/components/signal-card-renderer/assets/template_bond.html"
+DEFAULT_TEMPLATE_CB_PATH = "builtin/components/signal-card-renderer/assets/template_cb.html"
 
 
 @dataclass

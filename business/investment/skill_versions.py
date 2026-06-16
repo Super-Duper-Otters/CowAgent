@@ -7,8 +7,8 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
 from .config_service import get_config, save_config
+from .component_paths import runtime_component_root, runtime_versions_root
 from .skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
-from .storage import get_storage_dirs
 
 
 BUILTIN_VERSION_ID = "builtin-default"
@@ -24,7 +24,11 @@ def _now() -> str:
 
 
 def _version_root(definition: InvestmentSkillDefinition) -> Path:
-    return get_storage_dirs()["root"] / "skills" / definition.storage_name
+    return runtime_versions_root(definition.storage_name)
+
+
+def _version_roots(definition: InvestmentSkillDefinition) -> list[Path]:
+    return [_version_root(definition)]
 
 
 def _new_version_id() -> str:
@@ -52,6 +56,17 @@ def _read_manifest(version_dir: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def _find_version_dir(definition: InvestmentSkillDefinition, version_id: str) -> Path | None:
+    safe_id = Path(version_id or "").name
+    if not safe_id:
+        return None
+    for root in _version_roots(definition):
+        version_dir = root / safe_id
+        if _read_manifest(version_dir):
+            return version_dir
+    return None
 
 
 def _absolute(path: str | Path) -> str:
@@ -104,6 +119,77 @@ def _copy_builtin_assets(definition: InvestmentSkillDefinition, version_dir: Pat
     target_assets = version_dir / "assets"
     if source_assets.is_dir() and not target_assets.exists():
         shutil.copytree(source_assets, target_assets)
+
+
+def _component_manifest_from_definition(definition: InvestmentSkillDefinition) -> dict:
+    config_key = definition.config_key
+    if not config_key and definition.handler_type == "script" and definition.entry:
+        config_key = f"skill.{definition.skill_key}.script_path"
+    component_type = definition.component_type
+    if not component_type and definition.handler_type == "script":
+        component_type = "active_script" if definition.routable else "passive_script"
+    return {
+        "component_key": definition.skill_key,
+        "label": definition.label,
+        "description": definition.description,
+        "service_type": str(definition.service_type),
+        "match_type": definition.match_type,
+        "default_triggers": list(definition.default_triggers),
+        "handler_type": definition.handler_type,
+        "entry": definition.entry,
+        "output_mode": definition.output_mode,
+        "routable": definition.routable,
+        "config_key": config_key,
+        "script_name": definition.script_name or (Path(definition.entry).name if definition.entry else ""),
+        "storage_name": definition.storage_name or definition.skill_key,
+        "copy_assets_from": definition.copy_assets_from,
+        "component_type": component_type,
+        "prompt_key": definition.prompt_key,
+        "renderer_component_key": definition.renderer_component_key,
+        "template_key": definition.template_key,
+    }
+
+
+def _read_package_component_manifest(package_dir: Path) -> dict:
+    component_json = package_dir / "component.json"
+    if component_json.is_file():
+        from business.business_registry import read_component_definition
+
+        definition = read_component_definition(package_dir)
+        if definition is None:
+            raise ValueError("component.json must contain a valid investment component definition")
+        return _component_manifest_from_definition(InvestmentSkillDefinition(
+            skill_key=definition.business_key,
+            label=definition.label,
+            description=definition.description,
+            service_type=definition.service_type,
+            match_type=definition.match_type,
+            default_triggers=definition.default_triggers,
+            handler_type=definition.handler_type,
+            entry=definition.entry,
+            output_mode=definition.output_mode,
+            routable=definition.routable,
+            base_dir=definition.base_dir,
+            config_key=definition.config_key,
+            default_script_path=definition.default_script_path,
+            script_name=definition.script_name,
+            storage_name=definition.storage_name,
+            copy_assets_from=definition.copy_assets_from,
+            component_type=definition.component_type,
+            prompt_key=definition.prompt_key,
+            renderer_component_key=definition.renderer_component_key,
+            template_key=definition.template_key,
+        ))
+
+    if not (package_dir / "SKILL.md").is_file():
+        raise ValueError("investment component package must contain component.json or SKILL.md at package root")
+
+    from .skill_registry import _read_uploaded_definition
+
+    definition = _read_uploaded_definition(package_dir)
+    if definition is None:
+        raise ValueError("SKILL.md must contain investment frontmatter")
+    return _component_manifest_from_definition(definition)
 
 
 def list_skill_definitions() -> list[dict]:
@@ -183,18 +269,18 @@ def list_versions(skill_key: str) -> list[dict]:
             "active": _is_active(definition, ""),
         }
     ]
-    root = _version_root(definition)
-    if root.is_dir():
-        for version_dir in sorted((item for item in root.iterdir() if item.is_dir()), reverse=True):
-            manifest = _read_manifest(version_dir)
-            if not manifest:
-                continue
-            script_path = str(manifest.get("script_path", ""))
-            versions.append(manifest | {
-                "skill_key": definition.skill_key,
-                "storage_path": str(version_dir),
-                "active": _is_active(definition, script_path),
-            })
+    for root in _version_roots(definition):
+        if root.is_dir():
+            for version_dir in sorted((item for item in root.iterdir() if item.is_dir()), reverse=True):
+                manifest = _read_manifest(version_dir)
+                if not manifest:
+                    continue
+                script_path = str(manifest.get("script_path", ""))
+                versions.append(manifest | {
+                    "skill_key": definition.skill_key,
+                    "storage_path": str(version_dir),
+                    "active": _is_active(definition, script_path),
+                })
     return versions
 
 
@@ -211,18 +297,26 @@ def list_all_skills() -> list[dict]:
 def activate_version(skill_key: str, version_id: str, *, operator: str = "web-console") -> dict:
     definition = _definition(skill_key)
     _ensure_versioned(definition)
+    component_manifest_path = runtime_component_root(definition.skill_key) / "component.json"
     if version_id == BUILTIN_VERSION_ID:
         save_config(definition.config_key, "", operator_role="admin", operator=operator)
+        component_manifest_path.unlink(missing_ok=True)
         return [item for item in list_versions(definition.skill_key) if item["version_id"] == BUILTIN_VERSION_ID][0]
 
-    version_dir = _version_root(definition) / Path(version_id or "").name
-    manifest = _read_manifest(version_dir)
-    if not manifest:
+    version_dir = _find_version_dir(definition, version_id)
+    if version_dir is None:
         raise ValueError(f"{definition.label} version not found: {version_id}")
+    manifest = _read_manifest(version_dir) or {}
     script_path = Path(str(manifest.get("script_path", "")))
     if not script_path.is_file():
         raise ValueError(f"{definition.label} script missing: {script_path}")
     save_config(definition.config_key, str(script_path), operator_role="admin", operator=operator)
+    version_component_manifest = version_dir / "component.json"
+    if version_component_manifest.is_file():
+        component_manifest_path.write_text(
+            version_component_manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     return manifest | {"skill_key": definition.skill_key, "storage_path": str(version_dir), "active": True}
 
 
@@ -232,10 +326,10 @@ def delete_version(skill_key: str, version_id: str, *, operator: str = "web-cons
     if version_id == BUILTIN_VERSION_ID:
         raise ValueError("builtin skill version cannot be deleted")
 
-    version_dir = _version_root(definition) / Path(version_id or "").name
-    manifest = _read_manifest(version_dir)
-    if not manifest:
+    version_dir = _find_version_dir(definition, version_id)
+    if version_dir is None:
         raise ValueError(f"{definition.label} version not found: {version_id}")
+    manifest = _read_manifest(version_dir) or {}
     script_path = str(manifest.get("script_path", ""))
     was_active = _is_active(definition, script_path)
     if was_active:
@@ -250,17 +344,13 @@ def delete_version(skill_key: str, version_id: str, *, operator: str = "web-cons
 
 
 def save_package_upload(filename: str, content: bytes, *, operator: str = "web-console") -> dict:
-    from .skill_registry import _read_uploaded_definition, _uploaded_skill_root
-
     safe_name = Path(filename or "").name
     if Path(safe_name).suffix.lower() != ".zip":
-        raise ValueError("investment skill package upload only accepts .zip files")
+        raise ValueError("investment component package upload only accepts .zip files")
     if not content:
-        raise ValueError("uploaded skill package is empty")
+        raise ValueError("uploaded component package is empty")
 
-    root = _uploaded_skill_root()
-    root.mkdir(parents=True, exist_ok=True)
-    tmp_dir = root / f".upload-{uuid.uuid4().hex}"
+    tmp_dir = runtime_component_root(f".upload-{uuid.uuid4().hex}")
     tmp_dir.mkdir(parents=True, exist_ok=False)
     try:
         archive_path = tmp_dir / safe_name
@@ -272,17 +362,45 @@ def save_package_upload(filename: str, content: bytes, *, operator: str = "web-c
                 target = tmp_dir / _safe_member_path(member.filename)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(archive.read(member))
-        if not (tmp_dir / "SKILL.md").is_file():
-            raise ValueError("investment skill package must contain SKILL.md at package root")
 
-        definition = _read_uploaded_definition(tmp_dir)
-        if definition is None:
-            raise ValueError("SKILL.md must contain investment frontmatter")
-        target_dir = root / definition.skill_key
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        tmp_dir.rename(target_dir)
-        return {"skill_key": definition.skill_key, "storage_path": str(target_dir), "operator": operator}
+        component_manifest = _read_package_component_manifest(tmp_dir)
+        component_key = str(component_manifest["component_key"])
+        target_root = runtime_component_root(component_key)
+        version_id = _new_version_id()
+        version_dir = runtime_versions_root(component_key) / version_id
+        target_root.mkdir(parents=True, exist_ok=True)
+        version_dir.parent.mkdir(parents=True, exist_ok=True)
+        if version_dir.exists():
+            shutil.rmtree(version_dir)
+        tmp_dir.rename(version_dir)
+
+        (target_root / "component.json").write_text(
+            json.dumps(component_manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        entry = str(component_manifest.get("entry") or "").strip()
+        script_path = version_dir / entry if entry else Path("")
+        upload_manifest = {
+            "skill_key": component_key,
+            "version_id": version_id,
+            "source": "upload",
+            "original_filename": safe_name,
+            "uploaded_at": _now(),
+            "operator": operator,
+            "script_path": str(script_path) if entry else "",
+            "storage_path": str(version_dir),
+        }
+        _write_manifest(version_dir, upload_manifest)
+
+        config_key = str(component_manifest.get("config_key") or "")
+        if config_key and entry:
+            save_config(config_key, str(script_path), operator_role="admin", operator=operator)
+
+        return upload_manifest | {
+            "component_key": component_key,
+            "skill_key": component_key,
+            "active": bool(config_key and entry),
+        }
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise

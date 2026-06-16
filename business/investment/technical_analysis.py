@@ -197,8 +197,11 @@ def _skill_symbol(symbol: str) -> str:
     return _technical_analysis_target(symbol).skill_symbol or str(symbol or "").strip()
 
 
+DEFAULT_TECHNICAL_ANALYSIS_PATH = "builtin/components/technical-analysis/scripts/analyze_universal.py"
+
+
 def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
-    skill_path = Path(str(get_config("technical_analysis.skill_path") or "skills/技术分析/scripts/analyze_universal.py"))
+    skill_path = Path(str(get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     if not skill_path.is_absolute():
         skill_path = Path.cwd() / skill_path
     env = os.environ.copy()
@@ -223,7 +226,7 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
 
 
 def _configured_skill_path() -> Path:
-    skill_path = Path(str(get_config("technical_analysis.skill_path") or "skills/技术分析/scripts/analyze_universal.py"))
+    skill_path = Path(str(get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     return skill_path if skill_path.is_absolute() else Path.cwd() / skill_path
 
 

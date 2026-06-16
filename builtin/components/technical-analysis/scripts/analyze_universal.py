@@ -186,7 +186,7 @@ def _fetch_tushare_stock(symbol, api):
     pro = ts.pro_api(api)
     ts_code = symbol.upper()
     if '.' not in ts_code:
-        ts_code = ts_code + '.SH'  # 默认上海
+        ts_code = f"{ts_code}.SH" if ts_code.startswith('6') else f"{ts_code}.SZ"
     df = pro.daily(ts_code=ts_code, start_date='20200101')
     df = df.rename(columns={'trade_date': 'date', 'vol': 'volume'})
     df['date'] = pd.to_datetime(df['date'])

@@ -313,7 +313,9 @@ def run_health_checks(run_smoke: bool = False) -> list[HealthItem]:
     dirs = get_storage_dirs()
     items.append(_check_writable_dir("files_dir", Path(str(get_config("storage.files_dir") or dirs["files"]))))
     items.append(_check_writable_dir("tmp_dir", Path(str(get_config("storage.tmp_dir") or dirs["tmp"]))))
-    items.append(_check_file("technical_analysis_skill", get_config("technical_analysis.skill_path") or "skills/技术分析/scripts/analyze_universal.py"))
+    from .technical_analysis import DEFAULT_TECHNICAL_ANALYSIS_PATH
+
+    items.append(_check_file("technical_analysis_skill", get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     items.append(_check_file("signal_card_renderer", get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))
     items.append(_check_file("template_ta", DEFAULT_TEMPLATE_TA_PATH))
     items.append(_check_file("template_bond", DEFAULT_TEMPLATE_BOND_PATH))
