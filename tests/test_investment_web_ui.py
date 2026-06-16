@@ -2437,6 +2437,11 @@ def test_investment_content_history_date_filters_are_scoped_by_service_type():
 def test_investment_health_ui_exposes_manual_full_check_and_levels():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    health_start = html.index('id="view-invest-health"')
+    logs_start = html.index('id="view-logs"', health_start)
+    health_view = html[health_start:logs_start]
+    health_body = _js_function_body(js, "renderInvestmentHealth")
 
     assert "async function renderInvestmentHealth(runSmoke = false)" in js
     assert "/api/investment/health?smoke=1" in js
@@ -2445,5 +2450,40 @@ def test_investment_health_ui_exposes_manual_full_check_and_levels():
     assert "check.level" in js
     assert "warning" in js
     assert "不可上线" in js
+    assert "w-full max-w-[1600px] mx-auto" in health_view
+    assert "invest-health-shell" in health_view
+    assert "invest-health-placeholder" in health_view
+    assert "investment-health-page" in health_body
+    assert "investment-health-header" in health_body
+    assert "healthDescriptions" in health_body
+    assert "renderInvestmentHealthPendingRows" in js
+    assert "startInvestmentHealthProgress" in js
+    assert "stopInvestmentHealthProgress" in js
+    assert "setInterval" in _js_function_body(js, "startInvestmentHealthProgress")
+    assert "clearInterval" in _js_function_body(js, "stopInvestmentHealthProgress")
+    assert "investment-health-checking" in health_body
+    assert "检查中..." in js
+    assert "healthRunning" in health_body
+    assert "disabled" in health_body
+    assert "完整检查中..." in health_body
+    assert "business_database: '业务数据库连接是否可用，是后台记录、配置和任务运行的基础。'" in health_body
+    assert "const note = healthDescriptions[check.name] || '该检查项用于确认对应依赖或配置是否满足上线要求。';" in health_body
+    assert '<span class="investment-health-info"' in health_body
+    assert "<th>检查项</th><th>状态</th><th>详情</th>" in health_body
+    assert "检查项名称" not in health_body
+    assert "检查结果级别" not in health_body
+    assert "后端返回的诊断说明" not in health_body
+    assert "<span>健康检查</span>" not in health_body
+    assert "上线前检查" not in health_body
+    assert "检查项详情" not in health_body
+    assert ".investment-health-page" in css
+    assert ".investment-health-header" in css
+    assert ".investment-health-info" in css
+    assert ".investment-health-row.checking" in css
+    assert "@keyframes investment-health-pulse" in css
+    assert ".investment-health-info::after" not in css
+    assert ".investment-health-page .investment-health-summary" in css
+    assert ".investment-table-wrap.investment-table-scroll" in css
+    assert ".invest-health-placeholder" in css
     assert ".investment-health-summary.warning" in css
     assert ".investment-badge.warning" in css

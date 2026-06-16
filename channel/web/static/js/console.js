@@ -5513,11 +5513,106 @@ function investmentHealthLevelClass(level) {
     return 'ok';
 }
 
+let investmentHealthProgressTimer = null;
+
+function renderInvestmentHealthPendingRows(healthDescriptions) {
+    return Object.entries(healthDescriptions).map(([name, note]) => `
+        <tr class="investment-health-row" data-health-check="${escapeHtml(name)}">
+            <td>${escapeHtml(name)} <span class="investment-health-info" tabindex="0" aria-label="${escapeHtml(note)}" title="${escapeHtml(note)}">i</span></td>
+            <td><span class="investment-badge warning">等待中</span></td>
+            <td class="investment-wide investment-muted">等待检查...</td>
+        </tr>`).join('');
+}
+
+function startInvestmentHealthProgress() {
+    stopInvestmentHealthProgress();
+    const rows = Array.from(document.querySelectorAll('#invest-health-content .investment-health-row'));
+    if (!rows.length) return;
+    let index = 0;
+    investmentHealthProgressTimer = setInterval(() => {
+        rows.forEach((row, rowIndex) => {
+            row.classList.toggle('checking', rowIndex === index);
+            const badge = row.querySelector('.investment-badge');
+            const detail = row.querySelector('.investment-wide');
+            if (badge) badge.textContent = rowIndex < index ? '已检查' : rowIndex === index ? '检查中...' : '等待中';
+            if (detail) detail.textContent = rowIndex < index ? '等待真实结果...' : rowIndex === index ? '正在检查该项...' : '等待检查...';
+        });
+        rows[index]?.scrollIntoView({block: 'nearest'});
+        index = (index + 1) % rows.length;
+    }, 220);
+}
+
+function stopInvestmentHealthProgress() {
+    if (investmentHealthProgressTimer) {
+        clearInterval(investmentHealthProgressTimer);
+        investmentHealthProgressTimer = null;
+    }
+}
+
 async function renderInvestmentHealth(runSmoke = false) {
     const element = investmentContentEl('invest-health-content');
-    investmentLoading(element);
+    stopInvestmentHealthProgress();
     try {
+        const healthDescriptions = {
+            business_database: '业务数据库连接是否可用，是后台记录、配置和任务运行的基础。',
+            files_dir: '文件存储目录是否存在并可写，用于保存上传资料和生成产物。',
+            tmp_dir: '临时目录是否存在并可写，用于健康检查、渲染和中间文件。',
+            technical_analysis_skill: '技术分析脚本文件是否存在，影响技术分析业务生成。',
+            signal_card_renderer: '信号卡渲染器是否存在，影响图片卡片生成。',
+            template_ta: '技术分析卡片模板是否存在。',
+            template_bond: '利率债卡片模板是否存在。',
+            template_cb: '可转债卡片模板是否存在。',
+            stock_dictionary_table: '股票字典表是否存在，影响股票名称解析。',
+            stock_dictionary_count: '股票字典是否已有可用数据。',
+            stock_dictionary_latest: '股票字典是否有最近更新时间。',
+            stock_dictionary_latest_source: '股票字典最近一次刷新来源是否可识别。',
+            tushare_token: 'Tushare Token 是否已配置，影响股票字典刷新。',
+            model_config: 'AI 模型供应商、模型名、API 地址和密钥是否完整。',
+            dependency_pandas: 'pandas Python 包是否可导入。',
+            dependency_talib: 'TA-Lib Python 包是否可导入，影响技术指标计算。',
+            dependency_scipy: 'SciPy Python 包是否可导入，影响部分分析计算。',
+            dependency_akshare: 'AkShare Python 包是否可导入，当前为可选依赖。',
+            dependency_tushare: 'Tushare Python 包是否可导入，当前为可选依赖。',
+            dependency_baostock: 'BaoStock Python 包是否可导入，当前为可选依赖。',
+            playwright: 'Playwright Python 包是否可导入，影响截图和渲染能力。',
+            playwright_chromium: 'Playwright Chromium 浏览器是否已安装。',
+            chinese_font: '系统是否有中文字体，影响生成图片中文字显示。',
+            wechatmp_channel_enabled: '微信公众号通道是否启用。',
+            wechatmp_app_id: '微信公众号 AppID 是否已配置。',
+            wechatmp_app_secret: '微信公众号 AppSecret 是否已配置。',
+            wechatmp_token: '微信公众号 Token 是否已配置。',
+            wechatmp_aes_key: '微信公众号 AES Key 是否已配置，加密模式下需要。',
+            smoke_technical_analysis: '完整检查中的技术分析业务冒烟测试。',
+            smoke_renderer_ta: '完整检查中的技术分析卡片渲染测试。',
+            smoke_renderer_rate: '完整检查中的利率债卡片渲染测试。',
+            smoke_renderer_cb: '完整检查中的可转债卡片渲染测试。',
+        };
+        const renderHealthButton = (healthRunning) => `<button id="investment-health-full-check" class="investment-btn primary" onclick="runInvestmentFullHealthCheck()"${healthRunning ? ' disabled' : ''}><i class="fas ${healthRunning ? 'fa-spinner fa-spin' : 'fa-vial-circle-check'}"></i><span>${healthRunning ? '完整检查中...' : '运行完整检查'}</span></button>`;
+        const renderHealthTable = rows => investmentTableWrap(`<table class="investment-table">
+            <thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`, true, '健康检查结果');
+        if (runSmoke) {
+            element.innerHTML = `
+                <div class="investment-health-page investment-health-checking">
+                    <section class="investment-panel full">
+                        <div class="investment-panel-heading investment-health-header">
+                            <div class="investment-health-spacer"></div>
+                            ${renderHealthButton(true)}
+                        </div>
+                        <div class="investment-health-summary warning">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span>正在逐项运行完整检查...</span>
+                        </div>
+                        ${renderHealthTable(renderInvestmentHealthPendingRows(healthDescriptions))}
+                    </section>
+                </div>`;
+            startInvestmentHealthProgress();
+        } else {
+            investmentLoading(element);
+        }
         const data = await investmentFetchJson(runSmoke ? '/api/investment/health?smoke=1' : '/api/investment/health');
+        stopInvestmentHealthProgress();
         const summaryLevel = data.level || (data.ok ? 'ok' : 'error');
         const summaryClass = investmentHealthLevelClass(summaryLevel);
         const summaryText = summaryLevel === 'error'
@@ -5526,33 +5621,30 @@ async function renderInvestmentHealth(runSmoke = false) {
         const summaryIcon = summaryLevel === 'error'
             ? 'fa-triangle-exclamation'
             : (summaryLevel === 'warning' ? 'fa-circle-exclamation' : 'fa-circle-check');
-        const rows = (data.checks || []).map(check => `
-            <tr>
-                <td>${escapeHtml(check.name)}</td>
+        const rows = (data.checks || []).map(check => {
+            const note = healthDescriptions[check.name] || '该检查项用于确认对应依赖或配置是否满足上线要求。';
+            return `<tr>
+                <td>${escapeHtml(check.name)} <span class="investment-health-info" tabindex="0" aria-label="${escapeHtml(note)}" title="${escapeHtml(note)}">i</span></td>
                 <td><span class="investment-badge ${investmentHealthLevelClass(check.level || (check.ok ? 'ok' : 'error'))}">${investmentHealthLevelLabel(check.level || (check.ok ? 'ok' : 'error'))}</span></td>
                 <td class="investment-wide">${escapeHtml(check.detail || '')}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
         element.innerHTML = `
-            <div class="investment-layout">
+            <div class="investment-health-page">
                 <section class="investment-panel full">
-                    <div class="investment-panel-title"><i class="fas fa-heart-pulse"></i><span>上线前检查</span></div>
+                    <div class="investment-panel-heading investment-health-header">
+                        <div class="investment-health-spacer"></div>
+                        ${renderHealthButton(false)}
+                    </div>
                     <div class="investment-health-summary ${summaryClass}">
                         <i class="fas ${summaryIcon}"></i>
                         <span>${summaryText}</span>
                     </div>
-                    <div class="investment-actions">
-                        ${investmentButton('fa-vial-circle-check', '运行完整检查', 'runInvestmentFullHealthCheck()', 'primary')}
-                    </div>
-                </section>
-                <section class="investment-table-panel full">
-                    <div class="investment-panel-title"><i class="fas fa-heart-pulse"></i><span>检查项详情</span></div>
-                    ${investmentTableWrap(`<table class="investment-table">
-                        <thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>`)}
+                    ${renderHealthTable(rows)}
                 </section>
             </div>`;
     } catch (error) {
+        stopInvestmentHealthProgress();
         investmentError(element, error);
     }
 }

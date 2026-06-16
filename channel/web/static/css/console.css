@@ -3168,6 +3168,94 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     min-width: 0;
 }
 
+.invest-health-shell,
+#invest-health-content {
+    width: 100%;
+    min-width: 0;
+}
+
+#invest-health-content {
+    min-height: min(520px, calc(100vh - 190px));
+}
+
+.invest-health-placeholder {
+    display: flex;
+    min-height: min(420px, calc(100vh - 260px));
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #d8e1ee;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #6b7c93;
+}
+
+.investment-health-page {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: 14px;
+}
+
+.investment-health-header {
+    align-items: center;
+    gap: 12px;
+}
+
+.investment-health-spacer {
+    flex: 1 1 auto;
+}
+
+.investment-health-header .investment-btn {
+    flex: 0 0 auto;
+}
+
+.investment-health-page .investment-health-summary {
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    background: #f0fdf4;
+    color: #15803d;
+    margin-bottom: 14px;
+}
+
+.investment-table-wrap.investment-table-scroll {
+    overflow: auto;
+}
+
+.investment-health-row.checking td {
+    background: #eff6ff;
+    animation: investment-health-pulse 1s ease-in-out infinite;
+}
+
+@keyframes investment-health-pulse {
+    0%, 100% {
+        background: #eff6ff;
+    }
+
+    50% {
+        background: #dbeafe;
+    }
+}
+
+.investment-health-info {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+}
+
 .investment-stock-data-card {
     display: grid;
     width: 100%;
@@ -4444,6 +4532,15 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 }
 
 @media (max-width: 640px) {
+    .investment-health-header {
+        align-items: stretch;
+    }
+
+    .investment-health-header,
+    .investment-health-header .investment-btn {
+        width: 100%;
+    }
+
     .investment-stock-header,
     .investment-stock-action-card,
     .investment-config-tool {
