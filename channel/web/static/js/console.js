@@ -1762,7 +1762,6 @@ function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, c
         </section>`;
 }
 
-
 function renderInvestmentStockRows(stocks = []) {
     if (!stocks.length) return '<div class="investment-empty">暂无匹配股票</div>';
     const rows = stocks.map(stock => `
@@ -5181,12 +5180,12 @@ async function uploadInvestmentSkill(skillKey, fileInput = null) {
     try {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/upload`, {method: 'POST', body: form});
         input.value = '';
-        if (result) result.textContent = 'Skill 已上传并设为生效';
-        showInvestmentToast('Skill 已上传并生效');
+        if (result) result.textContent = '组件版本已上传并设为生效';
+        showInvestmentToast('组件版本已上传并生效');
         await loadInvestmentComponents();
     } catch (error) {
         if (result) result.textContent = String(error.message || error);
-        showInvestmentToast('Skill 上传失败', 'error');
+        showInvestmentToast('组件版本上传失败', 'error');
     }
 }
 
@@ -5205,7 +5204,7 @@ async function activateInvestmentSkillVersion(skillKey, selectedVersion) {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(selectedVersion)}/activate`, {
             method: 'POST',
         });
-        showInvestmentToast('Skill 版本已生效');
+        showInvestmentToast('组件版本已生效');
         await loadInvestmentComponents();
     } catch (error) {
         showInvestmentToast(`切换版本失败：${String(error.message || error)}`, 'error');
@@ -5222,7 +5221,7 @@ async function deleteInvestmentSkillVersion(skillKey, versionId) {
         await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(versionId)}/delete`, {
             method: 'POST',
         });
-        showInvestmentToast('Skill 版本已删除');
+        showInvestmentToast('组件版本已删除');
         await loadInvestmentComponents();
     } catch (error) {
         showInvestmentToast(`删除版本失败：${String(error.message || error)}`, 'error');
@@ -5487,7 +5486,6 @@ async function refreshInvestmentStocks() {
         if (resultEl) resultEl.textContent = String(error.message || error);
     }
 }
-
 
 async function queryInvestmentStocks() {
     const resultEl = document.getElementById('invest-stock-query-result');
@@ -5925,6 +5923,10 @@ function renderMarkdown(text) {
         return injectImagePreviews(injectVideoPlayers(html));
     }
     catch (e) { return text.replace(/\n/g, '<br>'); }
+}
+
+function renderUserPlainText(text) {
+    return escapeHtml(text || '').replace(/\n/g, '<br>');
 }
 
 // =====================================================================
@@ -6973,7 +6975,7 @@ function createUserMessageEl(content, timestamp, attachments) {
         attachHtml = `<div class="user-msg-attachments">${items}</div>`;
     }
 
-    const textHtml = content ? renderMarkdown(content) : '';
+    const textHtml = content ? renderUserPlainText(content) : '';
     el.innerHTML = `
         <div class="max-w-[75%] sm:max-w-[60%]">
             <div class="bg-primary-400 text-white rounded-2xl px-4 py-2.5 text-sm leading-relaxed msg-content user-bubble">

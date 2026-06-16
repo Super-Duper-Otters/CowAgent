@@ -960,29 +960,6 @@
 }
 
 @media (max-width: 640px) {
-    .investment-stock-header,
-    .investment-stock-action-card,
-    .investment-config-tool {
-        grid-template-columns: 1fr;
-    }
-
-    .investment-stock-header {
-        display: grid;
-    }
-
-    .investment-stock-source-badge,
-    .investment-stock-action-control,
-    .investment-stock-action-control .investment-btn,
-    .investment-stock-action-card .investment-field,
-    .investment-stock-toolbar .investment-btn,
-    .investment-stock-toolbar .investment-field {
-        width: 100%;
-    }
-
-    .investment-stock-source-badge {
-        justify-content: center;
-    }
-
     .investment-reply-row {
         grid-template-columns: 1fr;
         align-items: stretch;
@@ -3093,6 +3070,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .investment-config-page,
 .investment-config-panel {
     display: grid;
+    width: 100%;
+    min-width: 0;
     gap: 14px;
 }
 
@@ -3164,6 +3143,11 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 #investment-config-panel-content {
     display: block;
+    width: 100%;
+    min-width: 0;
+}
+
+#invest-config-content {
     width: 100%;
     min-width: 0;
 }

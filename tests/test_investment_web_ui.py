@@ -83,6 +83,15 @@ def test_chat_message_images_are_scaled_inside_reply_bubbles():
     assert "object-fit: contain;" in css
 
 
+def test_user_chat_messages_render_as_plain_text_not_markdown():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    body = _js_function_body(js, "createUserMessageEl")
+
+    assert "function renderUserPlainText" in js
+    assert "renderUserPlainText(content)" in body
+    assert "renderMarkdown(content)" not in body
+
+
 def test_channels_page_defines_wechatmp_service_for_configured_service_accounts():
     web_channel = WEB_CHANNEL.read_text(encoding="utf-8")
     defs_start = web_channel.index("CHANNEL_DEFS = OrderedDict([")
@@ -245,15 +254,20 @@ def test_investment_table_like_views_use_wide_containers():
     records_start = html.index('id="view-invest-records"')
     records_end = html.index('id="view-invest-config"')
     records_body = html[records_start:records_end]
+    config_start = html.index('id="view-invest-config"')
+    config_end = html.index('id="view-invest-skills"')
+    config_body = html[config_start:config_end]
 
     assert "w-full max-w-[1600px] mx-auto" in users_body
     assert "w-full max-w-[1600px] mx-auto" in daily_body
     assert "w-full max-w-[1600px] mx-auto" in content_body
     assert "w-full max-w-[1600px] mx-auto" in records_body
+    assert "w-full max-w-[1600px] mx-auto" in config_body
     assert "max-w-6xl mx-auto" not in users_body
     assert "max-w-6xl mx-auto" not in daily_body
     assert "max-w-6xl mx-auto" not in content_body
     assert "max-w-6xl mx-auto" not in records_body
+    assert "max-w-6xl mx-auto" not in config_body
 
 
 def test_investment_content_is_a_top_level_view():
@@ -541,6 +555,20 @@ def test_investment_component_cards_hide_business_details():
     assert "调用方" not in card_body
     assert "openInvestmentComponentConfigDialog" in card_body
     assert "openInvestmentComponentVersionDialog" in card_body
+
+
+def test_investment_component_upload_copy_uses_component_wording():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    upload_body = _js_function_body(js, "uploadInvestmentSkill")
+    activate_body = _js_function_body(js, "activateInvestmentSkillVersion")
+    delete_body = _js_function_body(js, "deleteInvestmentSkillVersion")
+
+    combined = "\n".join((upload_body, activate_body, delete_body))
+    assert "组件版本已上传并设为生效" in combined
+    assert "组件版本已生效" in combined
+    assert "组件版本已删除" in combined
+    assert "Skill 已上传" not in combined
+    assert "Skill 版本" not in combined
 
 
 def test_only_versioned_components_show_upload_controls():
