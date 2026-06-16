@@ -1427,21 +1427,30 @@ def test_investment_config_subpages_use_aligned_section_layouts():
     assert "investment-config-panel" in web_chat_body
     assert "investment-config-section" in web_chat_body
 
-    assert "investment-config-toolbar investment-stock-toolbar" in stock_body
-    assert "investment-config-tool" in stock_body
+    assert "investment-stock-action-grid" in stock_body
+    assert "investment-stock-action-card investment-stock-refresh-tool" in stock_body
+    assert "investment-stock-action-card investment-stock-query-tool" in stock_body
     assert "investment-stock-refresh-tool" in stock_body
     assert "investment-stock-query-tool" in stock_body
+    assert "invest-stock-refresh-market" in stock_body
+    assert "刷新市场" in stock_body
+    assert "A股" in stock_body
+    assert "港股" in stock_body
+    assert "美股" in stock_body
+    assert "akshare" not in stock_body
+    assert "['auto', 'auto']" not in stock_body
     assert stock_body.count("investment-inline-form investment-stock-actions") == 0
     assert "investment-panel-heading" in stock_body
-    assert "investment-subtitle" in stock_body
+    assert "investment-subtitle" not in stock_body
 
     assert ".investment-config-panel" in css
     assert ".investment-config-section" in css
-    assert ".investment-config-toolbar" in css
-    assert ".investment-config-tool" in css
+    assert ".investment-stock-action-grid" in css
+    assert ".investment-stock-action-card" in css
+    assert ".investment-stock-action-control" in css
     assert "grid-template-columns: minmax(0, 1fr) auto;" in css
     assert "align-items: end;" in css
-    assert "align-self: end;" in css
+    assert "align-self: stretch;" in css
 
 
 def test_investment_stock_data_page_combines_dictionary_config_and_tools():
@@ -1455,8 +1464,25 @@ def test_investment_stock_data_page_combines_dictionary_config_and_tools():
     assert "investment-stock-data-panel" in stock_panel_body
     assert "investment-stock-data-card" in stock_tools_body
     assert "renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])" in stock_tools_body
+    assert "仅使用 Tushare 数据源" not in stock_tools_body
+    assert "必须先填写并保存 Tushare Token" not in stock_tools_body
     assert "股票数据" in stock_tools_body
     assert "股票字典维护" not in stock_tools_body
+
+
+def test_investment_stock_refresh_requires_tushare_token_and_sends_market():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    refresh_body = _js_function_body(js, "refreshInvestmentStocks")
+    token_body = _js_function_body(js, "investmentHasConfiguredTushareToken")
+
+    assert "invest-stock-refresh-market" in refresh_body
+    assert "investmentHasConfiguredTushareToken()" in refresh_body
+    assert "请先填写并保存 Tushare Token" in token_body
+    assert "请先保存 Tushare Token 后再刷新" in token_body
+    assert "body: JSON.stringify({source: market})" in refresh_body
+    assert "invest-stock-refresh-source" not in refresh_body
+    assert "'auto'" not in refresh_body
+    assert "'akshare'" not in refresh_body
 
 
 def test_investment_config_page_renders_reply_text_section():

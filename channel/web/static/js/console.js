@@ -1713,38 +1713,55 @@ function investmentStockStats(stats = {}) {
 function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, canReadStocks = true) {
     return `
         <section class="investment-panel investment-config-section investment-workbench-full investment-stock-data-card">
-            <div class="investment-panel-heading">
-                <div>
+            <div class="investment-panel-heading investment-stock-header">
+                <div class="investment-stock-title-block">
                     <div class="investment-panel-title"><i class="fas fa-chart-line"></i><span>股票数据</span></div>
-                    <div class="investment-subtitle">维护股票字典数据源，刷新基础股票字典，并用股票名称查询验证解析结果。</div>
+                </div>
+                <div class="investment-stock-source-badge"><i class="fas fa-database"></i><span>Tushare</span></div>
+            </div>
+            <div class="investment-stock-layout">
+                <div class="investment-stock-token-panel">
+                    <div class="investment-stock-section-title">
+                        <i class="fas fa-key"></i><span>数据源凭证</span>
+                    </div>
+                    ${canReadConfig ? `
+                        <div class="investment-stock-source-config">
+                            ${renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])}
+                        </div>` : '<div class="investment-muted">当前账号无权查看 Tushare Token 配置。</div>'}
+                </div>
+                <div class="investment-stock-stats-panel">
+                    <div class="investment-stock-section-title">
+                        <i class="fas fa-chart-column"></i><span>字典状态</span>
+                    </div>
+                    ${investmentStockStats(stats)}
                 </div>
             </div>
-            ${canReadConfig ? `
-                <div class="investment-stock-source-config">
-                    ${renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])}
-                </div>` : ''}
-            ${investmentStockStats(stats)}
             ${canReadStocks ? `
-                <div class="investment-config-toolbar investment-stock-toolbar">
-                    <div class="investment-config-tool investment-stock-refresh-tool">
+                <div class="investment-stock-action-grid">
+                    <div class="investment-stock-action-card investment-stock-refresh-tool">
                         <label class="investment-field investment-source-field">
-                            <span>刷新来源</span>
-                            ${investmentDropdown('invest-stock-refresh-source', [['auto', 'auto'], ['akshare', 'akshare'], ['tushare', 'tushare']], 'auto')}
+                            <span>刷新市场</span>
+                            ${investmentDropdown('invest-stock-refresh-market', [['a_share', 'A股'], ['hk', '港股'], ['us', '美股']], 'a_share')}
                         </label>
-                        ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+                        <div class="investment-stock-action-control">
+                            ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+                        </div>
                     </div>
-                    <div class="investment-config-tool investment-stock-query-tool">
+                    <div class="investment-stock-action-card investment-stock-query-tool">
                         <label class="investment-field investment-stock-query-field">
                             <span>股票名查询测试</span>
                             <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛">
                         </label>
-                        ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+                        <div class="investment-stock-action-control">
+                            ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+                        </div>
                     </div>
                 </div>
                 <div id="invest-stock-action-result" class="investment-muted"></div>
                 <div id="invest-stock-query-result" class="investment-table-wrap"></div>` : ''}
         </section>`;
 }
+
 
 function renderInvestmentStockRows(stocks = []) {
     if (!stocks.length) return '<div class="investment-empty">暂无匹配股票</div>';
@@ -5430,15 +5447,37 @@ async function saveInvestmentConfig() {
     await renderInvestmentConfig();
 }
 
+function investmentHasConfiguredTushareToken() {
+    const input = document.getElementById(investmentConfigElementId('tushare.token'));
+    const value = String(input?.value || '').trim();
+    const saveButton = document.getElementById(`${investmentConfigElementId('tushare.token')}-save`);
+    const resultEl = document.getElementById('invest-stock-action-result');
+    if (!value) {
+        const message = '请先填写并保存 Tushare Token';
+        if (resultEl) resultEl.textContent = message;
+        showInvestmentToast(message, 'error');
+        if (input && !input.disabled) input.focus();
+        return false;
+    }
+    if (saveButton && !saveButton.classList.contains('hidden')) {
+        const message = '请先保存 Tushare Token 后再刷新';
+        if (resultEl) resultEl.textContent = message;
+        showInvestmentToast(message, 'error');
+        return false;
+    }
+    return true;
+}
+
 async function refreshInvestmentStocks() {
     const resultEl = document.getElementById('invest-stock-action-result');
-    const source = document.getElementById('invest-stock-refresh-source')?.value || 'auto';
+    const market = document.getElementById('invest-stock-refresh-market')?.value || 'a_share';
+    if (!investmentHasConfiguredTushareToken()) return;
     if (resultEl) resultEl.textContent = '刷新中...';
     try {
         const data = await investmentFetchJson('/api/investment/stocks/refresh', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({source}),
+            body: JSON.stringify({source: market}),
         });
         const message = `刷新完成：${JSON.stringify(data.result || {})}`;
         await renderInvestmentConfig();
@@ -5448,6 +5487,7 @@ async function refreshInvestmentStocks() {
         if (resultEl) resultEl.textContent = String(error.message || error);
     }
 }
+
 
 async function queryInvestmentStocks() {
     const resultEl = document.getElementById('invest-stock-query-result');
