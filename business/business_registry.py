@@ -44,6 +44,9 @@ class BusinessDefinition:
     prompt_key: str = ""
     renderer_component_key: str = ""
     template_key: str = ""
+    generation_mode: str = ""
+    delivery_mode: str = "direct"
+    content_enabled: bool = False
 
     @property
     def enabled_config_key(self) -> str:
@@ -88,6 +91,9 @@ class BusinessDefinition:
             "prompt_key": self.prompt_key,
             "renderer_component_key": self.renderer_component_key,
             "template_key": self.template_key,
+            "generation_mode": self.generation_mode,
+            "delivery_mode": self.delivery_mode,
+            "content_enabled": self.content_enabled,
             "uses_triggers": self.uses_triggers,
             "versioned": self.versioned,
         }
@@ -118,6 +124,20 @@ def _artifact_roles_for_handler(handler_type: str) -> tuple[str, ...]:
     return ("output",)
 
 
+def _generation_mode_for_handler(handler_type: str) -> str:
+    if handler_type == "daily_content":
+        return "pre_generated"
+    if handler_type in {"technical_analysis", "builtin_technical_analysis", "prompt_to_image"}:
+        return "on_demand"
+    return ""
+
+
+def _delivery_mode_for_handler(handler_type: str) -> str:
+    if handler_type in {"technical_analysis", "builtin_technical_analysis", "prompt_to_image"}:
+        return "deferred"
+    return "direct"
+
+
 def _definition(
     *,
     business_key: str,
@@ -140,6 +160,9 @@ def _definition(
     prompt_key: str = "",
     renderer_component_key: str = "",
     template_key: str = "",
+    generation_mode: str | None = None,
+    delivery_mode: str | None = None,
+    content_enabled: bool | None = None,
 ) -> BusinessDefinition:
     return BusinessDefinition(
         business_key=business_key,
@@ -165,6 +188,9 @@ def _definition(
         prompt_key=prompt_key,
         renderer_component_key=renderer_component_key,
         template_key=template_key,
+        generation_mode=generation_mode if generation_mode is not None else _generation_mode_for_handler(handler_type),
+        delivery_mode=delivery_mode if delivery_mode is not None else _delivery_mode_for_handler(handler_type),
+        content_enabled=content_enabled if content_enabled is not None else handler_type == "daily_content",
     )
 
 
@@ -256,6 +282,15 @@ def _normalize_triggers(value: Any) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in items if str(item).strip())
 
 
+def _optional_str_value(data: dict, key: str) -> str | None:
+    if key not in data:
+        return None
+    value = data.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
 def _contains_markdown_link(raw_input: str) -> bool:
     return bool(re.search(r"\[[^\]]+\]\([^)]+\)", raw_input or ""))
 
@@ -299,6 +334,9 @@ def read_uploaded_business_definition(skill_dir: Path) -> BusinessDefinition | N
         script_name=Path(entry).name if entry else "",
         storage_name=business_key,
         component_type=component_type,
+        generation_mode=_optional_str_value(investment, "generation_mode"),
+        delivery_mode=_optional_str_value(investment, "delivery_mode"),
+        content_enabled=_bool_value(investment.get("content_enabled"), False) if "content_enabled" in investment else None,
     )
 
 
@@ -344,6 +382,9 @@ def read_component_definition(component_dir: Path) -> BusinessDefinition | None:
         prompt_key=str(manifest.get("prompt_key") or ""),
         renderer_component_key=str(manifest.get("renderer_component_key") or ""),
         template_key=str(manifest.get("template_key") or ""),
+        generation_mode=_optional_str_value(manifest, "generation_mode"),
+        delivery_mode=_optional_str_value(manifest, "delivery_mode"),
+        content_enabled=_bool_value(manifest.get("content_enabled"), False) if "content_enabled" in manifest else None,
     )
 
 
@@ -428,4 +469,16 @@ def match_business(raw_input: str) -> BusinessMatch | None:
                         target,
                         definition.skill_key or definition.business_key,
                     )
+        if definition.match_type == "prefix":
+            for trigger in triggers:
+                if not trigger or not text.startswith(trigger):
+                    continue
+                target = text[len(trigger):].strip()
+                return BusinessMatch(
+                    definition.business_key,
+                    definition.service_type,
+                    raw_input,
+                    target,
+                    definition.skill_key or definition.business_key,
+                )
     return None

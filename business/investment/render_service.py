@@ -23,6 +23,7 @@ class RenderRequest:
     output_path: str | None = None
     output_dir: str = ""
     template_path: str = ""
+    template_key: str = ""
 
 
 @dataclass
@@ -82,6 +83,17 @@ def template_for_service(service_type: ServiceType) -> str:
     raise ValueError(f"unsupported service type: {service_type}")
 
 
+def template_for_key(template_key: str) -> str:
+    key = str(template_key or "").strip().lower().replace("-", "_")
+    if key in {"technical_analysis", "ta"}:
+        return DEFAULT_TEMPLATE_TA_PATH
+    if key == "rate":
+        return DEFAULT_TEMPLATE_BOND_PATH
+    if key in {"convertible_bond", "convertible-bond", "cb"}:
+        return DEFAULT_TEMPLATE_CB_PATH
+    return ""
+
+
 def _failure_result(request: RenderRequest, target: str, detail: str) -> RenderResult:
     safe_detail = sanitize_sensitive_text(detail)
     return RenderResult(
@@ -104,7 +116,7 @@ def render_card(request: RenderRequest, *, renderer: Renderer | None = None) -> 
         target_path = output_dir / target_path
     request.output_dir = str(output_dir)
     request.output_path = str(target_path)
-    request.template_path = template_for_service(request.service_type)
+    request.template_path = request.template_path or template_for_key(request.template_key) or template_for_service(request.service_type)
     target = request.output_path
     try:
         template_path = _resolve_path(request.template_path)

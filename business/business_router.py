@@ -25,6 +25,9 @@ def _reply_from_business(business_reply) -> Reply | None:
 
     reply.business_service_type = business_reply.service_type
     reply.investment_service_type = business_reply.service_type
+    if getattr(business_reply, "module_key", ""):
+        reply.business_module_key = business_reply.module_key
+        reply.investment_module_key = business_reply.module_key
     if getattr(business_reply, "request_id", ""):
         reply.business_request_id = business_reply.request_id
         reply.investment_request_id = business_reply.request_id

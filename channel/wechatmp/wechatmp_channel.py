@@ -201,6 +201,7 @@ class WechatMPChannel(ChatChannel):
             cache_title = context.content if isinstance(context.content, str) else ""
             business_request_id = getattr(reply, "business_request_id", "") or getattr(reply, "investment_request_id", "")
             business_service_type = getattr(reply, "business_service_type", "") or getattr(reply, "investment_service_type", "")
+            business_module_key = getattr(reply, "business_module_key", "") or getattr(reply, "investment_module_key", "")
             business_source_type = getattr(reply, "business_source_type", "") or getattr(reply, "investment_source_type", "")
             business_source_id = getattr(reply, "business_source_id", "") or getattr(reply, "investment_source_id", "")
             if reply.type == ReplyType.TEXT or reply.type == ReplyType.INFO or reply.type == ReplyType.ERROR:
@@ -212,6 +213,7 @@ class WechatMPChannel(ChatChannel):
                     reply_text,
                     cache_title,
                     service_type=business_service_type,
+                    module_key=business_module_key,
                     request_id=business_request_id,
                     source_type=business_source_type,
                     source_id=business_source_id,
@@ -243,6 +245,7 @@ class WechatMPChannel(ChatChannel):
                             media_id,
                             cache_title,
                             service_type=business_service_type,
+                            module_key=business_module_key,
                             request_id=business_request_id,
                             source_type=business_source_type,
                             source_id=business_source_id,
@@ -289,6 +292,7 @@ class WechatMPChannel(ChatChannel):
                             media_id,
                             cache_title,
                             service_type=business_service_type,
+                            module_key=business_module_key,
                             request_id=business_request_id,
                             source_type=business_source_type,
                             source_id=business_source_id,
@@ -321,6 +325,7 @@ class WechatMPChannel(ChatChannel):
                     media_id,
                     cache_title,
                     service_type=business_service_type,
+                    module_key=business_module_key,
                     request_id=business_request_id,
                     source_type=business_source_type,
                     source_id=business_source_id,
@@ -346,6 +351,7 @@ class WechatMPChannel(ChatChannel):
                     media_id,
                     cache_title,
                     service_type=business_service_type,
+                    module_key=business_module_key,
                     request_id=business_request_id,
                     source_type=business_source_type,
                     source_id=business_source_id,

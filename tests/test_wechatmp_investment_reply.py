@@ -295,6 +295,25 @@ def test_passive_reply_cache_preserves_request_id_without_breaking_legacy_access
     assert cache.pop_result("openid") == ("text", "ready")
 
 
+def test_passive_reply_cache_keeps_module_key():
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    cache = PassiveReplyCache(now_func=lambda: 100)
+    cache.append_reply(
+        "openid",
+        "image",
+        "media-id",
+        "宏观简报",
+        service_type="unmatched",
+        module_key="macro-brief",
+        request_id="req-1",
+    )
+
+    result = cache.peek_result("openid")
+
+    assert result.module_key == "macro-brief"
+
+
 def test_passive_reply_cache_summarizes_and_pops_technical_results_by_target_name():
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -649,6 +668,20 @@ def test_wechatmp_passive_send_preserves_business_request_id_in_cache(monkeypatc
     assert cached_image.request_id == "request-image"
     assert cached_image.source_type == "cache"
     assert cached_image.source_id == "cache-image"
+
+
+def test_wechatmp_send_caches_business_module_key(monkeypatch):
+    from bridge.reply import Reply, ReplyType
+
+    channel = _wechatmp_channel(monkeypatch)
+    reply = Reply(ReplyType.TEXT, "ready")
+    reply.business_module_key = "macro-brief"
+    reply.business_service_type = "unmatched"
+    reply.business_request_id = "req-1"
+
+    channel.send(reply, _context(openid="openid", msg_id="m1", content="宏观简报 xxx"))
+
+    assert channel.cache_dict.peek_result("openid").module_key == "macro-brief"
 
 
 def test_wechatmp_passive_send_preserves_legacy_investment_metadata_in_cache(monkeypatch):

@@ -447,6 +447,7 @@ let currentInvestmentAdmin = null;
 let currentConsoleAuthenticated = false;
 let currentInvestmentUserPanel = 'customers';
 let currentInvestmentContentPanel = 'rate';
+let currentInvestmentContentModuleKey = '';
 let currentInvestmentConfigPanel = 'stock-data';
 let investmentUserState = {
     filters: {
@@ -468,8 +469,8 @@ let investmentRecordsState = {
     cacheCategory: '',
     exportMode: 'range',
     filters: {
-        requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
-        backendRequests: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
+        requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
+        backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
         cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
@@ -2384,35 +2385,104 @@ function exportInvestmentUsers() {
 async function renderInvestmentDailyContent() {
     const element = investmentContentEl('invest-daily-content-content');
     if (!element) return;
+    await ensureInvestmentComponentsLoaded();
+    const modules = investmentContentModules();
+    if (!currentInvestmentContentModuleKey || !investmentContentModuleForKey(currentInvestmentContentModuleKey)) {
+        currentInvestmentContentModuleKey = investmentContentModuleKey(modules[0]) || 'rate';
+    }
+    currentInvestmentContentPanel = investmentContentModuleServiceType(currentInvestmentContentModuleKey);
     element.innerHTML = `
-        <div class="investment-tabs">
-            <button class="investment-tab ${currentInvestmentContentPanel === 'rate' ? 'active' : ''}" onclick="switchInvestmentContentPanel('rate')">
-                <i class="fas fa-chart-line"></i><span>利率内容</span>
-            </button>
-            <button class="investment-tab ${currentInvestmentContentPanel === 'convertible_bond' ? 'active' : ''}" onclick="switchInvestmentContentPanel('convertible_bond')">
-                <i class="fas fa-scale-balanced"></i><span>转债内容</span>
-            </button>
-        </div>
+        ${renderInvestmentContentModuleTabs(modules)}
         <div id="invest-daily-content-panel" class="grid gap-3"></div>`;
-    return renderInvestmentContent(currentInvestmentContentPanel);
+    return renderInvestmentContent(currentInvestmentContentModuleKey);
 }
 
 function switchInvestmentContentPanel(panel) {
-    currentInvestmentContentPanel = panel === 'convertible_bond' ? 'convertible_bond' : 'rate';
+    const module = investmentContentModuleForKey(panel);
+    currentInvestmentContentModuleKey = investmentContentModuleKey(module) || panel;
+    currentInvestmentContentPanel = investmentContentModuleServiceType(currentInvestmentContentModuleKey);
     stopInvestmentContentPolling();
     renderInvestmentDailyContent();
 }
 
 function currentInvestmentContentServiceType() {
-    return currentInvestmentContentPanel === 'convertible_bond' ? 'convertible_bond' : 'rate';
+    return investmentContentModuleServiceType(currentInvestmentContentModuleKey || currentInvestmentContentPanel);
 }
 
-async function renderInvestmentContent(serviceType, options = {}) {
+function investmentContentModuleKey(component = {}) {
+    return component?.module_key || component?.component_key || component?.business_key || component?.skill_key || '';
+}
+
+function investmentContentModules() {
+    const modules = (currentInvestmentSkills || []).filter(component => component.content_enabled || component.handler_type === 'daily_content');
+    if (modules.length) return modules;
+    return [
+        {component_key: 'rate', service_type: 'rate', label: '利率组件', content_enabled: true, handler_type: 'daily_content'},
+        {component_key: 'convertible-bond', service_type: 'convertible_bond', label: '转债组件', content_enabled: true, handler_type: 'daily_content'},
+    ];
+}
+
+function investmentContentModuleForKey(key) {
+    const value = String(key || '');
+    return investmentContentModules().find(component => {
+        const moduleKey = investmentContentModuleKey(component);
+        return moduleKey === value || component.service_type === value;
+    }) || null;
+}
+
+function investmentContentModuleServiceType(key) {
+    const module = investmentContentModuleForKey(key);
+    if (module?.service_type) return module.service_type;
+    return key === 'convertible-bond' ? 'convertible_bond' : (key || 'rate');
+}
+
+function investmentContentModuleLabel(key) {
+    const module = investmentContentModuleForKey(key);
+    if (module?.label) return module.label;
+    return investmentServiceLabel(investmentContentModuleServiceType(key));
+}
+
+function investmentContentModuleIcon(component = {}) {
+    const serviceType = component.service_type || '';
+    if (serviceType === 'convertible_bond') return 'fa-scale-balanced';
+    if (serviceType === 'rate') return 'fa-chart-line';
+    return 'fa-layer-group';
+}
+
+function renderInvestmentContentModuleTabs(modules) {
+    modules = modules || investmentContentModules();
+    if (!modules.length) return '<div class="investment-empty">暂无可用内容组件</div>';
+    return `<div class="investment-tabs">${modules.map(component => {
+        const moduleKey = investmentContentModuleKey(component);
+        const active = moduleKey === currentInvestmentContentModuleKey;
+        const label = component.label || investmentServiceLabel(component.service_type);
+        return `<button class="investment-tab ${active ? 'active' : ''}" onclick="switchInvestmentContentPanel('${escapeHtml(moduleKey)}')">
+                <i class="fas ${investmentContentModuleIcon(component)}"></i><span>${escapeHtml(label)}</span>
+            </button>`;
+    }).join('')}</div>`;
+}
+
+async function ensureInvestmentComponentsLoaded() {
+    if (currentInvestmentSkills.length) return;
+    try {
+        const data = await investmentFetchJson('/api/investment/components');
+        currentInvestmentSkills = data.components || [];
+    } catch (error) {
+        currentInvestmentSkills = [];
+    }
+}
+
+async function renderInvestmentContent(moduleKeyOrServiceType, options = {}) {
     const element = investmentContentEl('invest-daily-content-panel') || investmentContentEl('invest-daily-content-content');
     investmentLoading(element);
     try {
+        const module = investmentContentModuleForKey(moduleKeyOrServiceType);
+        const moduleKey = investmentContentModuleKey(module) || '';
+        const serviceType = investmentContentModuleServiceType(moduleKeyOrServiceType);
+        const displayKey = moduleKey || serviceType;
+        const moduleLabel = investmentContentModuleLabel(moduleKeyOrServiceType);
         const effectiveDate = options.effective_date ?? investmentContentHistoryEffectiveDate(serviceType);
-        const query = investmentContentHistoryQuery(serviceType, effectiveDate);
+        const query = investmentContentHistoryQuery(displayKey, effectiveDate);
         const data = await investmentFetchJson(`/api/investment/daily-content?${query.toString()}`);
         const records = data.contents || [];
         const isCb = serviceType === 'convertible_bond';
@@ -2421,15 +2491,15 @@ async function renderInvestmentContent(serviceType, options = {}) {
             <div class="investment-daily-content-page">
                 <section class="investment-panel investment-content-top-panel">
                     <div class="investment-content-top">
-                        ${renderInvestmentCurrentEffective(data.current_effective, serviceType)}
-                        ${renderInvestmentContentUploadPanel(serviceType)}
+                        ${renderInvestmentCurrentEffective(data.current_effective, serviceType, moduleLabel, moduleKey)}
+                        ${renderInvestmentContentUploadPanel(serviceType, moduleLabel, moduleKey)}
                     </div>
                 </section>
                 <section class="investment-panel investment-content-history-panel">
                     <div class="investment-history-header">
                         <div class="investment-history-heading-row">
                             <div>
-                                <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${isCb ? '转债内容历史' : '利率内容历史'}</span></div>
+                                <div class="investment-panel-title"><i class="fas fa-layer-group"></i><span>${escapeHtml(moduleLabel)}历史</span></div>
                             </div>
                             <span class="investment-muted-inline">${records.length} 条记录</span>
                         </div>
@@ -2438,11 +2508,11 @@ async function renderInvestmentContent(serviceType, options = {}) {
                                 <span>日期</span>
                                 ${investmentRenderDateControl(historyDateId, effectiveDate || '', {
                                     placeholder: '选择日期',
-                                    attrs: `onchange="refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})"`,
+                                    attrs: `onchange="refreshInvestmentContentRecords('${displayKey}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})"`,
                                 })}
                             </label>
                             ${investmentButtonIfCan('audits.read', 'fa-clock-rotate-left', '操作流水', 'renderInvestmentOperationAudits()')}
-                            ${investmentButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})`)}
+                            ${investmentButton('fa-arrows-rotate', '刷新', `refreshInvestmentContentRecords('${displayKey}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})`)}
                         </div>
                     </div>
                     <div id="invest-content-records-table" class="investment-content-history-body">${renderInvestmentContentHistoryGroups(records)}</div>
@@ -2451,7 +2521,7 @@ async function renderInvestmentContent(serviceType, options = {}) {
             </div>`;
         const result = document.getElementById('invest-content-action-result');
         if (result && options.message) result.textContent = options.message;
-        scheduleInvestmentContentPolling(serviceType, records);
+        scheduleInvestmentContentPolling(displayKey, records);
     } catch (error) {
         investmentError(element, error);
     }
@@ -2467,19 +2537,23 @@ function investmentContentHistoryEffectiveDate(serviceType) {
     return document.getElementById(historyDateId)?.value || investmentTodayDate();
 }
 
-function investmentContentHistoryQuery(serviceType, effectiveDate = investmentTodayDate()) {
-    const query = new URLSearchParams({service_type: serviceType});
+function investmentContentHistoryQuery(moduleKeyOrServiceType, effectiveDate = investmentTodayDate()) {
+    const module = investmentContentModuleForKey(moduleKeyOrServiceType);
+    const moduleKey = investmentContentModuleKey(module);
+    const serviceType = investmentContentModuleServiceType(moduleKeyOrServiceType);
+    const query = new URLSearchParams(moduleKey ? {module_key: moduleKey} : {service_type: serviceType});
     query.set('effective_date', effectiveDate || investmentTodayDate());
     return query;
 }
 
-function renderInvestmentCurrentEffective(record, serviceType) {
+function renderInvestmentCurrentEffective(record, serviceType, moduleLabel = '', moduleKey = '') {
     const isCb = serviceType === 'convertible_bond';
-    const title = isCb ? '当前生效转债图' : '当前生效利率图';
-    const subtitle = isCb ? '公众号用户输入“转债”时会收到这张图' : '公众号用户输入“利率”时会收到这张图';
+    const label = moduleLabel || (isCb ? '转债' : '利率');
+    const title = `当前生效${label}图`;
+    const subtitle = `公众号用户输入该组件触发词时会收到这张图`;
     const image = record?.output_image ? renderInvestmentFilePreview(record.output_image, title) : '<div class="investment-current-empty">暂无生效图片</div>';
     const contentId = escapeHtml(record?.content_id || '');
-    const actionServiceType = escapeHtml(serviceType || '');
+    const actionServiceType = escapeHtml(moduleKey || serviceType || '');
     const actions = record?.content_id ? `
         <div class="investment-current-actions">
             ${investmentButtonIfCan('content.publish', 'fa-ban', '立即失效', `invalidateInvestmentContent('${contentId}', '${actionServiceType}')`, 'danger')}
@@ -2512,12 +2586,14 @@ function renderInvestmentCurrentEffective(record, serviceType) {
         </section>`;
 }
 
-function renderInvestmentContentUploadPanel(serviceType) {
+function renderInvestmentContentUploadPanel(serviceType, moduleLabel = '', moduleKey = '') {
     const isCb = serviceType === 'convertible_bond';
+    const label = moduleLabel || (isCb ? '转债' : '利率');
     return `
         <section class="investment-daily-upload-panel">
-            <div class="investment-panel-title"><i class="fas fa-upload"></i><span>${isCb ? '上传转债资料' : '上传利率资料'}</span></div>
+            <div class="investment-panel-title"><i class="fas fa-upload"></i><span>上传${escapeHtml(label)}资料</span></div>
             <input type="hidden" id="invest-content-service" value="${serviceType}">
+            <input type="hidden" id="invest-content-module-key" value="${escapeHtml(moduleKey || '')}">
             <input type="hidden" id="invest-content-upload-mode" value="image">
             <div class="investment-daily-upload-stage image-mode" id="invest-content-upload-stage">
                 <div class="investment-upload-mode-bar">
@@ -2528,18 +2604,18 @@ function renderInvestmentContentUploadPanel(serviceType) {
                         <input id="invest-content-files" type="file" accept="image/*" multiple onchange="updateInvestmentUploadFileSummary()">
                         <span class="investment-upload-plus"><i class="fas fa-plus"></i></span>
                         <strong>上传图片</strong>
-                        <small id="invest-content-file-summary">点击此区域选择利率/转债资料图片</small>
+                        <small id="invest-content-file-summary">点击此区域选择${escapeHtml(label)}资料图片</small>
                         <span id="invest-content-file-preview" class="investment-upload-preview"></span>
                     </label>
                     <label class="investment-field investment-upload-supplement">
-                        <span>${isCb ? '段子/补充文本（可选）' : '补充文本（可选）'}</span>
-                        <input id="invest-content-supplement-text" type="text" placeholder="${isCb ? '可输入转债段子或补充说明，参与生成' : '可输入补充说明，参与生成'}">
+                        <span>补充文本（可选）</span>
+                        <input id="invest-content-supplement-text" type="text" placeholder="可输入补充说明，参与生成">
                     </label>
                 </div>
                 <div class="investment-upload-text-mode">
                     <label class="investment-field">
-                        <span>${isCb ? '转债段子/文字资料' : '文字资料'}</span>
-                        <textarea id="invest-content-source-text" placeholder="${isCb ? '输入转债段子或完整文字资料，用于生成转债结果图片' : '输入利率文字资料，用于生成利率结果图片'}"></textarea>
+                        <span>文字资料</span>
+                        <textarea id="invest-content-source-text" placeholder="输入${escapeHtml(label)}文字资料，用于生成结果图片"></textarea>
                     </label>
                 </div>
             </div>
@@ -2564,8 +2640,10 @@ function renderInvestmentContentUploadPanel(serviceType) {
 }
 
 async function investmentShouldAutoEffectiveAfterGenerate(serviceType) {
-    const label = serviceType === 'convertible_bond' ? '转债' : '利率';
-    const response = await investmentFetchJson(`/api/investment/daily-content?service_type=${encodeURIComponent(serviceType)}&effective_date=${encodeURIComponent(investmentTodayDate())}&limit=1`);
+    const label = investmentContentModuleLabel(serviceType);
+    const query = investmentContentHistoryQuery(currentInvestmentContentModuleKey || serviceType, investmentTodayDate());
+    query.set('limit', '1');
+    const response = await investmentFetchJson(`/api/investment/daily-content?${query.toString()}`);
     const records = Array.isArray(response.contents) ? response.contents : [];
     if (records.length > 0) return false;
     const confirmed = await showInvestmentConfirmDialog({
@@ -2601,7 +2679,7 @@ function updateInvestmentUploadFileSummary() {
     if (!summary) return;
     summary.textContent = files.length
         ? files.map(file => file.name).join('、')
-        : '点击此区域选择利率/转债资料图片';
+        : '点击此区域选择资料图片';
     if (!preview) return;
     preview.innerHTML = files.slice(0, 4).map(file => {
         if (!file.type.startsWith('image/')) return '';
@@ -2611,7 +2689,8 @@ function updateInvestmentUploadFileSummary() {
 }
 
 async function refreshInvestmentContentRecords(serviceType, filters = {}) {
-    const effectiveDate = filters.effective_date ?? investmentContentHistoryEffectiveDate(serviceType);
+    const targetServiceType = investmentContentModuleServiceType(serviceType);
+    const effectiveDate = filters.effective_date ?? investmentContentHistoryEffectiveDate(targetServiceType);
     const query = investmentContentHistoryQuery(serviceType, effectiveDate);
     const data = await investmentFetchJson(`/api/investment/daily-content?${query.toString()}`);
     const records = data.contents || [];
@@ -2787,6 +2866,7 @@ function showInvestmentContentDetail(encoded) {
 
 async function createInvestmentContent(generateAfterCreate) {
     const serviceType = document.getElementById('invest-content-service').value;
+    const moduleKey = document.getElementById('invest-content-module-key')?.value || '';
     const result = document.getElementById('invest-content-action-result');
     if (result) result.textContent = generateAfterCreate ? '生成中...' : '保存中...';
     const autoEffective = generateAfterCreate ? await investmentShouldAutoEffectiveAfterGenerate(serviceType) : false;
@@ -2797,6 +2877,7 @@ async function createInvestmentContent(generateAfterCreate) {
         : document.getElementById('invest-content-supplement-text')?.value || '';
     const form = new FormData();
     form.append('service_type', serviceType);
+    if (moduleKey) form.append('module_key', moduleKey);
     form.append('source_text', sourceText);
     form.append('operator', investmentCurrentAdminUsername());
     form.append('expires_at', investmentContentExpiresAtValue());
@@ -2816,7 +2897,7 @@ async function createInvestmentContent(generateAfterCreate) {
                 showInvestmentToast('生成启动失败', 'error');
             }
         }
-        await renderInvestmentContent(serviceType, {message});
+        await renderInvestmentContent(moduleKey || serviceType, {message});
     } catch (error) {
         if (result) result.textContent = String(error.message || error);
         showInvestmentToast('保存内容失败', 'error');
@@ -3111,6 +3192,7 @@ function exportInvestmentRequestRecordsByCurrentFilters() {
 
 function exportInvestmentRequestRecordsFull() {
     investmentDownload('/api/investment/export/requests.xlsx', {
+        entry_type: 'external_request',
         service_type: investmentExportServiceType(),
         customer: investmentExportCustomer(),
     });
@@ -3128,6 +3210,7 @@ function exportInvestmentRequestRecordsByRange() {
         return;
     }
     investmentDownload('/api/investment/export/requests.xlsx', {
+        entry_type: 'external_request',
         start_date: startDate,
         end_date: endDate,
         service_type: investmentExportServiceType(),
@@ -3143,6 +3226,7 @@ function exportInvestmentRequestRecordsByMonth() {
     }
     const [year, month] = value.split('-');
     investmentDownload('/api/investment/export/requests.xlsx', {
+        entry_type: 'external_request',
         year,
         month,
         service_type: investmentExportServiceType(),
@@ -3157,6 +3241,7 @@ function exportInvestmentRequestRecordsByQuarter() {
         return;
     }
     investmentDownload('/api/investment/export/requests.xlsx', {
+        entry_type: 'external_request',
         year,
         quarter: document.getElementById('invest-export-quarter')?.value || '',
         service_type: investmentExportServiceType(),
@@ -3311,6 +3396,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {
             page: '1',
             page_size: investmentRecordsDefaultPageSize(tab),
+            entry_type: 'external_request',
             date_mode: 'day',
             start_date: investmentTodayDate(),
             end_date: investmentTodayDate(),
@@ -3324,6 +3410,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {
             page: '1',
             page_size: investmentRecordsDefaultPageSize(tab),
+            entry_type: 'internal_call',
             keyword: '',
             date_mode: 'day',
             start_date: investmentTodayDate(),
@@ -3600,8 +3687,8 @@ function renderInvestmentRecordsShell() {
             <section class="investment-records-summary" id="investment-records-summary">${renderInvestmentRecordsSummary()}</section>
             <section class="investment-records-board">
                 <div class="investment-records-tabs">
-                    ${renderInvestmentRecordsTabButton('requests', '公众号请求', 'fa-message')}
-                    ${renderInvestmentRecordsTabButton('backendRequests', '后台请求', 'fa-terminal')}
+                    ${renderInvestmentRecordsTabButton('requests', '公众号入口', 'fa-message')}
+                    ${renderInvestmentRecordsTabButton('backendRequests', '后台入口', 'fa-terminal')}
                     ${renderInvestmentRecordsTabButton('contents', '后台内容生成', 'fa-gears')}
                     ${renderInvestmentRecordsTabButton('audits', '操作流水', 'fa-clock-rotate-left')}
                 </div>
@@ -3618,6 +3705,7 @@ function investmentRequestExportDefaults() {
     const filters = investmentRecordsState.filters.requests || investmentRecordsDefaultFilters('requests');
     return {
         keyword: filters.keyword || '',
+        entry_type: 'external_request',
         service_type: filters.service_type || '',
         status: filters.status || '',
         customer: filters.customer || '',
@@ -3725,7 +3813,7 @@ function investmentRequestExportModeButton(mode, label, icon) {
 
 function renderInvestmentRecordsTabButton(tab, label, icon) {
     const active = investmentRecordsState.tab === tab ? ' active' : '';
-    return `<button class="investment-records-tab${active}" onclick="switchInvestmentRecordsTab('${tab}')"><i class="fas ${icon}"></i><span>${label}</span></button>`;
+    return `<a class="investment-records-tab${active}" href="#invest-records/${tab}" onclick="event.preventDefault(); switchInvestmentRecordsTab('${tab}')"><i class="fas ${icon}"></i><span>${label}</span></a>`;
 }
 
 function renderInvestmentRecordsSummary() {
@@ -3957,14 +4045,14 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
     try {
         let html = '';
         if (tab === 'requests') {
-            const data = await investmentFetchJson(`/api/investment/records/requests?${investmentRecordsQueryParams('requests').toString()}`);
+            const data = await investmentFetchJson(`/api/investment/records/requests?entry_type=external_request&${investmentRecordsQueryParams('requests').toString()}`);
             investmentRecordsState.data.requests = data.records || [];
             investmentRecordsApplyPagination('requests', data.pagination);
             html = renderInvestmentRequestRecordsTable(investmentRecordsState.data.requests);
             const summary = document.getElementById('investment-records-summary');
             if (summary) summary.innerHTML = renderInvestmentRecordsSummary();
         } else if (tab === 'backendRequests') {
-            const data = await investmentFetchJson(`/api/investment/records/internal-calls?${investmentRecordsQueryParams('backendRequests').toString()}`);
+            const data = await investmentFetchJson(`/api/investment/records/requests?entry_type=internal_call&${investmentRecordsQueryParams('backendRequests').toString()}`);
             investmentRecordsState.data.backendRequests = data.records || [];
             investmentRecordsApplyPagination('backendRequests', data.pagination);
             html = renderInvestmentBackendRequestRecordsTable(investmentRecordsState.data.backendRequests);
@@ -4022,18 +4110,19 @@ function renderInvestmentBackendRequestRecordsTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无后台请求记录</div>';
     const rows = records.map(record => `<tr>
         <td>${investmentServiceLabel(record.service_type)}</td>
-        <td>${investmentRecordClamp(record.call_id || '-', 1, 18)}</td>
+        <td>${investmentRecordClamp(record.request_id || '-', 1, 18)}</td>
         <td>${escapeHtml(record.actor_name || '-')}</td>
+        <td>${escapeHtml(record.actor_type || '-')}</td>
         <td>${escapeHtml(record.action_type || '-')}</td>
         <td><span class="investment-badge ${investmentStatusClass(record.status)}">${investmentStatusLabel(record.status)}</span></td>
-        <td>${investmentRecordFileSummary(record.outputs || [], '未生成')}</td>
-        <td>${investmentRecordClamp(record.error || record.output_text || '正常', 2, 54)}</td>
+        <td>${investmentRecordFileSummary(record.output_files || [], '未生成')}</td>
+        <td>${investmentRecordClamp(record.error_message || record.raw_input || '正常', 2, 54)}</td>
         <td>${escapeHtml(record.elapsed_ms == null ? '-' : `${record.elapsed_ms} ms`)}</td>
         <td>${escapeHtml(investmentFormatBeijingTime(record.created_at))}</td>
         <td class="investment-row-actions">${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('backendRequest', '${investmentEncodedRecord(record)}')`)}</td>
     </tr>`).join('');
     return investmentRecordTableShell(`<table class="investment-table investment-records-table">
-        <thead><tr><th>服务</th><th>调用 ID</th><th>调用人</th><th>动作</th><th>状态</th><th>输出摘要</th><th>摘要</th><th>耗时</th><th>北京时间</th><th>详情</th></tr></thead>
+        <thead><tr><th>服务</th><th>业务记录 ID</th><th>调用人</th><th>主体</th><th>动作</th><th>状态</th><th>输出摘要</th><th>摘要</th><th>耗时</th><th>北京时间</th><th>详情</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
 }
@@ -4629,9 +4718,11 @@ function renderInvestmentRequestEventTimeline(events) {
 function renderInvestmentBackendRequestDrawer(record) {
     return `
         ${investmentDrawerSection('基础信息', investmentDrawerFacts([
-            ['调用 ID', escapeHtml(record.call_id || '-')],
+            ['业务记录 ID', escapeHtml(record.request_id || '-')],
             ['服务', investmentServiceLabel(record.service_type)],
+            ['入口', escapeHtml(record.entry_type || '-')],
             ['动作', escapeHtml(record.action_type || '-')],
+            ['主体', escapeHtml(record.actor_type || '-')],
             ['状态', investmentStatusLabel(record.status)],
             ['调用人', escapeHtml(record.actor_name || '-')],
             ['角色', escapeHtml(record.actor_role || '-')],
@@ -4639,12 +4730,10 @@ function renderInvestmentBackendRequestDrawer(record) {
             ['创建时间', escapeHtml(investmentFormatBeijingTime(record.created_at) || '-')],
             ['更新时间', escapeHtml(investmentFormatBeijingTime(record.updated_at) || '-')],
         ]))}
-        ${investmentDrawerSection('输入文件', `<div class="investment-detail-links">${investmentFileLinks(record.sources || [])}</div>`)}
-        ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.outputs || [])}</div>`)}
-        ${investmentDrawerPre('输入文本', record.input_text || '')}
-        ${investmentDrawerPre('输入提示词', record.input_prompt || '')}
-        ${investmentDrawerPre('生成文本', record.output_text || '')}
-        ${investmentDrawerPre('错误详情', record.error || '')}
+        ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.output_files || [])}</div>`)}
+        ${investmentDrawerPre('输入文本', record.raw_input || '')}
+        ${investmentDrawerPre('结果/错误', record.error_message || record.user_prompt || '')}
+        ${investmentDrawerSection('产物审计', investmentArtifactTable(record.output_artifacts || []))}
     `;
 }
 
@@ -5045,6 +5134,7 @@ function renderInvestmentComponentCard(component) {
         <div class="investment-component-actions">
             ${investmentButtonIfCan('skills.write', 'fa-sliders', '配置', `openInvestmentComponentConfigDialog('${escapeHtml(componentKey)}')`, 'primary')}
             ${component.versioned ? investmentButtonIfCan('skills.write', 'fa-code-branch', '切换版本', `openInvestmentComponentVersionDialog('${escapeHtml(componentKey)}')`) : ''}
+            ${component.runtime ? investmentButtonIfCan('skills.write', 'fa-trash-can', '删除组件', `deleteInvestmentRuntimeComponent('${escapeHtml(componentKey)}')`, 'danger') : ''}
         </div>
     </article>`;
 }
@@ -5225,6 +5315,26 @@ async function deleteInvestmentSkillVersion(skillKey, versionId) {
         await loadInvestmentComponents();
     } catch (error) {
         showInvestmentToast(`删除版本失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function deleteInvestmentRuntimeComponent(componentKey) {
+    if (!componentKey) return;
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '删除组件',
+        message: `确认删除运行期组件 ${componentKey}？历史记录会保留。`,
+        confirmText: '删除',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+        await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/delete`, {
+            method: 'POST',
+        });
+        showInvestmentToast('组件已删除');
+        await loadInvestmentComponents();
+    } catch (error) {
+        showInvestmentToast(`删除组件失败：${String(error.message || error)}`, 'error');
     }
 }
 
@@ -5741,6 +5851,7 @@ window.saveInvestmentSkillSettings = saveInvestmentSkillSettings;
 window.saveInvestmentSkillDialog = saveInvestmentSkillDialog;
 window.activateInvestmentSkillVersion = activateInvestmentSkillVersion;
 window.deleteInvestmentSkillVersion = deleteInvestmentSkillVersion;
+window.deleteInvestmentRuntimeComponent = deleteInvestmentRuntimeComponent;
 window.selectedInvestmentSkillVersion = selectedInvestmentSkillVersion;
 window.refreshInvestmentStocks = refreshInvestmentStocks;
 window.queryInvestmentStocks = queryInvestmentStocks;

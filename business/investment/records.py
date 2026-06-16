@@ -79,6 +79,7 @@ class ContentRecord:
     content_id: str
     service_type: ServiceType
     status: Status
+    module_key: str = ""
     source_files: list[str] | None = None
     source_text: str = ""
     input_prompt: str = ""
@@ -227,6 +228,25 @@ def external_request_identity_values(openid: str, service_type: ServiceType | No
     }
 
 
+def business_record_identity_values(
+    *,
+    entry_type: EntryType,
+    action_type: ActionType,
+    actor_type: ActorType,
+    actor_id: str = "",
+    actor_name: str = "",
+    actor_role: str = "",
+) -> dict[str, str]:
+    return {
+        "entry_type": str(entry_type),
+        "action_type": str(action_type),
+        "actor_type": str(actor_type),
+        "actor_id": str(actor_id or ""),
+        "actor_name": str(actor_name or ""),
+        "actor_role": str(actor_role or ""),
+    }
+
+
 def _request_action_type(item: dict) -> ActionType:
     if item.get("action_type"):
         return ActionType(item["action_type"])
@@ -337,6 +357,133 @@ def create_request_record(
         result="accepted",
     )
     return request_id
+
+
+def create_business_workflow_record(
+    *,
+    entry_type: EntryType,
+    service_type: ServiceType | None,
+    action_type: ActionType,
+    actor_type: ActorType,
+    actor_id: str = "",
+    actor_name: str = "",
+    actor_role: str = "",
+    openid: str = "",
+    raw_input: str = "",
+    normalized_target: str = "",
+    stock_code: str = "",
+    stock_name: str = "",
+    customer_name: str = "",
+    institution: str = "",
+    market_date: str = "",
+    cache_key: str = "",
+    cache_hit: bool = False,
+    program_version: str = "",
+    ta_version: str = "",
+    renderer_version: str = "",
+    template_version: str = "",
+) -> str:
+    request_id = str(uuid.uuid4())
+    now = _now()
+    effective_openid = str(openid or actor_id or "")
+    with connect() as conn:
+        conn.execute(
+            insert(investment_request_records).values(
+                request_id=request_id,
+                openid=effective_openid,
+                raw_input=str(raw_input or ""),
+                service_type=str(service_type) if service_type else None,
+                **business_record_identity_values(
+                    entry_type=entry_type,
+                    action_type=action_type,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    actor_name=actor_name,
+                    actor_role=actor_role,
+                ),
+                status=str(Status.GENERATING),
+                output_files="[]",
+                **_audit_values(
+                    normalized_target=normalized_target,
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    customer_name=customer_name,
+                    institution=institution,
+                    market_date=market_date,
+                    cache_key=cache_key,
+                    cache_hit=cache_hit,
+                    program_version=program_version,
+                    ta_version=ta_version,
+                    renderer_version=renderer_version,
+                    template_version=template_version,
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return request_id
+
+
+def finish_business_workflow_record(
+    request_id: str,
+    *,
+    status: Status,
+    output_files: list[str] | None = None,
+    error_code: ErrorCode | str | None = None,
+    user_prompt: str = "",
+    error_message: str = "",
+    elapsed_ms: int | None = None,
+    normalized_target: str = "",
+    stock_code: str = "",
+    stock_name: str = "",
+    customer_name: str = "",
+    institution: str = "",
+    market_date: str = "",
+    cache_key: str = "",
+    cache_hit: bool = False,
+    program_version: str = "",
+    ta_version: str = "",
+    renderer_version: str = "",
+    template_version: str = "",
+) -> None:
+    values: dict[str, object] = {
+        "status": str(status),
+        "error_code": str(error_code or "") if error_code else None,
+        "user_prompt": str(user_prompt or ""),
+        "error_message": sanitize_sensitive_text(error_message),
+        "output_files": _json_list(output_files or []),
+        "elapsed_ms": elapsed_ms,
+        "updated_at": _now(),
+    }
+    values.update(
+        _audit_values(
+            **{
+                key: value
+                for key, value in {
+                    "normalized_target": normalized_target,
+                    "stock_code": stock_code,
+                    "stock_name": stock_name,
+                    "customer_name": customer_name,
+                    "institution": institution,
+                    "market_date": market_date,
+                    "cache_key": cache_key,
+                    "program_version": program_version,
+                    "ta_version": ta_version,
+                    "renderer_version": renderer_version,
+                    "template_version": template_version,
+                }.items()
+                if value
+            }
+        )
+    )
+    if cache_hit:
+        values["cache_hit"] = 1
+    with connect() as conn:
+        conn.execute(
+            update(investment_request_records)
+            .where(investment_request_records.c.request_id == request_id)
+            .values(**values)
+        )
 
 
 def succeed_request_record(
@@ -606,6 +753,7 @@ def list_request_records(
     limit: int = 50,
     *,
     service_type: ServiceType | str | None = None,
+    entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
     customer: str = "",
@@ -616,6 +764,7 @@ def list_request_records(
         page=1,
         page_size=limit,
         service_type=service_type,
+        entry_type=entry_type,
         status=status,
         keyword=keyword,
         customer=customer,
@@ -630,6 +779,7 @@ def build_request_record_conditions(
     users,
     *,
     service_type: ServiceType | str | None = None,
+    entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
     customer: str = "",
@@ -642,6 +792,12 @@ def build_request_record_conditions(
         return [], True
     if service_condition is not None:
         conditions.append(service_condition)
+    if entry_type is not None and str(entry_type or "").strip():
+        try:
+            normalized_entry_type = EntryType(entry_type)
+        except ValueError:
+            return [], True
+        conditions.append(table.c.entry_type == str(normalized_entry_type))
     if status is not None:
         try:
             normalized_status = Status(status)
@@ -722,6 +878,7 @@ def list_request_records_page(
     page: int = 1,
     page_size: int = 50,
     service_type: ServiceType | str | None = None,
+    entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
     customer: str = "",
@@ -749,6 +906,7 @@ def list_request_records_page(
         table,
         users,
         service_type=service_type,
+        entry_type=entry_type,
         status=status,
         keyword=keyword,
         customer=customer,
@@ -1593,6 +1751,7 @@ def _row_to_content(row) -> ContentRecord:
         content_id=item["content_id"],
         service_type=ServiceType(item["service_type"]),
         status=status,
+        module_key=item.get("module_key") or "",
         source_files=_load_list(item["source_files"]),
         source_text=item["source_text"] or "",
         input_prompt=item.get("input_prompt") or "",
@@ -1624,6 +1783,7 @@ def _row_to_content(row) -> ContentRecord:
 def list_content_records(
     limit: int = 50,
     service_type: ServiceType | None = None,
+    module_key: str = "",
     effective_date: str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
@@ -1634,6 +1794,7 @@ def list_content_records(
         page=1,
         page_size=limit,
         service_type=service_type,
+        module_key=module_key,
         effective_date=effective_date,
         status=status,
         keyword=keyword,
@@ -1648,6 +1809,7 @@ def list_content_records_page(
     page: int = 1,
     page_size: int = 50,
     service_type: ServiceType | None = None,
+    module_key: str = "",
     effective_date: str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
@@ -1662,6 +1824,9 @@ def list_content_records_page(
     conditions = []
     if service_type is not None:
         conditions.append(investment_daily_contents.c.service_type == str(service_type))
+    normalized_module_key = str(module_key or "").strip()
+    if normalized_module_key:
+        conditions.append(investment_daily_contents.c.module_key == normalized_module_key)
     if effective_date:
         conditions.append(investment_daily_contents.c.effective_date == effective_date)
     if start_date:
@@ -1681,6 +1846,7 @@ def list_content_records_page(
             or_(
                 investment_daily_contents.c.content_id.ilike(pattern),
                 investment_daily_contents.c.service_type.ilike(pattern),
+                investment_daily_contents.c.module_key.ilike(pattern),
                 investment_daily_contents.c.source_text.ilike(pattern),
                 investment_daily_contents.c.input_prompt.ilike(pattern),
                 investment_daily_contents.c.generated_text.ilike(pattern),

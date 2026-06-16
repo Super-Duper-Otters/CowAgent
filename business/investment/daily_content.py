@@ -12,7 +12,7 @@ from .audit_service import AdminActor, actor_from_admin, record_operation_audit
 from .config_service import sanitize_sensitive_text
 from .constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from .db import connect, row_to_dict
-from .records import record_output_file
+from .records import create_business_workflow_record, finish_business_workflow_record, record_output_file
 from .render_service import DEFAULT_RENDERER_PATH, template_for_service
 from .schema import investment_daily_contents
 from .storage import get_storage_dirs
@@ -32,7 +32,6 @@ class DailyContentResult:
     output_files: list[str] = field(default_factory=list)
 
 
-CONTENT_SERVICE_TYPES = (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND)
 CONTENT_STATUSES = (
     Status.DRAFT,
     Status.GENERATING,
@@ -121,7 +120,10 @@ def _output_image_version(service_type: ServiceType) -> str:
     if not renderer_path.is_absolute():
         renderer_path = Path.cwd() / renderer_path
     renderer_version = file_fingerprint(renderer_path)
-    template_version = file_fingerprint(template_for_service(service_type))
+    try:
+        template_version = file_fingerprint(template_for_service(service_type))
+    except ValueError:
+        template_version = ""
     return f"{renderer_version}|{template_version}"
 
 
@@ -160,9 +162,15 @@ def _load_source_files(value: Any) -> list[str]:
 
 
 def _ensure_content_service_type(service_type: ServiceType) -> ServiceType:
-    if service_type not in CONTENT_SERVICE_TYPES:
-        raise ValueError(f"unsupported daily content service type: {service_type}")
-    return service_type
+    return ServiceType(service_type)
+
+
+def _normalize_module_key(value: str | None = "") -> str:
+    return str(value or "").strip()
+
+
+def _allows_legacy_content_fallback(service_type: ServiceType, module_key: str) -> bool:
+    return bool(module_key) and module_key == str(service_type)
 
 
 def save_source_file(
@@ -172,6 +180,7 @@ def save_source_file(
     *,
     owner_id: str = "unassigned",
     effective_date: str | None = None,
+    module_key: str = "",
 ) -> str:
     from .config_service import get_config
 
@@ -207,8 +216,10 @@ def create_content_draft(
     expires_at: str | None = None,
     auto_effective_after_generate: bool = False,
     actor: Any | None = None,
+    module_key: str = "",
 ) -> str:
     service_type = _ensure_content_service_type(service_type)
+    normalized_module_key = _normalize_module_key(module_key)
     normalized_effective_date = _normalize_effective_date(effective_date)
     normalized_expires_at = _normalize_expires_at(expires_at)
     content_id = str(uuid.uuid4())
@@ -218,12 +229,15 @@ def create_content_draft(
     actor_values.update(_content_actor_values(actor, prefix="created"))
     actor_values.update(_content_actor_values(actor, prefix="updated"))
     with connect() as conn:
+        version_conditions = [
+            investment_daily_contents.c.service_type == str(service_type),
+            investment_daily_contents.c.effective_date == normalized_effective_date,
+        ]
+        if normalized_module_key:
+            version_conditions.append(investment_daily_contents.c.module_key == normalized_module_key)
         version_row = conn.execute(
             select(investment_daily_contents.c.content_version)
-            .where(
-                investment_daily_contents.c.service_type == str(service_type),
-                investment_daily_contents.c.effective_date == normalized_effective_date,
-            )
+            .where(*version_conditions)
             .order_by(investment_daily_contents.c.content_version.desc())
             .limit(1)
         ).fetchone()
@@ -232,6 +246,7 @@ def create_content_draft(
             insert(investment_daily_contents).values(
                 content_id=content_id,
                 service_type=str(service_type),
+                module_key=normalized_module_key,
                 source_files=json.dumps(source_files or [], ensure_ascii=False),
                 source_text=source_text,
                 status=str(Status.DRAFT),
@@ -254,6 +269,7 @@ def create_content_draft(
         actor=audit_actor,
         detail={
             "service_type": str(service_type),
+            "module_key": normalized_module_key,
             "effective_date": normalized_effective_date,
             "expires_at": normalized_expires_at,
             "content_version": content_version,
@@ -443,16 +459,57 @@ def update_generation_failure(content_id: str, detail: str, input_prompt: str = 
     )
 
 
-def _default_ai_generator(service_type: ServiceType, source_text: str, source_files: list[str] | None = None):
+def _module_definition(module_key: str):
+    if not module_key:
+        return None
+    try:
+        from business.business_registry import get_business_definition
+
+        return get_business_definition(module_key)
+    except Exception:
+        return None
+
+
+def _default_ai_generator(
+    service_type: ServiceType,
+    source_text: str,
+    source_files: list[str] | None = None,
+    *,
+    module_key: str = "",
+    prompt_key: str = "",
+):
+    if module_key or prompt_key:
+        from business.prompt_to_image_handler import generate_standard_text_for_module
+
+        return generate_standard_text_for_module(
+            service_type,
+            source_text,
+            source_files=source_files,
+            prompt_key=prompt_key,
+            module_key=module_key,
+        )
     from .ai_generation import generate_standard_text
 
     return generate_standard_text(service_type, source_text, source_files=source_files)
 
 
-def _default_renderer(service_type: ServiceType, generated_text: str, output_path: str | None = None):
+def _default_renderer(
+    service_type: ServiceType,
+    generated_text: str,
+    output_path: str | None = None,
+    *,
+    template_key: str = "",
+):
     from .render_service import RenderRequest, render_card
 
-    return render_card(RenderRequest(service_type=service_type, standard_text=generated_text, output_path=output_path))
+    return render_card(
+        RenderRequest(
+            service_type=service_type,
+            standard_text=generated_text,
+            output_path=output_path,
+            template_key=template_key,
+        )
+    )
 
 
 def generate_content(
@@ -462,7 +519,7 @@ def generate_content(
     actor: Any | None = None,
 ) -> DailyContentResult:
     started_at = datetime.now(UTC)
-    internal_call_id = ""
+    business_request_id = ""
     ai_audit_id = ""
     with connect() as conn:
         row = conn.execute(
@@ -473,26 +530,28 @@ def generate_content(
     item = row_to_dict(row)
     service_type = ServiceType(item["service_type"])
     _ensure_content_service_type(service_type)
+    module_key = _normalize_module_key(item.get("module_key"))
+    definition = _module_definition(module_key)
+    prompt_key = str(getattr(definition, "prompt_key", "") or "")
+    template_key = str(getattr(definition, "template_key", "") or "")
     source_files = _load_source_files(item.get("source_files"))
     operator, audit_actor = _actor_identity(actor, item.get("operator") or "")
     actor_id = str(getattr(audit_actor, "admin_id", "") or "")
     actor_role = str(getattr(audit_actor, "role", "") or "")
     actor_type = ActorType.ADMIN if audit_actor is not None else ActorType.SYSTEM
     try:
-        from .internal_call_records import start_internal_call_record
-
-        internal_call_id = start_internal_call_record(
+        business_request_id = create_business_workflow_record(
+            entry_type=EntryType.INTERNAL_CALL,
             service_type=service_type,
             action_type=ActionType.GENERATE,
             actor_type=actor_type,
             actor_id=actor_id,
             actor_name=operator,
             actor_role=actor_role,
-            input_text=item["source_text"] or "",
-            sources=source_files,
+            raw_input=item["source_text"] or "",
         )
     except Exception:
-        internal_call_id = ""
+        business_request_id = ""
     _mark_generation_started(content_id, actor=actor)
     try:
         from .ai_generation_audit import start_ai_generation_audit
@@ -505,15 +564,21 @@ def generate_content(
             actor_id=actor_id,
             actor_name=operator,
             actor_role=actor_role,
-            business_record_type="internal_call",
-            business_record_id=internal_call_id,
+            business_record_type="request",
+            business_record_id=business_request_id,
             input_text=item["source_text"] or "",
             sources=source_files,
         )
     except Exception:
         ai_audit_id = ""
     if ai_generator is None:
-        ai_result = _default_ai_generator(service_type, item["source_text"] or "", source_files)
+        ai_result = _default_ai_generator(
+            service_type,
+            item["source_text"] or "",
+            source_files,
+            module_key=module_key,
+            prompt_key=prompt_key,
+        )
     else:
         try:
             ai_result = ai_generator(service_type, item["source_text"] or "", source_files)
@@ -524,15 +589,13 @@ def generate_content(
         input_prompt = str(getattr(ai_result, "prompt", "") or "")
         code = getattr(ai_result, "error_code", None) or ErrorCode.SYSTEM_ERROR
         update_generation_failure(content_id, detail, input_prompt=input_prompt)
-        if internal_call_id:
-            from .internal_call_records import finish_internal_call_record
-
-            finish_internal_call_record(
-                internal_call_id,
+        if business_request_id:
+            finish_business_workflow_record(
+                business_request_id,
                 status=Status.FAILED,
                 error_code=str(code),
-                error=detail,
-                input_prompt=input_prompt,
+                user_prompt=user_message(code),
+                error_message=detail,
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         if ai_audit_id:
@@ -564,6 +627,7 @@ def generate_content(
             service_type,
             generated_text,
             output_path=_daily_content_render_output_path(item, service_type),
+            template_key=template_key,
         )
     else:
         render_result = renderer(service_type, generated_text)
@@ -571,29 +635,24 @@ def generate_content(
         detail = sanitize_sensitive_text(getattr(render_result, "detail", "render failed"))
         code = getattr(render_result, "error_code", None) or ErrorCode.IMAGE_GENERATION_FAILED
         update_generation_failure(content_id, detail)
-        if internal_call_id:
-            from .internal_call_records import finish_internal_call_record
-
-            finish_internal_call_record(
-                internal_call_id,
+        if business_request_id:
+            finish_business_workflow_record(
+                business_request_id,
                 status=Status.FAILED,
                 error_code=str(code),
-                error=detail,
-                output_text=generated_text,
+                user_prompt=user_message(code),
+                error_message=detail or generated_text,
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         return DailyContentResult(False, content_id=content_id, error_code=code, user_prompt=user_message(code), detail=detail)
     output_image = str(getattr(render_result, "image_path", ""))
     output_image = update_generation_success(content_id, generated_text, output_image, input_prompt=input_prompt)
-    if internal_call_id:
-        from .internal_call_records import finish_internal_call_record
-
-        finish_internal_call_record(
-            internal_call_id,
+    if business_request_id:
+        finish_business_workflow_record(
+            business_request_id,
             status=Status.SUCCESS,
-            input_prompt=input_prompt,
-            output_text=generated_text,
-            outputs=[output_image],
+            error_message=generated_text,
+            output_files=[output_image],
             elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
         )
     return DailyContentResult(
@@ -628,6 +687,7 @@ def set_content_effective(
         row = conn.execute(
             select(
                 investment_daily_contents.c.service_type,
+                investment_daily_contents.c.module_key,
                 investment_daily_contents.c.output_image,
                 investment_daily_contents.c.effective_date,
                 investment_daily_contents.c.expires_at,
@@ -639,6 +699,7 @@ def set_content_effective(
             raise KeyError(content_id)
         item = row_to_dict(row)
         service_type = item["service_type"]
+        module_key = _normalize_module_key(item.get("module_key"))
         final_image = output_image or item["output_image"]
         normalized_effective_date = _normalize_effective_date(effective_date or item.get("effective_date"))
         original_effective_date = item.get("effective_date") or ""
@@ -660,23 +721,22 @@ def set_content_effective(
                 owner_type="content",
             )
         now = _now()
+        archive_conditions = [
+            investment_daily_contents.c.effective_date == normalized_effective_date,
+            investment_daily_contents.c.status == str(Status.EFFECTIVE),
+            investment_daily_contents.c.content_id != content_id,
+        ]
+        if module_key:
+            archive_conditions.append(investment_daily_contents.c.module_key == module_key)
+        else:
+            archive_conditions.append(investment_daily_contents.c.service_type == service_type)
         archive_rows = conn.execute(
-            select(investment_daily_contents.c.content_id).where(
-                investment_daily_contents.c.service_type == service_type,
-                investment_daily_contents.c.effective_date == normalized_effective_date,
-                investment_daily_contents.c.status == str(Status.EFFECTIVE),
-                investment_daily_contents.c.content_id != content_id,
-            )
+            select(investment_daily_contents.c.content_id).where(*archive_conditions)
         ).fetchall()
         archived_ids = [row_to_dict(archive_row)["content_id"] for archive_row in archive_rows]
         conn.execute(
             update(investment_daily_contents)
-            .where(
-                investment_daily_contents.c.service_type == service_type,
-                investment_daily_contents.c.effective_date == normalized_effective_date,
-                investment_daily_contents.c.status == str(Status.EFFECTIVE),
-                investment_daily_contents.c.content_id != content_id,
-            )
+            .where(*archive_conditions)
             .values(status=str(Status.ARCHIVED), archived_at=now, updated_at=now)
         )
         conn.execute(
@@ -711,7 +771,12 @@ def set_content_effective(
             archived_id,
             operator=operator,
             actor=audit_actor,
-            detail={"service_type": service_type, "effective_date": normalized_effective_date, "replaced_by": content_id},
+            detail={
+                "service_type": service_type,
+                "module_key": module_key,
+                "effective_date": normalized_effective_date,
+                "replaced_by": content_id,
+            },
         )
     record_operation_audit(
         "content.publish",
@@ -721,6 +786,7 @@ def set_content_effective(
         actor=audit_actor,
         detail={
             "service_type": service_type,
+            "module_key": module_key,
             "effective_date": normalized_effective_date,
             "expires_at": normalized_expires_at,
             "output_image": final_image,
@@ -823,23 +889,37 @@ def invalidate_content(
     return invalidated
 
 
-def get_latest_effective_content(service_type: ServiceType) -> DailyContentResult:
+def get_latest_effective_content(service_type: ServiceType, module_key: str = "") -> DailyContentResult:
     mark_expired_daily_contents_invalidated()
     today = _today()
     now = _now()
+    service_type = _ensure_content_service_type(service_type)
+    normalized_module_key = _normalize_module_key(module_key)
+    conditions = [
+        investment_daily_contents.c.service_type == str(service_type),
+        investment_daily_contents.c.status == str(Status.EFFECTIVE),
+        investment_daily_contents.c.effective_date <= today,
+        or_(
+            investment_daily_contents.c.expires_at.is_(None),
+            investment_daily_contents.c.expires_at == "",
+            investment_daily_contents.c.expires_at > now,
+        ),
+    ]
+    if normalized_module_key:
+        if _allows_legacy_content_fallback(service_type, normalized_module_key):
+            conditions.append(
+                or_(
+                    investment_daily_contents.c.module_key == normalized_module_key,
+                    investment_daily_contents.c.module_key.is_(None),
+                    investment_daily_contents.c.module_key == "",
+                )
+            )
+        else:
+            conditions.append(investment_daily_contents.c.module_key == normalized_module_key)
     with connect() as conn:
         row = conn.execute(
             select(investment_daily_contents)
-            .where(
-                investment_daily_contents.c.service_type == str(service_type),
-                investment_daily_contents.c.status == str(Status.EFFECTIVE),
-                investment_daily_contents.c.effective_date <= today,
-                or_(
-                    investment_daily_contents.c.expires_at.is_(None),
-                    investment_daily_contents.c.expires_at == "",
-                    investment_daily_contents.c.expires_at > now,
-                ),
-            )
+            .where(*conditions)
             .order_by(
                 investment_daily_contents.c.effective_date.desc(),
                 investment_daily_contents.c.effective_at.desc(),
@@ -853,7 +933,7 @@ def get_latest_effective_content(service_type: ServiceType) -> DailyContentResul
             False,
             error_code=ErrorCode.NO_CONTENT,
             user_prompt=user_message(ErrorCode.NO_CONTENT),
-            detail=f"no effective content for {service_type}",
+            detail=f"no effective content for {normalized_module_key or service_type}",
         )
     if not Path(item["output_image"]).is_file():
         return DailyContentResult(

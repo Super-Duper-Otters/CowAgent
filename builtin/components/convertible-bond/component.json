@@ -1,0 +1,19 @@
+{
+  "component_key": "convertible-bond",
+  "label": "转债组件",
+  "description": "返回当前生效的可转债投研内容图片。",
+  "service_type": "convertible_bond",
+  "match_type": "exact",
+  "default_triggers": ["转债"],
+  "handler_type": "daily_content",
+  "generation_mode": "pre_generated",
+  "delivery_mode": "direct",
+  "content_enabled": true,
+  "output_mode": "image",
+  "routable": true,
+  "storage_name": "convertible-bond",
+  "component_type": "active_prompt",
+  "prompt_key": "prompt.convertible_bond",
+  "renderer_component_key": "signal-card-renderer",
+  "template_key": "convertible_bond"
+}

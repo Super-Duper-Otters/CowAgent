@@ -35,14 +35,17 @@ def handle_daily_content(
     raw_input: str,
     route,
     *,
+    definition=None,
     customer_metadata: dict[str, str] | None = None,
     elapsed=lambda: 0,
 ):
     from business.router import BusinessReply
 
     customer_metadata = customer_metadata or {}
-    request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
-    content = get_daily_content_business(route.service_type)
+    module_key = getattr(definition, "business_key", "") or getattr(route, "module_key", "")
+    service_type = getattr(definition, "service_type", None) or route.service_type
+    request_id = _create_request_record_with_customer(openid, raw_input, service_type, customer_metadata)
+    content = get_daily_content_business(service_type, module_key=module_key)
     if not content.success:
         code = content.error_code or ErrorCode.NO_CONTENT
         fail_request_record(request_id, code, content.user_prompt, content.detail, elapsed())
@@ -51,11 +54,12 @@ def handle_daily_content(
             False,
             content.user_prompt,
             [],
-            route.service_type,
+            service_type,
             code,
             content.user_prompt,
             sanitize_sensitive_text(content.detail),
             request_id,
+            module_key=module_key,
         )
 
     output_files = [content.output_image]
@@ -70,8 +74,9 @@ def handle_daily_content(
         True,
         _image_reply(output_files),
         output_files,
-        route.service_type,
+        service_type,
         request_id=request_id,
         source_type="content",
         source_id=content.content_id,
+        module_key=module_key,
     )

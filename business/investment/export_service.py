@@ -6,7 +6,7 @@ from typing import Iterable
 from openpyxl import Workbook
 from sqlalchemy import select
 
-from .constants import ServiceType, Status
+from .constants import EntryType, ServiceType, Status
 from .db import connect, row_to_dict
 from .records import _visible_delivery_message, build_request_record_conditions
 from .schema import investment_request_records, investment_users
@@ -69,6 +69,7 @@ def export_request_records_xlsx(
     start_date: str,
     end_date: str,
     service_type: str | ServiceType | None = None,
+    entry_type: str | EntryType | None = EntryType.EXTERNAL_REQUEST,
     status: str | Status | None = None,
     keyword: str = "",
     customer: str = "",
@@ -80,6 +81,7 @@ def export_request_records_xlsx(
         table,
         users,
         service_type=service_type,
+        entry_type=entry_type,
         status=status,
         keyword=keyword,
         customer=customer,

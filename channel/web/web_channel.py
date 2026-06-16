@@ -2875,6 +2875,7 @@ class InvestmentRequestRecordsExportHandler:
                 start_date='',
                 end_date='',
                 service_type='',
+                entry_type='external_request',
                 status='',
                 keyword='',
                 customer='',
@@ -2892,6 +2893,7 @@ class InvestmentRequestRecordsExportHandler:
                 start_date,
                 end_date,
                 service_type=params.service_type or None,
+                entry_type=getattr(params, "entry_type", "") or "external_request",
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
                 customer=getattr(params, "customer", "") or "",
@@ -3129,19 +3131,66 @@ def _investment_import_user_preview(row):
     }
 
 
+def _investment_content_definition_for_service(service_type):
+    if not service_type:
+        return None
+    try:
+        from business.business_registry import list_business_definitions
+
+        for definition in list_business_definitions():
+            if definition.service_type == service_type and (
+                getattr(definition, "content_enabled", False)
+                or getattr(definition, "handler_type", "") == "daily_content"
+            ):
+                return definition
+    except Exception:
+        return None
+    return None
+
+
+def _investment_resolve_content_module(module_key="", service_value=""):
+    from business.business_registry import get_business_definition
+    from business.constants import ServiceType, normalize_service
+
+    module_key = str(module_key or "").strip()
+    if module_key:
+        definition = get_business_definition(module_key)
+        if not (getattr(definition, "content_enabled", False) or getattr(definition, "handler_type", "") == "daily_content"):
+            raise ValueError(f"unsupported content module: {module_key}")
+        return definition.service_type, definition
+
+    service_type = normalize_service(service_value) if service_value else None
+    if service_type == ServiceType.UNMATCHED:
+        return service_type, None
+    return service_type, _investment_content_definition_for_service(service_type)
+
+
+def _investment_content_module_payload(record, definition=None):
+    if record is None:
+        return {}
+    if definition is None:
+        definition = _investment_content_definition_for_service(record.service_type)
+    record_module_key = str(getattr(record, "module_key", "") or "")
+    return {
+        "module_key": record_module_key or (getattr(definition, "business_key", "") if definition else ""),
+        "module_label": getattr(definition, "label", "") if definition else "",
+    }
+
+
 class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
             from business.business_records import list_content_records, list_output_files
-            from business.constants import normalize_service, ServiceType
+            from business.constants import ServiceType
             from business.daily_content import get_latest_effective_content
             from business.business_records import get_content_record
 
-            params = web.input(limit='50', service_type='', effective_date='')
+            params = web.input(limit='50', service_type='', module_key='', effective_date='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
-            if service_type == ServiceType.UNMATCHED:
+            module_key = str(getattr(params, "module_key", "") or "").strip()
+            service_type, definition = _investment_resolve_content_module(module_key, service_value)
+            if service_type == ServiceType.UNMATCHED and not module_key:
                 return _investment_json_response({
                     "status": "success",
                     "current_effective": None,
@@ -3150,17 +3199,19 @@ class InvestmentDailyContentHandler:
             contents = list_content_records(
                 limit=_investment_safe_limit(getattr(params, "limit", "50")),
                 service_type=service_type,
+                module_key=module_key,
                 effective_date=getattr(params, "effective_date", "") or None,
             )
             current_effective = None
-            if service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
-                latest = get_latest_effective_content(service_type)
+            if definition is not None or service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
+                latest = get_latest_effective_content(service_type, module_key=module_key)
                 if latest.success and latest.content_id:
                     record = get_content_record(latest.content_id)
                     current_effective = record.__dict__ | {
                         "service_type": str(record.service_type),
                         "status": str(record.status),
                         "output_artifacts": list_output_files(record.content_id),
+                        **_investment_content_module_payload(record, definition),
                     }
             return _investment_json_response({
                 "status": "success",
@@ -3169,6 +3220,7 @@ class InvestmentDailyContentHandler:
                     "service_type": str(content.service_type),
                     "status": str(content.status),
                     "output_artifacts": list_output_files(content.content_id),
+                    **_investment_content_module_payload(content, definition),
                 } for content in contents],
             })
         except Exception as e:
@@ -3178,7 +3230,6 @@ class InvestmentDailyContentHandler:
     def POST(self):
         admin = _require_investment_permission("content.upload")
         try:
-            from business.constants import normalize_service
             from business.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
 
             source_files = []
@@ -3187,6 +3238,7 @@ class InvestmentDailyContentHandler:
                 params = _raw_web_input()
                 body = {
                     "service_type": params.get("service_type", ""),
+                    "module_key": params.get("module_key", ""),
                     "source_text": params.get("source_text", ""),
                     "joke_text": params.get("joke_text", ""),
                     "operator": params.get("operator", ""),
@@ -3203,7 +3255,11 @@ class InvestmentDailyContentHandler:
             else:
                 body = _investment_json_body()
                 source_files = body.get("source_files", [])
-            service_type = normalize_service(body.get("service_type", ""))
+            service_type, _definition = _investment_resolve_content_module(
+                body.get("module_key", ""),
+                body.get("service_type", ""),
+            )
+            module_key = str(body.get("module_key", "") or "").strip()
             source_text = body.get("source_text", "")
             joke_text = body.get("joke_text", "")
             if joke_text:
@@ -3217,6 +3273,7 @@ class InvestmentDailyContentHandler:
                 expires_at=body.get("expires_at") or "",
                 auto_effective_after_generate=str(body.get("auto_effective_after_generate", "")).lower() in {"1", "true", "yes", "on"},
                 actor=admin,
+                module_key=module_key,
             )
             if file_items:
                 from business.business_records import record_output_file
@@ -3230,6 +3287,7 @@ class InvestmentDailyContentHandler:
                         _read_uploaded_file_bytes(file_obj),
                         owner_id=content_id,
                         effective_date=body.get("effective_date") or None,
+                        module_key=module_key,
                     )
                     source_files.append(source_path)
                     record_output_file(
@@ -3395,6 +3453,7 @@ class InvestmentRequestRecordsHandler:
                 page='1',
                 page_size='',
                 service_type='',
+                entry_type='',
                 status='',
                 keyword='',
                 customer='',
@@ -3415,6 +3474,7 @@ class InvestmentRequestRecordsHandler:
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
+                entry_type=getattr(params, "entry_type", "") or None,
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
                 customer=getattr(params, "customer", "") or "",
@@ -3428,7 +3488,11 @@ class InvestmentRequestRecordsHandler:
             return _investment_json_response({
                 "status": "success",
                 "records": [record.__dict__ | {
+                    "record_type": "business_record",
                     "service_type": str(record.service_type) if record.service_type else "",
+                    "entry_type": str(record.entry_type),
+                    "action_type": str(record.action_type),
+                    "actor_type": str(record.actor_type),
                     "status": str(record.status),
                     "error_code": str(record.error_code) if record.error_code else "",
                     "output_artifacts": list_output_files(record.request_id),
@@ -3458,10 +3522,15 @@ class InvestmentContentRecordsHandler:
                 keyword='',
                 start_date='',
                 end_date='',
+                module_key='',
             )
             service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
-            if service_type == ServiceType.UNMATCHED:
+            module_key = str(getattr(params, "module_key", "") or "").strip()
+            if module_key:
+                service_type, _definition = _investment_resolve_content_module(module_key, service_value)
+            else:
+                service_type = normalize_service(service_value) if service_value else None
+            if service_type == ServiceType.UNMATCHED and not module_key:
                 page, page_size = _investment_safe_pagination(params, 80)
                 return _investment_json_response({
                     "status": "success",
@@ -3477,6 +3546,7 @@ class InvestmentContentRecordsHandler:
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
+                module_key=module_key,
                 effective_date=getattr(params, "effective_date", "") or None,
                 status=record_status or None,
                 keyword=keyword,
@@ -3501,8 +3571,9 @@ class InvestmentInternalCallRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.constants import ServiceType, normalize_service
-            from business.investment.internal_call_records import list_internal_call_records_page
+            from business.constants import EntryType, ServiceType, normalize_service
+            from business.business_records import list_output_files, list_request_records_page
+            from business.investment.event_service import list_request_events
 
             params = web.input(
                 limit='50',
@@ -3524,21 +3595,32 @@ class InvestmentInternalCallRecordsHandler:
                     "pagination": _investment_pagination_payload(page, page_size, 0),
                 })
             page, page_size = _investment_safe_pagination(params, 80)
-            records, total = list_internal_call_records_page(
+            records, total = list_request_records_page(
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
-                status=getattr(params, "status", "") or "",
+                entry_type=EntryType.INTERNAL_CALL,
+                status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
                 start_date=_investment_date_bound(getattr(params, "start_date", "")),
                 end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
             )
+            events_by_request = {
+                record.request_id: [event.__dict__ for event in list_request_events(request_id=record.request_id, limit=200)]
+                for record in records
+            }
             return _investment_json_response({
                 "status": "success",
                 "records": [record.__dict__ | {
-                    "record_type": "internal_call",
-                    "service_type": str(record.service_type),
+                    "record_type": "business_record",
+                    "service_type": str(record.service_type) if record.service_type else "",
+                    "entry_type": str(record.entry_type),
+                    "action_type": str(record.action_type),
+                    "actor_type": str(record.actor_type),
                     "status": str(record.status),
+                    "error_code": str(record.error_code) if record.error_code else "",
+                    "output_artifacts": list_output_files(record.request_id),
+                    "events": events_by_request.get(record.request_id, []),
                 } for record in records],
                 "pagination": _investment_pagination_payload(page, page_size, total),
             })
@@ -3859,6 +3941,35 @@ class InvestmentComponentSettingsHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] component settings error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentComponentDeleteHandler:
+    def POST(self, component_key):
+        admin = _require_investment_permission("skills.write")
+        try:
+            from business.investment.component_service import delete_runtime_component, list_components
+
+            deleted = delete_runtime_component(
+                component_key,
+                operator_role=admin.role,
+                operator=admin.username,
+                actor=admin,
+            )
+            _record_investment_operation(
+                "component.delete",
+                "investment_component",
+                component_key,
+                admin=admin,
+                detail={"storage_path": deleted.get("storage_path", "")},
+            )
+            return _investment_json_response({
+                "status": "success",
+                "deleted": deleted,
+                "components": list_components(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] component delete error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

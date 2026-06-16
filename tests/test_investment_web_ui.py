@@ -339,6 +339,14 @@ def test_investment_generated_content_uses_shared_artifact_file_tree():
     assert ".investment-artifact-viewer" in css
 
 
+def test_daily_content_tabs_are_built_from_content_components():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert "content_enabled" in js
+    assert "renderInvestmentContentModuleTabs" in js
+    assert "currentInvestmentContentModuleKey" in js
+
+
 def test_rate_and_convertible_bond_content_are_merged_under_investment_content_page():
     html = CHAT_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
@@ -359,15 +367,14 @@ def test_rate_and_convertible_bond_content_are_merged_under_investment_content_p
     assert 'id="view-invest-cb"' not in html
     assert '<h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">投资内容</h2>' in daily_view_body
     assert 'id="invest-daily-content-content"' in daily_view_body
-    assert "let currentInvestmentContentPanel = 'rate';" in js
+    assert "let currentInvestmentContentModuleKey = '';" in js
     assert "function switchInvestmentContentPanel(" in js
     assert "async function renderInvestmentDailyContent(" in js
     assert "if (viewId === 'invest-daily-content') return renderInvestmentDailyContent();" in js
     assert "'invest-daily-content': 'content.read'" in js
-    assert "investment-tab" in daily_render_body
-    assert "利率内容" in daily_render_body
-    assert "转债内容" in daily_render_body
-    assert "renderInvestmentContent(currentInvestmentContentPanel)" in daily_render_body
+    assert "investment-tab" in _js_function_body(js, "renderInvestmentContentModuleTabs")
+    assert "renderInvestmentContentModuleTabs" in daily_render_body
+    assert "renderInvestmentContent(currentInvestmentContentModuleKey)" in daily_render_body
 
 
 def test_general_skills_page_is_hidden_from_sidebar():
@@ -496,6 +503,7 @@ def test_investment_skill_has_own_navigation_page():
     assert "deleteInvestmentSkillVersion(" in js
     assert "组件配置" in js
     assert "/api/investment/components" in js
+    assert "/api/investment/components/${encodeURIComponent(componentKey)}/delete" in js
     assert "/api/investment/skills/packages/upload" in js
     assert "/api/investment/components/${encodeURIComponent(componentKey)}/settings" in js
     assert "/api/investment/skills/${encodeURIComponent(skillKey)}/upload" in js
@@ -539,6 +547,8 @@ def test_investment_component_cards_scope_controls_by_type():
     assert "主动组件" in js
     assert "包含脚本" in js
     assert "settings.prompt_key" in config_dialog_body
+    assert "component.runtime" in card_body
+    assert "deleteInvestmentRuntimeComponent" in card_body
     assert "invest-component-modal-triggers" in config_dialog_body
     assert "invest-component-modal-prompt" in config_dialog_body
 
@@ -1706,7 +1716,7 @@ def test_investment_records_default_to_beijing_today_filters():
     default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
 
-    assert "requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
     assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "start_date: investmentTodayDate()" in default_body
@@ -2215,26 +2225,35 @@ def test_investment_request_drawer_shows_request_event_timeline():
     assert "showInvestmentRequestDetail" not in open_body
 
 
-def test_investment_backend_request_records_ui_uses_internal_call_fields():
+def test_investment_records_page_links_to_entry_filtered_business_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     table_body = _js_function_body(js, "renderInvestmentBackendRequestRecordsTable")
     drawer_body = _js_function_body(js, "renderInvestmentBackendRequestDrawer")
-    content_table_body = _js_function_body(js, "renderInvestmentContentRecordsTable")
+    load_body = _js_function_body(js, "loadInvestmentRecordsTab")
+    nav_body = _js_function_body(js, "renderInvestmentRecordsShell")
 
-    assert "record.call_id" in table_body
+    assert "entry_type=external_request" in js
+    assert "entry_type=internal_call" in js
+    assert "/api/investment/records/requests" in load_body
+    assert "/api/investment/records/internal-calls" not in load_body
+    assert "公众号入口" in nav_body
+    assert "后台入口" in nav_body
+    assert 'href="#invest-records/${tab}"' in js
+    assert "renderInvestmentRecordsTabButton('backendRequests', '后台入口'" in js
+    assert "record.request_id" in table_body
+    assert "record.call_id" not in table_body
     assert "record.actor_name" in table_body
+    assert "record.actor_type" in table_body
+    assert "record.action_type" in table_body
     assert "record.status" in table_body
-    assert "record.outputs" in table_body
+    assert "record.output_files" in table_body
     assert "record.elapsed_ms" in table_body
-    assert "调用 ID" in drawer_body
-    assert "record.call_id" in drawer_body
+    assert "业务记录 ID" in drawer_body
+    assert "record.request_id" in drawer_body
     assert "record.actor_role" in drawer_body
-    assert "输入提示词" in drawer_body
-    assert "record.input_prompt" in drawer_body
-    assert "record.output_text" in drawer_body
-    assert "record.outputs" in drawer_body
-    assert "record.record_type === 'internal_call'" not in content_table_body
+    assert "record.raw_input" in drawer_body
+    assert "record.output_files" in drawer_body
 
 
 def test_investment_content_records_show_input_prompt():
@@ -2328,14 +2347,15 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
     content_load_body = _js_function_body(js, "loadInvestmentGeneratedContent")
     assert "/api/investment/records/requests" in load_body
-    assert "/api/investment/records/internal-calls" in load_body
+    assert "/api/investment/records/internal-calls" not in load_body
+    assert "entry_type=internal_call" in load_body
     assert "/api/investment/records/contents" in load_body
     assert "/api/investment/artifact-folders" in content_load_body
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
     assert "['invalidated', '已失效']" in filters_body
-    assert "renderInvestmentRecordsTabButton('requests', '公众号请求'" in js
-    assert "renderInvestmentRecordsTabButton('backendRequests', '后台请求'" in js
+    assert "renderInvestmentRecordsTabButton('requests', '公众号入口'" in js
+    assert "renderInvestmentRecordsTabButton('backendRequests', '后台入口'" in js
     assert "renderInvestmentRecordsTabButton('contents', '后台内容生成'" in js
     assert "renderInvestmentRecordsTabButton('audits', '操作流水'" in js
 
@@ -2346,8 +2366,8 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     state_start = js.index("let investmentRecordsState =")
     state_end = js.index("const INVEST_VIEW_PERMISSIONS")
     state_body = js[state_start:state_end]
-    assert "requests: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "backendRequests: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
     assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body

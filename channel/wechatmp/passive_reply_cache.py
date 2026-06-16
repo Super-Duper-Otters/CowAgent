@@ -10,6 +10,7 @@ class PassiveReplyResult:
     replies: list[tuple[str, str]] = field(default_factory=list)
     created_at: float = 0.0
     service_type: object = ""
+    module_key: str = ""
     request_id: str = ""
     source_type: str = ""
     source_id: str = ""
@@ -23,27 +24,29 @@ class PassiveReplyCache:
         self._pending_commands = {}
         self._lock = threading.RLock()
 
-    def append_result(self, receiver, title, replies, service_type="", request_id="", source_type="", source_id=""):
+    def append_result(self, receiver, title, replies, service_type="", request_id="", source_type="", source_id="", module_key=""):
         with self._lock:
             self._results.setdefault(receiver, []).append(PassiveReplyResult(
                 title=title or "",
                 replies=list(replies or []),
                 created_at=self._now(),
                 service_type=service_type or "",
+                module_key=str(module_key or ""),
                 request_id=request_id or "",
                 source_type=str(source_type or ""),
                 source_id=str(source_id or ""),
             ))
 
-    def append_reply(self, receiver, reply_type, reply_content, title="", service_type="", request_id="", source_type="", source_id=""):
+    def append_reply(self, receiver, reply_type, reply_content, title="", service_type="", request_id="", source_type="", source_id="", module_key=""):
         with self._lock:
-            result = self._find_append_target_locked(receiver, title, service_type, request_id, source_type, source_id)
+            result = self._find_append_target_locked(receiver, title, service_type, module_key, request_id, source_type, source_id)
             if result is None:
                 self._results.setdefault(receiver, []).append(PassiveReplyResult(
                     title=title or "",
                     replies=[(reply_type, reply_content)],
                     created_at=self._now(),
                     service_type=service_type or "",
+                    module_key=str(module_key or ""),
                     request_id=request_id or "",
                     source_type=str(source_type or ""),
                     source_id=str(source_id or ""),
@@ -53,6 +56,8 @@ class PassiveReplyCache:
                 result.title = title
             if service_type and not result.service_type:
                 result.service_type = service_type
+            if module_key and not result.module_key:
+                result.module_key = str(module_key)
             if request_id and not result.request_id:
                 result.request_id = request_id
             if source_type and not result.source_type:
@@ -71,12 +76,13 @@ class PassiveReplyCache:
                 replies=list(result.replies),
                 created_at=result.created_at,
                 service_type=result.service_type,
+                module_key=result.module_key,
                 request_id=result.request_id,
                 source_type=result.source_type,
                 source_id=result.source_id,
             )
 
-    def _find_append_target_locked(self, receiver, title, service_type, request_id, source_type, source_id):
+    def _find_append_target_locked(self, receiver, title, service_type, module_key, request_id, source_type, source_id):
         results = self._live_results_locked(receiver)
         if not results:
             return None
@@ -88,12 +94,14 @@ class PassiveReplyCache:
             return None
         normalized_title = str(title or "")
         normalized_service_type = str(service_type or "")
+        normalized_module_key = str(module_key or "")
         normalized_source_type = str(source_type or "")
         normalized_source_id = str(source_id or "")
         latest = results[-1]
         if (
             latest.title == normalized_title
             and str(latest.service_type or "") == normalized_service_type
+            and str(latest.module_key or "") == normalized_module_key
             and str(latest.source_type or "") == normalized_source_type
             and str(latest.source_id or "") == normalized_source_id
         ):
@@ -152,6 +160,7 @@ class PassiveReplyCache:
                     replies=[item],
                     created_at=result.created_at,
                     service_type=result.service_type,
+                    module_key=result.module_key,
                     request_id=result.request_id,
                     source_type=result.source_type,
                     source_id=result.source_id,

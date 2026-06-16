@@ -98,6 +98,7 @@ investment_daily_contents = Table(
     metadata,
     Column("content_id", Text, primary_key=True),
     Column("service", Text, nullable=False, key="service_type"),
+    Column("module_key", Text),
     Column("sources", Text, key="source_files"),
     Column("input_text", Text, key="source_text"),
     Column("input_prompt", Text),
@@ -127,6 +128,7 @@ investment_daily_contents = Table(
     Index("idx_content_records_service_status", "service_type", "status"),
     Index("idx_content_records_effective", "service_type", "effective_at"),
     Index("idx_content_records_effective_date", "service_type", "effective_date", "status"),
+    Index("idx_content_records_module_effective_status", "module_key", "effective_date", "status"),
 )
 
 investment_output_files = Table(

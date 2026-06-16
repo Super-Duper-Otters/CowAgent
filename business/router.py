@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from business.business_records import (
     create_business_record as create_request_record,
     mark_business_failed as fail_request_record,
-    mark_business_success as succeed_request_record,
 )
 from business.config_service import get_config, sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType, user_message
+from business.constants import ErrorCode, ServiceType
 from business.permission_service import (
     verify_customer_access as verify_user_access,
     verify_customer_business_access as verify_permission,
@@ -32,6 +31,7 @@ class RouteResult:
     target_text: str = ""
     skill_key: str = ""
     error_code: ErrorCode | None = None
+    module_key: str = ""
 
 
 @dataclass
@@ -47,6 +47,7 @@ class BusinessReply:
     request_id: str = ""
     source_type: str = ""
     source_id: str = ""
+    module_key: str = ""
 
 
 def parse_route(raw_input: str) -> RouteResult:
@@ -54,15 +55,15 @@ def parse_route(raw_input: str) -> RouteResult:
 
     matched = match_business(raw_input)
     if matched is not None:
-        return RouteResult(True, matched.service_type, raw_input, matched.target_text, matched.skill_key)
+        return RouteResult(
+            True,
+            matched.service_type,
+            raw_input,
+            matched.target_text,
+            matched.skill_key,
+            module_key=matched.business_key,
+        )
     return RouteResult(False, ServiceType.UNMATCHED, raw_input, error_code=ErrorCode.INPUT_ERROR)
-
-
-def _failure_reply_with_detail(prompt: str, detail: str) -> str:
-    safe_detail = sanitize_sensitive_text(detail or "").strip()
-    if not safe_detail:
-        return prompt
-    return f"{prompt}\n原因：{safe_detail}"
 
 
 def _agent_fallback_enabled() -> bool:
@@ -188,81 +189,16 @@ def handle_text_message(
                 request_id,
             )
 
-    if route.skill_key:
-        from business.business_registry import get_business_definition
+    from business.business_registry import get_business_definition
+    from business.module_dispatcher import dispatch_module
 
-        definition = get_business_definition(route.skill_key)
-        if definition.handler_type == "script":
-            request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
-            try:
-                from business.skill_runner import run_investment_skill
-
-                result = run_investment_skill(definition, openid, raw_input, route.target_text)
-                if not result.success:
-                    code = result.error_code or ErrorCode.SYSTEM_ERROR
-                    prompt = result.user_prompt or user_message(code)
-                    fail_request_record(request_id, code, prompt, result.detail, elapsed())
-                    detail = sanitize_sensitive_text(result.detail)
-                    return BusinessReply(
-                        True,
-                        False,
-                        _failure_reply_with_detail(prompt, detail),
-                        [],
-                        route.service_type,
-                        code,
-                        prompt,
-                        detail,
-                        request_id,
-                    )
-                succeed_request_record(request_id, output_files=result.output_files, elapsed_ms=elapsed())
-                return BusinessReply(True, True, result.reply_text, result.output_files, route.service_type, request_id=request_id)
-            except Exception as exc:
-                detail = sanitize_sensitive_text(str(exc))
-                prompt = user_message(ErrorCode.SYSTEM_ERROR)
-                fail_request_record(request_id, ErrorCode.SYSTEM_ERROR, prompt, detail, elapsed())
-                return BusinessReply(
-                    True,
-                    False,
-                    prompt,
-                    [],
-                    route.service_type,
-                    ErrorCode.SYSTEM_ERROR,
-                    prompt,
-                    detail,
-                    request_id,
-                )
-
-    if route.service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
-        from business.daily_content_handler import handle_daily_content
-
-        return handle_daily_content(
-            openid,
-            raw_input,
-            route,
-            customer_metadata=customer_metadata,
-            elapsed=elapsed,
-        )
-
-    if route.service_type == ServiceType.TECHNICAL_ANALYSIS:
-        from business.technical_analysis_handler import handle_technical_analysis
-
-        return handle_technical_analysis(
-            openid,
-            raw_input,
-            route,
-            customer_metadata=customer_metadata,
-            elapsed=elapsed,
-            technical_analysis_handler=technical_analysis_handler,
-        )
-
-    request_id = _create_request_record_with_customer(openid, raw_input, route.service_type, customer_metadata)
-    fail_request_record(request_id, ErrorCode.INPUT_ERROR, user_message(ErrorCode.INPUT_ERROR), "unsupported route", elapsed())
-    return BusinessReply(
-        True,
-        False,
-        user_message(ErrorCode.INPUT_ERROR),
-        [],
-        route.service_type,
-        ErrorCode.INPUT_ERROR,
-        request_id=request_id,
+    definition = get_business_definition(route.module_key or route.skill_key)
+    return dispatch_module(
+        definition,
+        openid,
+        raw_input,
+        route,
+        customer_metadata=customer_metadata,
+        elapsed=elapsed,
+        technical_analysis_handler=technical_analysis_handler,
     )

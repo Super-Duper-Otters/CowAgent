@@ -1099,12 +1099,14 @@ def test_operation_audit_infers_final_record_categories(investment_env):
         assert by_action[action] == expected
 
 
-def test_generate_content_creates_generation_record_with_actor(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+def test_daily_content_generation_records_backend_entry_in_business_records(investment_env, tmp_path):
+    from sqlalchemy import text
+
+    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.ai_generation_audit import list_ai_generation_audits_for_business
-    from business.investment.internal_call_records import list_internal_call_records_page
-    from business.investment.records import get_content_record
+    from business.investment.db import connect
+    from business.investment.records import get_content_record, list_request_records_page
 
     content_id = create_rate_content_draft(source_text="rate input", source_files=["/tmp/source.png"])
     actor = SimpleNamespace(id=8, username="ops-generate", role="content_operator")
@@ -1123,23 +1125,34 @@ def test_generate_content_creates_generation_record_with_actor(investment_env, t
         return SimpleNamespace(success=True, image_path=str(output_image))
 
     result = generate_content(content_id, ai_generator=fake_ai, renderer=fake_renderer, actor=actor)
-    internal_calls, total = list_internal_call_records_page(service_type=ServiceType.RATE)
+    records, total = list_request_records_page(
+        service_type=ServiceType.RATE,
+        entry_type=EntryType.INTERNAL_CALL,
+    )
     content = get_content_record(content_id)
 
     assert result.success is True
     assert result.input_prompt == "rate input prompt v2"
     assert content.input_prompt == "rate input prompt v2"
     assert total == 1
-    internal_call = internal_calls[0]
-    ai_audits = list_ai_generation_audits_for_business("internal_call", internal_call.call_id)
-    assert internal_call.service_type == ServiceType.RATE
-    assert internal_call.actor_name == "ops-generate"
-    assert internal_call.status.value == "success"
-    assert internal_call.input_prompt == "rate input prompt v2"
-    assert internal_call.output_text == "rate output"
-    assert internal_call.outputs == result.output_files
+    record = records[0]
+    ai_audits = list_ai_generation_audits_for_business("request", record.request_id)
+    assert record.entry_type == EntryType.INTERNAL_CALL
+    assert record.action_type == ActionType.GENERATE
+    assert record.actor_type == ActorType.ADMIN
+    assert record.actor_id == "8"
+    assert record.actor_name == "ops-generate"
+    assert record.actor_role == "content_operator"
+    assert record.service_type == ServiceType.RATE
+    assert record.status.value == "success"
+    assert record.raw_input == "rate input"
+    assert record.output_files == result.output_files
+    assert record.elapsed_ms is not None
+    with connect() as conn:
+        assert conn.execute(text("select count(*) from internal_call_records")).scalar_one() == 0
     assert len(ai_audits) == 1
-    assert ai_audits[0].business_record_id == internal_call.call_id
+    assert ai_audits[0].business_record_type == "request"
+    assert ai_audits[0].business_record_id == record.request_id
     assert ai_audits[0].actor_name == "ops-generate"
     assert ai_audits[0].input_text == "rate input"
     assert ai_audits[0].input_prompt == "rate input prompt v2"
@@ -1176,42 +1189,57 @@ def test_request_records_api_includes_request_event_timeline(investment_env, mon
     assert payload["records"][0]["events"][1]["content"] == "1"
 
 
-def test_internal_call_records_api_returns_internal_call_records(investment_env, monkeypatch):
-    from business.investment.constants import ActionType, ActorType, ServiceType, Status
-    from business.investment.internal_call_records import finish_internal_call_record, start_internal_call_record
-    from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentInternalCallRecordsHandler
+def test_business_records_api_filters_entry_type_and_internal_calls_alias(investment_env, monkeypatch):
+    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.investment.records import create_business_workflow_record, finish_business_workflow_record
+    from channel.web.web_channel import (
+        InvestmentContentRecordsHandler,
+        InvestmentInternalCallRecordsHandler,
+        InvestmentRequestRecordsHandler,
+    )
 
-    call_id = start_internal_call_record(
+    request_id = create_business_workflow_record(
+        entry_type=EntryType.INTERNAL_CALL,
         service_type=ServiceType.RATE,
         action_type=ActionType.GENERATE,
         actor_type=ActorType.ADMIN,
         actor_id="9",
         actor_name="ops-api",
         actor_role="admin",
-        input_text="rate input",
-        sources=["/tmp/rate-source.png"],
+        raw_input="rate input",
     )
-    finish_internal_call_record(
-        call_id,
+    finish_business_workflow_record(
+        request_id,
         status=Status.SUCCESS,
-        output_text="rate output",
-        outputs=["/tmp/rate-output.png"],
+        output_files=["/tmp/rate-output.png"],
+        error_message="rate output",
         elapsed_ms=88,
     )
 
     payload = _call_investment_json_handler(
         monkeypatch,
-        InvestmentInternalCallRecordsHandler().GET,
-        params={"service_type": "rate", "page": "1", "page_size": "20"},
+        InvestmentRequestRecordsHandler().GET,
+        params={"service_type": "rate", "entry_type": "internal_call", "page": "1", "page_size": "20"},
     )
 
     assert payload["status"] == "success"
-    assert [record["call_id"] for record in payload["records"]] == [call_id]
-    assert payload["records"][0]["record_type"] == "internal_call"
+    assert [record["request_id"] for record in payload["records"]] == [request_id]
+    assert payload["records"][0]["entry_type"] == "internal_call"
+    assert payload["records"][0]["record_type"] == "business_record"
     assert payload["records"][0]["actor_name"] == "ops-api"
+    assert payload["records"][0]["actor_type"] == "admin"
+    assert payload["records"][0]["action_type"] == "generate"
     assert payload["records"][0]["status"] == "success"
-    assert payload["records"][0]["outputs"] == ["/tmp/rate-output.png"]
+    assert payload["records"][0]["output_files"] == ["/tmp/rate-output.png"]
     assert payload["pagination"] == {"page": 1, "page_size": 20, "total": 1, "total_pages": 1}
+
+    alias_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentInternalCallRecordsHandler().GET,
+        params={"service_type": "rate", "page": "1", "page_size": "20"},
+    )
+    assert alias_payload["records"] == payload["records"]
+    assert alias_payload["pagination"] == payload["pagination"]
 
     content_payload = _call_investment_json_handler(
         monkeypatch,
@@ -1425,6 +1453,27 @@ def test_investment_builtin_components_have_explicit_component_types(investment_
     assert get_business_definition("signal-card-renderer").component_type == "passive_script"
 
 
+def test_content_strategy_components_are_manifest_backed():
+    from business.business_registry import get_business_definition
+
+    rate = get_business_definition("rate")
+    bond = get_business_definition("convertible-bond")
+
+    assert rate.handler_type == "daily_content"
+    assert rate.generation_mode == "pre_generated"
+    assert rate.delivery_mode == "direct"
+    assert rate.content_enabled is True
+    assert rate.routable is True
+    assert rate.default_triggers == ("利率",)
+
+    assert bond.handler_type == "daily_content"
+    assert bond.generation_mode == "pre_generated"
+    assert bond.delivery_mode == "direct"
+    assert bond.content_enabled is True
+    assert bond.routable is True
+    assert bond.default_triggers == ("转债",)
+
+
 def test_component_paths_define_builtin_and_runtime_roots(investment_env):
     from business.investment.component_paths import (
         builtin_components_root,
@@ -1506,6 +1555,17 @@ def test_component_service_lists_components_by_type(investment_env):
     assert items["signal-card-renderer"]["uses_triggers"] is False
 
 
+def test_component_service_marks_content_modules():
+    from business.investment.component_service import list_components
+
+    by_key = {item["component_key"]: item for item in list_components()}
+
+    assert by_key["rate"]["content_enabled"] is True
+    assert by_key["rate"]["generation_mode"] == "pre_generated"
+    assert by_key["convertible-bond"]["content_enabled"] is True
+    assert by_key["signal-card-renderer"]["content_enabled"] is False
+
+
 def test_component_service_includes_prompt_and_version_data(investment_env):
     from business.investment.component_service import list_components
     from business.investment.config_service import save_config
@@ -1517,6 +1577,47 @@ def test_component_service_includes_prompt_and_version_data(investment_env):
     assert items["rate"]["versions"] == []
     assert items["technical-analysis"]["versions"]
     assert items["signal-card-renderer"]["versions"]
+
+
+def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(investment_env):
+    import json
+
+    import pytest
+
+    from business.investment.component_paths import runtime_component_root
+    from business.investment.component_service import delete_runtime_component, list_components
+
+    component_dir = runtime_component_root("macro-delete")
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "component.json").write_text(
+        json.dumps(
+            {
+                "component_key": "macro-delete",
+                "label": "可删除宏观组件",
+                "service_type": "unmatched",
+                "match_type": "prefix",
+                "default_triggers": ["可删除宏观"],
+                "handler_type": "prompt_to_image",
+                "routable": True,
+                "prompt_key": "prompt.macro_delete",
+                "template_key": "rate",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (component_dir / "versions" / "v1").mkdir(parents=True, exist_ok=True)
+
+    assert "macro-delete" in {item["component_key"] for item in list_components()}
+
+    deleted = delete_runtime_component("macro-delete", operator_role="admin", operator="pytest")
+
+    assert deleted["component_key"] == "macro-delete"
+    assert deleted["deleted"] is True
+    assert not component_dir.exists()
+    assert "macro-delete" not in {item["component_key"] for item in list_components()}
+    with pytest.raises(ValueError, match="builtin"):
+        delete_runtime_component("rate", operator_role="admin", operator="pytest")
 
 
 def test_runtime_component_definition_overrides_builtin_definition(investment_env):
@@ -4002,44 +4103,50 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
 
 
 def test_internal_call_records_api_filters_by_keyword_and_date_range(investment_env, monkeypatch):
-    from business.investment.constants import ActionType, ActorType, ServiceType, Status
+    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.db import connect
-    from business.investment.internal_call_records import finish_internal_call_record, start_internal_call_record
+    from business.investment.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentInternalCallRecordsHandler
 
-    included = start_internal_call_record(
+    included = create_business_workflow_record(
+        entry_type=EntryType.INTERNAL_CALL,
         service_type=ServiceType.RATE,
         action_type=ActionType.GENERATE,
         actor_type=ActorType.ADMIN,
         actor_name="Alice",
-        input_text="monthly-liquidity-input",
-        sources=["/tmp/source.xlsx"],
+        raw_input="monthly-liquidity-input",
     )
-    finish_internal_call_record(
+    finish_business_workflow_record(
         included,
         status=Status.SUCCESS,
-        output_text="monthly-liquidity-output",
-        outputs=["/tmp/rate.png"],
+        error_message="monthly-liquidity-output",
+        output_files=["/tmp/rate.png"],
         elapsed_ms=12,
     )
-    excluded = start_internal_call_record(
+    excluded = create_business_workflow_record(
+        entry_type=EntryType.INTERNAL_CALL,
         service_type=ServiceType.RATE,
         action_type=ActionType.GENERATE,
         actor_type=ActorType.ADMIN,
         actor_name="Bob",
-        input_text="other-rate-input",
+        raw_input="other-rate-input",
     )
-    finish_internal_call_record(excluded, status=Status.SUCCESS, output_text="other-rate-output", outputs=["/tmp/other-rate.png"])
+    finish_business_workflow_record(
+        excluded,
+        status=Status.SUCCESS,
+        error_message="other-rate-output",
+        output_files=["/tmp/other-rate.png"],
+    )
 
     with connect() as conn:
         conn.execute(
-            text("update internal_call_records set created_at = :created_at, updated_at = :created_at where call_id = :call_id"),
-            {"created_at": "2026-05-15T02:00:00+00:00", "call_id": included},
+            text("update request_records set created_at = :created_at, updated_at = :created_at where request_id = :request_id"),
+            {"created_at": "2026-05-15T02:00:00+00:00", "request_id": included},
         )
         conn.execute(
-            text("update internal_call_records set created_at = :created_at, updated_at = :created_at where call_id = :call_id"),
-            {"created_at": "2026-06-15T02:00:00+00:00", "call_id": excluded},
+            text("update request_records set created_at = :created_at, updated_at = :created_at where request_id = :request_id"),
+            {"created_at": "2026-06-15T02:00:00+00:00", "request_id": excluded},
         )
 
     _login_default_investment_admin(monkeypatch)
@@ -4063,8 +4170,9 @@ def test_internal_call_records_api_filters_by_keyword_and_date_range(investment_
     payload = json.loads(InvestmentInternalCallRecordsHandler().GET())
 
     assert payload["pagination"]["total"] == 1
-    assert [record["call_id"] for record in payload["records"]] == [included]
-    assert excluded not in {record.get("call_id") for record in payload["records"]}
+    assert [record["request_id"] for record in payload["records"]] == [included]
+    assert excluded not in {record.get("request_id") for record in payload["records"]}
+    assert payload["records"][0]["entry_type"] == "internal_call"
 
     content_payload = json.loads(InvestmentContentRecordsHandler().GET())
 
@@ -10174,6 +10282,91 @@ def test_daily_content_upload_saves_files_under_investment_files_dir(investment_
         save_source_file(ServiceType.RATE, "../escape.txt", b"bad")
 
 
+def test_daily_content_api_accepts_module_key_for_content_modules(investment_env, tmp_path, monkeypatch):
+    from business.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.investment.records import get_content_record
+    from channel.web.web_channel import InvestmentDailyContentHandler
+
+    image = tmp_path / "rate-current.png"
+    image.write_bytes(b"png")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate", operator="pytest", module_key="rate")
+    set_content_effective(content_id, str(image), operator="pytest")
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentDailyContentHandler().GET,
+        params={"module_key": "rate", "limit": "20"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["current_effective"]["content_id"] == content_id
+    assert payload["current_effective"]["module_key"] == "rate"
+    assert payload["current_effective"]["module_label"]
+    assert payload["contents"][0]["module_key"] == "rate"
+    assert payload["contents"][0]["module_label"]
+    assert get_content_record(content_id).module_key == "rate"
+
+
+def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(investment_env, tmp_path):
+    from business.investment.component_paths import runtime_component_root
+    from business.investment.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.investment.records import get_content_record
+
+    for module_key, label in (("module-a", "Module A"), ("module-b", "Module B")):
+        component_dir = runtime_component_root(module_key)
+        component_dir.mkdir(parents=True, exist_ok=True)
+        (component_dir / "component.json").write_text(
+            json.dumps(
+                {
+                    "component_key": module_key,
+                    "label": label,
+                    "description": label,
+                    "service_type": "unmatched",
+                    "handler_type": "daily_content",
+                    "component_type": "active_prompt",
+                    "content_enabled": True,
+                    "routable": True,
+                    "default_triggers": [label],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    module_a_image = tmp_path / "module-a.png"
+    module_b_image = tmp_path / "module-b.png"
+    module_a_image.write_bytes(b"a")
+    module_b_image.write_bytes(b"b")
+
+    module_a_id = create_content_draft(
+        ServiceType.UNMATCHED,
+        module_key="module-a",
+        source_text="module A content",
+        effective_date="2026-06-16",
+    )
+    module_b_id = create_content_draft(
+        ServiceType.UNMATCHED,
+        module_key="module-b",
+        source_text="module B content",
+        effective_date="2026-06-16",
+    )
+
+    set_content_effective(module_a_id, str(module_a_image), operator="pytest")
+    set_content_effective(module_b_id, str(module_b_image), operator="pytest")
+
+    module_a = get_latest_effective_content(ServiceType.UNMATCHED, module_key="module-a")
+    module_b = get_latest_effective_content(ServiceType.UNMATCHED, module_key="module-b")
+
+    assert module_a.success is True
+    assert module_a.content_id == module_a_id
+    assert module_b.success is True
+    assert module_b.content_id == module_b_id
+    assert get_content_record(module_a_id).module_key == "module-a"
+    assert get_content_record(module_b_id).module_key == "module-b"
+
+
 def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(investment_env, monkeypatch):
     import io
 
@@ -10760,6 +10953,137 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
     assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
 
 
+def test_router_dispatches_daily_content_by_handler_type(investment_env, tmp_path, monkeypatch):
+    from business.constants import ServiceType
+    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.router import handle_text_message
+
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"png")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate source", operator="pytest")
+    set_content_effective(content_id, str(image), operator="pytest")
+
+    reply = handle_text_message("openid-rate-generic", "利率", skip_permission=True)
+
+    assert reply.handled is True
+    assert reply.success is True
+    assert reply.module_key == "rate"
+    assert reply.service_type == ServiceType.RATE
+    assert len(reply.output_files) == 1
+    assert Path(reply.output_files[0]).is_file()
+    assert Path(reply.output_files[0]).name.startswith("output_image_rate_")
+
+
+def test_business_router_sets_module_key_on_reply(monkeypatch):
+    from business.constants import ServiceType
+    from business.router import BusinessReply
+    from business.business_router import _reply_from_business
+
+    business_reply = BusinessReply(
+        handled=True,
+        success=True,
+        reply_text="[图片: x.png]",
+        output_files=["x.png"],
+        service_type=ServiceType.RATE,
+        module_key="rate",
+        request_id="request-1",
+    )
+
+    reply = _reply_from_business(business_reply)
+
+    assert reply.business_module_key == "rate"
+    assert reply.investment_module_key == "rate"
+
+
+def test_prompt_to_image_module_generates_image_from_customer_input(investment_env, tmp_path, monkeypatch):
+    import json
+
+    from business.investment.component_paths import runtime_component_root
+    from business.router import handle_text_message
+
+    component_dir = runtime_component_root("macro-brief")
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "component.json").write_text(
+        json.dumps(
+            {
+                "component_key": "macro-brief",
+                "label": "宏观简报",
+                "description": "按客户输入生成宏观简报图。",
+                "service_type": "unmatched",
+                "match_type": "prefix",
+                "default_triggers": ["宏观简报"],
+                "handler_type": "prompt_to_image",
+                "generation_mode": "on_demand",
+                "delivery_mode": "deferred",
+                "output_mode": "image",
+                "routable": True,
+                "component_type": "active_prompt",
+                "prompt_key": "prompt.macro_brief",
+                "renderer_component_key": "signal-card-renderer",
+                "template_key": "rate",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "macro.png"
+
+    def fake_generate_standard_text(service_type, source_text, source_files=None, prompt_key="", module_key="", template_key=""):
+        assert "今天流动性偏宽" in source_text
+        assert prompt_key == "prompt.macro_brief"
+        assert module_key == "macro-brief"
+        assert template_key == "rate"
+        return type(
+            "AIResult",
+            (),
+            {
+                "success": True,
+                "text": "标准宏观简报",
+                "prompt": "prompt used",
+                "detail": "",
+                "error_code": None,
+            },
+        )()
+
+    def fake_render_card(request, renderer=None):
+        output.write_bytes(b"png")
+        return type(
+            "RenderResult",
+            (),
+            {
+                "success": True,
+                "image_path": str(output),
+                "output_files": [str(output)],
+                "detail": "",
+                "error_code": None,
+                "user_prompt": "",
+            },
+        )()
+
+    monkeypatch.setattr("business.prompt_to_image_handler.generate_standard_text_for_module", fake_generate_standard_text)
+    monkeypatch.setattr("business.prompt_to_image_handler.render_card", fake_render_card)
+
+    reply = handle_text_message("openid-macro", "宏观简报 今天流动性偏宽", skip_permission=True)
+
+    assert reply.success is True
+    assert reply.module_key == "macro-brief"
+    assert reply.output_files == [str(output)]
+
+
+def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
+    from business.prompt_to_image_handler import _configured_prompt
+
+    monkeypatch.setattr("business.prompt_to_image_handler.get_config", lambda key, default=None: default)
+
+    prompt = _configured_prompt("prompt.macro_brief", template_key="rate")
+
+    assert "当日核心信号" in prompt
+    assert "周度全景复盘" in prompt
+    assert "复合策略信号" in prompt
+    assert "只输出" in prompt
+
+
 def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
@@ -10887,22 +11211,16 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
     assert calls == [("openid-ta", "300502.SZ 技术分析", "300502.SZ", None)]
 
 
-def test_business_router_routes_daily_content_without_investment_router_handler(investment_env, monkeypatch):
+def test_business_router_routes_daily_content_through_module_dispatcher(investment_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
     from business.router import BusinessReply
     from business.investment.user_service import create_user
-    import business.router as business_route
     import business.business_router as business_router
     import business.daily_content_handler as cowagent_content_handler
 
     create_user("openid-rate", enabled=True, allowed_services=[ServiceType.ALL])
-    monkeypatch.setattr(
-        business_route,
-        "handle_text_message",
-        lambda *_args, **_kwargs: pytest.fail("daily content must use native handler short path"),
-    )
     calls = []
 
     def fake_handler(openid, raw_input, route, **kwargs):
@@ -10916,6 +11234,7 @@ def test_business_router_routes_daily_content_without_investment_router_handler(
             request_id="rate-request",
             source_type="content",
             source_id="content-rate",
+            module_key="rate",
         )
 
     monkeypatch.setattr(cowagent_content_handler, "handle_daily_content", fake_handler)
@@ -10931,8 +11250,10 @@ def test_business_router_routes_daily_content_without_investment_router_handler(
     assert reply.business_request_id == "rate-request"
     assert reply.business_source_type == "content"
     assert reply.business_source_id == "content-rate"
+    assert reply.business_module_key == "rate"
     assert reply.investment_service_type == ServiceType.RATE
     assert reply.investment_request_id == "rate-request"
+    assert reply.investment_module_key == "rate"
     assert calls == [("openid-rate", "利率", ServiceType.RATE, True)]
 
 
