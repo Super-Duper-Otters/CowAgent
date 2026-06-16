@@ -44,7 +44,13 @@ def _run_script(
     raw_input: str,
     target_text: str,
 ) -> InvestmentSkillRunResult:
-    script = Path(definition.default_script_path or definition.entry)
+    script_path = ""
+    config_key = str(getattr(definition, "config_key", "") or "")
+    if config_key:
+        from .config_service import get_config
+
+        script_path = str(get_config(config_key, "") or "")
+    script = Path(script_path or definition.default_script_path or definition.entry)
     if not script.is_absolute():
         script = Path.cwd() / script
     payload = {

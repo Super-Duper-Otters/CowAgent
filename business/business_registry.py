@@ -1,6 +1,7 @@
 # encoding:utf-8
 """CowAgent built-in business definitions and intent matching."""
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,7 @@ from agent.skills.frontmatter import parse_frontmatter
 
 from business.config_service import get_config
 from business.constants import ServiceType, normalize_service
+from business.investment.component_paths import builtin_components_root, runtime_components_root
 from business.investment.render_service import DEFAULT_RENDERER_PATH
 
 
@@ -169,15 +171,15 @@ def _definition(
 BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
     _definition(
         business_key="technical-analysis",
-        label="技术分析 Skill",
+        label="技术分析组件",
         description="根据股票代码或名称生成技术分析报告、图表和信号卡片。",
         service_type=ServiceType.TECHNICAL_ANALYSIS,
         match_type="suffix",
         default_triggers=("技术分析",),
         handler_type="builtin_technical_analysis",
-        entry="skills/技术分析/scripts/analyze_universal.py",
+        entry="builtin/components/technical-analysis/scripts/analyze_universal.py",
         config_key="technical_analysis.skill_path",
-        default_script_path="skills/技术分析/scripts/analyze_universal.py",
+        default_script_path="builtin/components/technical-analysis/scripts/analyze_universal.py",
         script_name="analyze_universal.py",
         storage_name="technical-analysis",
         component_type="active_script",
@@ -187,7 +189,7 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
     ),
     _definition(
         business_key="rate",
-        label="利率 Skill",
+        label="利率组件",
         description="返回当前生效的利率投研内容图片。",
         service_type=ServiceType.RATE,
         match_type="exact",
@@ -201,7 +203,7 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
     ),
     _definition(
         business_key="convertible-bond",
-        label="转债 Skill",
+        label="转债组件",
         description="返回当前生效的可转债投研内容图片。",
         service_type=ServiceType.CONVERTIBLE_BOND,
         match_type="exact",
@@ -215,7 +217,7 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
     ),
     _definition(
         business_key="signal-card-renderer",
-        label="图片生成 Skill",
+        label="图片生成组件",
         description="把标准投研文本渲染为信号卡片图片，作为投资业务内部组件使用。",
         service_type=ServiceType.UNMATCHED,
         match_type="exact",
@@ -228,16 +230,10 @@ BUILTIN_DEFINITIONS: tuple[BusinessDefinition, ...] = (
         default_script_path=DEFAULT_RENDERER_PATH,
         script_name="render_card.py",
         storage_name="signal-card-renderer",
-        copy_assets_from="skills/signal-card-renderer/assets",
+        copy_assets_from="builtin/components/signal-card-renderer/assets",
         component_type="passive_script",
     ),
 )
-
-
-def uploaded_business_root() -> Path:
-    from business.investment.storage import get_storage_dirs
-
-    return get_storage_dirs()["root"] / "investment-skills"
 
 
 def _bool_value(value: Any, default: bool = True) -> bool:
@@ -258,6 +254,10 @@ def _normalize_triggers(value: Any) -> tuple[str, ...]:
     else:
         items = []
     return tuple(str(item).strip() for item in items if str(item).strip())
+
+
+def _contains_markdown_link(raw_input: str) -> bool:
+    return bool(re.search(r"\[[^\]]+\]\([^)]+\)", raw_input or ""))
 
 
 def validate_business_key(business_key: str) -> str:
@@ -302,14 +302,83 @@ def read_uploaded_business_definition(skill_dir: Path) -> BusinessDefinition | N
     )
 
 
+def read_component_definition(component_dir: Path) -> BusinessDefinition | None:
+    manifest_path = component_dir / "component.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(manifest, dict):
+        return None
+
+    business_key = validate_business_key(str(manifest.get("component_key") or component_dir.name))
+    entry = str(manifest.get("entry") or "").strip()
+    handler_type = str(manifest.get("handler_type") or "script")
+    routable = _bool_value(manifest.get("routable"), True)
+    component_type = str(manifest.get("component_type") or "").strip()
+    if not component_type and handler_type == "script":
+        component_type = "active_script" if routable else "passive_script"
+
+    script_name = str(manifest.get("script_name") or (Path(entry).name if entry else ""))
+    default_script_path = str((component_dir / entry).resolve()) if entry else ""
+    return _definition(
+        business_key=business_key,
+        label=str(manifest.get("label") or business_key),
+        description=str(manifest.get("description") or ""),
+        service_type=normalize_service(str(manifest.get("service_type") or "unmatched")),
+        match_type=str(manifest.get("match_type") or "exact"),
+        default_triggers=_normalize_triggers(manifest.get("default_triggers") or manifest.get("triggers")),
+        handler_type=handler_type,
+        entry=entry,
+        output_mode=str(manifest.get("output_mode") or "mixed"),
+        routable=routable,
+        base_dir=str(component_dir),
+        config_key=str(manifest.get("config_key") or ""),
+        default_script_path=default_script_path,
+        script_name=script_name,
+        storage_name=str(manifest.get("storage_name") or business_key),
+        copy_assets_from=str(manifest.get("copy_assets_from") or ""),
+        component_type=component_type,
+        prompt_key=str(manifest.get("prompt_key") or ""),
+        renderer_component_key=str(manifest.get("renderer_component_key") or ""),
+        template_key=str(manifest.get("template_key") or ""),
+    )
+
+
+def _merge_component_definitions(definitions: dict[str, BusinessDefinition], root: Path) -> None:
+    if not root.is_dir():
+        return
+    for component_dir in sorted(item for item in root.iterdir() if item.is_dir() and not item.name.startswith(".")):
+        definition = read_component_definition(component_dir)
+        if definition is None:
+            definition = _read_active_version_component_definition(component_dir)
+        if definition is not None:
+            definitions[definition.business_key] = definition
+
+
+def _read_active_version_component_definition(component_dir: Path) -> BusinessDefinition | None:
+    versions_dir = component_dir / "versions"
+    if not versions_dir.is_dir():
+        return None
+    for version_dir in sorted(item for item in versions_dir.iterdir() if item.is_dir()):
+        definition = read_component_definition(version_dir)
+        if definition is None:
+            continue
+        if definition.config_key and definition.entry:
+            configured = str(get_config(definition.config_key, "") or "")
+            configured_path = Path(configured) if configured else Path("")
+            active_script = version_dir / definition.entry
+            if configured_path and configured_path == active_script:
+                return definition
+    return None
+
+
 def list_business_definitions() -> list[BusinessDefinition]:
     definitions = {definition.business_key: definition for definition in BUILTIN_DEFINITIONS}
-    root = uploaded_business_root()
-    if root.is_dir():
-        for skill_dir in sorted(item for item in root.iterdir() if item.is_dir() and not item.name.startswith(".")):
-            definition = read_uploaded_business_definition(skill_dir)
-            if definition is not None:
-                definitions[definition.business_key] = definition
+    _merge_component_definitions(definitions, builtin_components_root())
+    _merge_component_definitions(definitions, runtime_components_root())
     return list(definitions.values())
 
 
@@ -330,6 +399,8 @@ def resolve_triggers(definition: BusinessDefinition) -> tuple[str, ...]:
 
 
 def match_business(raw_input: str) -> BusinessMatch | None:
+    if _contains_markdown_link(raw_input):
+        return None
     text = (raw_input or "").strip()
     if not text:
         return None

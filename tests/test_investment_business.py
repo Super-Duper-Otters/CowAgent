@@ -1425,6 +1425,64 @@ def test_investment_builtin_components_have_explicit_component_types(investment_
     assert get_business_definition("signal-card-renderer").component_type == "passive_script"
 
 
+def test_component_paths_define_builtin_and_runtime_roots(investment_env):
+    from business.investment.component_paths import (
+        builtin_components_root,
+        runtime_component_root,
+        runtime_components_root,
+        runtime_versions_root,
+    )
+    from business.investment.storage import get_storage_dirs
+
+    assert builtin_components_root() == Path.cwd() / "builtin" / "components"
+    assert runtime_components_root() == get_storage_dirs()["root"] / "components"
+    assert runtime_component_root("technical-analysis") == get_storage_dirs()["root"] / "components" / "technical-analysis"
+    assert runtime_versions_root("technical-analysis") == get_storage_dirs()["root"] / "components" / "technical-analysis" / "versions"
+
+
+def test_builtin_component_manifests_are_clean_and_complete():
+    technical = json.loads((Path("builtin/components/technical-analysis/component.json")).read_text(encoding="utf-8"))
+    renderer = json.loads((Path("builtin/components/signal-card-renderer/component.json")).read_text(encoding="utf-8"))
+
+    assert technical["component_key"] == "technical-analysis"
+    assert technical["entry"] == "scripts/analyze_universal.py"
+    assert technical["component_type"] == "active_script"
+    assert technical["default_triggers"] == ["技术分析"]
+    assert technical["config_key"] == "technical_analysis.skill_path"
+
+    assert renderer["component_key"] == "signal-card-renderer"
+    assert renderer["entry"] == "scripts/render_card.py"
+    assert renderer["component_type"] == "passive_script"
+    assert renderer["routable"] is False
+    assert renderer["config_key"] == "render.renderer_path"
+
+
+def test_default_component_runtime_paths_use_builtin_components(investment_env):
+    from business.business_registry import get_business_definition
+    from business.investment.constants import ServiceType
+    from business.investment.render_service import (
+        DEFAULT_RENDERER_PATH,
+        DEFAULT_TEMPLATE_BOND_PATH,
+        DEFAULT_TEMPLATE_CB_PATH,
+        DEFAULT_TEMPLATE_TA_PATH,
+        template_for_service,
+    )
+    from business.investment.technical_analysis import _configured_skill_path
+
+    technical = get_business_definition("technical-analysis")
+    renderer = get_business_definition("signal-card-renderer")
+
+    assert Path(technical.default_script_path).resolve() == (Path.cwd() / "builtin/components/technical-analysis/scripts/analyze_universal.py").resolve()
+    assert Path(renderer.default_script_path).resolve() == (Path.cwd() / "builtin/components/signal-card-renderer/scripts/render_card.py").resolve()
+    assert Path(DEFAULT_RENDERER_PATH).as_posix() == "builtin/components/signal-card-renderer/scripts/render_card.py"
+    assert Path(DEFAULT_TEMPLATE_TA_PATH).as_posix() == "builtin/components/signal-card-renderer/assets/template_ta.html"
+    assert Path(DEFAULT_TEMPLATE_BOND_PATH).as_posix() == "builtin/components/signal-card-renderer/assets/template_bond.html"
+    assert Path(DEFAULT_TEMPLATE_CB_PATH).as_posix() == "builtin/components/signal-card-renderer/assets/template_cb.html"
+    assert template_for_service(ServiceType.TECHNICAL_ANALYSIS) == DEFAULT_TEMPLATE_TA_PATH
+    assert _configured_skill_path().resolve().is_file()
+    assert "skills" not in _configured_skill_path().resolve().parts
+
+
 def test_investment_component_trigger_ownership(investment_env):
     from business.business_registry import get_business_definition
 
@@ -1461,6 +1519,81 @@ def test_component_service_includes_prompt_and_version_data(investment_env):
     assert items["signal-card-renderer"]["versions"]
 
 
+def test_runtime_component_definition_overrides_builtin_definition(investment_env):
+    from business.business_registry import get_business_definition
+    from business.investment.component_paths import runtime_component_root
+
+    component_dir = runtime_component_root("technical-analysis")
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "component.json").write_text(
+        json.dumps(
+            {
+                "component_key": "technical-analysis",
+                "label": "技术分析自定义名称",
+                "description": "运行期覆盖定义",
+                "service_type": "technical_analysis",
+                "match_type": "suffix",
+                "default_triggers": ["技术分析", "TA"],
+                "handler_type": "builtin_technical_analysis",
+                "entry": "scripts/analyze_universal.py",
+                "routable": True,
+                "config_key": "technical_analysis.skill_path",
+                "script_name": "analyze_universal.py",
+                "storage_name": "technical-analysis",
+                "component_type": "active_script",
+                "prompt_key": "prompt.technical_analysis",
+                "renderer_component_key": "signal-card-renderer",
+                "template_key": "technical_analysis",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    definition = get_business_definition("technical-analysis")
+
+    assert definition.label == "技术分析自定义名称"
+    assert definition.default_triggers == ("技术分析", "TA")
+    assert definition.uses_triggers is True
+
+
+def test_skill_versions_list_only_new_runtime_versions(investment_env):
+    from business.investment.component_paths import runtime_versions_root
+    from business.investment.storage import get_storage_dirs
+    from business.investment.skill_versions import list_versions
+
+    new_version = runtime_versions_root("technical-analysis") / "skill-new"
+    old_version = get_storage_dirs()["root"] / "skills" / "technical-analysis" / "skill-old"
+    for version_dir, version_id in ((new_version, "skill-new"), (old_version, "skill-old")):
+        script = version_dir / "scripts" / "analyze_universal.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("print('ok')", encoding="utf-8")
+        (version_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "skill_key": "technical-analysis",
+                    "version_id": version_id,
+                    "source": "upload",
+                    "original_filename": "technical-analysis.zip",
+                    "uploaded_at": "2026-06-16T00:00:00+00:00",
+                    "operator": "tester",
+                    "script_path": str(script),
+                    "storage_path": str(version_dir),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    versions = list_versions("technical-analysis")
+    version_ids = [item["version_id"] for item in versions]
+
+    assert "builtin-default" in version_ids
+    assert "skill-new" in version_ids
+    assert "skill-old" not in version_ids
+    assert Path(versions[version_ids.index("skill-new")]["storage_path"]) == new_version
+
+
 def test_investment_skill_loader_applies_web_trigger_override(investment_env):
     from business.investment.config_service import save_config
     from business.investment.constants import ServiceType
@@ -1490,6 +1623,8 @@ def test_investment_skill_loader_extracts_suffix_target(investment_env):
 
 
 def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
+    from business.investment.component_paths import runtime_component_root, runtime_versions_root
+    from business.investment.config_service import get_config
     from business.investment.constants import ServiceType
     from business.investment.skill_registry import list_investment_skills, match_investment_skill
     from business.investment.skill_versions import save_package_upload
@@ -1517,10 +1652,16 @@ investment:
         archive.writestr("SKILL.md", skill_md)
         archive.writestr("scripts/macro_analysis.py", script)
 
-    save_package_upload("macro.zip", package.read_bytes(), operator="pytest")
+    uploaded = save_package_upload("macro.zip", package.read_bytes(), operator="pytest")
 
     keys = {item["skill_key"] for item in list_investment_skills()}
     assert "macro-analysis" in keys
+    component_root = runtime_component_root("macro-analysis")
+    version_root = runtime_versions_root("macro-analysis") / uploaded["version_id"]
+    assert (component_root / "component.json").is_file()
+    assert (version_root / "SKILL.md").is_file()
+    assert (version_root / "scripts" / "macro_analysis.py").is_file()
+    assert get_config("skill.macro-analysis.script_path") == str(version_root / "scripts" / "macro_analysis.py")
     matched = match_investment_skill("宏观")
     assert matched is not None
     assert matched.skill_key == "macro-analysis"
@@ -1600,6 +1741,134 @@ investment:
     assert reply.success is True
     assert reply.service_type == ServiceType.UNMATCHED
     assert reply.reply_text == "macro script ok"
+
+
+def test_web_technical_analysis_script_component_returns_uploaded_text(investment_env, tmp_path):
+    from bridge.reply import ReplyType
+    from business.investment.skill_versions import save_package_upload
+    from channel.web.web_channel import _build_investment_web_reply
+
+    package = tmp_path / "ta-text.zip"
+    component_json = {
+        "component_key": "technical-analysis",
+        "label": "技术分析文本测试组件",
+        "description": "技术分析脚本组件测试",
+        "service_type": "technical_analysis",
+        "match_type": "suffix",
+        "default_triggers": ["技术分析"],
+        "handler_type": "script",
+        "entry": "scripts/analyze_universal.py",
+        "output_mode": "text",
+        "routable": True,
+        "config_key": "technical_analysis.skill_path",
+        "script_name": "analyze_universal.py",
+        "storage_name": "technical-analysis",
+        "component_type": "active_script",
+    }
+    script = (
+        "import json, sys\n"
+        "payload=json.loads(sys.stdin.read() or '{}')\n"
+        "print(json.dumps({'success': True, 'reply_text': 'WEB_TEXT_COMPONENT:' + payload.get('target_text', ''), 'output_files': []}, ensure_ascii=False))\n"
+    )
+    with ZipFile(package, "w") as archive:
+        archive.writestr("component.json", json.dumps(component_json, ensure_ascii=False))
+        archive.writestr("scripts/analyze_universal.py", script)
+
+    save_package_upload("ta-text.zip", package.read_bytes(), operator="pytest")
+
+    reply = _build_investment_web_reply("web-admin-session", "300502.SZ 技术分析")
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert reply.content == "WEB_TEXT_COMPONENT:300502.SZ"
+
+
+def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(investment_env, tmp_path):
+    from bridge.reply import ReplyType
+    from business.investment.component_paths import runtime_component_root
+    from business.investment.skill_versions import save_package_upload
+    from channel.web.web_channel import _build_investment_web_reply
+
+    package = tmp_path / "ta-text.zip"
+    component_json = {
+        "component_key": "technical-analysis",
+        "label": "技术分析文本测试组件",
+        "description": "技术分析脚本组件测试",
+        "service_type": "technical_analysis",
+        "match_type": "suffix",
+        "default_triggers": ["技术分析"],
+        "handler_type": "script",
+        "entry": "scripts/analyze_universal.py",
+        "output_mode": "text",
+        "routable": True,
+        "config_key": "technical_analysis.skill_path",
+        "script_name": "analyze_universal.py",
+        "storage_name": "technical-analysis",
+        "component_type": "active_script",
+    }
+    script = (
+        "import json, sys\n"
+        "payload=json.loads(sys.stdin.read() or '{}')\n"
+        "print(json.dumps({'success': True, 'reply_text': 'ACTIVE_VERSION_MANIFEST:' + payload.get('target_text', ''), 'output_files': []}, ensure_ascii=False))\n"
+    )
+    with ZipFile(package, "w") as archive:
+        archive.writestr("component.json", json.dumps(component_json, ensure_ascii=False))
+        archive.writestr("scripts/analyze_universal.py", script)
+
+    save_package_upload("ta-text.zip", package.read_bytes(), operator="pytest")
+    (runtime_component_root("technical-analysis") / "component.json").unlink()
+
+    reply = _build_investment_web_reply("web-admin-session", "300502.SZ 技术分析")
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert reply.content == "ACTIVE_VERSION_MANIFEST:300502.SZ"
+
+
+def test_business_reply_technical_analysis_script_component_returns_uploaded_text(investment_env, tmp_path):
+    from bridge.context import Context, ContextType
+    from bridge.reply import ReplyType
+    from business.business_router import build_business_reply
+    from business.investment.constants import ServiceType
+    from business.investment.skill_versions import save_package_upload
+    from business.investment.user_service import create_user
+
+    create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    package = tmp_path / "ta-text.zip"
+    component_json = {
+        "component_key": "technical-analysis",
+        "label": "技术分析文本测试组件",
+        "description": "技术分析脚本组件测试",
+        "service_type": "technical_analysis",
+        "match_type": "suffix",
+        "default_triggers": ["技术分析"],
+        "handler_type": "script",
+        "entry": "scripts/analyze_universal.py",
+        "output_mode": "text",
+        "routable": True,
+        "config_key": "technical_analysis.skill_path",
+        "script_name": "analyze_universal.py",
+        "storage_name": "technical-analysis",
+        "component_type": "active_script",
+    }
+    script = (
+        "import json, sys\n"
+        "payload=json.loads(sys.stdin.read() or '{}')\n"
+        "print(json.dumps({'success': True, 'reply_text': 'CHAT_TEXT_COMPONENT:' + payload.get('target_text', ''), 'output_files': []}, ensure_ascii=False))\n"
+    )
+    with ZipFile(package, "w") as archive:
+        archive.writestr("component.json", json.dumps(component_json, ensure_ascii=False))
+        archive.writestr("scripts/analyze_universal.py", script)
+
+    save_package_upload("ta-text.zip", package.read_bytes(), operator="pytest")
+    context = Context(ContextType.TEXT, "300502.SZ 技术分析")
+    context["session_id"] = "customer-openid"
+
+    reply = build_business_reply(context)
+
+    assert reply is not None
+    assert reply.type == ReplyType.TEXT
+    assert reply.content == "CHAT_TEXT_COMPONENT:300502.SZ"
 
 
 def test_investment_skill_upload_python_file_creates_version_and_activates_it(investment_env):
@@ -1689,6 +1958,7 @@ def test_investment_skill_versions_include_loaded_skills(investment_env):
 
     from business.investment.config_service import get_config
     from business.investment.skill_versions import activate_version, list_all_skills, save_upload
+    from business.business_registry import get_business_definition
 
     technical = save_upload("technical-analysis", "analyze_universal.py", b"print('ta v1')", operator="tester")
     renderer = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
@@ -1708,6 +1978,7 @@ def test_investment_skill_versions_include_loaded_skills(investment_env):
 
     activate_version("technical-analysis", "builtin-default", operator="tester")
     assert get_config("technical_analysis.skill_path", "") == ""
+    assert get_business_definition("technical-analysis").handler_type == "builtin_technical_analysis"
 
 
 def test_web_investment_skill_handlers_list_upload_and_activate_versions(investment_env, monkeypatch):
@@ -9813,7 +10084,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
         {"render.output_dir": str(output_dir)},
         operator_role="admin",
     )
-    standard_text = Path("skills/signal-card-renderer/examples/bond_sample.txt").read_text(encoding="utf-8")
+    standard_text = Path("builtin/components/signal-card-renderer/examples/bond_sample.txt").read_text(encoding="utf-8")
 
     class FakeBot:
         def __init__(self):
@@ -10439,6 +10710,14 @@ def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
     assert route.target_text == "300502.SZ"
 
 
+def test_parse_route_rejects_markdown_link_targets(investment_env):
+    from business.investment.router import parse_route
+
+    route = parse_route("[300502.SZ](http://300502.sz/) 技术分析")
+
+    assert route.matched is False
+
+
 def test_parse_route_ignores_disabled_investment_skill(investment_env):
     from business.investment.config_service import save_config
     from business.investment.router import parse_route
@@ -10712,9 +10991,8 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
 
 def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
+    from business.investment.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.internal_call_records import get_internal_call_record
     from business.investment.records import list_request_records
     from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
@@ -10732,27 +11010,24 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
     assert "![output_image_admin-rate_" in reply.content
     assert "](/api/file?id=" in reply.content
     assert "/api/file?path=" not in reply.content
-    assert list_request_records(limit=10) == []
-    from business.investment.schema import internal_call_records
-    from business.investment.db import connect
-
-    with connect() as conn:
-        call_id = conn.execute(internal_call_records.select()).fetchone()._mapping["call_id"]
-    call = get_internal_call_record(call_id)
-    assert call.service_type == ServiceType.RATE
-    assert call.action_type.value == "deliver_effective_content"
-    assert call.actor_type.value == "system"
+    records = list_request_records(limit=10)
+    assert len(records) == 1
+    assert records[0].raw_input == "利率"
+    assert records[0].service_type == ServiceType.RATE
+    assert records[0].status == Status.SUCCESS
 
 
-def test_web_channel_routes_technical_analysis_as_internal_call(investment_env, tmp_path, monkeypatch):
+def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(investment_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
-    from business.investment.records import list_artifact_folder_nodes, list_artifact_packages_page, list_request_records
+    from business.investment.constants import ServiceType, Status
+    from business.investment.records import list_request_records
     from business.investment.schema import internal_call_records, investment_cache_entries
     from business.investment.db import connect
+    from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
-    import business.investment.executors.technical_analysis_executor as executor
+    import business.technical_analysis_handler as ta_handler
 
+    create_user("web-admin-session", enabled=False, allowed_services=[])
     signal = tmp_path / "signal.png"
     chart = tmp_path / "chart.png"
     report = tmp_path / "report.md"
@@ -10761,12 +11036,12 @@ def test_web_channel_routes_technical_analysis_as_internal_call(investment_env, 
     report.write_text("report", encoding="utf-8")
 
     monkeypatch.setattr(
-        executor,
+        ta_handler,
         "prepare_technical_analysis_business_context",
         lambda raw_input, target_text: SimpleNamespace(cache_key="", normalized_target=target_text, market_date="2026-06-10"),
     )
     monkeypatch.setattr(
-        executor,
+        ta_handler,
         "run_technical_analysis_business",
         lambda openid, raw_input, target_text, cache_context=None: SimpleNamespace(
             success=True,
@@ -10794,54 +11069,30 @@ def test_web_channel_routes_technical_analysis_as_internal_call(investment_env, 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
     assert "已生成投资业务图片" in reply.content
-    assert list_request_records(limit=10) == []
+    records = list_request_records(limit=10)
+    assert len(records) == 1
+    assert records[0].raw_input == "300502.SZ 技术分析"
+    assert records[0].service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert records[0].status == Status.SUCCESS
     with connect() as conn:
         rows = conn.execute(internal_call_records.select()).fetchall()
-    assert len(rows) == 1
-    item = rows[0]._mapping
-    assert item["service"] == str(ServiceType.TECHNICAL_ANALYSIS)
-    assert item["action_type"] == "generate"
-    assert item["actor_type"] == "system"
-    assert item["status"] == "success"
+    assert rows == []
     with connect() as conn:
         cache_rows = conn.execute(investment_cache_entries.select()).fetchall()
     assert len(cache_rows) == 1
     cache_item = cache_rows[0]._mapping
     assert cache_item["cache_key"] == "technical_analysis:300502.SZ:2026-06-10:v"
-    assert cache_item["artifact_owner_id"] == item["call_id"]
-
-    packages, package_total = list_artifact_folder_nodes(
-        level="package",
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        date="2026-06-10",
-        page=1,
-        page_size=20,
-    )
-    assert package_total == 1
-    assert packages[0]["package_id"] == "technical_analysis:300502.SZ:2026-06-10:v"
-
-    detail_packages, detail_total = list_artifact_packages_page(
-        package_id="technical_analysis:300502.SZ:2026-06-10:v",
-        page=1,
-        page_size=1,
-    )
-    assert detail_total == 1
-    assert detail_packages[0]["created_from_request_id"] == item["call_id"]
-    assert [file["virtual_path"] for file in detail_packages[0]["files"]] == [
-        "output/signal_card.png",
-        "intermediate/main_chart.png",
-        "intermediate/markdown_report.md",
-    ]
+    assert cache_item["artifact_owner_id"] == records[0].request_id
 
 
-def test_web_technical_analysis_internal_call_without_cache_key_appears_in_history(investment_env, tmp_path, monkeypatch):
+def test_web_technical_analysis_without_cache_key_appears_in_request_history(investment_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
-    from business.investment.records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.investment.constants import ServiceType, Status
+    from business.investment.records import list_request_records
     from business.investment.schema import internal_call_records, investment_cache_entries
     from business.investment.db import connect
     from channel.web.web_channel import _build_investment_web_reply
-    import business.investment.executors.technical_analysis_executor as executor
+    import business.technical_analysis_handler as ta_handler
 
     signal = tmp_path / "signal-no-cache.png"
     chart = tmp_path / "chart-no-cache.png"
@@ -10851,12 +11102,12 @@ def test_web_technical_analysis_internal_call_without_cache_key_appears_in_histo
     report.write_text("report", encoding="utf-8")
 
     monkeypatch.setattr(
-        executor,
+        ta_handler,
         "prepare_technical_analysis_business_context",
         lambda raw_input, target_text: SimpleNamespace(cache_key="", normalized_target=target_text, market_date=""),
     )
     monkeypatch.setattr(
-        executor,
+        ta_handler,
         "run_technical_analysis_business",
         lambda openid, raw_input, target_text, cache_context=None: SimpleNamespace(
             success=True,
@@ -10884,26 +11135,12 @@ def test_web_technical_analysis_internal_call_without_cache_key_appears_in_histo
     assert reply is not None
     assert reply.type == ReplyType.TEXT
     with connect() as conn:
-        call_id = conn.execute(internal_call_records.select()).fetchone()._mapping["call_id"]
+        assert conn.execute(internal_call_records.select()).fetchall() == []
         assert conn.execute(investment_cache_entries.select()).fetchall() == []
-
-    packages, package_total = list_artifact_folder_nodes(
-        level="package",
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        date="2026-06-10",
-        page=1,
-        page_size=20,
-    )
-    assert package_total == 1
-    assert packages[0]["package_id"] == call_id
-    assert packages[0]["source_type"] == "internal_call"
-
-    detail_packages, detail_total = list_artifact_packages_page(package_id=call_id, page=1, page_size=1)
-    assert detail_total == 1
-    assert detail_packages[0]["package_id"] == call_id
-    assert detail_packages[0]["source_type"] == "internal_call"
-    assert detail_packages[0]["files"][0]["virtual_path"] == "input/raw_input.txt"
-    assert detail_packages[0]["files"][1]["virtual_path"] == "output/signal_card.png"
+    records = list_request_records(limit=10)
+    assert len(records) == 1
+    assert records[0].service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert records[0].status == Status.SUCCESS
 
 
 def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, monkeypatch):

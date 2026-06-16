@@ -383,21 +383,15 @@ def _format_investment_web_reply(reply: Reply) -> str:
 
 def _build_investment_web_reply(session_id: str, prompt: str):
     from business.router import parse_route
-    from business.constants import ServiceType
 
     route = parse_route(prompt)
-    if route.matched and route.service_type in (ServiceType.RATE, ServiceType.CONVERTIBLE_BOND):
-        return _build_internal_daily_content_web_reply(route.service_type, prompt)
-    if route.matched and route.service_type == ServiceType.TECHNICAL_ANALYSIS:
-        return _build_internal_technical_analysis_web_reply(route, prompt)
-
     if route.matched:
         from bridge.context import Context, ContextType
         from business.business_router import build_business_reply
 
         context = Context(ContextType.TEXT, prompt)
         context["session_id"] = session_id
-        reply = build_business_reply(context, skip_permission=False)
+        reply = build_business_reply(context, skip_permission=True)
         if reply is None:
             return None
         return Reply(ReplyType.TEXT, _format_investment_web_reply(reply))
@@ -408,183 +402,6 @@ def _build_investment_web_reply(session_id: str, prompt: str):
     if get_config("router.enable_web_open_chat", False):
         return None
     return Reply(ReplyType.TEXT, DEFAULT_UNMATCHED_PROMPT)
-
-
-def _build_internal_daily_content_web_reply(service_type, prompt: str):
-    from business.investment.constants import ActionType, ActorType, ErrorCode, Status, user_message
-    from business.daily_content import get_latest_effective_content
-    from business.investment.internal_call_records import finish_internal_call_record, start_internal_call_record
-
-    admin = None
-    try:
-        admin = _current_investment_admin()
-    except Exception:
-        admin = None
-    actor_type = ActorType.ADMIN if admin is not None else ActorType.SYSTEM
-    actor_id = str(getattr(admin, "id", "") or "")
-    actor_name = str(getattr(admin, "username", "") or "")
-    actor_role = str(getattr(admin, "role", "") or "")
-    call_id = start_internal_call_record(
-        service_type=service_type,
-        action_type=ActionType.DELIVER_EFFECTIVE_CONTENT,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        actor_name=actor_name,
-        actor_role=actor_role,
-        input_text=prompt,
-    )
-    content = get_latest_effective_content(service_type)
-    if not content.success:
-        code = content.error_code or ErrorCode.NO_CONTENT
-        finish_internal_call_record(
-            call_id,
-            status=Status.FAILED,
-            error_code=str(code),
-            error=content.detail,
-        )
-        return Reply(ReplyType.TEXT, content.user_prompt or user_message(code))
-    output_files = [content.output_image]
-    finish_internal_call_record(
-        call_id,
-        status=Status.SUCCESS,
-        outputs=output_files,
-    )
-    return Reply(ReplyType.TEXT, _format_investment_web_reply(Reply(ReplyType.IMAGE_URL, output_files)))
-
-
-def _build_internal_technical_analysis_web_reply(route, prompt: str):
-    from business.cache_service import write_business_cache
-    from business.investment.artifacts import archive_business_output_files, record_business_artifact
-    from business.investment.ai_generation_audit import finish_ai_generation_audit, start_ai_generation_audit
-    from business.investment.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
-    from business.investment.executors.technical_analysis_executor import (
-        prepare_technical_analysis_business_context,
-        run_technical_analysis_business,
-    )
-    from business.investment.internal_call_records import finish_internal_call_record, start_internal_call_record
-
-    started_at = time.time()
-    admin = None
-    try:
-        admin = _current_investment_admin()
-    except Exception:
-        admin = None
-    actor_type = ActorType.ADMIN if admin is not None else ActorType.SYSTEM
-    actor_id = str(getattr(admin, "id", "") or "")
-    actor_name = str(getattr(admin, "username", "") or "")
-    actor_role = str(getattr(admin, "role", "") or "")
-    call_id = start_internal_call_record(
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        action_type=ActionType.GENERATE,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        actor_name=actor_name,
-        actor_role=actor_role,
-        input_text=prompt,
-    )
-    audit_id = start_ai_generation_audit(
-        entry_type=EntryType.INTERNAL_CALL,
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        action_type=ActionType.GENERATE,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        actor_name=actor_name,
-        actor_role=actor_role,
-        business_record_type="internal_call",
-        business_record_id=call_id,
-        input_text=prompt,
-    )
-    elapsed = lambda: int((time.time() - started_at) * 1000)
-    try:
-        cache_context = prepare_technical_analysis_business_context(prompt, route.target_text)
-        result = run_technical_analysis_business("web-internal", prompt, route.target_text, cache_context=cache_context)
-        if not result.success:
-            code = result.error_code or ErrorCode.TECHNICAL_ANALYSIS_FAILED
-            finish_internal_call_record(
-                call_id,
-                status=Status.FAILED,
-                error_code=str(code),
-                error=result.detail,
-                elapsed_ms=elapsed(),
-            )
-            finish_ai_generation_audit(
-                audit_id,
-                result="failed",
-                error_code=str(code),
-                error=result.detail,
-                elapsed_ms=elapsed(),
-            )
-            return Reply(ReplyType.TEXT, result.user_prompt or user_message(code))
-        output_files = result.output_files or [result.signal_card_path, result.main_chart_path]
-        artifact_roles = {
-            result.signal_card_path: "signal_card",
-            result.main_chart_path: "main_chart",
-            result.report_path: "markdown_report",
-        }
-        artifact_versions = {
-            result.signal_card_path: result.renderer_version,
-            result.main_chart_path: result.ta_version,
-            result.report_path: result.ta_version,
-        }
-        output_files, artifact_roles, artifact_versions, _path_map = archive_business_output_files(
-            call_id,
-            output_files,
-            ServiceType.TECHNICAL_ANALYSIS,
-            artifact_roles=artifact_roles,
-            artifact_versions=artifact_versions,
-            owner_type="internal_call",
-            storage_date=result.market_date,
-        )
-        for file_path in output_files:
-            record_business_artifact(
-                call_id,
-                file_path,
-                artifact_roles.get(file_path, "artifact"),
-                ServiceType.TECHNICAL_ANALYSIS,
-                version_tag=artifact_versions.get(file_path, ""),
-                owner_type="internal_call",
-            )
-        if result.cache_key and not result.cache_hit:
-            write_business_cache(
-                cache_key=result.cache_key,
-                service_type=ServiceType.TECHNICAL_ANALYSIS,
-                normalized_target=result.normalized_target,
-                market_date=result.market_date,
-                version_fingerprint=result.version_fingerprint,
-                output_files=output_files,
-                artifact_owner_id=call_id,
-            )
-        finish_internal_call_record(
-            call_id,
-            status=Status.SUCCESS,
-            outputs=output_files,
-            elapsed_ms=elapsed(),
-        )
-        finish_ai_generation_audit(
-            audit_id,
-            result="success",
-            outputs=output_files,
-            elapsed_ms=elapsed(),
-        )
-        user_files = [file_path for file_path in output_files if artifact_roles.get(file_path) in {"signal_card", "main_chart"}]
-        return Reply(ReplyType.TEXT, _format_investment_web_reply(Reply(ReplyType.IMAGE_URL, user_files or output_files)))
-    except Exception as exc:
-        detail = str(exc)
-        finish_internal_call_record(
-            call_id,
-            status=Status.FAILED,
-            error_code=str(ErrorCode.SYSTEM_ERROR),
-            error=detail,
-            elapsed_ms=elapsed(),
-        )
-        finish_ai_generation_audit(
-            audit_id,
-            result="failed",
-            error_code=str(ErrorCode.SYSTEM_ERROR),
-            error=detail,
-            elapsed_ms=elapsed(),
-        )
-        return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
 
 
 @singleton
@@ -834,6 +651,7 @@ class WebChannel(ChatChannel):
 
     def upload_file(self):
         """Handle file or directory upload via multipart/form-data."""
+        _require_console_auth()
         try:
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -949,6 +767,7 @@ class WebChannel(ChatChannel):
         Returns a request_id for tracking this specific request.
         Supports optional attachments (file paths from /upload).
         """
+        _require_console_auth()
         try:
             data = web.data()
             json_data = json.loads(data)
@@ -1026,6 +845,7 @@ class WebChannel(ChatChannel):
         "done" event is consumed, so a new GET /stream with the same
         request_id can resume reading remaining events.
         """
+        _require_console_auth()
         if request_id not in self.sse_queues:
             yield b"data: {\"type\": \"error\", \"message\": \"invalid request_id\"}\n\n"
             return
@@ -1060,6 +880,7 @@ class WebChannel(ChatChannel):
         """
         Poll for responses using the session_id.
         """
+        _require_console_auth()
         try:
             data = web.data()
             json_data = json.loads(data)
