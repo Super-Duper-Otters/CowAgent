@@ -958,7 +958,7 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert "investment-date-picker-button" in js
     assert "investmentRenderDateControl(historyDateId" in content_body
     assert "clearInvestmentContentHistoryDate" not in js
-    assert "onchange=\"refreshInvestmentContentRecords('${serviceType}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})\"" in content_body
+    assert "onchange=\"refreshInvestmentContentRecords('${displayKey}', {effective_date: investmentContentHistoryEffectiveDate('${serviceType}')})\"" in content_body
     assert "placeholder: '选择日期'" in content_body
     assert "当前日期：" not in content_body
     assert "展示全部历史内容" not in content_body
@@ -978,7 +978,6 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert "investment-upload-preview" in upload_body
     assert "investment-upload-supplement" in upload_body
     assert "补充文本（可选）" in upload_body
-    assert "段子/补充文本（可选）" in upload_body
     assert "investment-upload-text-mode" in upload_body
     assert 'id="invest-content-source-text"' in upload_body
     assert 'id="invest-content-expires-mode"' not in upload_body
@@ -1003,8 +1002,8 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert "保存并生成" not in upload_body
     assert "investment-panel investment-current-panel" not in current_body
     assert "investment-panel investment-upload-panel" not in upload_body
-    assert "renderInvestmentCurrentEffective(data.current_effective, serviceType)" in content_body
-    assert "renderInvestmentContentUploadPanel(serviceType)" in content_body
+    assert "renderInvestmentCurrentEffective(data.current_effective, serviceType, moduleLabel, moduleKey)" in content_body
+    assert "renderInvestmentContentUploadPanel(serviceType, moduleLabel, moduleKey)" in content_body
     assert content_body.index("investment-content-top-panel") < content_body.index("investment-content-history-panel")
     assert content_body.index("renderInvestmentCurrentEffective") < content_body.index("renderInvestmentContentUploadPanel")
     assert content_body.index("renderInvestmentContentUploadPanel") < content_body.index("investment-content-history-panel")
@@ -1159,7 +1158,7 @@ def test_daily_content_upload_supports_image_and_text_generation_modes():
     assert "investment-upload-mode-bar" in upload_body
     assert "investment-upload-image-mode" in upload_body
     assert "investment-upload-text-mode" in upload_body
-    assert "点击此区域选择利率/转债资料图片" in upload_body
+    assert "点击此区域选择${escapeHtml(label)}资料图片" in upload_body
     assert "window.switchInvestmentUploadMode = switchInvestmentUploadMode;" in js
     assert "window.updateInvestmentUploadFileSummary = updateInvestmentUploadFileSummary;" in js
     assert "window.syncInvestmentDefaultExpiresAt = syncInvestmentDefaultExpiresAt;" in js
@@ -1193,7 +1192,8 @@ def test_daily_content_upload_confirms_auto_effective_when_today_has_no_record()
     create_body = _js_function_body(js, "createInvestmentContent")
 
     assert "function investmentShouldAutoEffectiveAfterGenerate(serviceType)" in js
-    assert "effective_date=${encodeURIComponent(investmentTodayDate())}" in helper_body
+    assert "investmentContentHistoryQuery(currentInvestmentContentModuleKey || serviceType, investmentTodayDate())" in helper_body
+    assert "query.set('limit', '1');" in helper_body
     assert "response.contents" in helper_body
     assert "records.length > 0" in helper_body
     assert "showInvestmentConfirmDialog" in helper_body
@@ -2509,7 +2509,7 @@ def test_business_content_history_date_filters_are_scoped_by_service_type():
     assert "investmentContentHistoryEffectiveDate()" not in render_content_body
     assert "investmentContentHistoryEffectiveDate(serviceType)" in render_content_body
     assert "investmentContentHistoryEffectiveDate()" not in refresh_records_body
-    assert "investmentContentHistoryEffectiveDate(serviceType)" in refresh_records_body
+    assert "investmentContentHistoryEffectiveDate(targetServiceType)" in refresh_records_body
 
 
 def test_business_health_ui_exposes_manual_full_check_and_levels():
