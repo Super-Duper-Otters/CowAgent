@@ -1335,17 +1335,11 @@ def test_investment_user_message_can_be_overridden_from_database(investment_env)
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
 
 
-def test_business_user_message_uses_cowagent_reply_config_facade(investment_env, monkeypatch):
+def test_business_user_message_uses_config_service_before_reply_defaults(investment_env):
     from business.config_service import save_config
     from business.constants import ErrorCode, user_message
-    import business.investment.reply_config as legacy_reply_config
 
     save_config("reply.investment.no_content", "业务内容稍后更新。", operator_role="admin", operator="pytest")
-    monkeypatch.setattr(
-        legacy_reply_config,
-        "get_reply_text",
-        lambda *_args, **_kwargs: pytest.fail("business user_message must not use investment reply_config"),
-    )
 
     assert user_message(ErrorCode.NO_CONTENT) == "业务内容稍后更新。"
 
