@@ -11,7 +11,7 @@ from business import config_service
 from business.config_service import get_config
 from business.constants import SERVICE_LABELS, ServiceType
 from business.db import connect, get_engine, row_to_dict
-from business.investment.render_service import (
+from business.render_service import (
     DEFAULT_RENDERER_PATH,
     DEFAULT_TEMPLATE_BOND_PATH,
     DEFAULT_TEMPLATE_CB_PATH,
@@ -278,7 +278,7 @@ def _run_technical_analysis_smoke() -> HealthItem:
 
 
 def _run_renderer_smoke_checks() -> list[HealthItem]:
-    from business.investment.render_service import RenderRequest, render_card
+    from business.render_service import RenderRequest, render_card
 
     samples = (
         (ServiceType.TECHNICAL_ANALYSIS, "smoke_renderer_ta", "技术分析\n信号：中性\n风险：样例"),

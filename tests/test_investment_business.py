@@ -1479,7 +1479,7 @@ def test_builtin_component_manifests_are_clean_and_complete():
 def test_default_component_runtime_paths_use_builtin_components(investment_env):
     from business.business_registry import get_business_definition
     from business.constants import ServiceType
-    from business.investment.render_service import (
+    from business.render_service import (
         DEFAULT_RENDERER_PATH,
         DEFAULT_TEMPLATE_BOND_PATH,
         DEFAULT_TEMPLATE_CB_PATH,
@@ -5258,7 +5258,7 @@ def test_request_records_api_includes_generating_timeout_warning(investment_env,
 def test_batch_01_service_results_share_contract_fields(investment_env):
     from business.investment.ai_generation import AIGenerationResult
     from business.daily_content import DailyContentResult
-    from business.investment.render_service import RenderResult
+    from business.render_service import RenderResult
     from business.router import BusinessReply
     from business.investment.technical_analysis import TechnicalAnalysisResult
 
@@ -5851,7 +5851,7 @@ def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
 
 
 def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp_path):
-    from business.investment.artifact_service import record_artifact
+    from business.artifact_service import record_artifact
     from business.constants import ServiceType
     from business.db import connect
     from business.investment.versioning import file_fingerprint
@@ -5887,7 +5887,7 @@ def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp
 
 
 def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp_path):
-    from business.investment.artifact_service import record_artifact
+    from business.artifact_service import record_artifact
     from business.constants import ServiceType
     from business.db import connect
 
@@ -10549,7 +10549,7 @@ def test_daily_content_effective_content_image_missing_returns_no_content(invest
 
 def test_render_service_validates_output_files(investment_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.render_service import RenderRequest, render_card
+    from business.render_service import RenderRequest, render_card
 
     output = tmp_path / "card.png"
 
@@ -10577,7 +10577,7 @@ def test_render_service_validates_output_files(investment_env, tmp_path):
 def test_render_service_contract_uses_skill_templates_and_configured_output_dir(investment_env, tmp_path):
     from business.config_service import save_configs
     from business.constants import ServiceType, Status
-    from business.investment.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
+    from business.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
 
     template_ta = tmp_path / "template_ta.html"
     template_bond = tmp_path / "template_bond.html"

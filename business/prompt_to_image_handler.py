@@ -6,7 +6,7 @@ from typing import Any
 from business.business_records import create_business_record, mark_business_failed, mark_business_success
 from business.config_service import get_config, sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType, user_message
-from business.investment.render_service import RenderRequest, render_card
+from business.render_service import RenderRequest, render_card
 
 
 DEFAULT_PROMPT_TO_IMAGE_PROMPT = (

@@ -13,7 +13,7 @@ from business.config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from business.db import connect, row_to_dict
 from business.records import create_business_workflow_record, finish_business_workflow_record, record_output_file
-from business.investment.render_service import DEFAULT_RENDERER_PATH, template_for_service
+from business.render_service import DEFAULT_RENDERER_PATH, template_for_service
 from business.schema import investment_daily_contents
 from business.storage import get_storage_dirs
 from business.investment.versioning import file_fingerprint
@@ -376,7 +376,7 @@ def update_generation_success(content_id: str, generated_text: str, output_image
         operator = item.get("operator") or ""
         audit_actor = _actor_from_content_item(item)
     if output_image and service_type is not None:
-        from business.investment.artifact_service import archive_artifact_file
+        from business.artifact_service import archive_artifact_file
 
         stored_output_image = archive_artifact_file(
             content_id,
@@ -500,7 +500,7 @@ def _default_renderer(
     *,
     template_key: str = "",
 ):
-    from business.investment.render_service import RenderRequest, render_card
+    from business.render_service import RenderRequest, render_card
 
     return render_card(
         RenderRequest(
@@ -711,7 +711,7 @@ def set_content_effective(
             normalized_expires_at = item.get("expires_at") or ""
         final_service_type = ServiceType(service_type)
         if final_image:
-            from business.investment.artifact_service import archive_artifact_file
+            from business.artifact_service import archive_artifact_file
 
             final_image = archive_artifact_file(
                 content_id,

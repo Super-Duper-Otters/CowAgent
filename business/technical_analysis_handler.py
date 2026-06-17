@@ -1,7 +1,7 @@
 # encoding:utf-8
 """CowAgent built-in technical analysis business handler."""
 
-from business.investment.artifacts import archive_business_output_files
+from business.artifacts import archive_business_output_files
 from business.cache_service import write_business_cache
 from business.business_records import (
     mark_business_failed as fail_request_record,

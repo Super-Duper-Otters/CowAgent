@@ -553,7 +553,7 @@ def succeed_request_record(
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
     if service_type is not None:
-        from business.investment.artifact_service import archive_output_files
+        from business.artifact_service import archive_output_files
 
         stored_output_files, stored_artifact_roles, stored_artifact_versions, _path_map = archive_output_files(
             request_id,
@@ -1745,7 +1745,7 @@ def record_output_file(
     version_tag: str = "",
     owner_type: str = "request",
 ) -> None:
-    from business.investment.artifact_service import record_artifact
+    from business.artifact_service import record_artifact
 
     record_artifact(
         owner_id,

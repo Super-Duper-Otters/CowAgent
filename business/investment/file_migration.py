@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
-from .artifact_service import archive_artifact_file
+from business.artifact_service import archive_artifact_file
 from business.constants import ServiceType
 from business.db import connect, row_to_dict
 from business.schema import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records
@@ -173,7 +173,7 @@ def migrate_legacy_files_to_unified_storage() -> int:
         return 0
 
     for owner_id, file_path, service_type, role, owner_type in pending_artifacts:
-        from .artifact_service import record_artifact
+        from business.artifact_service import record_artifact
 
         record_artifact(owner_id, file_path, role, service_type, owner_type=owner_type)
 

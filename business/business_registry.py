@@ -12,7 +12,7 @@ from agent.skills.frontmatter import parse_frontmatter
 from business.config_service import get_config
 from business.constants import ServiceType, normalize_service
 from business.investment.component_paths import builtin_components_root, runtime_components_root
-from business.investment.render_service import DEFAULT_RENDERER_PATH
+from business.render_service import DEFAULT_RENDERER_PATH
 
 
 SAFE_BUSINESS_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
