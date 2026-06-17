@@ -149,7 +149,7 @@ def test_investment_migration_removes_generation_records_table(investment_env):
 def test_investment_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
     from sqlalchemy import inspect
     from business import db
-    from business.investment import migrations
+    from business import migrations
 
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_migration_{uuid4().hex}"
@@ -833,7 +833,7 @@ def test_investment_database_url_rejects_sqlite_config(monkeypatch):
 
 
 def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
-    from business.investment import migrations
+    from business import migrations
     from business import schema
     from business import storage
 
@@ -1230,7 +1230,7 @@ def test_business_records_api_filters_internal_entry_type(investment_env, monkey
 
 
 def test_investment_alembic_runner_exposes_upgrade():
-    from business.investment import migrations
+    from business import migrations
 
     assert callable(migrations.upgrade)
     assert migrations.alembic_config_path().name == "alembic.ini"
@@ -2708,7 +2708,7 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_en
 
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(investment_env):
     from business.db import connect
-    from business.investment.record_cleanup import cleanup_useless_business_records
+    from business.record_cleanup import cleanup_useless_business_records
     from business.schema import (
         admin_sessions,
         configs,
@@ -5348,7 +5348,7 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
     from business.cache_service import find_cache_entry_by_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
-    from business.investment.file_migration import migrate_legacy_files_to_unified_storage
+    from business.file_migration import migrate_legacy_files_to_unified_storage
     from business.daily_content import create_content_draft
     from business.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
     from business.storage import get_storage_dirs

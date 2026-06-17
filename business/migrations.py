@@ -10,7 +10,7 @@ def _alembic_option_value(value: str) -> str:
 
 
 def alembic_config_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "migrations" / "investment" / "alembic.ini"
+    return Path(__file__).resolve().parents[1] / "migrations" / "investment" / "alembic.ini"
 
 
 def upgrade(revision: str = "head", database_url: str | None = None) -> None:

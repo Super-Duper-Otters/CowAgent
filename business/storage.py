@@ -42,13 +42,13 @@ def initialize_storage() -> None:
     dirs = get_storage_dirs()
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
-    from business.investment import migrations
+    from business import migrations
     from business.db import get_database_url
 
     database_url = get_database_url()
     if _MIGRATED_DATABASE_URL != database_url:
         migrations.upgrade("head")
         _MIGRATED_DATABASE_URL = database_url
-        from business.investment.file_migration import migrate_legacy_files_to_unified_storage
+        from business.file_migration import migrate_legacy_files_to_unified_storage
 
         migrate_legacy_files_to_unified_storage()
