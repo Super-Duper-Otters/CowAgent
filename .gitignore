@@ -42,7 +42,8 @@ ref/
 .superpowers/
 local/
 node_modules/
-/investment/
+/business_storage/
+/cowagent-local.tar
 技术分析v0.2.zip
 
 # local requirement drafting intermediates

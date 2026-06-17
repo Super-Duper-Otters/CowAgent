@@ -165,7 +165,7 @@ def test_investment_migration_transfers_generation_records_to_new_tables(tmp_pat
         conn.execute(text(f'create schema "{schema_name}"'))
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
     db.reset_engine_for_tests()
     try:
         migrations.upgrade("20260609_0018")
@@ -776,8 +776,8 @@ def investment_env(tmp_path, monkeypatch):
         conn.execute(text(f'create schema "{schema_name}"'))
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
-    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.delenv("COWAGENT_BUSINESS_DB_PATH", raising=False)
 
     db.reset_engine_for_tests()
     storage._MIGRATED_DATABASE_URL = None
@@ -796,7 +796,7 @@ def test_investment_database_url_defaults_to_docker_postgres(monkeypatch):
     from business import db
 
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
-    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
+    monkeypatch.delenv("COWAGENT_BUSINESS_DB_PATH", raising=False)
 
     url = db.get_database_url()
 
@@ -837,7 +837,7 @@ def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
     from business import schema
     from business import storage
 
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
     calls = []
 
     monkeypatch.setattr(migrations, "upgrade", lambda revision="head": calls.append(revision))

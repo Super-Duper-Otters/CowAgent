@@ -8,10 +8,10 @@ _MIGRATED_DATABASE_URL: str | None = None
 
 
 def _storage_root() -> Path:
-    env_root = os.environ.get("COWAGENT_INVESTMENT_STORAGE_ROOT")
+    env_root = os.environ.get("COWAGENT_BUSINESS_STORAGE_ROOT")
     if env_root:
         return Path(env_root)
-    return Path(get_appdata_dir()) / "investment"
+    return Path(get_appdata_dir()) / "business_storage"
 
 
 def get_storage_dirs() -> dict[str, Path]:
@@ -24,7 +24,7 @@ def get_storage_dirs() -> dict[str, Path]:
 
 
 def get_db_path() -> Path:
-    env_path = os.environ.get("COWAGENT_INVESTMENT_DB_PATH")
+    env_path = os.environ.get("COWAGENT_BUSINESS_DB_PATH")
     if env_path:
         return Path(env_path)
     return _storage_root() / "investment.db"

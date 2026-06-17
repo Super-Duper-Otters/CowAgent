@@ -37,7 +37,7 @@ def investment_postgres_env(tmp_path, monkeypatch):
         conn.execute(text(f'create schema "{schema_name}"'))
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
 
     from business import db
     from business import storage

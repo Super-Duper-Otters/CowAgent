@@ -74,7 +74,7 @@ services:
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-20}
       COWAGENT_RUN_MIGRATIONS: ${COWAGENT_RUN_MIGRATIONS:-true}
       COWAGENT_INVESTMENT_DATABASE_URL: postgresql+psycopg://cowagent:${POSTGRES_PASSWORD:-cowagent}@cowagent-investment-pg:5432/cowagent_investment
-      COWAGENT_INVESTMENT_STORAGE_ROOT: /home/agent/cow/investment
+      COWAGENT_BUSINESS_STORAGE_ROOT: /home/agent/cow/business_storage
     depends_on:
       cowagent-investment-pg:
         condition: service_healthy

@@ -31,7 +31,7 @@ def agent_messages_pg_env(tmp_path, monkeypatch):
         conn.execute(text(f'create schema "{schema_name}"'))
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
     monkeypatch.setenv("AGENT_MEMORY_INDEX", "false")
     db.reset_engine_for_tests()
     storage._MIGRATED_DATABASE_URL = None

@@ -190,7 +190,7 @@ if (-not $SkipMigration) {
 if ($MigrateSqlite) {
     $sourceSqlite = $SqlitePath
     if (-not $sourceSqlite) {
-        $sourceSqlite = Join-Path $script:ProjectRootResolved "investment\investment.db"
+        $sourceSqlite = Join-Path $script:ProjectRootResolved "business_storage\investment.db"
     }
     if (-not (Test-Path -LiteralPath $sourceSqlite)) {
         throw "SQLite source database not found: $sourceSqlite"

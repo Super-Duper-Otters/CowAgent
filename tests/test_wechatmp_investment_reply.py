@@ -50,8 +50,8 @@ def investment_env(tmp_path, monkeypatch):
         conn.execute(text(f'create schema "{schema_name}"'))
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
-    monkeypatch.delenv("COWAGENT_INVESTMENT_DB_PATH", raising=False)
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.delenv("COWAGENT_BUSINESS_DB_PATH", raising=False)
 
     db.reset_engine_for_tests()
     storage._MIGRATED_DATABASE_URL = None
