@@ -1,10 +1,10 @@
-# Investment PostgreSQL Deployment Runbook
+# Business PostgreSQL Deployment Runbook
 
-This runbook covers deployment, migration, rollback, and Navicat connection notes for the shared PostgreSQL database used by investment data and Agent conversation history.
+This runbook covers deployment, migration, rollback, and Navicat connection notes for the shared PostgreSQL database used by business data and Agent conversation history.
 
 ## Deployment Modes
 
-Investment data and Agent conversation history use PostgreSQL. The legacy local SQLite investment database at `investment/investment.db` is only a migration source for older deployments.
+Business data and Agent conversation history use PostgreSQL. The legacy local SQLite database at `business_storage/investment.db` is only a migration source for older deployments.
 
 To use PostgreSQL, set `COWAGENT_INVESTMENT_DATABASE_URL` in the runtime environment:
 
@@ -18,23 +18,23 @@ Use placeholder credentials in examples, local scripts, and shared docs. Do not 
 
 ## Schema Upgrade
 
-After selecting PostgreSQL, run the Alembic migrations. These create the investment tables plus `agent_sessions` and `agent_messages` for normal Agent conversation persistence:
+After selecting PostgreSQL, run the Alembic migrations. These create the business tables plus `agent_sessions` and `agent_messages` for normal Agent conversation persistence:
 
 ```powershell
-alembic -c migrations/investment/alembic.ini upgrade head
+alembic -c migrations/business/alembic.ini upgrade head
 ```
 
 Run the normal quality gates after configuration changes. For PostgreSQL-specific integration tests, set the optional PostgreSQL test environment variable expected by the test suite before running those tests.
 
 ## SQLite To PostgreSQL Migration
 
-Keep the SQLite database file until the migration has been verified. Migrate existing investment data with:
+Keep the SQLite database file until the migration has been verified. Migrate existing legacy business data with:
 
 ```powershell
-py scripts/migrate_investment_sqlite_to_pg.py --sqlite investment/investment.db --pg postgresql+psycopg://cowagent_user:example-password@localhost:5432/cowagent_investment
+py scripts/migrate_investment_sqlite_to_pg.py --sqlite business_storage/investment.db --pg postgresql+psycopg://cowagent_user:example-password@localhost:5432/cowagent_investment
 ```
 
-After migration, run the application against PostgreSQL and verify the expected investment records are present before changing operational traffic.
+After migration, run the application against PostgreSQL and verify the expected business records are present before changing operational traffic.
 
 Agent conversation history is intentionally not migrated from the old SQLite memory index. New conversations are written to PostgreSQL table `agent_messages` through the existing Agent conversation store API.
 
@@ -77,16 +77,12 @@ For hosted PostgreSQL, use the provider hostname, port, database name, username,
 
 ## Rollback
 
-To rollback from PostgreSQL to SQLite, unset `COWAGENT_INVESTMENT_DATABASE_URL` and remove `investment_database_url` from `config.json`. The application will return to the default SQLite deployment path.
+Runtime rollback is PostgreSQL-to-PostgreSQL: restore the previous application version and a compatible PostgreSQL backup or snapshot. The current business runtime expects a PostgreSQL SQLAlchemy URL; unsetting `COWAGENT_INVESTMENT_DATABASE_URL` falls back to the default local PostgreSQL URL, not to SQLite.
 
-```powershell
-Remove-Item Env:COWAGENT_INVESTMENT_DATABASE_URL
-```
-
-Keep `investment/investment.db` unchanged unless you intentionally migrated writes away from it and have a separate data reconciliation plan. PostgreSQL migration does not automatically copy later PostgreSQL writes back into SQLite.
+Keep `business_storage/investment.db` unchanged as a migration source unless you intentionally migrated writes away from it and have a separate data reconciliation plan. PostgreSQL migration does not automatically copy later PostgreSQL writes back into SQLite.
 
 ## Operational Warnings
 
-Generated image and file paths stored by investment features are local paths, not shared storage. Moving metadata to PostgreSQL does not make generated images or files available across machines. Use shared object storage or another explicit file distribution mechanism if multiple machines need to read the same generated assets.
+Generated image and file paths stored by business features are local paths, not shared storage. Moving metadata to PostgreSQL does not make generated images or files available across machines. Use shared object storage or another explicit file distribution mechanism if multiple machines need to read the same generated assets.
 
 The long-term memory index is not part of this migration. Do not migrate `agent/memory` index data unless you explicitly plan a separate PostgreSQL memory-index implementation.
