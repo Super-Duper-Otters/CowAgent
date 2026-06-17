@@ -239,7 +239,7 @@ def test_investment_migration_transfers_generation_records_to_new_tables(tmp_pat
 
 
 def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(investment_env):
-    from business.investment.auth_service import (
+    from business.auth_service import (
         authenticate_admin,
         create_admin_session,
         create_admin_user,
@@ -284,7 +284,7 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
 
 
 def test_technical_operator_only_has_config_permissions(investment_env):
-    from business.investment.auth_service import authenticate_admin, create_admin_user, require_permission
+    from business.auth_service import authenticate_admin, create_admin_user, require_permission
 
     create_admin_user("tech-ops-a", "tech-pass", role="technical_operator")
 
@@ -302,7 +302,7 @@ def test_technical_operator_only_has_config_permissions(investment_env):
 
 
 def test_investment_migrations_seed_default_admin_and_posters(investment_env):
-    from business.investment.auth_service import authenticate_admin
+    from business.auth_service import authenticate_admin
 
     admin = authenticate_admin("admin", "password")
     assert admin is not None
@@ -315,7 +315,7 @@ def test_investment_migrations_seed_default_admin_and_posters(investment_env):
 
 
 def test_admin_user_service_lists_updates_and_resets_password(investment_env):
-    from business.investment.auth_service import (
+    from business.auth_service import (
         authenticate_admin,
         create_admin_user,
         list_admin_users,
@@ -366,8 +366,8 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
 
 
 def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.audit_service import list_operation_audits
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.investment.records import get_content_record
     from channel.web import web_channel
     from channel.web.web_channel import (
@@ -508,7 +508,7 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
 
 
 def test_investment_auth_me_allows_content_operator_without_customer_or_audit_permission(investment_env, monkeypatch):
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAuthMeHandler
 
@@ -532,7 +532,7 @@ def test_investment_auth_me_allows_content_operator_without_customer_or_audit_pe
 def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
     from business.db import connect
     from business.schema import admin_sessions, admins
-    from business.investment.auth_service import create_admin_user
+    from business.auth_service import create_admin_user
     from channel.web import web_channel
 
     with connect() as conn:
@@ -553,7 +553,7 @@ def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(inves
 
 
 def test_admin_login_with_web_password_enabled_also_authenticates_console(investment_env, monkeypatch):
-    from business.investment.auth_service import create_admin_user
+    from business.auth_service import create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import AuthCheckHandler, AuthLoginHandler
 
@@ -652,7 +652,7 @@ def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
 
 
 def test_content_operator_session_denies_records_and_cache(investment_env, monkeypatch):
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentCacheHandler, InvestmentRequestRecordsHandler
 
@@ -1063,7 +1063,7 @@ def test_ai_generation_audit_records_common_generation_metadata(investment_env):
 
 
 def test_operation_audit_infers_final_record_categories(investment_env):
-    from business.investment.audit_service import list_operation_audits, record_operation_audit
+    from business.audit_service import list_operation_audits, record_operation_audit
 
     cases = [
         ("customer.update", "customer", "customer"),
@@ -1243,7 +1243,7 @@ def test_config_service_uses_investment_db_connection_helpers():
 
 
 def test_user_service_uses_investment_db_connection_helpers():
-    from business.investment import user_service
+    from business import user_service
 
     assert not hasattr(user_service, "get_connection")
 
@@ -1267,7 +1267,7 @@ def test_stock_resolver_uses_investment_db_connection_helpers():
 
 
 def test_health_uses_investment_db_connection_helpers():
-    from business.investment import health
+    from business import health
 
     assert not hasattr(health, "get_connection")
 
@@ -1774,7 +1774,7 @@ def test_uploaded_script_investment_skill_executes_from_route(investment_env, tm
     from business.constants import ServiceType
     from business.router import handle_text_message
     from business.investment.skill_versions import save_package_upload
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     import business.investment.skill_registry as investment_skill_registry
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -1908,7 +1908,7 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
     from business.business_router import build_business_reply
     from business.constants import ServiceType
     from business.investment.skill_versions import save_package_upload
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
     package = tmp_path / "ta-text.zip"
@@ -2109,7 +2109,7 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
 def test_web_user_disable_button_updates_permission_path(investment_env, monkeypatch):
     from business.constants import ErrorCode, ServiceType
     from business.router import handle_text_message
-    from business.investment.user_service import create_user, get_user_by_openid
+    from business.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserDisableHandler
 
@@ -2129,9 +2129,9 @@ def test_web_user_disable_button_updates_permission_path(investment_env, monkeyp
 
 
 def test_web_customer_search_enable_and_audits_use_customer_permissions(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
+    from business.audit_service import list_operation_audits
     from business.constants import ServiceType
-    from business.investment.user_service import create_user, get_user_by_openid
+    from business.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserStatusHandler, InvestmentUsersHandler
 
@@ -2161,8 +2161,8 @@ def test_web_customer_search_enable_and_audits_use_customer_permissions(investme
 
 
 def test_web_customer_create_audit_binds_session_admin_not_body_operator(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
-    from business.investment.auth_service import authenticate_admin
+    from business.audit_service import list_operation_audits
+    from business.auth_service import authenticate_admin
     from business.db import connect
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
@@ -2215,9 +2215,9 @@ def test_web_customer_create_audit_binds_session_admin_not_body_operator(investm
 
 
 def test_web_user_management_apis_support_keyword_and_pagination(investment_env, monkeypatch):
-    from business.investment.auth_service import create_admin_user
+    from business.auth_service import create_admin_user
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAdminUsersHandler, InvestmentUsersHandler
 
@@ -2264,7 +2264,7 @@ def test_web_user_management_apis_support_keyword_and_pagination(investment_env,
 
 def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2290,7 +2290,7 @@ def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_
 
 def test_web_customer_keyword_search_supports_field_categories(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2342,7 +2342,7 @@ def test_router_authenticates_before_parsing_unmatched_input(investment_env, mon
     from business.constants import ErrorCode, ServiceType
     import business.router as router
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     monkeypatch.setattr(router, "parse_route", lambda _raw_input: pytest.fail("unauthorized input must not be parsed"))
 
@@ -2368,7 +2368,7 @@ def test_router_authenticates_before_parsing_unmatched_input(investment_env, mon
 
 def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeypatch):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.user_service import create_user, verify_permission
+    from business.user_service import create_user, verify_permission
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2479,7 +2479,7 @@ def test_component_settings_rejects_triggers_for_passive_component(investment_en
 
 
 def test_investment_skill_settings_audit_records_before_and_after_values(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
+    from business.audit_service import list_operation_audits
     from business.config_service import save_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
@@ -2510,7 +2510,7 @@ def test_investment_skill_settings_audit_records_before_and_after_values(investm
 
 
 def _login_default_investment_admin(monkeypatch, *, username="admin", password="password"):
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
 
     admin = authenticate_admin(username, password)
@@ -2599,7 +2599,7 @@ def test_web_investment_config_saves_reply_text_values(investment_env, monkeypat
 
 
 def test_web_investment_config_audit_records_before_and_after_values(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
+    from business.audit_service import list_operation_audits
     from business.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
@@ -2820,8 +2820,8 @@ def test_web_daily_content_generate_marks_generating_before_background_task(inve
 
 
 def test_web_daily_content_create_binds_session_admin_not_body_operator(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.audit_service import list_operation_audits
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.db import connect
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentDailyContentHandler
@@ -3066,7 +3066,7 @@ def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(i
 
 
 def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch):
-    from business.investment.audit_service import record_operation_audit
+    from business.audit_service import record_operation_audit
     from business.constants import ServiceType
     from business.investment.records import create_request_record
     from channel.web.web_channel import InvestmentOperationAuditsHandler, InvestmentRequestRecordsHandler
@@ -3135,7 +3135,7 @@ def test_request_records_page_returns_total_offset_and_api_pagination(investment
 def test_request_records_page_filters_by_openid_or_mobile(investment_env):
     from business.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("openid-a", name="Alice", institution="Inst A", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", name="Bob", institution="Inst B", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
@@ -3214,7 +3214,7 @@ def test_content_records_page_returns_total_and_filter_pagination(investment_env
 
 
 def test_operation_audits_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
-    from business.investment.audit_service import list_operation_audits_page, record_operation_audit
+    from business.audit_service import list_operation_audits_page, record_operation_audit
     from business.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
 
@@ -3250,7 +3250,7 @@ def test_operation_audits_page_returns_total_and_filter_pagination(investment_en
 
 
 def test_operation_audit_records_admin_actor_fields(investment_env):
-    from business.investment.audit_service import AdminActor, list_operation_audits, record_operation_audit
+    from business.audit_service import AdminActor, list_operation_audits, record_operation_audit
 
     audit_id = record_operation_audit(
         "customer.update",
@@ -3901,7 +3901,7 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(investm
     from business.constants import ErrorCode, ServiceType
     from business.db import connect
     from business.investment.records import create_request_record, fail_request_record, succeed_request_record
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     create_user(
@@ -3965,7 +3965,7 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(investm
 
 
 def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(investment_env, monkeypatch):
-    from business.investment.audit_service import record_operation_audit
+    from business.audit_service import record_operation_audit
     from business.investment.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
@@ -4173,7 +4173,7 @@ def test_internal_request_records_api_filters_by_keyword_and_date_range(investme
 
 
 def test_operation_audits_api_filters_by_operator_action_keyword_and_date(investment_env, monkeypatch):
-    from business.investment.audit_service import record_operation_audit
+    from business.audit_service import record_operation_audit
     from business.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
 
@@ -4230,7 +4230,7 @@ def test_operation_audits_api_filters_by_operator_action_keyword_and_date(invest
 
 
 def test_investment_web_api_end_to_end_smoke_without_external_services(investment_env, tmp_path, monkeypatch):
-    from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.investment.daily_content import update_generation_success
     from business.investment.records import get_content_record
     from business.router import handle_text_message
@@ -4373,7 +4373,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
 
     health_calls = []
     monkeypatch.setattr(
-        "business.investment.health.run_health_checks",
+        "business.health.run_health_checks",
         lambda run_smoke=False: health_calls.append(run_smoke)
         or [SimpleNamespace(name="database", ok=True, detail="ok", level="ok")],
     )
@@ -4395,7 +4395,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
 
 def test_user_service_permission_edges_and_upsert(investment_env):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.user_service import (
+    from business.user_service import (
         ImportUserRow,
         create_user,
         import_users,
@@ -4443,7 +4443,7 @@ def test_user_service_permission_edges_and_upsert(investment_env):
 
 def test_user_service_crud_list_and_all_service_contract(investment_env):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
+    from business.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
 
     user_id = create_user(
         "crud-openid",
@@ -4481,7 +4481,7 @@ def test_user_service_crud_list_and_all_service_contract(investment_env):
 
 def test_user_services_normalize_all_when_all_or_every_business_service_selected(investment_env):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user, get_user_by_openid, update_user
+    from business.user_service import create_user, get_user_by_openid, update_user
 
     create_user(
         "all-plus-specific",
@@ -4507,7 +4507,7 @@ def test_user_services_normalize_all_when_all_or_every_business_service_selected
 
 def test_user_service_excel_import_maps_fields_and_permissions_take_effect(investment_env):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
+    from business.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
 
     create_user("existing-openid", name="old", allowed_services=["利率"])
     payload = _xlsx_bytes(
@@ -4575,7 +4575,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
 
 def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(investment_env):
     from datetime import datetime
-    from business.investment.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
+    from business.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
 
     payload = _xlsx_bytes(
         ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
@@ -4602,7 +4602,7 @@ def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(inv
 
     from openpyxl import Workbook
 
-    from business.investment.user_service import parse_users_excel
+    from business.user_service import parse_users_excel
 
     workbook = Workbook()
     sheet = workbook.active
@@ -4618,7 +4618,7 @@ def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(inv
 
 
 def test_user_service_excel_import_reports_invalid_date_with_row_and_field(investment_env):
-    from business.investment.user_service import parse_users_excel
+    from business.user_service import parse_users_excel
 
     payload = _xlsx_bytes(
         ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
@@ -4653,7 +4653,7 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(inves
 
 
 def test_user_service_excel_import_requires_authorization_start_end_and_services(investment_env):
-    from business.investment.user_service import parse_users_excel
+    from business.user_service import parse_users_excel
 
     missing_start = _xlsx_bytes(
         ["手机号", "服务权限", "授权结束日期"],
@@ -4682,8 +4682,8 @@ def test_user_service_excel_import_requires_authorization_start_end_and_services
 
 
 def test_user_import_template_headers_are_parseable(investment_env):
-    from business.investment.export_service import export_users_import_template_xlsx
-    from business.investment.user_service import parse_users_excel
+    from business.export_service import export_users_import_template_xlsx
+    from business.user_service import parse_users_excel
 
     rows = parse_users_excel(export_users_import_template_xlsx())
 
@@ -4694,7 +4694,7 @@ def test_user_import_template_headers_are_parseable(investment_env):
 
 def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.user_service import create_user, get_user_by_openid
+    from business.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersImportHandler
 
@@ -4819,7 +4819,7 @@ def test_request_record_delivery_status_is_business_facing(investment_env):
 
 def test_export_request_records_hides_internal_delivery_marker(investment_env):
     from business.constants import ServiceType
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, mark_request_delivered, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
@@ -4861,7 +4861,7 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(inve
 
 def test_job_service_reuses_running_technical_analysis_record(investment_env):
     from business.constants import ServiceType
-    from business.investment.job_service import find_running_job, start_job_if_absent
+    from business.job_service import find_running_job, start_job_if_absent
     from business.investment.records import succeed_request_record
 
     first = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
@@ -4881,7 +4881,7 @@ def test_job_service_reuses_running_technical_analysis_record(investment_env):
 
 def test_job_service_reuses_running_cache_job_across_users(investment_env):
     from business.constants import ServiceType
-    from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.job_service import find_running_cache_job, start_cache_job_if_absent
     from business.investment.records import succeed_request_record
 
     cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
@@ -4928,7 +4928,7 @@ def test_job_service_reuses_running_cache_job_across_users(investment_env):
 def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(investment_env):
     from business.constants import ServiceType, Status
     from business.db import connect
-    from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.job_service import find_running_cache_job, start_cache_job_if_absent
     from business.investment.records import get_request_record
 
     cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
@@ -4968,7 +4968,7 @@ def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(inv
 
 def test_job_service_allows_different_cache_keys_to_run_together(investment_env):
     from business.constants import ServiceType
-    from business.investment.job_service import start_cache_job_if_absent
+    from business.job_service import start_cache_job_if_absent
 
     first = start_cache_job_if_absent(
         "openid-a",
@@ -4995,10 +4995,10 @@ def test_job_service_allows_different_cache_keys_to_run_together(investment_env)
 def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
     from business import config_service
     from business.constants import ErrorCode, ServiceType, Status
-    from business.investment.job_service import find_running_job
+    from business.job_service import find_running_job
     from business.investment.records import get_content_record, list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": "sk-secret-123"})
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -5022,7 +5022,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
 def test_router_delegates_technical_analysis_to_cowagent_business_handler(investment_env, monkeypatch):
     from business.constants import ServiceType
     from business.router import BusinessReply, handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     import business.investment.executors.technical_analysis_executor as investment_ta_executor
     import business.technical_analysis_handler as cowagent_ta_handler
 
@@ -5061,7 +5061,7 @@ def test_job_service_ignores_stale_running_technical_analysis_record(investment_
 
     from business.constants import ServiceType, Status
     from business.db import connect
-    from business.investment.job_service import find_running_job, start_job_if_absent
+    from business.job_service import find_running_job, start_job_if_absent
     from business.investment.records import create_request_record, get_request_record
 
     old_id = create_request_record("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
@@ -5085,7 +5085,7 @@ def test_job_service_concurrent_start_creates_single_running_job(investment_env)
     from concurrent.futures import ThreadPoolExecutor
 
     from business.constants import ServiceType
-    from business.investment.job_service import start_job_if_absent
+    from business.job_service import start_job_if_absent
     from business.investment.records import get_content_record, list_request_records
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -5114,7 +5114,7 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = tmp_path / "signal.png"
@@ -5170,7 +5170,7 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("openid-a", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", enabled=True, allowed_services=[ServiceType.ALL])
@@ -5490,7 +5490,7 @@ def _xlsx_sheet_rows(content: bytes) -> list[list[object]]:
 
 
 def test_export_date_range_helpers_return_inclusive_bounds():
-    from business.investment.export_service import month_range, quarter_range
+    from business.export_service import month_range, quarter_range
 
     assert month_range(2026, 2) == ("2026-02-01T00:00:00", "2026-02-28T23:59:59")
     assert month_range(2024, 2) == ("2024-02-01T00:00:00", "2024-02-29T23:59:59")
@@ -5551,7 +5551,7 @@ def test_request_records_export_api_forces_external_request_entry_type(investmen
 def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
     from business.constants import ErrorCode, ServiceType
     from business.db import connect
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, fail_request_record, succeed_request_record
 
     older = create_request_record("old-openid", "利率", ServiceType.RATE)
@@ -5651,9 +5651,9 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(investmen
 def test_export_request_records_xlsx_filters_by_service_customer_and_range(investment_env):
     from business.constants import ServiceType
     from business.db import connect
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, succeed_request_record
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("openid-a", name="Alice", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", name="Bob", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
@@ -5717,7 +5717,7 @@ def test_request_records_keyword_search_matches_event_details(investment_env):
 def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(investment_env):
     from business.constants import ServiceType
     from business.investment.event_service import record_request_event
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
 
     included = create_request_record("openid-export-event", "利率", ServiceType.RATE)
@@ -5744,7 +5744,7 @@ def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(in
 
 def test_export_request_records_xlsx_unknown_service_returns_only_header(investment_env):
     from business.constants import ServiceType
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
@@ -5775,7 +5775,7 @@ def test_export_request_records_xlsx_unknown_service_returns_only_header(investm
 
 
 def test_export_request_records_xlsx_empty_records_contains_only_header(investment_env):
-    from business.investment.export_service import export_request_records_xlsx
+    from business.export_service import export_request_records_xlsx
 
     rows = _xlsx_sheet_rows(export_request_records_xlsx("2026-05-01T00:00:00", "2026-05-31T23:59:59"))
 
@@ -5785,8 +5785,8 @@ def test_export_request_records_xlsx_empty_records_contains_only_header(investme
 
 def test_export_users_xlsx_filters_enabled_users(investment_env):
     from business.constants import ServiceType
-    from business.investment.export_service import export_users_xlsx
-    from business.investment.user_service import create_user
+    from business.export_service import export_users_xlsx
+    from business.user_service import create_user
 
     create_user(
         "enabled-openid",
@@ -6368,7 +6368,7 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(investmen
     from business import config_service
     from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
     from business.constants import ErrorCode, Status
-    from business.investment.health import run_health_checks
+    from business.health import run_health_checks
 
     api_key = "sk-ai-failure-1234567890"
     monkeypatch.setattr(config_service, "conf", lambda: {"bot_type": "custom", "custom_api_key": api_key})
@@ -6396,7 +6396,7 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(investmen
 
 def test_model_health_check_accepts_global_config_fallback(investment_env, monkeypatch):
     from business import config_service
-    from business.investment.health import run_health_checks
+    from business.health import run_health_checks
 
     api_key = "sk-global-fallback-1234567890"
     monkeypatch.setattr(
@@ -6481,7 +6481,7 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(investment_
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     api_key = "sk-ta-secret-1234567890"
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
@@ -6763,7 +6763,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
     from business.router import handle_text_message
     from business.storage import get_storage_dirs
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     card = tmp_path / "signal.png"
     chart = tmp_path / "chart.png"
@@ -6945,7 +6945,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -6985,7 +6985,7 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -7028,7 +7028,7 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.schema import cache_entries
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
@@ -7080,7 +7080,7 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -7119,7 +7119,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7157,7 +7157,7 @@ def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(inve
     from business.db import connect
     from business.investment.records import get_request_record, list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7201,7 +7201,7 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7232,7 +7232,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
@@ -7262,7 +7262,7 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(inve
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7297,7 +7297,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
@@ -7339,7 +7339,7 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7637,7 +7637,7 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
     from business.investment.records import create_request_record, list_request_records, succeed_request_record
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7734,7 +7734,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     from business.router import handle_text_message
     from business.schema import cache_entries
     from business.investment.stock_resolver import refresh_stock_symbols
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
@@ -7910,7 +7910,7 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7965,7 +7965,7 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8019,7 +8019,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_lega
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8101,7 +8101,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -8147,7 +8147,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8191,7 +8191,7 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investmen
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8224,7 +8224,7 @@ def test_technical_analysis_different_market_date_misses_cache(investment_env, t
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = []
@@ -8290,7 +8290,7 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     report = tmp_path / "report_without_date.md"
@@ -8353,7 +8353,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     invalid_market_date = "2026-02-31"
@@ -8405,7 +8405,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     report = tmp_path / "report_without_date.md"
@@ -9786,7 +9786,7 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(investmen
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = str(tmp_path / "card.png")
@@ -9815,7 +9815,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
     from business.constants import ServiceType
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = str(tmp_path / "card.png")
@@ -9844,7 +9844,7 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(in
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     image = tmp_path / "rate.png"
@@ -9980,7 +9980,7 @@ def test_daily_content_republishing_historical_expired_record_clears_stale_expir
 
 
 def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_path):
-    from business.investment.audit_service import list_operation_audits
+    from business.audit_service import list_operation_audits
     from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import (
         create_content_draft,
@@ -10087,7 +10087,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
 
 
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
-    from business.investment.audit_service import list_operation_audits
+    from business.audit_service import list_operation_audits
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, generate_content, set_content_effective
 
@@ -10614,7 +10614,7 @@ def test_render_service_contract_uses_skill_templates_and_configured_output_dir(
 
 
 def test_render_health_check_reports_renderer_template_and_chromium_details(investment_env, tmp_path, monkeypatch):
-    from business.investment import health
+    from business import health
     from business.config_service import save_configs
 
     missing_renderer = tmp_path / "missing-render-card.py"
@@ -10647,7 +10647,7 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
 
 def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, monkeypatch):
     from business import config_service
-    from business.investment import health
+    from business import health
 
     monkeypatch.setattr(
         config_service,
@@ -10692,7 +10692,7 @@ def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, mo
 
 
 def test_health_dependency_import_failure_reports_error_detail(investment_env, monkeypatch):
-    from business.investment import health
+    from business import health
 
     def fake_import(module_name):
         if module_name == "talib":
@@ -10710,7 +10710,7 @@ def test_health_dependency_import_failure_reports_error_detail(investment_env, m
 
 
 def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(investment_env, monkeypatch):
-    from business.investment import health
+    from business import health
 
     calls = []
     monkeypatch.setattr(
@@ -10747,7 +10747,7 @@ def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(invest
 
 def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(investment_env):
     from business.config_service import save_config
-    from business.investment.health import run_health_checks
+    from business.health import run_health_checks
     from business.investment.stock_resolver import refresh_stock_symbols
 
     save_config("tushare.token", "ts-health-secret-1234567890", operator_role="admin")
@@ -10776,7 +10776,7 @@ def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking
 
 
 def test_health_check_reports_missing_and_unwritable_directories(investment_env, tmp_path, monkeypatch):
-    from business.investment import health
+    from business import health
     from business.config_service import save_configs
 
     missing_files = tmp_path / "missing-files"
@@ -10808,7 +10808,7 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
 
 
 def test_health_check_reports_all_dependencies_available(investment_env, tmp_path, monkeypatch):
-    from business.investment import health
+    from business import health
     from business import config_service
     from business.config_service import save_configs
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -10865,7 +10865,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_request_records
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     secret = "sk-secret"
     save_config("tushare.token", secret, operator_role="admin")
@@ -10979,7 +10979,7 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11192,7 +11192,7 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from business.business_router import build_business_reply
 
     create_user("business-openid", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11224,7 +11224,7 @@ def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(investm
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.router import DEFAULT_UNMATCHED_PROMPT
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from business.constants import ServiceType
     from business.business_router import build_business_reply
 
@@ -11272,7 +11272,7 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import BusinessReply
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     import business.router as business_route
     import business.business_router as business_router
     import business.technical_analysis_handler as cowagent_ta_handler
@@ -11310,7 +11310,7 @@ def test_business_router_routes_daily_content_through_module_dispatcher(investme
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import BusinessReply
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     import business.business_router as business_router
     import business.daily_content_handler as cowagent_content_handler
 
@@ -11353,7 +11353,7 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply
 
     create_user("web-session-user", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11382,7 +11382,7 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
     create_user("web-session", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11406,7 +11406,7 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
     from business.constants import ActorType, EntryType, ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import list_request_records, list_request_records_page
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
     create_user("disabled-web", enabled=False, allowed_services=[ServiceType.ALL])
@@ -11444,7 +11444,7 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
     from business.investment.records import list_request_records
     from business.schema import investment_cache_entries
     from business.db import connect
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
     import business.technical_analysis_handler as ta_handler
 
@@ -11598,7 +11598,7 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investme
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.user_service import create_user
+    from business.user_service import create_user
     import channel.wechatmp.wechatmp_channel as wechatmp_channel
 
     instances = wechatmp_channel.WechatMPChannel.__closure__[1].cell_contents

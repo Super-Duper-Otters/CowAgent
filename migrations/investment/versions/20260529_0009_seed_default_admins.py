@@ -22,7 +22,7 @@ def upgrade() -> None:
     import sqlalchemy as sa
 
     from alembic import op
-    from business.investment.auth_service import hash_password
+    from business.auth_service import hash_password
 
     bind = op.get_bind()
     table = sa.table(

@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from sqlalchemy import and_, insert, or_, select, update
 
-from .audit_service import AdminActor, actor_from_admin, record_operation_audit
+from business.audit_service import AdminActor, actor_from_admin, record_operation_audit
 from business.config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from business.db import connect, row_to_dict

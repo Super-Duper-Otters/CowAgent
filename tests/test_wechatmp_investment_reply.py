@@ -17,7 +17,7 @@ STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED = pytest.mark.skip(
 @pytest.fixture(autouse=True)
 def _default_investment_user_access(monkeypatch):
     monkeypatch.setattr(
-        "business.investment.user_service.verify_user_access",
+        "business.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(allowed=True, user_prompt=""),
     )
 
@@ -115,7 +115,7 @@ def _fake_passive_post(monkeypatch, passive_reply, channel, current_message, pro
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -526,7 +526,7 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
         lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
     )
     monkeypatch.setattr(
-        "business.investment.job_service.start_job_if_absent_with_metadata",
+        "business.job_service.start_job_if_absent_with_metadata",
         lambda *_args, **_kwargs: SimpleNamespace(
             created=True,
             record=SimpleNamespace(request_id="request-tech"),
@@ -920,7 +920,7 @@ def test_wechatmp_passive_image_reply_does_not_delete_temporary_media(monkeypatc
     monkeypatch.setattr(passive_reply, "WeChatMPMessage", lambda _msg, client=None: fake_wechatmp_msg)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -1273,7 +1273,7 @@ def test_wechatmp_passive_unauthorized_user_confirm_keeps_pending_result(monkeyp
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_user_access",
+        "business.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(
             allowed=False,
             user_prompt="您暂未开通该服务，如需开通请联系服务人员。",
@@ -1552,7 +1552,7 @@ def test_wechatmp_passive_cached_technical_analysis_hit_can_be_pulled_with_one(m
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: True, raising=False)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -1625,7 +1625,7 @@ def test_wechatmp_passive_cache_miss_returns_running_ack(monkeypatch):
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -1787,7 +1787,7 @@ def test_wechatmp_passive_one_without_pending_result_uses_normal_request_path(mo
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2060,7 +2060,7 @@ def test_wechatmp_passive_rate_and_bond_return_ready_image_without_running_ack(m
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2150,7 +2150,7 @@ def test_wechatmp_passive_rate_ready_between_retries_returns_image_without_confi
     monkeypatch.setattr(passive_reply.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(passive_reply.time, "time", fake_time)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2233,7 +2233,7 @@ def test_wechatmp_passive_rate_ready_between_retries_rechecks_permission_before_
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(passive_reply.time, "time", fake_time)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
     monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
     monkeypatch.setattr(
@@ -2323,7 +2323,7 @@ def test_wechatmp_passive_rate_retry_returns_image_when_cache_ready_on_second_re
     monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
     monkeypatch.setattr(passive_reply.time, "time", fake_time)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2408,7 +2408,7 @@ def test_wechatmp_passive_auto_wait_rechecks_permission_before_pop(monkeypatch):
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
     monkeypatch.setattr(passive_reply.time, "time", lambda: 1000.0)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
     monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
     monkeypatch.setattr(
@@ -2484,7 +2484,7 @@ def test_wechatmp_passive_auto_wait_permission_error_does_not_pop(monkeypatch):
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
     monkeypatch.setattr(passive_reply.time, "time", lambda: 1000.0)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
     monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
     monkeypatch.setattr(
@@ -2567,7 +2567,7 @@ def test_wechatmp_passive_bond_retry_returns_image_when_cache_ready_on_third_req
     monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
     monkeypatch.setattr(passive_reply.time, "time", fake_time)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2637,7 +2637,7 @@ def test_wechatmp_passive_technical_analysis_does_not_wait_for_ready_image(monke
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -2665,7 +2665,7 @@ def test_wechatmp_passive_permission_error_does_not_start_investment_generation(
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: (_ for _ in ()).throw(RuntimeError("database unavailable")),
     )
 
@@ -2681,7 +2681,7 @@ def test_wechatmp_passive_permission_prompt_records_failed_precheck(monkeypatch)
 
     calls = []
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             error_code=ErrorCode.UNAUTHORIZED,
@@ -2751,7 +2751,7 @@ def test_wechatmp_cached_result_permission_prompt_records_failed_precheck(monkey
         request_id="request-rate",
     )
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             error_code=ErrorCode.UNAUTHORIZED,
@@ -2788,7 +2788,7 @@ def test_wechatmp_passive_user_access_permission_prompt_records_failed_precheck_
 
     calls = []
     monkeypatch.setattr(
-        "business.investment.user_service.verify_user_access",
+        "business.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(
             allowed=False,
             error_code=ErrorCode.USER_DISABLED,
@@ -2822,7 +2822,7 @@ def test_wechatmp_active_permission_prompt_records_failed_precheck(monkeypatch):
     calls = []
     route = SimpleNamespace(matched=True, service_type=ServiceType.RATE, raw_input="利率")
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             error_code=ErrorCode.UNAUTHORIZED,
@@ -2952,7 +2952,7 @@ def test_wechatmp_passive_pending_result_confirm_rechecks_permission_before_pop(
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             user_prompt="您的服务已停用，如需恢复请联系服务人员。",
@@ -2989,7 +2989,7 @@ def test_wechatmp_passive_pending_result_permission_uses_cached_service_type_not
         )
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
 
     assert passive_reply.Query().POST() == "您暂未开通该服务，如需开通请联系服务人员。"
     assert permission_calls == [ServiceType.RATE]
@@ -3021,7 +3021,7 @@ def test_wechatmp_passive_pending_result_discard_permission_uses_cached_service_
         )
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
 
     assert passive_reply.Query().POST() == "您的服务已停用，如需恢复请联系服务人员。"
     assert permission_calls == [ServiceType.CONVERTIBLE_BOND]
@@ -3048,7 +3048,7 @@ def test_wechatmp_passive_split_text_keeps_original_investment_title_for_permiss
         return SimpleNamespace(allowed=False, user_prompt="您的服务已停用，如需恢复请联系服务人员。")
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
-    monkeypatch.setattr("business.investment.user_service.verify_permission", fake_verify)
+    monkeypatch.setattr("business.user_service.verify_permission", fake_verify)
 
     first_response = passive_reply.Query().POST()
 
@@ -3132,7 +3132,7 @@ def test_wechatmp_passive_disabled_investment_user_gets_service_stopped_prompt(m
     )
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             user_prompt="您的服务已停用，如需恢复请联系服务人员。",
@@ -3165,7 +3165,7 @@ def test_wechatmp_passive_disabled_user_invalid_text_stops_before_produce(monkey
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_user_access",
+        "business.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(
             allowed=False,
             user_prompt="您的服务已停用，如需恢复请联系服务人员。",
@@ -3188,7 +3188,7 @@ def test_wechatmp_passive_user_access_error_stops_before_produce(monkeypatch):
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_user_access",
+        "business.user_service.verify_user_access",
         lambda _openid: (_ for _ in ()).throw(RuntimeError("database unavailable")),
     )
 
@@ -3241,7 +3241,7 @@ def test_wechatmp_active_unmatched_investment_message_returns_passive_prompt(mon
     )
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(active_reply.web, "input", lambda: {})
@@ -3309,7 +3309,7 @@ def test_wechatmp_active_valid_investment_message_returns_polling_ack(monkeypatc
     )
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(active_reply.web, "input", lambda: {})
@@ -3377,7 +3377,7 @@ def test_wechatmp_active_disabled_investment_user_gets_service_stopped_prompt(mo
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: None)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(
             allowed=False,
             user_prompt="您的服务已停用，如需恢复请联系服务人员。",
@@ -3446,7 +3446,7 @@ def test_wechatmp_active_permission_check_error_does_not_start_generation(monkey
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: None)
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: (_ for _ in ()).throw(RuntimeError("database unavailable")),
     )
     monkeypatch.setattr(active_reply.web, "input", lambda: {})
@@ -3575,7 +3575,7 @@ def test_wechatmp_active_running_investment_job_does_not_start_duplicate(monkeyp
     monkeypatch.setattr(active_reply, "create_reply", FakeReply)
     monkeypatch.setattr(active_reply, "_running_investment_job", lambda _openid, _content: SimpleNamespace(request_id="req-1"))
     monkeypatch.setattr(
-        "business.investment.user_service.verify_permission",
+        "business.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(active_reply.web, "input", lambda: {})
