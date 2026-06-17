@@ -10,6 +10,9 @@ croniter>=2.0.0
 click>=8.0
 qrcode
 openpyxl
+SQLAlchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.2
 
 # wechatcom & wechatmp
 wechatpy

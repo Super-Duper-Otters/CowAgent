@@ -8,7 +8,7 @@ CHATGPT_ON_WECHAT_EXEC=${CHATGPT_ON_WECHAT_EXEC:-"python app.py"}
 run_migrations() {
     if [ "${COWAGENT_RUN_MIGRATIONS:-true}" = "true" ]; then
         echo "[entrypoint] Running database migrations..."
-        python -c "from business.investment.storage import initialize_storage; initialize_storage()"
+        python -c "from business.storage import initialize_storage; initialize_storage()"
     fi
 }
 

@@ -22,7 +22,13 @@ services:
       dockerfile: docker/Dockerfile.latest
       args:
         INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
-        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
+        INSTALL_MEDIA_TOOLS: ${INSTALL_MEDIA_TOOLS:-false}
+        INSTALL_BUSINESS_DEPS: ${INSTALL_BUSINESS_DEPS:-true}
+        INSTALL_OPTIONAL_DEPS: ${INSTALL_OPTIONAL_DEPS:-false}
+        INSTALL_COW_CLI: ${INSTALL_COW_CLI:-false}
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-false}
+        USE_APT_MIRROR: ${USE_APT_MIRROR:-false}
+        USE_PIP_MIRROR: ${USE_PIP_MIRROR:-true}
     image: cowagent:local
     container_name: cowagent
     security_opt:

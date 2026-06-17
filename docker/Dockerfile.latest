@@ -6,36 +6,67 @@ ARG TZ='Asia/Shanghai'
 ARG CHATGPT_ON_WECHAT_VER
 # Set to "false" to skip Playwright/Chromium and produce a smaller image
 ARG INSTALL_BROWSER=true
-# Set to "true" to use China mirrors for apt / pip / playwright (faster in CN)
+# Set to "true" to install ffmpeg/espeak voice and media conversion tools
+ARG INSTALL_MEDIA_TOOLS=false
+# Set to "true" to install business / technical-analysis dependencies
+ARG INSTALL_BUSINESS_DEPS=true
+# Set to "true" to install requirements-optional.txt extensions
+ARG INSTALL_OPTIONAL_DEPS=false
+# Set to "true" to install the optional `cow` CLI entry point
+ARG INSTALL_COW_CLI=false
+# Legacy switch. Prefer USE_APT_MIRROR / USE_PIP_MIRROR for independent control.
 ARG USE_CN_MIRROR=false
+# Set to "true" to use China mirrors for apt.
+ARG USE_APT_MIRROR=false
+# Set to "true" to use China mirrors for pip.
+ARG USE_PIP_MIRROR=true
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
 ENV BUILD_PREFIX=/app
 
-# Optionally switch apt and pip to China mirrors
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+# Prefer HTTPS apt sources to avoid HTTP proxy truncation in Docker Desktop.
+RUN if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list; \
+    fi; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ "$USE_CN_MIRROR" = "true" ] || [ "$USE_APT_MIRROR" = "true" ]; then \
         if [ -f /etc/apt/sources.list ]; then \
-            sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list; \
+            sed -i 's|https://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
         fi; \
         if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-            sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
+            sed -i 's|https://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources; \
         fi; \
+    fi; \
+    if [ "$USE_CN_MIRROR" = "true" ] || [ "$USE_PIP_MIRROR" = "true" ]; then \
         pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/; \
     fi
 
-ADD . ${BUILD_PREFIX}
+WORKDIR ${BUILD_PREFIX}
 
-# All heavy installs + user creation in ONE layer to avoid chown duplication
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ffmpeg espeak libavcodec-extra \
+COPY requirements.txt requirements-business.txt requirements-optional.txt pyproject.toml ${BUILD_PREFIX}/
+COPY cli ${BUILD_PREFIX}/cli
+
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends bash ca-certificates \
+    && if [ "$INSTALL_MEDIA_TOOLS" = "true" ]; then \
+        apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg espeak libavcodec-extra; \
+    fi \
     && cd ${BUILD_PREFIX} \
-    && cp config-template.json config.json \
     && /usr/local/bin/python -m pip install --no-cache --upgrade pip \
     && pip install --no-cache -r requirements.txt \
-    && pip install --no-cache -r requirements-optional.txt \
-    && pip install --no-cache -e . \
+    && if [ "$INSTALL_BUSINESS_DEPS" = "true" ]; then \
+        pip install --no-cache -r requirements-business.txt; \
+    fi \
+    && if [ "$INSTALL_OPTIONAL_DEPS" = "true" ]; then \
+        pip install --no-cache -r requirements-optional.txt; \
+    fi \
+    && if [ "$INSTALL_COW_CLI" = "true" ]; then \
+        pip install --no-cache -e .; \
+    fi \
     && if [ "$INSTALL_BROWSER" = "true" ]; then \
-        apt-get install -y --no-install-recommends fonts-wqy-zenhei \
+        apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-wqy-zenhei \
         && pip install --no-cache "playwright==1.52.0" \
         && python -m playwright install-deps chromium \
         && mkdir -p /app/ms-playwright \
@@ -50,13 +81,15 @@ RUN apt-get update \
     && mkdir -p /home/agent/cow \
     && groupadd -r agent \
     && useradd -r -g agent -s /bin/bash -d /home/agent agent \
-    && chown -R agent:agent /home/agent ${BUILD_PREFIX} /usr/local/lib
+    && chown -R agent:agent /home/agent
 
-WORKDIR ${BUILD_PREFIX}
+COPY --chown=agent:agent . ${BUILD_PREFIX}
 
-ADD docker/entrypoint.sh /entrypoint.sh
+RUN chown agent:agent ${BUILD_PREFIX} \
+    && install -o agent -g agent -m 0644 config-template.json config.json
 
-RUN chmod +x /entrypoint.sh \
-    && chown agent:agent /entrypoint.sh
+COPY --chown=agent:agent docker/entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

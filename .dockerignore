@@ -1,0 +1,37 @@
+.git
+.gitignore
+.pytest_cache
+__pycache__
+*.py[cod]
+*.pyo
+.mypy_cache
+.ruff_cache
+logs
+tmp
+
+# Local runtime/config files should be provided through environment variables or volumes.
+.env
+config.json
+run.log
+*.out.log
+nohup.out
+
+# Docker build/export artifacts. Including these can make the image gigabytes larger.
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Local docs and editor artifacts are not needed at runtime.
+*.docx
+*.pptx
+*.xlsx
+*.pdf
+.vscode
+.idea
+
+# Runtime business outputs are persisted through /home/agent/cow in Docker.
+business_storage
+
+# Tests are not needed in the deployment image.
+tests
