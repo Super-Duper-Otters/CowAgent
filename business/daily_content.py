@@ -554,7 +554,7 @@ def generate_content(
         business_request_id = ""
     _mark_generation_started(content_id, actor=actor)
     try:
-        from business.investment.ai_generation_audit import start_ai_generation_audit
+        from business.ai_generation_audit import start_ai_generation_audit
 
         ai_audit_id = start_ai_generation_audit(
             entry_type=EntryType.INTERNAL_CALL,
@@ -599,7 +599,7 @@ def generate_content(
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         if ai_audit_id:
-            from business.investment.ai_generation_audit import finish_ai_generation_audit
+            from business.ai_generation_audit import finish_ai_generation_audit
 
             finish_ai_generation_audit(
                 ai_audit_id,
@@ -613,7 +613,7 @@ def generate_content(
     generated_text = str(getattr(ai_result, "text", ""))
     input_prompt = str(getattr(ai_result, "prompt", "") or "")
     if ai_audit_id:
-        from business.investment.ai_generation_audit import finish_ai_generation_audit
+        from business.ai_generation_audit import finish_ai_generation_audit
 
         finish_ai_generation_audit(
             ai_audit_id,

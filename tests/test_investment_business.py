@@ -1010,7 +1010,7 @@ def test_internal_call_entries_are_separate_from_external_requests(investment_en
 
 
 def test_ai_generation_audit_records_common_generation_metadata(investment_env):
-    from business.investment.ai_generation_audit import (
+    from business.ai_generation_audit import (
         finish_ai_generation_audit,
         get_ai_generation_audit,
         start_ai_generation_audit,
@@ -1094,7 +1094,7 @@ def test_daily_content_generation_records_backend_entry_in_business_records(inve
 
     from business.constants import ActionType, ActorType, EntryType, ServiceType
     from business.daily_content import create_rate_content_draft, generate_content
-    from business.investment.ai_generation_audit import list_ai_generation_audits_for_business
+    from business.ai_generation_audit import list_ai_generation_audits_for_business
     from business.db import connect
     from business.records import get_content_record, list_request_records_page
 
