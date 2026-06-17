@@ -1233,7 +1233,9 @@ def test_investment_alembic_runner_exposes_upgrade():
     from business import migrations
 
     assert callable(migrations.upgrade)
-    assert migrations.alembic_config_path().name == "alembic.ini"
+    path = migrations.alembic_config_path()
+    assert path.name == "alembic.ini"
+    assert path.parent.name == "business"
 
 
 def test_config_service_uses_investment_db_connection_helpers():

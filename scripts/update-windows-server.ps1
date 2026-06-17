@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $DatabaseUrlEnvironmentName = "COWAGENT_INVESTMENT_DATABASE_URL"
-$AlembicConfigPath = "migrations/investment/alembic.ini"
+$AlembicConfigPath = "migrations/business/alembic.ini"
 
 function Write-Step {
     param([string]$Message)

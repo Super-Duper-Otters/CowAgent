@@ -182,8 +182,8 @@ Persist-DatabaseUrl $resolvedDatabaseUrl $PersistEnvironmentScope
 $null = Ensure-Config $script:ProjectRootResolved $resolvedDatabaseUrl ([bool]$WriteDatabaseUrlToConfig)
 
 if (-not $SkipMigration) {
-    Write-Step "Running Alembic migration: migrations/investment/alembic.ini upgrade head."
-    & $venvPython -m alembic -c migrations/investment/alembic.ini upgrade head
+    Write-Step "Running Alembic migration: migrations/business/alembic.ini upgrade head."
+    & $venvPython -m alembic -c migrations/business/alembic.ini upgrade head
     if ($LASTEXITCODE -ne 0) { throw "Alembic migration failed." }
 }
 
