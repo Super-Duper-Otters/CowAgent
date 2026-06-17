@@ -1093,7 +1093,7 @@ def test_daily_content_generation_records_backend_entry_in_business_records(inve
     from sqlalchemy import text
 
     from business.constants import ActionType, ActorType, EntryType, ServiceType
-    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.daily_content import create_rate_content_draft, generate_content
     from business.investment.ai_generation_audit import list_ai_generation_audits_for_business
     from business.db import connect
     from business.records import get_content_record, list_request_records_page
@@ -1255,7 +1255,7 @@ def test_records_service_uses_investment_db_connection_helpers():
 
 
 def test_daily_content_service_uses_investment_db_connection_helpers():
-    from business.investment import daily_content
+    from business import daily_content
 
     assert not hasattr(daily_content, "get_connection")
 
@@ -2779,7 +2779,7 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(inve
 
 def test_web_daily_content_generate_marks_generating_before_background_task(investment_env, monkeypatch):
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import create_rate_content_draft
+    from business.daily_content import create_rate_content_draft
     from business.records import get_content_record
     from channel.web.web_channel import InvestmentDailyContentGenerateHandler
 
@@ -2871,7 +2871,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     from pathlib import Path
 
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.storage import get_storage_dirs
     from channel.web.web_channel import InvestmentDailyContentHandler
 
@@ -2904,7 +2904,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
 
 def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-history.png"
@@ -2935,7 +2935,7 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
     from pathlib import Path
 
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.records import get_content_record, list_output_files
     from business.storage import get_storage_dirs
 
@@ -2973,7 +2973,7 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
 
 def test_list_content_records_filters_by_effective_date(investment_env):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from business.records import list_content_records
 
     create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
@@ -2991,7 +2991,7 @@ def test_list_content_records_filters_by_effective_date(investment_env):
 
 def test_web_content_handlers_accept_effective_date_filter(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
     old_id = create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
@@ -3015,7 +3015,7 @@ def test_web_content_handlers_accept_effective_date_filter(investment_env, monke
 
 def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
     rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-29")
@@ -3168,7 +3168,7 @@ def test_request_records_page_unknown_service_returns_empty(investment_env):
 
 def test_content_records_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from business.db import connect
     from business.records import list_content_records_page
     from channel.web.web_channel import InvestmentContentRecordsHandler
@@ -3363,7 +3363,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(investme
 def test_cache_handler_keyword_search_filters_backend_results_and_total(investment_env, monkeypatch, tmp_path):
     from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -3598,7 +3598,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_
 
 def test_artifact_folder_api_includes_daily_content_records(investment_env, monkeypatch, tmp_path):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
     from business.db import connect
     from business.schema import investment_daily_contents, investment_output_files
     from business.records import list_artifact_folder_nodes, list_artifact_packages_page
@@ -3746,7 +3746,7 @@ def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypa
 def test_generated_content_history_api_combines_cache_and_daily_content_records(investment_env, monkeypatch, tmp_path):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -3802,7 +3802,7 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
 def test_generated_content_history_treats_expired_daily_content_as_invalidated(investment_env, tmp_path):
     from business.cache_service import list_generated_history_market_dates, list_generated_history_page
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
 
     expired_image = tmp_path / "expired-rate.png"
     expired_image.write_bytes(b"expired-rate")
@@ -3859,7 +3859,7 @@ def test_generated_content_history_paginates_sources_without_bulk_fetch(investme
     from business import cache_service
     from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, update_generation_success
+    from business.daily_content import create_content_draft, update_generation_success
 
     for index in range(3):
         write_cache_entry(
@@ -3962,7 +3962,7 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
     from business.audit_service import record_operation_audit
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from business.db import connect
     from business.records import create_request_record
     from channel.web import web_channel
@@ -4225,7 +4225,7 @@ def test_operation_audits_api_filters_by_operator_action_keyword_and_date(invest
 
 def test_investment_web_api_end_to_end_smoke_without_external_services(investment_env, tmp_path, monkeypatch):
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
-    from business.investment.daily_content import update_generation_success
+    from business.daily_content import update_generation_success
     from business.records import get_content_record
     from business.router import handle_text_message
     from channel.web import web_channel
@@ -5257,7 +5257,7 @@ def test_request_records_api_includes_generating_timeout_warning(investment_env,
 
 def test_batch_01_service_results_share_contract_fields(investment_env):
     from business.investment.ai_generation import AIGenerationResult
-    from business.investment.daily_content import DailyContentResult
+    from business.daily_content import DailyContentResult
     from business.investment.render_service import RenderResult
     from business.router import BusinessReply
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -5349,7 +5349,7 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
     from business.constants import ServiceType
     from business.db import connect
     from business.investment.file_migration import migrate_legacy_files_to_unified_storage
-    from business.investment.daily_content import create_content_draft
+    from business.daily_content import create_content_draft
     from business.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
     from business.storage import get_storage_dirs
 
@@ -5928,7 +5928,7 @@ def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env
     from business import config_service
     from business.config_service import safe_log_value
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, regenerate_content
+    from business.daily_content import create_content_draft, regenerate_content
     from business.records import get_content_record
 
     api_key = "sk-live-secret-1234567890"
@@ -9854,7 +9854,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
 
 def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(investment_env, tmp_path):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
     from business.user_service import create_user
 
@@ -9873,7 +9873,7 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(in
 
 def test_daily_content_activation_and_query(investment_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.daily_content import (
+    from business.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         set_content_effective,
@@ -9900,7 +9900,7 @@ def test_daily_content_activation_and_query(investment_env, tmp_path):
 
 def test_daily_content_expired_effective_content_is_not_returned(investment_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
 
     expired_img = tmp_path / "expired.png"
@@ -9932,7 +9932,7 @@ def test_daily_content_expired_effective_content_is_not_returned(investment_env,
 
 def test_daily_content_expiration_persists_invalidated_status(investment_env, tmp_path):
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
+    from business.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
     from business.records import get_content_record
 
     expired_image = tmp_path / "expired.png"
@@ -9963,7 +9963,7 @@ def test_daily_content_expiration_persists_invalidated_status(investment_env, tm
 
 def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(investment_env, tmp_path):
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
 
     current_image = tmp_path / "current.png"
@@ -9994,7 +9994,7 @@ def test_daily_content_republishing_historical_expired_record_clears_stale_expir
 def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_path):
     from business.audit_service import list_operation_audits
     from business.constants import ErrorCode, ServiceType, Status
-    from business.investment.daily_content import (
+    from business.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         invalidate_content,
@@ -10031,7 +10031,7 @@ def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_p
 
 def test_daily_content_auto_effective_after_generate_publishes_on_backend(investment_env, tmp_path):
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import create_content_draft, generate_content
+    from business.daily_content import create_content_draft, generate_content
     from business.records import get_content_record
 
     output = tmp_path / "auto-effective.png"
@@ -10065,7 +10065,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
     from datetime import date, timedelta
 
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import (
+    from business.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         set_content_effective,
@@ -10101,7 +10101,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
     from business.audit_service import list_operation_audits
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, generate_content, set_content_effective
+    from business.daily_content import create_content_draft, generate_content, set_content_effective
 
     first = create_content_draft(ServiceType.RATE, source_text="first", operator="operator-a")
     second = create_content_draft(ServiceType.RATE, source_text="second", operator="operator-b")
@@ -10129,7 +10129,7 @@ def test_daily_content_operation_audits_track_create_generate_effective_and_arch
 
 def test_daily_content_create_upload_generate_and_failure_records(investment_env):
     from business.constants import ErrorCode, ServiceType, Status
-    from business.investment.daily_content import (
+    from business.daily_content import (
         create_convertible_bond_content_draft,
         create_rate_content_draft,
         generate_content,
@@ -10185,7 +10185,7 @@ def test_daily_content_create_upload_generate_and_failure_records(investment_env
 
 def test_daily_content_default_generation_passes_uploaded_source_files(investment_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.daily_content import create_rate_content_draft, generate_content
 
     uploaded = tmp_path / "uploaded-rate.png"
     uploaded.write_bytes(b"png")
@@ -10220,7 +10220,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     from business import config_service
     from business.config_service import save_configs
     from business.constants import ServiceType
-    from business.investment.daily_content import create_rate_content_draft, generate_content
+    from business.daily_content import create_rate_content_draft, generate_content
     from business.records import get_content_record
     from business.storage import get_storage_dirs
 
@@ -10295,7 +10295,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
 
 def test_daily_content_records_filter_by_service_type_for_console_pages(investment_env):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
+    from business.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
     from business.records import list_content_records
 
     rate_id = create_rate_content_draft(source_text="rate")
@@ -10310,7 +10310,7 @@ def test_daily_content_records_filter_by_service_type_for_console_pages(investme
 
 def test_daily_content_upload_saves_files_under_investment_files_dir(investment_env):
     from business.constants import ServiceType
-    from business.investment.daily_content import save_source_file
+    from business.daily_content import save_source_file
 
     saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data", owner_id="content-123", effective_date="2026-06-07")
 
@@ -10333,7 +10333,7 @@ def test_daily_content_upload_saves_files_under_investment_files_dir(investment_
 
 def test_daily_content_api_accepts_module_key_for_content_modules(investment_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.records import get_content_record
     from channel.web.web_channel import InvestmentDailyContentHandler
 
@@ -10360,7 +10360,7 @@ def test_daily_content_api_accepts_module_key_for_content_modules(investment_env
 def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(investment_env, tmp_path):
     from business.investment.component_paths import runtime_component_root
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
 
     for module_key, label in (("module-a", "Module A"), ("module-b", "Module B")):
@@ -10464,7 +10464,7 @@ def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(invest
 
 def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env, tmp_path):
     from business.constants import ServiceType, Status
-    from business.investment.daily_content import (
+    from business.daily_content import (
         create_rate_content_draft,
         generate_content,
         get_latest_effective_content,
@@ -10520,7 +10520,7 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
 
 def test_daily_content_convertible_bond_no_effective_content_prompt(investment_env):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.daily_content import get_latest_effective_content
+    from business.daily_content import get_latest_effective_content
 
     empty = get_latest_effective_content(ServiceType.CONVERTIBLE_BOND)
     assert empty.success is False
@@ -10531,7 +10531,7 @@ def test_daily_content_convertible_bond_no_effective_content_prompt(investment_e
 @pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
 def test_daily_content_effective_content_image_missing_returns_no_content(investment_env, tmp_path, service_type):
     from business.constants import ErrorCode, ServiceType
-    from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
 
     service = ServiceType(service_type)
     missing_image = tmp_path / f"missing-{service_type}.png"
@@ -10874,7 +10874,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     from business.constants import ErrorCode
     from business.constants import ServiceType
     from business.config_service import save_config
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.records import get_content_record, list_request_records
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
     from business.user_service import create_user
@@ -11005,7 +11005,7 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
 
 def test_router_dispatches_daily_content_by_handler_type(investment_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
 
     image = tmp_path / "rate.png"
@@ -11203,7 +11203,7 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     from bridge.reply import ReplyType
     from business.config_service import save_config
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.user_service import create_user
     from business.business_router import build_business_reply
 
@@ -11364,7 +11364,7 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply
 
@@ -11393,7 +11393,7 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
     from bridge.reply import ReplyType
     from business.config_service import save_config
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
@@ -11416,7 +11416,7 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
 def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
     from bridge.reply import ReplyType
     from business.constants import ActorType, EntryType, ServiceType, Status
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.records import list_request_records, list_request_records_page
     from business.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
@@ -11609,7 +11609,7 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investme
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.constants import ServiceType
-    from business.investment.daily_content import create_content_draft, set_content_effective
+    from business.daily_content import create_content_draft, set_content_effective
     from business.user_service import create_user
     import channel.wechatmp.wechatmp_channel as wechatmp_channel
 

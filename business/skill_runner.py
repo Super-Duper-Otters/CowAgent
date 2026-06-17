@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from business.constants import ErrorCode, user_message
-from business.investment.daily_content import get_latest_effective_content
+from business.daily_content import get_latest_effective_content
 from business.investment.technical_analysis import run_technical_analysis
 
 

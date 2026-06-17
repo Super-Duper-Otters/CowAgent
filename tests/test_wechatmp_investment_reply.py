@@ -1174,7 +1174,7 @@ def test_wechatmp_passive_invalidated_daily_content_is_not_returned_by_confirm(m
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.investment.daily_content.mark_expired_daily_contents_invalidated",
+        "business.daily_content.mark_expired_daily_contents_invalidated",
         lambda: 0,
         raising=False,
     )

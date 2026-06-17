@@ -593,7 +593,7 @@ def list_generated_history_page(
     keyword: str = "",
     include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
-    from business.investment.daily_content import mark_expired_daily_contents_invalidated
+    from business.daily_content import mark_expired_daily_contents_invalidated
 
     mark_expired_daily_contents_invalidated()
     page = max(1, int(page or 1))
@@ -655,7 +655,7 @@ def list_generated_history_market_dates(
     service_type: ServiceType | None = None,
     include_invalidated: bool = False,
 ) -> list[str]:
-    from business.investment.daily_content import mark_expired_daily_contents_invalidated
+    from business.daily_content import mark_expired_daily_contents_invalidated
 
     mark_expired_daily_contents_invalidated()
     dates = set(list_cache_market_dates(limit=limit, service_type=service_type, include_invalidated=include_invalidated))
