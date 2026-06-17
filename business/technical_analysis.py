@@ -27,7 +27,7 @@ from business.market_date_resolver import MarketDateResolution, MarketDateResolv
 from business.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from business.schema import investment_cache_entries, investment_request_records
 from business.storage import get_storage_dirs
-from business.stock_resolver import get_stock_symbol_by_code, list_exact_stock_name_matches, resolve_stock
+from business.stock_resolver import get_stock_symbol_by_code, get_tushare_token, list_exact_stock_name_matches, resolve_stock
 from business.versioning import file_fingerprint
 
 
@@ -255,7 +255,7 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
     if not skill_path.is_absolute():
         skill_path = Path.cwd() / skill_path
     env = os.environ.copy()
-    tushare_token = str(get_config("tushare.token", "") or "").strip()
+    tushare_token = str(get_tushare_token() or "").strip()
     if tushare_token:
         env["TUSHARE_TOKEN"] = tushare_token
     command = [sys.executable, str(skill_path), "--symbol", symbol, "--output", str(output_dir)]

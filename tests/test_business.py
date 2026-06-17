@@ -6041,6 +6041,10 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "授权剩余时间：",
         "数据来源：",
         "业务对接：",
+        "【系统约束：标的名称】",
+        "标的字段必须输出",
+        "图片主标题由“📈 标的：”字段渲染而来",
+        "股票字典中文名",
     ):
         assert required in request.prompt
     assert "禁止输出 Markdown 表格" in request.prompt
@@ -9751,6 +9755,33 @@ def test_tushare_token_config_permission_is_sensitive(business_env):
 
     with pytest.raises(PermissionError):
         save_config("tushare.token", "blocked-token", operator_role="operator")
+
+
+def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path, monkeypatch):
+    from business import technical_analysis
+
+    output_dir = tmp_path / "ta-output"
+    output_dir.mkdir()
+    report = output_dir / "300502_技术分析报告_2026-05-25.md"
+    chart = output_dir / "300502_TA_2026-05-25.png"
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env_token"] = kwargs["env"].get("TUSHARE_TOKEN")
+        report.write_text("ta report", encoding="utf-8")
+        chart.write_bytes(b"chart")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(technical_analysis, "get_tushare_token", lambda: "shared-token-1234567890")
+    monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
+
+    result_report, result_chart = technical_analysis._run_skill("300502", output_dir)
+
+    assert captured["env_token"] == "shared-token-1234567890"
+    assert captured["command"][-4:] == ["--symbol", "300502", "--output", str(output_dir)]
+    assert result_report == report
+    assert result_chart == chart
 
 
 def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_prompts(business_env, tmp_path, monkeypatch):
