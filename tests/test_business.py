@@ -6534,8 +6534,9 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
     assert result.success is True
     assert calls[0][0:3] == ("skill", "300502", "300502_SZ")
     assert len(calls[0][3]) == 32
-    assert calls[1] == ("ai", "# 技术分析报告\n\n核心观点")
-    assert "📈 标的：300502.SZ（300502.SZ）" in calls[2][1]
+    assert calls[1][0] == "ai"
+    assert "# 技术分析报告\n\n核心观点" in calls[1][1]
+    assert "📈 标的：300502.SZ" in calls[2][1]
     assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-29_")
     assert calls[2][2].endswith(".png")
     assert result.report_path == str(report)
@@ -6636,13 +6637,18 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
         return report, chart
 
     monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
-    monkeypatch.setattr(
-        technical_analysis,
-        "generate_technical_analysis_text",
-        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
-    )
+    ai_inputs = []
 
-    def fake_render(_standard_text, output_path):
+    def fake_ai(report_text):
+        ai_inputs.append(report_text)
+        return SimpleNamespace(success=True, text="📈 标的：WRONG\n行情日期：2026-05-25\nstandard")
+
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+
+    rendered_texts = []
+
+    def fake_render(standard_text, output_path):
+        rendered_texts.append(standard_text)
         Path(output_path).write_bytes(b"card")
         return SimpleNamespace(success=True, image_path=str(output_path), detail="")
 
@@ -6655,6 +6661,52 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
     assert result.normalized_target == expected_normalized
     assert result.stock_code == expected_normalized
     assert result.stock_name == name
+    assert f"- 中文名称：{name}" in ai_inputs[0]
+    assert f"- 标的字段必须输出：{name}（{expected_normalized}）" in ai_inputs[0]
+    assert f"📈 标的：{name}（{expected_normalized}）" in rendered_texts[0]
+    assert "📈 标的：WRONG" not in rendered_texts[0]
+
+
+def test_technical_analysis_code_input_uses_dictionary_chinese_name_in_signal_card(
+    business_env, tmp_path, monkeypatch
+):
+    from business import technical_analysis
+    from business.stock_resolver import refresh_stock_symbols
+    from business.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "tushare_a"}],
+        source="tushare_a",
+    )
+    report = tmp_path / "code_技术分析报告_2026-05-25.md"
+    chart = tmp_path / "code_TA_2026-05-25.png"
+    report.write_text("ta report", encoding="utf-8")
+    chart.write_bytes(b"chart")
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", lambda _symbol, _output_dir: (report, chart))
+    ai_inputs = []
+
+    def fake_ai(report_text):
+        ai_inputs.append(report_text)
+        return SimpleNamespace(success=True, text="📈 标的：300502.SZ\n行情日期：2026-05-25\nstandard")
+
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    rendered_texts = []
+
+    def fake_render(standard_text, output_path):
+        rendered_texts.append(standard_text)
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", "300502.SZ 技术分析")
+
+    assert result.success is True
+    assert result.stock_name == "新易盛"
+    assert "- 中文名称：新易盛" in ai_inputs[0]
+    assert "- 标的字段必须输出：新易盛（300502.SZ）" in ai_inputs[0]
+    assert "📈 标的：新易盛（300502.SZ）" in rendered_texts[0]
 
 
 @pytest.mark.parametrize(

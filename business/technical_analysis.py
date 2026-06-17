@@ -27,7 +27,7 @@ from business.market_date_resolver import MarketDateResolution, MarketDateResolv
 from business.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from business.schema import investment_cache_entries, investment_request_records
 from business.storage import get_storage_dirs
-from business.stock_resolver import list_exact_stock_name_matches, resolve_stock
+from business.stock_resolver import get_stock_symbol_by_code, list_exact_stock_name_matches, resolve_stock
 from business.versioning import file_fingerprint
 
 
@@ -155,6 +155,16 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
     value = str(target or "").strip()
     target_info = _technical_analysis_target(value)
     if not value or not _CJK_RE.search(value):
+        if target_info.normalized_target:
+            stock = get_stock_symbol_by_code(target_info.normalized_target)
+            stock_name = str(stock.get("name") or "").strip()
+            if stock_name:
+                target_info = TechnicalAnalysisTarget(
+                    normalized_target=target_info.normalized_target,
+                    skill_symbol=target_info.skill_symbol,
+                    is_a_share=target_info.is_a_share,
+                    stock_name=stock_name,
+                )
         return target_info, None, ""
 
     symbol, error = resolve_stock(value, auto_refresh_on_miss=False)
@@ -195,6 +205,46 @@ def _ambiguous_stock_detail(value: str) -> str:
 
 def _skill_symbol(symbol: str) -> str:
     return _technical_analysis_target(symbol).skill_symbol or str(symbol or "").strip()
+
+
+def _technical_analysis_display_target(target_info: TechnicalAnalysisTarget) -> str:
+    code = str(target_info.normalized_target or "").strip()
+    name = str(target_info.stock_name or "").strip()
+    if name and code and name != code:
+        return f"{name}（{code}）"
+    return name or code
+
+
+def _technical_analysis_report_with_target_context(report_text: str, target_info: TechnicalAnalysisTarget) -> str:
+    display_target = _technical_analysis_display_target(target_info)
+    if not display_target:
+        return report_text
+    lines = [
+        "【系统约束：标的名称】",
+        f"- 标准代码：{target_info.normalized_target or '——'}",
+        f"- 中文名称：{target_info.stock_name or '——'}",
+        f"- 标的字段必须输出：{display_target}",
+        "- 图片主标题来自“标的”字段，必须使用上述标的字段；禁止使用英文名、拼音、仅代码或报告中的其他原始名称。",
+        "",
+        "【技术分析报告原文】",
+        report_text,
+    ]
+    return "\n".join(lines)
+
+
+def _force_technical_analysis_display_target(standard_text: str, target_info: TechnicalAnalysisTarget) -> str:
+    display_target = _technical_analysis_display_target(target_info)
+    if not display_target:
+        return standard_text
+    replacement = f"📈 标的：{display_target}"
+    pattern = re.compile(r"^.*?标的\s*[:：].*$", re.M)
+    if pattern.search(standard_text):
+        return pattern.sub(replacement, standard_text, count=1)
+    brand_match = re.search(r"^【.+?】\s*$", standard_text, flags=re.M)
+    if brand_match:
+        insert_at = brand_match.end()
+        return f"{standard_text[:insert_at]}\n{replacement}{standard_text[insert_at:]}"
+    return f"{replacement}\n{standard_text}"
 
 
 DEFAULT_TECHNICAL_ANALYSIS_PATH = "builtin/components/technical-analysis/scripts/analyze_universal.py"
@@ -633,7 +683,8 @@ def run_technical_analysis(
     try:
         generated_report_path, generated_chart_path = _run_skill(target_info.skill_symbol or _skill_symbol(symbol), output_dir)
         report_text = generated_report_path.read_text(encoding="utf-8")
-        ai_result = generate_technical_analysis_text(report_text)
+        report_text_with_context = _technical_analysis_report_with_target_context(report_text, target_info)
+        ai_result = generate_technical_analysis_text(report_text_with_context)
         if not ai_result.success:
             return TechnicalAnalysisResult(
                 False,
@@ -641,7 +692,8 @@ def run_technical_analysis(
                 user_prompt=user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED),
                 detail=sanitize_sensitive_text(ai_result.detail),
             )
-        generated_market_date, market_date_warning = _market_date(ai_result.text, generated_report_path, generated_chart_path)
+        standard_text = _force_technical_analysis_display_target(ai_result.text, target_info)
+        generated_market_date, market_date_warning = _market_date(standard_text, generated_report_path, generated_chart_path)
         if resolved_market_date.source == "explicit" and resolved_market_date.market_date:
             market_date = resolved_market_date.market_date
             market_date_warning = ""
@@ -667,7 +719,7 @@ def run_technical_analysis(
         version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
         card_market_date = market_date or "unknown"
         card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"
-        render_result = render_technical_analysis_card(ai_result.text, str(card_path))
+        render_result = render_technical_analysis_card(standard_text, str(card_path))
         if not render_result.success:
             return TechnicalAnalysisResult(
                 False,

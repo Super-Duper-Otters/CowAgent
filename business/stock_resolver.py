@@ -106,6 +106,22 @@ def list_exact_stock_name_matches(value: str, limit: int = 10) -> list[dict[str,
     return [row_to_dict(row) for row in rows]
 
 
+def get_stock_symbol_by_code(value: str) -> dict[str, str]:
+    code = _standardize_code(value)
+    if not code:
+        return {}
+    table = investment_stock_symbols
+    stmt = (
+        select(table.c.code, table.c.name, table.c.market, table.c.ts_code, table.c.source)
+        .where(table.c.code == code, table.c.source.in_(("tushare_a", "tushare_hk", "tushare_us")))
+        .order_by(table.c.source)
+        .limit(1)
+    )
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    return row_to_dict(row) if row else {}
+
+
 def get_tushare_token(masked: bool = False) -> str:
     token = str(get_config("tushare.token", "") or "").strip()
     if not token:
