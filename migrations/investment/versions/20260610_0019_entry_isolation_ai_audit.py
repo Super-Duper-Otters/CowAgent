@@ -43,30 +43,6 @@ def upgrade() -> None:
         """
     )
     op.create_table(
-        "internal_call_records",
-        sa.Column("call_id", sa.Text(), primary_key=True),
-        sa.Column("entry_type", sa.Text(), nullable=False),
-        sa.Column("service", sa.Text(), nullable=False),
-        sa.Column("action_type", sa.Text(), nullable=False),
-        sa.Column("actor_type", sa.Text(), nullable=False),
-        sa.Column("actor_id", sa.Text(), nullable=True),
-        sa.Column("actor_name", sa.Text(), nullable=True),
-        sa.Column("actor_role", sa.Text(), nullable=True),
-        sa.Column("input_text", sa.Text(), nullable=True),
-        sa.Column("sources", sa.Text(), nullable=False),
-        sa.Column("status", sa.Text(), nullable=False),
-        sa.Column("error_code", sa.Text(), nullable=True),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("output_text", sa.Text(), nullable=True),
-        sa.Column("outputs", sa.Text(), nullable=False),
-        sa.Column("elapsed_ms", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.Text(), nullable=False),
-        sa.Column("updated_at", sa.Text(), nullable=False),
-    )
-    op.create_index("idx_internal_call_records_entry_created", "internal_call_records", ["entry_type", "created_at"])
-    op.create_index("idx_internal_call_records_service_created", "internal_call_records", ["service", "created_at"])
-    op.create_index("idx_internal_call_records_actor_created", "internal_call_records", ["actor_name", "created_at"])
-    op.create_table(
         "ai_generation_audits",
         sa.Column("audit_id", sa.Text(), primary_key=True),
         sa.Column("entry_type", sa.Text(), nullable=False),
@@ -99,30 +75,50 @@ def upgrade() -> None:
     if inspector.has_table("generation_records"):
         op.execute(
             """
-            INSERT INTO internal_call_records (
-                call_id, entry_type, service, action_type, actor_type, actor_id, actor_name, actor_role,
-                input_text, sources, status, error_code, error, output_text, outputs, elapsed_ms, created_at, updated_at
+            INSERT INTO request_records (
+                request_id, openid, raw_input, service,
+                entry_type, action_type, actor_type, actor_id, actor_name, actor_role,
+                status, error_code, user_prompt, error, outputs,
+                normalized_target, stock_code, stock_name, customer_name, institution,
+                market_date, cache_key, cache_hit, program_version, ta_version,
+                renderer_version, template_version, created_at, updated_at, elapsed_ms
             )
             SELECT
                 generation_id,
-                'internal_call',
+                COALESCE(NULLIF(CAST(operator_id AS TEXT), ''), NULLIF(operator_name, ''), 'internal'),
+                COALESCE(input_text, ''),
                 service,
+                'internal_call',
                 'generate',
                 CASE WHEN COALESCE(operator_name, '') = '' THEN 'system' ELSE 'admin' END,
                 COALESCE(CAST(operator_id AS TEXT), ''),
                 COALESCE(operator_name, ''),
                 COALESCE(operator_role, ''),
-                COALESCE(input_text, ''),
-                COALESCE(sources, '[]'),
                 CASE WHEN result = 'success' THEN 'success' ELSE 'failed' END,
                 COALESCE(error_code, ''),
+                '',
                 COALESCE(error, ''),
-                COALESCE(output_text, ''),
                 COALESCE(outputs, '[]'),
-                elapsed_ms,
+                COALESCE(input_text, ''),
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                0,
+                '',
+                '',
+                '',
+                '',
                 created_at,
-                updated_at
+                updated_at,
+                elapsed_ms
             FROM generation_records
+            WHERE NOT EXISTS (
+                SELECT 1 FROM request_records current
+                WHERE current.request_id = generation_records.generation_id
+            )
             """
         )
         op.execute(
@@ -141,7 +137,7 @@ def upgrade() -> None:
                 COALESCE(CAST(operator_id AS TEXT), ''),
                 COALESCE(operator_name, ''),
                 COALESCE(operator_role, ''),
-                'internal_call',
+                'request',
                 generation_id,
                 COALESCE(input_text, ''),
                 COALESCE(sources, '[]'),
@@ -174,10 +170,6 @@ def downgrade() -> None:
     op.drop_index("idx_ai_generation_audits_service_created", table_name="ai_generation_audits")
     op.drop_index("idx_ai_generation_audits_business", table_name="ai_generation_audits")
     op.drop_table("ai_generation_audits")
-    op.drop_index("idx_internal_call_records_actor_created", table_name="internal_call_records")
-    op.drop_index("idx_internal_call_records_service_created", table_name="internal_call_records")
-    op.drop_index("idx_internal_call_records_entry_created", table_name="internal_call_records")
-    op.drop_table("internal_call_records")
     op.drop_index("idx_request_records_entry_created", table_name="request_records")
     for column_name in ("actor_role", "actor_name", "actor_id", "actor_type", "action_type", "entry_type"):
         op.drop_column("request_records", column_name)

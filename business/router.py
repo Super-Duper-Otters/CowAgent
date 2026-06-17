@@ -90,11 +90,13 @@ def _create_request_record_with_customer(
     raw_input: str,
     service_type: ServiceType | None,
     customer_metadata: dict[str, str],
+    record_context: dict | None = None,
 ) -> str:
     return create_request_record(
         openid,
         raw_input,
         service_type,
+        record_context=record_context,
         customer_name=customer_metadata.get("customer_name", ""),
         institution=customer_metadata.get("institution", ""),
     )
@@ -106,6 +108,7 @@ def handle_text_message(
     *,
     technical_analysis_handler=None,
     skip_permission: bool = False,
+    record_context: dict | None = None,
 ) -> BusinessReply:
     start = time.time()
 
@@ -121,6 +124,7 @@ def handle_text_message(
                 raw_input,
                 ServiceType.UNAUTHORIZED_REQUEST,
                 customer_metadata,
+                record_context,
             )
             fail_request_record(
                 request_id,
@@ -143,7 +147,13 @@ def handle_text_message(
 
     route = parse_route(raw_input)
     if not route.matched:
-        request_id = _create_request_record_with_customer(openid, raw_input, ServiceType.UNMATCHED, customer_metadata)
+        request_id = _create_request_record_with_customer(
+            openid,
+            raw_input,
+            ServiceType.UNMATCHED,
+            customer_metadata,
+            record_context,
+        )
         fail_request_record(
             request_id,
             route.error_code or ErrorCode.INPUT_ERROR,
@@ -169,6 +179,7 @@ def handle_text_message(
                 raw_input,
                 ServiceType.UNAUTHORIZED_REQUEST,
                 customer_metadata,
+                record_context,
             )
             fail_request_record(
                 request_id,
@@ -199,6 +210,7 @@ def handle_text_message(
         raw_input,
         route,
         customer_metadata=customer_metadata,
+        record_context=record_context,
         elapsed=elapsed,
         technical_analysis_handler=technical_analysis_handler,
     )

@@ -2225,6 +2225,18 @@ def test_investment_request_drawer_shows_request_event_timeline():
     assert "showInvestmentRequestDetail" not in open_body
 
 
+def test_investment_record_detail_buttons_escape_apostrophes_in_encoded_records():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    encoded_body = _js_function_body(js, "investmentEncodedRecord")
+    request_table = _js_function_body(js, "renderInvestmentRequestRecordsTable")
+    backend_table = _js_function_body(js, "renderInvestmentBackendRequestRecordsTable")
+
+    assert "replace(/[!'()*]/g" in encoded_body
+    assert "openInvestmentRecordDrawer('request', '${investmentEncodedRecord(record)}')" in request_table
+    assert "openInvestmentRecordDrawer('backendRequest', '${investmentEncodedRecord(record)}')" in backend_table
+
+
 def test_investment_records_page_links_to_entry_filtered_business_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -2358,6 +2370,20 @@ def test_investment_records_tabs_use_independent_loaders_and_filters():
     assert "renderInvestmentRecordsTabButton('backendRequests', '后台入口'" in js
     assert "renderInvestmentRecordsTabButton('contents', '后台内容生成'" in js
     assert "renderInvestmentRecordsTabButton('audits', '操作流水'" in js
+
+
+def test_request_records_service_column_prefers_module_label():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    request_table_body = _js_function_body(js, "renderInvestmentRequestRecordsTable")
+    backend_table_body = _js_function_body(js, "renderInvestmentBackendRequestRecordsTable")
+    filter_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    records_body = _js_function_body(js, "renderInvestmentRecords")
+
+    assert "investmentRecordServiceLabel(record)" in request_table_body
+    assert "investmentRecordServiceLabel(record)" in backend_table_body
+    assert "investmentRecordServiceOptions(false)" in filter_body
+    assert "ensureInvestmentComponentsLoaded()" in records_body
+    assert "${investmentServiceLabel(record.service_type)}</td>" not in request_table_body
 
 
 def test_investment_records_tabs_keep_independent_pagination_state():

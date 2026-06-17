@@ -7,6 +7,7 @@ from common.log import logger
 
 from business import router as business_route
 from business.constants import ErrorCode, user_message
+from business.investment.constants import ActorType, EntryType
 
 
 def _openid_from_context(context: Context) -> str:
@@ -45,6 +46,30 @@ def _is_wechatmp_context(context: Context) -> bool:
     return channel_type in {"wechatmp", "wechatmp_service"}
 
 
+def _business_record_context(context: Context) -> dict:
+    if context is None:
+        return {}
+    channel_type = str(context.get("channel_type", "") or "")
+    entry_type = context.get("business_entry_type") or context.get("investment_entry_type")
+    if not entry_type and channel_type == "web":
+        entry_type = EntryType.INTERNAL_CALL
+    if not entry_type:
+        return {}
+    actor_type = context.get("business_actor_type") or context.get("investment_actor_type")
+    actor_id = str(context.get("business_actor_id") or context.get("investment_actor_id") or "")
+    actor_name = str(context.get("business_actor_name") or context.get("investment_actor_name") or "")
+    actor_role = str(context.get("business_actor_role") or context.get("investment_actor_role") or "")
+    if not actor_type:
+        actor_type = ActorType.ADMIN if str(entry_type) == str(EntryType.INTERNAL_CALL) else ActorType.CUSTOMER
+    return {
+        "entry_type": entry_type,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "actor_name": actor_name,
+        "actor_role": actor_role,
+    }
+
+
 def build_business_reply(context: Context, *, skip_permission: bool = False) -> Reply | None:
     if context is None or not isinstance(context.content, str):
         return None
@@ -56,6 +81,7 @@ def build_business_reply(context: Context, *, skip_permission: bool = False) -> 
                     _openid_from_context(context),
                     context.content,
                     skip_permission=skip_permission,
+                    record_context=_business_record_context(context),
                 )
                 return _reply_from_business(business_reply)
             return None
@@ -63,6 +89,7 @@ def build_business_reply(context: Context, *, skip_permission: bool = False) -> 
             _openid_from_context(context),
             context.content,
             skip_permission=skip_permission,
+            record_context=_business_record_context(context),
         )
     except Exception as exc:
         logger.exception("[business_router] investment business failed: {}".format(exc))

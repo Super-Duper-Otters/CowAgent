@@ -25,6 +25,7 @@ def dispatch_module(
     route,
     *,
     customer_metadata=None,
+    record_context=None,
     elapsed=lambda: 0,
     technical_analysis_handler=None,
 ):
@@ -41,6 +42,7 @@ def dispatch_module(
                 route,
                 definition=definition,
                 customer_metadata=customer_metadata,
+                record_context=record_context,
                 elapsed=elapsed,
             ),
             module_key,
@@ -55,6 +57,7 @@ def dispatch_module(
                 raw_input,
                 route,
                 customer_metadata=customer_metadata,
+                record_context=record_context,
                 elapsed=elapsed,
                 technical_analysis_handler=technical_analysis_handler,
             ),
@@ -70,6 +73,7 @@ def dispatch_module(
             route,
             definition=definition,
             customer_metadata=customer_metadata,
+            record_context=record_context,
             elapsed=elapsed,
         )
 
@@ -83,6 +87,7 @@ def dispatch_module(
             openid,
             raw_input,
             route.service_type,
+            record_context=record_context,
             customer_name=customer_metadata.get("customer_name", ""),
             institution=customer_metadata.get("institution", ""),
         )

@@ -100,8 +100,7 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
         "archived_at",
         "input_prompt",
     }.issubset(daily_content_columns)
-    internal_call_columns = {column["name"] for column in inspector.get_columns("internal_call_records")}
-    assert {"input_prompt"}.issubset(internal_call_columns)
+    assert not inspector.has_table("internal_call_records")
     ai_audit_columns = {column["name"] for column in inspector.get_columns("ai_generation_audits")}
     assert {"input_prompt"}.issubset(ai_audit_columns)
     output_file_columns = {column["name"] for column in inspector.get_columns("artifacts")}

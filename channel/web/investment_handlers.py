@@ -19,7 +19,6 @@ INVESTMENT_API_URLS = (
     '/api/investment/daily-content/(.*)/effective', 'InvestmentDailyContentEffectiveHandler',
     '/api/investment/audits', 'InvestmentOperationAuditsHandler',
     '/api/investment/records/requests', 'InvestmentRequestRecordsHandler',
-    '/api/investment/records/internal-calls', 'InvestmentInternalCallRecordsHandler',
     '/api/investment/records/contents', 'InvestmentContentRecordsHandler',
     '/api/investment/artifact-folders', 'InvestmentArtifactFoldersHandler',
     '/api/investment/artifacts', 'InvestmentArtifactPackagesHandler',

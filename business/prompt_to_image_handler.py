@@ -150,6 +150,7 @@ def handle_prompt_to_image(
     *,
     definition,
     customer_metadata: dict[str, str] | None = None,
+    record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
     from business.router import BusinessReply
@@ -161,8 +162,10 @@ def handle_prompt_to_image(
         openid,
         raw_input,
         service_type,
+        record_context=record_context,
         customer_name=customer_metadata.get("customer_name", ""),
         institution=customer_metadata.get("institution", ""),
+        module_key=module_key,
     )
     source_text = str(getattr(route, "target_text", "") or raw_input)
 

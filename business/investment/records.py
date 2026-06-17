@@ -17,7 +17,6 @@ from .schema import (
     investment_output_files,
     investment_request_records,
     investment_users,
-    internal_call_records,
     request_events,
 )
 
@@ -42,6 +41,7 @@ class RequestRecord:
     raw_input: str
     service_type: ServiceType | None
     status: Status
+    module_key: str = ""
     entry_type: EntryType = EntryType.EXTERNAL_REQUEST
     action_type: ActionType = ActionType.GENERATE
     actor_type: ActorType = ActorType.CUSTOMER
@@ -317,6 +317,7 @@ def create_request_record(
     ta_version: str = "",
     renderer_version: str = "",
     template_version: str = "",
+    module_key: str = "",
 ) -> str:
     request_id = str(uuid.uuid4())
     now = _now()
@@ -327,6 +328,7 @@ def create_request_record(
                 openid=openid,
                 raw_input=raw_input,
                 service_type=str(service_type) if service_type else None,
+                module_key=str(module_key or "").strip(),
                 **external_request_identity_values(openid, service_type),
                 status=str(Status.GENERATING),
                 output_files="[]",
@@ -382,6 +384,7 @@ def create_business_workflow_record(
     ta_version: str = "",
     renderer_version: str = "",
     template_version: str = "",
+    module_key: str = "",
 ) -> str:
     request_id = str(uuid.uuid4())
     now = _now()
@@ -393,6 +396,7 @@ def create_business_workflow_record(
                 openid=effective_openid,
                 raw_input=str(raw_input or ""),
                 service_type=str(service_type) if service_type else None,
+                module_key=str(module_key or "").strip(),
                 **business_record_identity_values(
                     entry_type=entry_type,
                     action_type=action_type,
@@ -706,6 +710,7 @@ def _row_to_request(row) -> RequestRecord:
         openid=item["openid"],
         raw_input=item["raw_input"],
         service_type=ServiceType(item["service_type"]) if item["service_type"] else None,
+        module_key=item.get("module_key") or "",
         entry_type=EntryType(item.get("entry_type") or EntryType.EXTERNAL_REQUEST),
         action_type=_request_action_type(item),
         actor_type=ActorType(item.get("actor_type") or ActorType.CUSTOMER),
@@ -753,6 +758,7 @@ def list_request_records(
     limit: int = 50,
     *,
     service_type: ServiceType | str | None = None,
+    module_key: str = "",
     entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
@@ -764,6 +770,7 @@ def list_request_records(
         page=1,
         page_size=limit,
         service_type=service_type,
+        module_key=module_key,
         entry_type=entry_type,
         status=status,
         keyword=keyword,
@@ -779,6 +786,7 @@ def build_request_record_conditions(
     users,
     *,
     service_type: ServiceType | str | None = None,
+    module_key: str = "",
     entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
@@ -792,6 +800,9 @@ def build_request_record_conditions(
         return [], True
     if service_condition is not None:
         conditions.append(service_condition)
+    normalized_module_key = str(module_key or "").strip()
+    if normalized_module_key:
+        conditions.append(table.c.module_key == normalized_module_key)
     if entry_type is not None and str(entry_type or "").strip():
         try:
             normalized_entry_type = EntryType(entry_type)
@@ -837,6 +848,7 @@ def build_request_record_conditions(
                 table.c.openid.ilike(pattern),
                 table.c.raw_input.ilike(pattern),
                 table.c.service_type.ilike(pattern),
+                table.c.module_key.ilike(pattern),
                 table.c.status.ilike(pattern),
                 table.c.error_code.ilike(pattern),
                 table.c.user_prompt.ilike(pattern),
@@ -878,6 +890,7 @@ def list_request_records_page(
     page: int = 1,
     page_size: int = 50,
     service_type: ServiceType | str | None = None,
+    module_key: str = "",
     entry_type: EntryType | str | None = None,
     status: Status | str | None = None,
     keyword: str = "",
@@ -906,6 +919,7 @@ def list_request_records_page(
         table,
         users,
         service_type=service_type,
+        module_key=module_key,
         entry_type=entry_type,
         status=status,
         keyword=keyword,
@@ -1316,29 +1330,30 @@ def _internal_call_artifact_conditions(service_type: ServiceType | str | None, s
             return None
         if normalized_service != ServiceType.TECHNICAL_ANALYSIS:
             return None
-    conditions.append(internal_call_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS))
-    conditions.append(internal_call_records.c.status == str(Status.SUCCESS))
+    conditions.append(investment_request_records.c.entry_type == str(EntryType.INTERNAL_CALL))
+    conditions.append(investment_request_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS))
+    conditions.append(investment_request_records.c.status == str(Status.SUCCESS))
     conditions.append(
         ~exists(
             select(investment_cache_entries.c.cache_key).where(
-                investment_cache_entries.c.artifact_owner_id == internal_call_records.c.call_id
+                investment_cache_entries.c.artifact_owner_id == investment_request_records.c.request_id
             )
         )
     )
     if start_date:
-        conditions.append(func.substr(internal_call_records.c.created_at, 1, 10) >= str(start_date))
+        conditions.append(func.substr(investment_request_records.c.created_at, 1, 10) >= str(start_date))
     if end_date:
-        conditions.append(func.substr(internal_call_records.c.created_at, 1, 10) <= str(end_date))
+        conditions.append(func.substr(investment_request_records.c.created_at, 1, 10) <= str(end_date))
     keyword_text = str(keyword or "").strip()
     if keyword_text:
         pattern = f"%{keyword_text}%"
         conditions.append(
             or_(
-                internal_call_records.c.call_id.ilike(pattern),
-                internal_call_records.c.service_type.ilike(pattern),
-                internal_call_records.c.input_text.ilike(pattern),
-                internal_call_records.c.output_text.ilike(pattern),
-                internal_call_records.c.outputs.ilike(pattern),
+                investment_request_records.c.request_id.ilike(pattern),
+                investment_request_records.c.service_type.ilike(pattern),
+                investment_request_records.c.raw_input.ilike(pattern),
+                investment_request_records.c.error_message.ilike(pattern),
+                investment_request_records.c.output_files.ilike(pattern),
             )
         )
     return conditions
@@ -1384,9 +1399,9 @@ def _artifact_package_sources(
     internal_conditions = _internal_call_artifact_conditions(service_type, start_date, end_date, keyword)
     if internal_conditions is not None:
         if package_id:
-            internal_conditions.append(internal_call_records.c.call_id == str(package_id))
-        internal_stmt = select(internal_call_records)
-        internal_count = select(func.count()).select_from(internal_call_records)
+            internal_conditions.append(investment_request_records.c.request_id == str(package_id))
+        internal_stmt = select(investment_request_records)
+        internal_count = select(func.count()).select_from(investment_request_records)
         if internal_conditions:
             internal_stmt = internal_stmt.where(*internal_conditions)
             internal_count = internal_count.where(*internal_conditions)
@@ -1496,23 +1511,23 @@ def _content_artifact_package_summary(item: dict) -> dict:
 
 
 def _internal_call_artifact_package_summary(item: dict) -> dict:
-    call_id = str(item.get("call_id") or "")
+    request_id = str(item.get("request_id") or "")
     generated_at = str(item.get("created_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
-    output_files = _load_list(item.get("outputs"))
+    output_files = _load_list(item.get("output_files"))
     return {
         "level": "package",
-        "key": call_id,
-        "package_id": call_id,
+        "key": request_id,
+        "package_id": request_id,
         "source_type": "internal_call",
-        "label": str(item.get("input_text") or "技术分析内容"),
+        "label": str(item.get("raw_input") or "技术分析内容"),
         "service_type": str(item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS),
         "market_date": generated_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
-        "normalized_target": str(item.get("input_text") or "技术分析内容"),
+        "normalized_target": str(item.get("normalized_target") or item.get("raw_input") or "技术分析内容"),
         "version_fingerprint": "",
-        "artifact_owner_id": call_id,
+        "artifact_owner_id": request_id,
         "file_count": len(output_files),
         "hit_count": 0,
         "updated_at": str(item.get("updated_at") or ""),
@@ -1625,18 +1640,18 @@ def list_artifact_folder_nodes(
     internal_conditions = _internal_call_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
     if internal_conditions is not None:
         if normalized_level == "service":
-            internal_key_expr = internal_call_records.c.service_type
+            internal_key_expr = investment_request_records.c.service_type
         else:
             slices = {"year": 4, "month": 7, "date": 10, "day": 10}
             length = slices.get(normalized_level)
             if not length:
                 return [], 0
-            internal_key_expr = func.substr(internal_call_records.c.created_at, 1, length)
+            internal_key_expr = func.substr(investment_request_records.c.created_at, 1, length)
         internal_grouped = (
             select(
                 internal_key_expr.label("key"),
                 func.count().label("count"),
-                func.max(internal_call_records.c.updated_at).label("updated_at"),
+                func.max(investment_request_records.c.updated_at).label("updated_at"),
             )
             .where(*internal_conditions)
             .group_by(internal_key_expr)

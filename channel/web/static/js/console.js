@@ -827,6 +827,26 @@ function investmentServiceLabel(value) {
     return INVEST_SERVICE_LABELS[value] || value || '-';
 }
 
+function investmentRecordServiceLabel(record = {}) {
+    return record.module_label || investmentServiceLabel(record.service_type);
+}
+
+function investmentRecordServiceOptions(contentOnly = false) {
+    const base = contentOnly
+        ? [['', '全部'], ['rate', '利率'], ['convertible_bond', '转债']]
+        : [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债']];
+    const seen = new Set(base.map(([value]) => value));
+    (currentInvestmentSkills || []).forEach(component => {
+        const key = investmentContentModuleKey(component);
+        if (!key || seen.has(key)) return;
+        if (contentOnly && !(component.content_enabled || component.handler_type === 'daily_content')) return;
+        if (!contentOnly && component.routable === false) return;
+        seen.add(key);
+        base.push([key, component.label || key]);
+    });
+    return base;
+}
+
 function investmentNormalizeCustomerServices(values = []) {
     const labelsToValues = Object.fromEntries(INVEST_CUSTOMER_SERVICE_OPTIONS.map(([value, label]) => [label, value]));
     const selected = Array.from(new Set((values || [])
@@ -1479,7 +1499,8 @@ function investmentArtifactTable(artifacts = []) {
 }
 
 function investmentEncodedRecord(record) {
-    return encodeURIComponent(JSON.stringify(record || {}));
+    return encodeURIComponent(JSON.stringify(record || {}))
+        .replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
 }
 
 function investmentStatusClass(status) {
@@ -3255,7 +3276,7 @@ function renderInvestmentRequestRecordsTableLegacy(records) {
         <td class="investment-mono">${escapeHtml((record.request_id || '').slice(0, 8))}</td>
         <td>${investmentCompactText(record.openid || '', 22)}</td>
         <td>${investmentCompactText(record.raw_input || '', 32)}</td>
-        <td>${investmentServiceLabel(record.service_type)}</td>
+        <td>${investmentRecordServiceLabel(record)}</td>
         <td><span class="investment-badge ${record.status === 'success' ? 'ok' : 'fail'}">${investmentStatusLabel(record.status)}</span></td>
         <td>${escapeHtml(record.error_code || '')}</td>
         <td>${record.cache_hit ? '<span class="investment-badge ok">命中</span>' : '<span class="investment-badge">未命中</span>'}</td>
@@ -3850,7 +3871,7 @@ function renderInvestmentRecordsFilters(tab) {
         controls = `
             <div class="investment-request-search-slot">${field('keyword', '客户/输入/错误')}</div>
             <div class="investment-request-filter-selects">
-                ${select('service_type', '服务', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债'], ['unauthorized_request', '无权限请求']])}
+                ${select('service_type', '服务', [...investmentRecordServiceOptions(false), ['unauthorized_request', '无权限请求']])}
                 ${select('status', '状态', [['', '全部'], ['success', '成功'], ['failed', '失败'], ['generating', '生成中']])}
             </div>
             <div class="investment-request-date-panel">
@@ -3865,9 +3886,7 @@ function renderInvestmentRecordsFilters(tab) {
         const isMonthMode = (filters.date_mode || 'day') === 'month';
         const isBackendRequest = tab === 'backendRequests';
         const keywordLabel = isBackendRequest ? '输入/输出/错误' : '内容/资料/生成结果';
-        const serviceOptions = isBackendRequest
-            ? [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债']]
-            : [['', '全部'], ['rate', '利率'], ['convertible_bond', '转债']];
+        const serviceOptions = investmentRecordServiceOptions(!isBackendRequest);
         const statusOptions = isBackendRequest
             ? [['', '全部'], ['generating', '生成中'], ['success', '成功'], ['failed', '失败']]
             : [['', '全部'], ['draft', '草稿'], ['generating', '生成中'], ['generated', '已生成'], ['generate_failed', '生成失败'], ['effective', '已生效'], ['archived', '已归档'], ['invalidated', '已失效']];
@@ -4078,6 +4097,7 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
 async function renderInvestmentRecords(options = {}) {
     const element = investmentContentEl('invest-records-content');
     if (!element) return;
+    await ensureInvestmentComponentsLoaded();
     if (options.tab) investmentRecordsState.tab = options.tab;
     if (!['requests', 'backendRequests', 'contents', 'audits'].includes(investmentRecordsState.tab)) {
         investmentRecordsState.tab = 'requests';
@@ -4090,7 +4110,7 @@ function renderInvestmentRequestRecordsTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无公众号请求记录</div>';
     const rows = records.map(record => `<tr>
         <td>${investmentCompactText(record.customer_display || record.openid || '', 24)}</td>
-        <td>${investmentServiceLabel(record.service_type)}</td>
+        <td>${investmentRecordServiceLabel(record)}</td>
         <td>${investmentRecordClamp(record.stock_name || record.stock_code || record.normalized_target || record.raw_input || '-', 2, 46)}</td>
         <td><span class="investment-badge ${investmentStatusClass(record.status_warning === '未完成/可能超时' ? 'generating' : record.status)}">${investmentStatusLabel(record.status)}${record.status_warning === '未完成/可能超时' ? ' / 可能超时' : ''}</span></td>
         <td><span class="investment-badge ${investmentDeliveryStatusClass(record.delivery_status)}">${escapeHtml(record.delivery_status || '-')}</span></td>
@@ -4109,7 +4129,7 @@ function renderInvestmentRequestRecordsTable(records) {
 function renderInvestmentBackendRequestRecordsTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无后台请求记录</div>';
     const rows = records.map(record => `<tr>
-        <td>${investmentServiceLabel(record.service_type)}</td>
+        <td>${investmentRecordServiceLabel(record)}</td>
         <td>${investmentRecordClamp(record.request_id || '-', 1, 18)}</td>
         <td>${escapeHtml(record.actor_name || '-')}</td>
         <td>${escapeHtml(record.actor_type || '-')}</td>
@@ -4130,7 +4150,7 @@ function renderInvestmentBackendRequestRecordsTable(records) {
 function renderInvestmentContentRecordsTable(records) {
     if (!records.length) return '<div class="investment-empty">暂无后台内容生成记录</div>';
     const rows = records.map(record => `<tr>
-            <td>${investmentServiceLabel(record.service_type)}</td>
+        <td>${investmentRecordServiceLabel(record)}</td>
             <td>${escapeHtml(record.content_id || '-')}</td>
             <td>${escapeHtml(record.effective_date || '-')}</td>
             <td>v${escapeHtml(record.content_version || 1)}</td>

@@ -62,6 +62,7 @@ investment_request_records = Table(
     Column("openid", Text, nullable=False),
     Column("raw_input", Text, nullable=False),
     Column("service", Text, key="service_type"),
+    Column("module_key", Text),
     Column("entry_type", Text),
     Column("action_type", Text),
     Column("actor_type", Text),
@@ -90,6 +91,7 @@ investment_request_records = Table(
     Column("elapsed_ms", Integer),
     Index("idx_request_records_created", "created_at"),
     Index("idx_request_records_service_status", "service_type", "status"),
+    Index("idx_request_records_module_created", "module_key", "created_at"),
     Index("idx_request_records_entry_created", "entry_type", "created_at"),
 )
 
@@ -239,33 +241,6 @@ request_events = Table(
     Index("idx_request_events_type_created", "event_type", "created_at"),
 )
 
-internal_call_records = Table(
-    "internal_call_records",
-    metadata,
-    Column("call_id", Text, primary_key=True),
-    Column("entry_type", Text, nullable=False),
-    Column("service", Text, nullable=False, key="service_type"),
-    Column("action_type", Text, nullable=False),
-    Column("actor_type", Text, nullable=False),
-    Column("actor_id", Text),
-    Column("actor_name", Text),
-    Column("actor_role", Text),
-    Column("input_text", Text),
-    Column("input_prompt", Text),
-    Column("sources", Text, nullable=False),
-    Column("status", Text, nullable=False),
-    Column("error_code", Text),
-    Column("error", Text),
-    Column("output_text", Text),
-    Column("outputs", Text, nullable=False),
-    Column("elapsed_ms", Integer),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    Index("idx_internal_call_records_entry_created", "entry_type", "created_at"),
-    Index("idx_internal_call_records_service_created", "service_type", "created_at"),
-    Index("idx_internal_call_records_actor_created", "actor_name", "created_at"),
-)
-
 ai_generation_audits = Table(
     "ai_generation_audits",
     metadata,
@@ -337,5 +312,4 @@ cache_entries = investment_cache_entries
 configs = investment_configs
 operation_audits = investment_operation_audits
 stock_symbols = investment_stock_symbols
-internal_calls = internal_call_records
 ai_audits = ai_generation_audits

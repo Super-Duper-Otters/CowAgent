@@ -20,11 +20,13 @@ def _create_request_record_with_customer(
     raw_input: str,
     service_type: ServiceType | None,
     customer_metadata: dict[str, str],
+    record_context: dict | None = None,
 ) -> str:
     return create_request_record(
         openid,
         raw_input,
         service_type,
+        record_context=record_context,
         customer_name=customer_metadata.get("customer_name", ""),
         institution=customer_metadata.get("institution", ""),
     )
@@ -37,6 +39,7 @@ def handle_daily_content(
     *,
     definition=None,
     customer_metadata: dict[str, str] | None = None,
+    record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
     from business.router import BusinessReply
@@ -44,7 +47,7 @@ def handle_daily_content(
     customer_metadata = customer_metadata or {}
     module_key = getattr(definition, "business_key", "") or getattr(route, "module_key", "")
     service_type = getattr(definition, "service_type", None) or route.service_type
-    request_id = _create_request_record_with_customer(openid, raw_input, service_type, customer_metadata)
+    request_id = _create_request_record_with_customer(openid, raw_input, service_type, customer_metadata, record_context)
     content = get_daily_content_business(service_type, module_key=module_key)
     if not content.success:
         code = content.error_code or ErrorCode.NO_CONTENT

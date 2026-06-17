@@ -32,9 +32,9 @@ def test_investment_schema_declares_all_tables():
         "configs",
         "stock_symbols",
         "operation_audits",
-        "internal_call_records",
         "ai_generation_audits",
     }.issubset(metadata.tables)
+    assert "internal_call_records" not in metadata.tables
 
     assert {
         "created_by_admin_id",
@@ -90,18 +90,6 @@ def test_investment_schema_declares_all_tables():
         "actor_role",
     }.issubset(metadata.tables["request_records"].columns.keys())
     assert {
-        "call_id",
-        "entry_type",
-        "service",
-        "action_type",
-        "actor_type",
-        "actor_id",
-        "actor_name",
-        "actor_role",
-        "input_prompt",
-        "status",
-    }.issubset({column.name for column in metadata.tables["internal_call_records"].columns})
-    assert {
         "audit_id",
         "entry_type",
         "service",
@@ -154,7 +142,8 @@ def test_investment_migration_removes_generation_records_table(investment_env):
     tables = set(inspect(get_engine()).get_table_names())
 
     assert "generation_records" not in tables
-    assert {"internal_call_records", "ai_generation_audits"}.issubset(tables)
+    assert "internal_call_records" not in tables
+    assert "ai_generation_audits" in tables
 
 
 def test_investment_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
@@ -228,16 +217,18 @@ def test_investment_migration_transfers_generation_records_to_new_tables(tmp_pat
 
         inspector = inspect(engine)
         assert "generation_records" not in set(inspector.get_table_names())
+        assert "internal_call_records" not in set(inspector.get_table_names())
         with engine.begin() as conn:
-            internal = conn.execute(text("select * from internal_call_records where call_id = 'legacy-generation-1'")).mappings().one()
+            request = conn.execute(text("select * from request_records where request_id = 'legacy-generation-1'")).mappings().one()
             audit = conn.execute(text("select * from ai_generation_audits where business_record_id = 'legacy-generation-1'")).mappings().one()
-        assert internal["entry_type"] == "internal_call"
-        assert internal["service"] == "rate"
-        assert internal["action_type"] == "generate"
-        assert internal["actor_name"] == "ops"
-        assert internal["status"] == "success"
-        assert internal["output_text"] == "legacy output"
-        assert audit["business_record_type"] == "internal_call"
+        assert request["entry_type"] == "internal_call"
+        assert request["service"] == "rate"
+        assert request["action_type"] == "generate"
+        assert request["actor_name"] == "ops"
+        assert request["status"] == "success"
+        assert request["outputs"] == '["/tmp/output.png"]'
+        assert audit["business_record_type"] == "request"
+        assert audit["business_record_id"] == "legacy-generation-1"
         assert audit["result"] == "success"
         assert audit["output_text"] == "legacy output"
     finally:
@@ -980,31 +971,27 @@ def test_external_request_record_declares_entry_and_actor(investment_env):
     assert record.actor_role == ""
 
 
-def test_internal_call_records_are_separate_from_external_requests(investment_env):
+def test_internal_call_entries_are_separate_from_external_requests(investment_env):
     from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
-    from business.investment.internal_call_records import (
-        finish_internal_call_record,
-        get_internal_call_record,
-        start_internal_call_record,
-    )
-    from business.investment.records import list_request_records
+    from business.investment.records import create_business_workflow_record, finish_business_workflow_record, get_request_record, list_request_records
 
-    call_id = start_internal_call_record(
+    request_id = create_business_workflow_record(
+        entry_type=EntryType.INTERNAL_CALL,
         service_type=ServiceType.RATE,
         action_type=ActionType.GENERATE,
         actor_type=ActorType.ADMIN,
         actor_id="7",
         actor_name="ops",
         actor_role="content_operator",
-        input_text="rate input",
-        sources=["/tmp/rate-source.png"],
+        raw_input="rate input",
     )
-    finish_internal_call_record(call_id, status=Status.SUCCESS, outputs=["/tmp/rate-card.png"], elapsed_ms=31)
+    finish_business_workflow_record(request_id, status=Status.SUCCESS, output_files=["/tmp/rate-card.png"], elapsed_ms=31)
 
-    record = get_internal_call_record(call_id)
+    record = get_request_record(request_id)
 
-    assert list_request_records(limit=10) == []
-    assert record.call_id == call_id
+    assert list_request_records(entry_type=EntryType.EXTERNAL_REQUEST, limit=10) == []
+    assert [item.request_id for item in list_request_records(entry_type=EntryType.INTERNAL_CALL, limit=10)] == [request_id]
+    assert record.request_id == request_id
     assert record.entry_type == EntryType.INTERNAL_CALL
     assert record.service_type == ServiceType.RATE
     assert record.action_type == ActionType.GENERATE
@@ -1013,9 +1000,8 @@ def test_internal_call_records_are_separate_from_external_requests(investment_en
     assert record.actor_name == "ops"
     assert record.actor_role == "content_operator"
     assert record.status == Status.SUCCESS
-    assert record.input_text == "rate input"
-    assert record.sources == ["/tmp/rate-source.png"]
-    assert record.outputs == ["/tmp/rate-card.png"]
+    assert record.raw_input == "rate input"
+    assert record.output_files == ["/tmp/rate-card.png"]
     assert record.elapsed_ms == 31
 
 
@@ -1148,8 +1134,6 @@ def test_daily_content_generation_records_backend_entry_in_business_records(inve
     assert record.raw_input == "rate input"
     assert record.output_files == result.output_files
     assert record.elapsed_ms is not None
-    with connect() as conn:
-        assert conn.execute(text("select count(*) from internal_call_records")).scalar_one() == 0
     assert len(ai_audits) == 1
     assert ai_audits[0].business_record_type == "request"
     assert ai_audits[0].business_record_id == record.request_id
@@ -1189,12 +1173,11 @@ def test_request_records_api_includes_request_event_timeline(investment_env, mon
     assert payload["records"][0]["events"][1]["content"] == "1"
 
 
-def test_business_records_api_filters_entry_type_and_internal_calls_alias(investment_env, monkeypatch):
+def test_business_records_api_filters_internal_entry_type(investment_env, monkeypatch):
     from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import (
         InvestmentContentRecordsHandler,
-        InvestmentInternalCallRecordsHandler,
         InvestmentRequestRecordsHandler,
     )
 
@@ -1232,14 +1215,6 @@ def test_business_records_api_filters_entry_type_and_internal_calls_alias(invest
     assert payload["records"][0]["status"] == "success"
     assert payload["records"][0]["output_files"] == ["/tmp/rate-output.png"]
     assert payload["pagination"] == {"page": 1, "page_size": 20, "total": 1, "total_pages": 1}
-
-    alias_payload = _call_investment_json_handler(
-        monkeypatch,
-        InvestmentInternalCallRecordsHandler().GET,
-        params={"service_type": "rate", "page": "1", "page_size": "20"},
-    )
-    assert alias_payload["records"] == payload["records"]
-    assert alias_payload["pagination"] == payload["pagination"]
 
     content_payload = _call_investment_json_handler(
         monkeypatch,
@@ -2552,13 +2527,25 @@ def _call_investment_json_handler(monkeypatch, handler, *, params=None, body=Non
     from channel.web import web_channel
 
     _login_default_investment_admin(monkeypatch)
-    monkeypatch.setattr(web_channel.web, "input", lambda **_defaults: SimpleNamespace(**(params or {})))
+    monkeypatch.setattr(web_channel.web, "input", lambda **defaults: SimpleNamespace(**{**defaults, **(params or {})}))
     monkeypatch.setattr(web_channel.web, "data", lambda: json.dumps(body or {}, ensure_ascii=False).encode("utf-8"))
     monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
 
     raw = handler()
     payload = json.loads(raw)
     return payload
+
+
+def _call_investment_bytes_handler(monkeypatch, handler, *, params=None):
+    from channel.web import web_channel
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "input", lambda **defaults: SimpleNamespace(**{**defaults, **(params or {})}))
+    monkeypatch.setattr(web_channel.web.ctx, "headers", [], raising=False)
+    raw = handler()
+    assert isinstance(raw, bytes)
+    return raw
 
 
 def test_web_investment_config_returns_masked_tushare_token(investment_env, monkeypatch):
@@ -4102,12 +4089,11 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
     assert audits_payload["pagination"]["total"] == 1
 
 
-def test_internal_call_records_api_filters_by_keyword_and_date_range(investment_env, monkeypatch):
+def test_internal_request_records_api_filters_by_keyword_and_date_range(investment_env, monkeypatch):
     from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.db import connect
     from business.investment.records import create_business_workflow_record, finish_business_workflow_record
-    from channel.web import web_channel
-    from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentInternalCallRecordsHandler
+    from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentRequestRecordsHandler
 
     included = create_business_workflow_record(
         entry_type=EntryType.INTERNAL_CALL,
@@ -4149,32 +4135,37 @@ def test_internal_call_records_api_filters_by_keyword_and_date_range(investment_
             {"created_at": "2026-06-15T02:00:00+00:00", "request_id": excluded},
         )
 
-    _login_default_investment_admin(monkeypatch)
-    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        web_channel.web,
-        "input",
-        lambda **defaults: SimpleNamespace(
-            **{
-                **defaults,
-                "service_type": "rate",
-                "keyword": "monthly-liquidity",
-                "start_date": "2026-05-01",
-                "end_date": "2026-05-31",
-                "page": "1",
-                "page_size": "80",
-            }
-        ),
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentRequestRecordsHandler().GET,
+        params={
+            "service_type": "rate",
+            "entry_type": "internal_call",
+            "keyword": "monthly-liquidity",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "page": "1",
+            "page_size": "80",
+        },
     )
-
-    payload = json.loads(InvestmentInternalCallRecordsHandler().GET())
 
     assert payload["pagination"]["total"] == 1
     assert [record["request_id"] for record in payload["records"]] == [included]
     assert excluded not in {record.get("request_id") for record in payload["records"]}
     assert payload["records"][0]["entry_type"] == "internal_call"
 
-    content_payload = json.loads(InvestmentContentRecordsHandler().GET())
+    content_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentContentRecordsHandler().GET,
+        params={
+            "service_type": "rate",
+            "keyword": "monthly-liquidity",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "page": "1",
+            "page_size": "80",
+        },
+    )
 
     assert content_payload["pagination"]["total"] == 0
     assert content_payload["records"] == []
@@ -5514,6 +5505,46 @@ def test_investment_date_bound_treats_plain_dates_as_beijing_days():
     assert _investment_date_bound("2026-05-31 12:30:00", end=True) == "2026-05-31 12:30:00"
     assert _investment_month_bounds(2026, 5) == ("2026-04-30T16:00:00", "2026-05-31T15:59:59.999999")
     assert _investment_quarter_bounds(2026, 2) == ("2026-03-31T16:00:00", "2026-06-30T15:59:59.999999")
+
+
+def test_request_records_export_api_forces_external_request_entry_type(investment_env, monkeypatch):
+    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.investment.records import (
+        create_business_workflow_record,
+        create_request_record,
+        finish_business_workflow_record,
+        succeed_request_record,
+    )
+    from channel.web.web_channel import InvestmentRequestRecordsExportHandler
+
+    external_id = create_request_record("openid-export", "利率", ServiceType.RATE)
+    succeed_request_record(external_id, output_files=["/tmp/external.png"], elapsed_ms=1)
+    internal_id = create_business_workflow_record(
+        entry_type=EntryType.INTERNAL_CALL,
+        service_type=ServiceType.RATE,
+        action_type=ActionType.GENERATE,
+        actor_type=ActorType.ADMIN,
+        actor_name="ops-export",
+        raw_input="backend export source",
+    )
+    finish_business_workflow_record(
+        internal_id,
+        status=Status.SUCCESS,
+        output_files=["/tmp/internal.png"],
+        elapsed_ms=1,
+    )
+
+    payload = _call_investment_bytes_handler(
+        monkeypatch,
+        InvestmentRequestRecordsExportHandler().GET,
+        params={"entry_type": "internal_call"},
+    )
+    rows = _xlsx_sheet_rows(payload)
+
+    assert len(rows) == 2
+    assert rows[1][1] == "openid-export"
+    assert rows[1][4] == "利率"
+    assert all("backend export source" not in [str(cell) for cell in row] for row in rows)
 
 
 def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
@@ -10999,6 +11030,7 @@ def test_prompt_to_image_module_generates_image_from_customer_input(investment_e
     import json
 
     from business.investment.component_paths import runtime_component_root
+    from business.investment.records import list_request_records
     from business.router import handle_text_message
 
     component_dir = runtime_component_root("macro-brief")
@@ -11069,6 +11101,70 @@ def test_prompt_to_image_module_generates_image_from_customer_input(investment_e
     assert reply.success is True
     assert reply.module_key == "macro-brief"
     assert reply.output_files == [str(output)]
+    record = list_request_records(limit=1)[0]
+    assert record.module_key == "macro-brief"
+
+
+def test_request_records_api_returns_module_label_for_custom_prompt_module(investment_env, monkeypatch):
+    import json
+
+    from business.constants import ServiceType
+    from business.investment.component_paths import runtime_component_root
+    from business.investment.records import create_request_record, fail_request_record
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentRequestRecordsHandler
+
+    component_dir = runtime_component_root("macro-brief")
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "component.json").write_text(
+        json.dumps(
+            {
+                "component_key": "macro-brief",
+                "label": "宏观简报",
+                "service_type": "unmatched",
+                "match_type": "prefix",
+                "default_triggers": ["宏观简报"],
+                "handler_type": "prompt_to_image",
+                "component_type": "active_prompt",
+                "prompt_key": "prompt.macro_brief",
+                "template_key": "rate",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    request_id = create_request_record(
+        "session_d468593",
+        "宏观简报 今天重点关注什么",
+        ServiceType.UNMATCHED,
+        module_key="macro-brief",
+    )
+    fail_request_record(request_id, "image_generation_failed", "图片生成失败", "render failed", 12)
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "input",
+        lambda **kwargs: SimpleNamespace(
+            limit="50",
+            page="1",
+            page_size="",
+            service_type="",
+            entry_type="",
+            status="",
+            keyword="",
+            customer="",
+            start_date="",
+            end_date="",
+        ),
+    )
+
+    payload = json.loads(InvestmentRequestRecordsHandler().GET())
+
+    assert payload["status"] == "success"
+    assert payload["records"][0]["module_key"] == "macro-brief"
+    assert payload["records"][0]["module_label"] == "宏观简报"
 
 
 def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
@@ -11312,9 +11408,9 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
 
 def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType, Status
+    from business.investment.constants import ActorType, EntryType, ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.records import list_request_records
+    from business.investment.records import list_request_records, list_request_records_page
     from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
@@ -11336,13 +11432,22 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
     assert records[0].raw_input == "利率"
     assert records[0].service_type == ServiceType.RATE
     assert records[0].status == Status.SUCCESS
+    assert records[0].entry_type == EntryType.INTERNAL_CALL
+    assert records[0].actor_type == ActorType.ADMIN
+
+    public_items, public_total = list_request_records_page(entry_type=EntryType.EXTERNAL_REQUEST, page_size=10)
+    backend_items, backend_total = list_request_records_page(entry_type=EntryType.INTERNAL_CALL, page_size=10)
+    assert public_total == 0
+    assert public_items == []
+    assert backend_total == 1
+    assert backend_items[0].request_id == records[0].request_id
 
 
 def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(investment_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType, Status
     from business.investment.records import list_request_records
-    from business.investment.schema import internal_call_records, investment_cache_entries
+    from business.investment.schema import investment_cache_entries
     from business.investment.db import connect
     from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
@@ -11396,9 +11501,6 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
     assert records[0].service_type == ServiceType.TECHNICAL_ANALYSIS
     assert records[0].status == Status.SUCCESS
     with connect() as conn:
-        rows = conn.execute(internal_call_records.select()).fetchall()
-    assert rows == []
-    with connect() as conn:
         cache_rows = conn.execute(investment_cache_entries.select()).fetchall()
     assert len(cache_rows) == 1
     cache_item = cache_rows[0]._mapping
@@ -11410,7 +11512,7 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(inv
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType, Status
     from business.investment.records import list_request_records
-    from business.investment.schema import internal_call_records, investment_cache_entries
+    from business.investment.schema import investment_cache_entries
     from business.investment.db import connect
     from channel.web.web_channel import _build_investment_web_reply
     import business.technical_analysis_handler as ta_handler
@@ -11456,7 +11558,6 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(inv
     assert reply is not None
     assert reply.type == ReplyType.TEXT
     with connect() as conn:
-        assert conn.execute(internal_call_records.select()).fetchall() == []
         assert conn.execute(investment_cache_entries.select()).fetchall() == []
     records = list_request_records(limit=10)
     assert len(records) == 1

@@ -57,6 +57,7 @@ def get_ready_technical_analysis_reply(
     route,
     *,
     customer_metadata: dict[str, str] | None = None,
+    record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
     from business.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
@@ -79,6 +80,7 @@ def get_ready_technical_analysis_reply(
         raw_input,
         route,
         customer_metadata=customer_metadata,
+        record_context=record_context,
         elapsed=elapsed,
         cache_context=cache_context,
     )
@@ -90,6 +92,7 @@ def handle_technical_analysis(
     route,
     *,
     customer_metadata: dict[str, str] | None = None,
+    record_context: dict | None = None,
     elapsed=lambda: 0,
     technical_analysis_handler=None,
     cache_context=None,
@@ -106,10 +109,17 @@ def handle_technical_analysis(
             cache_context.cache_key,
             normalized_target=cache_context.normalized_target,
             market_date=cache_context.market_date,
+            record_context=record_context,
             **customer_metadata,
         )
     else:
-        job = start_job_if_absent_with_metadata(openid, raw_input, route.service_type, **customer_metadata)
+        job = start_job_if_absent_with_metadata(
+            openid,
+            raw_input,
+            route.service_type,
+            record_context=record_context,
+            **customer_metadata,
+        )
     if not job.created:
         return BusinessReply(
             True,

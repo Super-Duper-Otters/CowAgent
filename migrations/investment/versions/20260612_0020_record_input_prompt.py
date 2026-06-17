@@ -17,11 +17,9 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column("content_records", sa.Column("input_prompt", sa.Text(), nullable=True))
-    op.add_column("internal_call_records", sa.Column("input_prompt", sa.Text(), nullable=True))
     op.add_column("ai_generation_audits", sa.Column("input_prompt", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
     op.drop_column("ai_generation_audits", "input_prompt")
-    op.drop_column("internal_call_records", "input_prompt")
     op.drop_column("content_records", "input_prompt")

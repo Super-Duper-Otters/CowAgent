@@ -388,9 +388,24 @@ def _build_investment_web_reply(session_id: str, prompt: str):
     if route.matched:
         from bridge.context import Context, ContextType
         from business.business_router import build_business_reply
+        from business.investment.constants import ActorType, EntryType
 
         context = Context(ContextType.TEXT, prompt)
         context["session_id"] = session_id
+        context["channel_type"] = "web"
+        context["investment_entry_type"] = EntryType.INTERNAL_CALL
+        context["investment_actor_type"] = ActorType.ADMIN
+        context["investment_actor_id"] = str(session_id or "web")
+        context["investment_actor_name"] = "web"
+        context["investment_actor_role"] = "admin"
+        try:
+            admin = _current_investment_admin()
+        except Exception:
+            admin = None
+        if admin is not None:
+            context["investment_actor_id"] = str(getattr(admin, "id", "") or getattr(admin, "username", "") or session_id or "web")
+            context["investment_actor_name"] = str(getattr(admin, "username", "") or "web")
+            context["investment_actor_role"] = str(getattr(admin, "role", "") or "admin")
         reply = build_business_reply(context, skip_permission=True)
         if reply is None:
             return None
@@ -2893,7 +2908,7 @@ class InvestmentRequestRecordsExportHandler:
                 start_date,
                 end_date,
                 service_type=params.service_type or None,
-                entry_type=getattr(params, "entry_type", "") or "external_request",
+                entry_type="external_request",
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
                 customer=getattr(params, "customer", "") or "",
@@ -2906,6 +2921,7 @@ class InvestmentRequestRecordsExportHandler:
                     "start_date": start_date,
                     "end_date": end_date,
                     "service_type": params.service_type or "",
+                    "entry_type": "external_request",
                     "status": getattr(params, "status", "") or "",
                     "keyword": getattr(params, "keyword", "") or "",
                     "customer": getattr(params, "customer", "") or "",
@@ -3177,6 +3193,52 @@ def _investment_content_module_payload(record, definition=None):
     }
 
 
+def _investment_module_label(module_key: str) -> str:
+    module_key = str(module_key or "").strip()
+    if not module_key:
+        return ""
+    try:
+        from business.business_registry import get_business_definition
+
+        return str(get_business_definition(module_key).label or "")
+    except Exception:
+        return ""
+
+
+def _investment_module_key_for_request_record(record) -> str:
+    module_key = str(getattr(record, "module_key", "") or "").strip()
+    if module_key:
+        return module_key
+    try:
+        from business.constants import ServiceType
+        from business.router import parse_route
+
+        if getattr(record, "service_type", None) == ServiceType.UNMATCHED:
+            route = parse_route(str(getattr(record, "raw_input", "") or ""))
+            if route and route.service_type == ServiceType.UNMATCHED and route.module_key:
+                return str(route.module_key)
+    except Exception:
+        return ""
+    return ""
+
+
+def _investment_resolve_request_record_filter(service_value: str):
+    from business.constants import ServiceType, normalize_service
+
+    value = str(service_value or "").strip()
+    if not value:
+        return None, ""
+    service_type = normalize_service(value)
+    if service_type == ServiceType.UNMATCHED and value not in {"unmatched", str(ServiceType.UNMATCHED)}:
+        try:
+            from business.business_registry import get_business_definition
+
+            return None, get_business_definition(value).business_key
+        except Exception:
+            raise ValueError(f"unsupported record service filter: {value}")
+    return service_type, ""
+
+
 class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
@@ -3445,7 +3507,6 @@ class InvestmentRequestRecordsHandler:
         _require_investment_permission("records.read")
         try:
             from business.business_records import list_output_files, list_request_records_page
-            from business.constants import ServiceType, normalize_service
             from business.investment.event_service import list_request_events
 
             params = web.input(
@@ -3461,8 +3522,9 @@ class InvestmentRequestRecordsHandler:
                 end_date='',
             )
             service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
-            if service_type == ServiceType.UNMATCHED and service_value not in {"unmatched", str(ServiceType.UNMATCHED)}:
+            try:
+                service_type, module_key = _investment_resolve_request_record_filter(service_value)
+            except ValueError:
                 page, page_size = _investment_safe_pagination(params, 80)
                 return _investment_json_response({
                     "status": "success",
@@ -3474,6 +3536,7 @@ class InvestmentRequestRecordsHandler:
                 page=page,
                 page_size=page_size,
                 service_type=service_type,
+                module_key=module_key,
                 entry_type=getattr(params, "entry_type", "") or None,
                 status=getattr(params, "status", "") or None,
                 keyword=getattr(params, "keyword", "") or "",
@@ -3490,6 +3553,8 @@ class InvestmentRequestRecordsHandler:
                 "records": [record.__dict__ | {
                     "record_type": "business_record",
                     "service_type": str(record.service_type) if record.service_type else "",
+                    "module_key": _investment_module_key_for_request_record(record),
+                    "module_label": _investment_module_label(_investment_module_key_for_request_record(record)),
                     "entry_type": str(record.entry_type),
                     "action_type": str(record.action_type),
                     "actor_type": str(record.actor_type),
@@ -3564,68 +3629,6 @@ class InvestmentContentRecordsHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] content records error: {e}")
-            return _investment_json_response({"status": "error", "message": str(e)})
-
-
-class InvestmentInternalCallRecordsHandler:
-    def GET(self):
-        _require_investment_permission("records.read")
-        try:
-            from business.constants import EntryType, ServiceType, normalize_service
-            from business.business_records import list_output_files, list_request_records_page
-            from business.investment.event_service import list_request_events
-
-            params = web.input(
-                limit='50',
-                page='1',
-                page_size='',
-                service_type='',
-                status='',
-                keyword='',
-                start_date='',
-                end_date='',
-            )
-            service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
-            if service_type == ServiceType.UNMATCHED:
-                page, page_size = _investment_safe_pagination(params, 80)
-                return _investment_json_response({
-                    "status": "success",
-                    "records": [],
-                    "pagination": _investment_pagination_payload(page, page_size, 0),
-                })
-            page, page_size = _investment_safe_pagination(params, 80)
-            records, total = list_request_records_page(
-                page=page,
-                page_size=page_size,
-                service_type=service_type,
-                entry_type=EntryType.INTERNAL_CALL,
-                status=getattr(params, "status", "") or None,
-                keyword=getattr(params, "keyword", "") or "",
-                start_date=_investment_date_bound(getattr(params, "start_date", "")),
-                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
-            )
-            events_by_request = {
-                record.request_id: [event.__dict__ for event in list_request_events(request_id=record.request_id, limit=200)]
-                for record in records
-            }
-            return _investment_json_response({
-                "status": "success",
-                "records": [record.__dict__ | {
-                    "record_type": "business_record",
-                    "service_type": str(record.service_type) if record.service_type else "",
-                    "entry_type": str(record.entry_type),
-                    "action_type": str(record.action_type),
-                    "actor_type": str(record.actor_type),
-                    "status": str(record.status),
-                    "error_code": str(record.error_code) if record.error_code else "",
-                    "output_artifacts": list_output_files(record.request_id),
-                    "events": events_by_request.get(record.request_id, []),
-                } for record in records],
-                "pagination": _investment_pagination_payload(page, page_size, total),
-            })
-        except Exception as e:
-            logger.error(f"[Investment] internal call records error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 
