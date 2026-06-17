@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config_service import get_config
+from business.config_service import get_config
 from business.constants import ServiceType
 from .render_service import DEFAULT_RENDERER_PATH
 

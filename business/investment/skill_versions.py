@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
-from .config_service import get_config, save_config
+from business.config_service import get_config, save_config
 from .component_paths import runtime_component_root, runtime_versions_root
 from .skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
 

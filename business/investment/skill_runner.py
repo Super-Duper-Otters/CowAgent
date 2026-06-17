@@ -47,7 +47,7 @@ def _run_script(
     script_path = ""
     config_key = str(getattr(definition, "config_key", "") or "")
     if config_key:
-        from .config_service import get_config
+        from business.config_service import get_config
 
         script_path = str(get_config(config_key, "") or "")
     script = Path(script_path or definition.default_script_path or definition.entry)

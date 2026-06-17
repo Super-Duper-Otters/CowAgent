@@ -9,7 +9,7 @@ from typing import Any, Callable
 from sqlalchemy import and_, insert, or_, select, update
 
 from .audit_service import AdminActor, actor_from_admin, record_operation_audit
-from .config_service import sanitize_sensitive_text
+from business.config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from business.db import connect, row_to_dict
 from .records import create_business_workflow_record, finish_business_workflow_record, record_output_file
@@ -114,7 +114,7 @@ def default_expires_at_for_effective_date(effective_date: str | None = None) -> 
 
 
 def _output_image_version(service_type: ServiceType) -> str:
-    from .config_service import get_config
+    from business.config_service import get_config
 
     renderer_path = Path(str(get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))
     if not renderer_path.is_absolute():
@@ -133,7 +133,7 @@ def _safe_output_segment(value: str, fallback: str = "item") -> str:
 
 
 def _daily_content_render_output_path(item: dict[str, Any], service_type: ServiceType) -> str:
-    from .config_service import get_config
+    from business.config_service import get_config
 
     output_dir = Path(str(get_config("render.output_dir") or get_config("storage.tmp_dir") or (get_storage_dirs()["tmp"] / "render")))
     if not output_dir.is_absolute():
@@ -182,7 +182,7 @@ def save_source_file(
     effective_date: str | None = None,
     module_key: str = "",
 ) -> str:
-    from .config_service import get_config
+    from business.config_service import get_config
 
     service_type = _ensure_content_service_type(service_type)
     safe_name = (filename or "").strip()

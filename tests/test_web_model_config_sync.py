@@ -69,7 +69,7 @@ def test_investment_config_save_rejects_global_model_keys_and_does_not_touch_pro
     cfg_path.write_text(json.dumps(original, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setenv("COWAGENT_CONFIG_PATH", str(cfg_path))
 
-    from business.investment import config_service
+    from business import config_service
 
     runtime_cfg = dict(original)
     monkeypatch.setattr(config_service, "conf", lambda: runtime_cfg)

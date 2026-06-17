@@ -7,8 +7,8 @@ from pathlib import Path
 
 from sqlalchemy import inspect, select
 
-from . import config_service
-from .config_service import get_config
+from business import config_service
+from business.config_service import get_config
 from business.constants import SERVICE_LABELS, ServiceType
 from business.db import connect, get_engine, row_to_dict
 from .render_service import (

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .config_service import get_config, sanitize_sensitive_text
+from business.config_service import get_config, sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType, Status, user_message
 from business.storage import get_storage_dirs
 

@@ -1237,7 +1237,7 @@ def test_investment_alembic_runner_exposes_upgrade():
 
 
 def test_config_service_uses_investment_db_connection_helpers():
-    from business.investment import config_service
+    from business import config_service
 
     assert not hasattr(config_service, "get_connection")
 
@@ -1274,7 +1274,7 @@ def test_health_uses_investment_db_connection_helpers():
 
 def test_config_service_direct_call_initializes_storage_schema(investment_env):
     from business import db
-    from business.investment.config_service import get_config, save_config
+    from business.config_service import get_config, save_config
     from sqlalchemy import inspect
 
     db.reset_engine_for_tests()
@@ -1285,21 +1285,18 @@ def test_config_service_direct_call_initializes_storage_schema(investment_env):
     assert inspect(db.get_engine()).has_table("configs")
 
 
-def test_business_config_facade_shares_existing_config_storage(investment_env):
-    from business.config_service import get_config as get_business_config
-    from business.config_service import save_config as save_business_config
-    from business.investment.config_service import get_config as get_legacy_config
-    from business.investment.config_service import save_config as save_legacy_config
+def test_business_config_service_uses_existing_config_storage(investment_env):
+    from business.config_service import get_config, save_config
 
-    save_business_config("prompt.rate", "business facade prompt", operator_role="admin")
-    assert get_legacy_config("prompt.rate") == "business facade prompt"
+    save_config("prompt.rate", "business prompt", operator_role="admin")
+    assert get_config("prompt.rate") == "business prompt"
 
-    save_legacy_config("prompt.convertible_bond", "legacy compatible prompt", operator_role="admin")
-    assert get_business_config("prompt.convertible_bond") == "legacy compatible prompt"
+    save_config("prompt.convertible_bond", "convertible bond prompt", operator_role="admin")
+    assert get_config("prompt.convertible_bond") == "convertible bond prompt"
 
 
 def test_config_masks_sensitive_values_and_checks_permissions(investment_env, monkeypatch):
-    from business.investment.config_service import (
+    from business.config_service import (
         can_modify_config,
         get_config,
         mask_sensitive_value,
@@ -1307,7 +1304,7 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
         safe_log_value,
     )
 
-    monkeypatch.setattr("business.investment.config_service.conf", lambda: {"tushare_token": "fallback-token"})
+    monkeypatch.setattr("business.config_service.conf", lambda: {"tushare_token": "fallback-token"})
 
     assert get_config("tushare.token") == "fallback-token"
     save_config("tushare.token", "ts-1234567890abcdef", operator_role="admin")
@@ -1329,7 +1326,7 @@ def test_investment_user_message_uses_reply_config_defaults(investment_env):
 
 
 def test_investment_user_message_can_be_overridden_from_database(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ErrorCode, user_message
 
     save_config("reply.investment.unauthorized", "请联系客户经理开通权限。", operator_role="admin", operator="pytest")
@@ -1354,7 +1351,7 @@ def test_business_user_message_uses_cowagent_reply_config_facade(investment_env,
 
 
 def test_web_open_chat_config_is_admin_only(investment_env):
-    from business.investment.config_service import can_modify_config, get_config, save_config
+    from business.config_service import can_modify_config, get_config, save_config
 
     assert get_config("router.enable_web_open_chat", False) is False
     assert can_modify_config("router.enable_web_open_chat", "technical_operator") is False
@@ -1371,7 +1368,7 @@ def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(in
     from sqlalchemy import select
 
     from business import db
-    from business.investment.config_service import get_config, save_config, save_configs
+    from business.config_service import get_config, save_config, save_configs
     from business.schema import configs
 
     forbidden = {
@@ -1395,7 +1392,7 @@ def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(in
 
 
 def test_web_console_config_save_preserves_masked_investment_sensitive_values(investment_env):
-    from business.investment.config_service import get_config, get_configs, save_configs
+    from business.config_service import get_config, get_configs, save_configs
 
     token = "ts-console-secret-1234567890"
     save_configs({"tushare.token": token, "router.enable_agent_fallback": False}, operator_role="admin")
@@ -1547,7 +1544,7 @@ def test_component_service_marks_content_modules():
 
 def test_component_service_includes_prompt_and_version_data(investment_env):
     from business.investment.component_service import list_components
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("prompt.rate", "rate prompt v1", operator_role="admin")
     items = {item["component_key"]: item for item in list_components()}
@@ -1675,7 +1672,7 @@ def test_skill_versions_list_only_new_runtime_versions(investment_env):
 
 
 def test_investment_skill_loader_applies_web_trigger_override(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.skill_registry import match_investment_skill
 
@@ -1689,7 +1686,7 @@ def test_investment_skill_loader_applies_web_trigger_override(investment_env):
 
 
 def test_investment_skill_loader_extracts_suffix_target(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.skill_registry import match_investment_skill
 
@@ -1704,7 +1701,7 @@ def test_investment_skill_loader_extracts_suffix_target(investment_env):
 
 def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
     from business.investment.component_paths import runtime_component_root, runtime_versions_root
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from business.constants import ServiceType
     from business.investment.skill_registry import list_investment_skills, match_investment_skill
     from business.investment.skill_versions import save_package_upload
@@ -1954,7 +1951,7 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
 def test_investment_skill_upload_python_file_creates_version_and_activates_it(investment_env):
     from pathlib import Path
 
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from business.investment.skill_versions import list_versions, save_upload
 
     result = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
@@ -1998,7 +1995,7 @@ def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(inv
 
 
 def test_investment_skill_version_activation_switches_between_upload_and_builtin(investment_env):
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from business.investment.skill_versions import activate_version, list_versions, save_upload
 
     uploaded = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v2')", operator="tester")
@@ -2017,7 +2014,7 @@ def test_investment_skill_version_activation_switches_between_upload_and_builtin
 def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_falls_back_to_builtin(investment_env):
     import pytest
 
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from business.investment.skill_versions import delete_version, list_versions, save_upload
 
     uploaded = save_upload("technical-analysis", "analyze_universal.py", b"print('ta delete')", operator="tester")
@@ -2036,7 +2033,7 @@ def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_fall
 def test_investment_skill_versions_include_loaded_skills(investment_env):
     from pathlib import Path
 
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from business.investment.skill_versions import activate_version, list_all_skills, save_upload
     from business.business_registry import get_business_definition
 
@@ -2062,7 +2059,7 @@ def test_investment_skill_versions_include_loaded_skills(investment_env):
 
 
 def test_web_investment_skill_handlers_list_upload_and_activate_versions(investment_env, monkeypatch):
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentSkillActivateHandler,
@@ -2407,7 +2404,7 @@ def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeyp
 
 
 def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_env, monkeypatch):
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
 
@@ -2435,7 +2432,7 @@ def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_
 
 def test_component_settings_save_updates_active_prompt_component(investment_env, monkeypatch):
     from business.business_registry import get_business_definition, resolve_triggers
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentComponentSettingsHandler
 
@@ -2483,7 +2480,7 @@ def test_component_settings_rejects_triggers_for_passive_component(investment_en
 
 def test_investment_skill_settings_audit_records_before_and_after_values(investment_env, monkeypatch):
     from business.investment.audit_service import list_operation_audits
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
 
@@ -2553,7 +2550,7 @@ def _call_investment_bytes_handler(monkeypatch, handler, *, params=None):
 
 
 def test_web_investment_config_returns_masked_tushare_token(investment_env, monkeypatch):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     save_config("tushare.token", "ts-web-secret-1234567890", operator_role="admin")
@@ -2591,7 +2588,7 @@ def test_web_investment_config_returns_reply_text_metadata(investment_env, monke
 
 
 def test_web_investment_config_saves_reply_text_values(investment_env, monkeypatch):
-    from business.investment.config_service import get_config
+    from business.config_service import get_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     body = {"configs": {"reply.wechatmp.pending_result_invalidated": "结果已失效，请重新发起。"}}
@@ -2603,7 +2600,7 @@ def test_web_investment_config_saves_reply_text_values(investment_env, monkeypat
 
 def test_web_investment_config_audit_records_before_and_after_values(investment_env, monkeypatch):
     from business.investment.audit_service import list_operation_audits
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     save_config("reply.wechatmp.pending_result_invalidated", "旧提示", operator_role="admin", operator="seed")
@@ -4996,7 +4993,7 @@ def test_job_service_allows_different_cache_keys_to_run_together(investment_env)
 
 
 def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.constants import ErrorCode, ServiceType, Status
     from business.investment.job_service import find_running_job
     from business.investment.records import get_content_record, list_request_records
@@ -5934,8 +5931,8 @@ def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp
 
 
 def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
-    from business.investment import config_service
-    from business.investment.config_service import safe_log_value
+    from business import config_service
+    from business.config_service import safe_log_value
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, regenerate_content
     from business.investment.records import get_content_record
@@ -5974,9 +5971,9 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
         generate_rate_text,
         generate_technical_analysis_text,
     )
-    from business.investment import config_service
+    from business import config_service
     from business import db
-    from business.investment.config_service import save_configs
+    from business.config_service import save_configs
     from business.constants import ServiceType, Status
 
     api_key = "sk-global-contract-1234567890"
@@ -6053,7 +6050,7 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
 
 
 def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import build_generation_request
     from business.constants import ServiceType
 
@@ -6171,7 +6168,7 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
     ],
 )
 def test_global_model_config_resolves_configured_and_inferred_providers(monkeypatch, global_config, expected):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import _global_model_config
 
     monkeypatch.setattr(config_service, "conf", lambda: global_config)
@@ -6180,7 +6177,7 @@ def test_global_model_config_resolves_configured_and_inferred_providers(monkeypa
 
 
 def test_ai_generation_sends_image_source_files_as_multimodal_content(investment_env, tmp_path, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_bytes = b"\x89PNG\r\n\x1a\nimage"
@@ -6224,7 +6221,7 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(investment
 
 
 def test_ai_generation_retries_transient_model_connection_errors(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
 
     monkeypatch.setattr(
@@ -6258,7 +6255,7 @@ def test_ai_generation_retries_transient_model_connection_errors(investment_env,
 
 
 def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_env, tmp_path, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_path = tmp_path / "rate-source.png"
@@ -6300,7 +6297,7 @@ def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_e
 
 def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_env):
     from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("prompt.rate", "", operator_role="admin")
     seen: list[AIGenerationRequest] = []
@@ -6368,7 +6365,7 @@ def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(invest
 
 
 def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
     from business.constants import ErrorCode, Status
     from business.investment.health import run_health_checks
@@ -6398,7 +6395,7 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(investmen
 
 
 def test_model_health_check_accepts_global_config_fallback(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment.health import run_health_checks
 
     api_key = "sk-global-fallback-1234567890"
@@ -6420,10 +6417,10 @@ def test_model_health_check_accepts_global_config_fallback(investment_env, monke
 
 
 def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.investment import ai_generation
     from business.investment.ai_generation import generate_rate_text
-    from business.investment.config_service import save_configs
+    from business.config_service import save_configs
 
     monkeypatch.setattr(
         config_service,
@@ -6479,7 +6476,7 @@ def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investmen
 
 
 def test_technical_analysis_failure_records_sanitized_backend_detail(investment_env, monkeypatch):
-    from business.investment import config_service
+    from business import config_service
     from business.constants import ErrorCode, ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
@@ -8646,7 +8643,7 @@ def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing
 
 def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_env):
     from business.investment.cache_policy import technical_analysis_cache_expired_after_close
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45", operator_role="admin")
 
@@ -8662,7 +8659,7 @@ def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_
 
 def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(investment_env):
     from business.investment.cache_policy import technical_analysis_cache_expired_after_close
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45:00", operator_role="admin")
 
@@ -8678,7 +8675,7 @@ def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutof
 
 def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment_env):
     from business.investment.cache_policy import technical_analysis_cache_expired_after_close
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "1:02", operator_role="admin")
 
@@ -8694,7 +8691,7 @@ def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment
 
 def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_env):
     from business.investment.cache_policy import technical_analysis_cache_expired_after_close
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", " 14:45", operator_role="admin")
 
@@ -9245,7 +9242,7 @@ def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
 
 def test_stock_resolver_tushare_token_priority_and_masking(investment_env, tmp_path, monkeypatch):
     from business.investment import stock_resolver
-    from business.investment.config_service import get_config, save_config
+    from business.config_service import get_config, save_config
 
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
     (tmp_path / ".tushare_token").write_text("file-token-1234567890", encoding="utf-8")
@@ -9282,7 +9279,7 @@ def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_
 
 def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, monkeypatch):
     from business.investment import stock_resolver
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
 
     calls = []
 
@@ -9714,7 +9711,7 @@ def test_sqlite_to_pg_migration_output_does_not_include_pg_url(tmp_path, monkeyp
 
 
 def test_tushare_token_config_permission_is_sensitive(investment_env):
-    from business.investment.config_service import can_modify_config, save_config
+    from business.config_service import can_modify_config, save_config
 
     assert can_modify_config("tushare.token", "uploader") is False
     assert can_modify_config("tushare.token", "operator") is False
@@ -10208,8 +10205,8 @@ def test_daily_content_default_generation_passes_uploaded_source_files(investmen
 
 
 def test_daily_content_default_image_generation_renders_png_with_fake_model(investment_env, tmp_path, monkeypatch):
-    from business.investment import config_service
-    from business.investment.config_service import save_configs
+    from business import config_service
+    from business.config_service import save_configs
     from business.constants import ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.records import get_content_record
@@ -10566,7 +10563,7 @@ def test_render_service_validates_output_files(investment_env, tmp_path):
 
 
 def test_render_service_contract_uses_skill_templates_and_configured_output_dir(investment_env, tmp_path):
-    from business.investment.config_service import save_configs
+    from business.config_service import save_configs
     from business.constants import ServiceType, Status
     from business.investment.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
 
@@ -10618,7 +10615,7 @@ def test_render_service_contract_uses_skill_templates_and_configured_output_dir(
 
 def test_render_health_check_reports_renderer_template_and_chromium_details(investment_env, tmp_path, monkeypatch):
     from business.investment import health
-    from business.investment.config_service import save_configs
+    from business.config_service import save_configs
 
     missing_renderer = tmp_path / "missing-render-card.py"
     save_configs(
@@ -10649,7 +10646,8 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
 
 
 def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, monkeypatch):
-    from business.investment import config_service, health
+    from business import config_service
+    from business.investment import health
 
     monkeypatch.setattr(
         config_service,
@@ -10748,7 +10746,7 @@ def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(invest
 
 
 def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.investment.health import run_health_checks
     from business.investment.stock_resolver import refresh_stock_symbols
 
@@ -10779,7 +10777,7 @@ def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking
 
 def test_health_check_reports_missing_and_unwritable_directories(investment_env, tmp_path, monkeypatch):
     from business.investment import health
-    from business.investment.config_service import save_configs
+    from business.config_service import save_configs
 
     missing_files = tmp_path / "missing-files"
     tmp_dir = tmp_path / "tmp"
@@ -10811,8 +10809,8 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
 
 def test_health_check_reports_all_dependencies_available(investment_env, tmp_path, monkeypatch):
     from business.investment import health
-    from business.investment import config_service
-    from business.investment.config_service import save_configs
+    from business import config_service
+    from business.config_service import save_configs
     from business.investment.stock_resolver import refresh_stock_symbols
 
     files = {
@@ -10863,7 +10861,7 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
 def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_path):
     from business.constants import ErrorCode
     from business.constants import ServiceType
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_request_records
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
@@ -10927,7 +10925,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
 
 
 def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.router import parse_route
 
@@ -10952,7 +10950,7 @@ def test_parse_route_rejects_markdown_link_targets(investment_env):
 
 
 def test_parse_route_ignores_disabled_investment_skill(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.router import parse_route
 
     save_config("skill.rate.enabled", False, operator_role="admin", operator="pytest")
@@ -10978,7 +10976,7 @@ def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matche
 
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
     from business.investment.user_service import create_user
@@ -11191,7 +11189,7 @@ def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
 def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
@@ -11381,7 +11379,7 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
 
 def test_web_channel_uses_configured_investment_skill_triggers(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
@@ -11564,7 +11562,7 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(inv
 
 def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, monkeypatch):
     from bridge.reply import Reply, ReplyType
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from bridge.context import Context, ContextType
     from channel.chat_channel import ChatChannel
     from channel.web.web_channel import WebChannel, WebMessage

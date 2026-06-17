@@ -11,7 +11,7 @@ from business.business_registry import (
     resolve_triggers,
 )
 
-from .config_service import get_config, save_config
+from business.config_service import get_config, save_config
 from .component_paths import runtime_component_root, runtime_components_root
 from .skill_versions import list_versions
 

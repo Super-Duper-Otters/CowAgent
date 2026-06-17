@@ -3,7 +3,7 @@ import re
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from .config_service import get_config
+from business.config_service import get_config
 from .market_date_resolver import MarketDateResolver
 
 

@@ -1445,7 +1445,7 @@ def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_env, monkeypatch):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.wechatmp import passive_reply
 
     save_config("reply.wechatmp.technical_ack", "配置提示：{} 生成中，回复1。", operator_role="admin")
@@ -1456,7 +1456,7 @@ def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_en
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, monkeypatch):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.wechatmp import passive_reply
 
     save_config("reply.wechatmp.technical_cache_hit", "缓存好了：{}，回复1取图。", operator_role="admin")
@@ -1474,7 +1474,7 @@ def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_conf
 
 
 def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(investment_env):
-    from business.investment.config_service import save_config
+    from business.config_service import save_config
     from channel.wechatmp import passive_reply
 
     save_config("reply.wechatmp.running_technical_analysis", "{} 还在跑。", operator_role="admin")

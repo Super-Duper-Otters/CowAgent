@@ -109,7 +109,7 @@ def archive_artifact_file(
     if not path.is_file():
         return file_path
 
-    from .config_service import get_config
+    from business.config_service import get_config
 
     files_root = Path(str(get_config("storage.files_dir") or get_storage_dirs()["files"]))
     if not files_root.is_absolute():

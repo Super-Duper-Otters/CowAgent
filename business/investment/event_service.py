@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import insert, select
 
-from .config_service import sanitize_sensitive_text
+from business.config_service import sanitize_sensitive_text
 from business.db import connect, row_to_dict
 from business.schema import request_events
 
