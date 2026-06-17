@@ -1,21 +1,18 @@
 # encoding:utf-8
 import os
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from business.constants import ServiceType
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
 
 
 STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED = pytest.mark.skip(
-    reason="stage 8 removes investment route and permission prechecks from wechatmp channel modules"
+    reason="stage 8 removes business route and permission prechecks from wechatmp channel modules"
 )
 
 
 @pytest.fixture(autouse=True)
-def _default_investment_user_access(monkeypatch):
+def _default_business_user_access(monkeypatch):
     monkeypatch.setattr(
         "business.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(allowed=True, user_prompt=""),
@@ -23,47 +20,12 @@ def _default_investment_user_access(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_investment_record_writes(monkeypatch):
+def _isolate_business_record_writes(monkeypatch):
     monkeypatch.setattr("business.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
     monkeypatch.setattr("business.records.fail_request_record", lambda *args, **_kwargs: None)
     monkeypatch.setattr("business.business_records.create_request_record", lambda *args, **_kwargs: "test-request-id")
     monkeypatch.setattr("business.business_records.fail_request_record", lambda *args, **_kwargs: None)
 
-
-@pytest.fixture()
-def business_env(tmp_path, monkeypatch):
-    from business import db
-    from business import storage
-
-    base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
-    schema_name = f"cowagent_test_{uuid4().hex}"
-    url = make_url(base_url)
-    schema_url = url.set(
-        query={
-            **dict(url.query),
-            "options": f"-csearch_path={schema_name}",
-        },
-    ).render_as_string(hide_password=False)
-
-    admin_engine = create_engine(base_url, future=True)
-    with admin_engine.begin() as conn:
-        conn.execute(text(f'create schema "{schema_name}"'))
-
-    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
-    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
-    monkeypatch.delenv("COWAGENT_BUSINESS_DB_PATH", raising=False)
-
-    db.reset_engine_for_tests()
-    storage._MIGRATED_DATABASE_URL = None
-    storage.initialize_storage()
-    try:
-        yield tmp_path
-    finally:
-        db.reset_engine_for_tests()
-        storage._MIGRATED_DATABASE_URL = None
-        with admin_engine.begin() as conn:
-            conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
-        admin_engine.dispose()
 
 
 def _reset_wechatmp_singleton(wechatmp_channel):
