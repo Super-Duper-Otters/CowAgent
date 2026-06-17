@@ -519,12 +519,20 @@ function investmentCurrentAdminUsername() {
     return currentInvestmentAdmin?.username || 'admin';
 }
 
-async function loadInvestmentAdminSession() {
+async function loadInvestmentAdminSession({redirectOnMissing = false} = {}) {
     try {
         const data = await investmentFetchJson('/api/investment/auth/me');
         currentInvestmentAdmin = data.admin || null;
     } catch (error) {
         currentInvestmentAdmin = null;
+        if (redirectOnMissing) {
+            redirectToLogin();
+            return null;
+        }
+    }
+    if (!currentInvestmentAdmin && redirectOnMissing) {
+        redirectToLogin();
+        return null;
     }
     updateAuthUserSummary(currentInvestmentAdmin);
     document.querySelectorAll('.sidebar-item').forEach(item => {
@@ -533,6 +541,7 @@ async function loadInvestmentAdminSession() {
             item.classList.toggle('hidden', !investmentCanView(viewId));
         }
     });
+    return currentInvestmentAdmin;
 }
 
 const INVEST_CONFIG_GROUPS = [
@@ -10382,7 +10391,7 @@ function initApp() {
     applyI18n();
     _applyInputTooltips();
     _restoreSessionPanel();
-    loadInvestmentAdminSession().catch(() => {});
+    loadInvestmentAdminSession({redirectOnMissing: currentConsoleAuthenticated}).catch(() => {});
 
     fetch('/api/version').then(r => r.json()).then(data => {
         APP_VERSION = `v${data.version}`;
@@ -10404,6 +10413,10 @@ fetch('/auth/check').then(r => r.json()).then(data => {
     } else {
         currentConsoleAuthenticated = Boolean(data.auth_required && data.authenticated);
         currentInvestmentAdmin = data.investment_admin || currentInvestmentAdmin;
+        if (currentConsoleAuthenticated && !currentInvestmentAdmin) {
+            redirectToLogin();
+            return;
+        }
         initApp();
     }
 }).catch(() => {

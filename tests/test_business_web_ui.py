@@ -1311,8 +1311,12 @@ def test_business_console_hides_actions_by_admin_role():
 
     assert "let currentInvestmentAdmin = null;" in js
     assert "function investmentCan(" in js
-    assert "async function loadInvestmentAdminSession(" in js
+    assert "async function loadInvestmentAdminSession({redirectOnMissing = false} = {})" in js
     assert "/api/investment/auth/me" in js
+    assert "if (redirectOnMissing) {\n            redirectToLogin();\n            return null;\n        }" in js
+    assert "if (!currentInvestmentAdmin && redirectOnMissing)" in js
+    assert "loadInvestmentAdminSession({redirectOnMissing: currentConsoleAuthenticated})" in js
+    assert "if (currentConsoleAuthenticated && !currentInvestmentAdmin)" in js
     assert "investmentButtonIfCan('customers.write'" in js
     assert "investmentButtonIfCan('customers.enable'" in js
     assert "investmentButtonIfCan('customers.import'" in js
