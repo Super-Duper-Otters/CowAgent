@@ -1445,7 +1445,7 @@ def test_content_strategy_components_are_manifest_backed():
 
 
 def test_component_paths_define_builtin_and_runtime_roots(investment_env):
-    from business.investment.component_paths import (
+    from business.component_paths import (
         builtin_components_root,
         runtime_component_root,
         runtime_components_root,
@@ -1512,7 +1512,7 @@ def test_investment_component_trigger_ownership(investment_env):
 
 
 def test_component_service_lists_components_by_type(investment_env):
-    from business.investment.component_service import list_components
+    from business.component_service import list_components
 
     items = {item["component_key"]: item for item in list_components()}
 
@@ -1526,7 +1526,7 @@ def test_component_service_lists_components_by_type(investment_env):
 
 
 def test_component_service_marks_content_modules():
-    from business.investment.component_service import list_components
+    from business.component_service import list_components
 
     by_key = {item["component_key"]: item for item in list_components()}
 
@@ -1537,7 +1537,7 @@ def test_component_service_marks_content_modules():
 
 
 def test_component_service_includes_prompt_and_version_data(investment_env):
-    from business.investment.component_service import list_components
+    from business.component_service import list_components
     from business.config_service import save_config
 
     save_config("prompt.rate", "rate prompt v1", operator_role="admin")
@@ -1554,8 +1554,8 @@ def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(inv
 
     import pytest
 
-    from business.investment.component_paths import runtime_component_root
-    from business.investment.component_service import delete_runtime_component, list_components
+    from business.component_paths import runtime_component_root
+    from business.component_service import delete_runtime_component, list_components
 
     component_dir = runtime_component_root("macro-delete")
     component_dir.mkdir(parents=True, exist_ok=True)
@@ -1592,7 +1592,7 @@ def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(inv
 
 def test_runtime_component_definition_overrides_builtin_definition(investment_env):
     from business.business_registry import get_business_definition
-    from business.investment.component_paths import runtime_component_root
+    from business.component_paths import runtime_component_root
 
     component_dir = runtime_component_root("technical-analysis")
     component_dir.mkdir(parents=True, exist_ok=True)
@@ -1629,7 +1629,7 @@ def test_runtime_component_definition_overrides_builtin_definition(investment_en
 
 
 def test_skill_versions_list_only_new_runtime_versions(investment_env):
-    from business.investment.component_paths import runtime_versions_root
+    from business.component_paths import runtime_versions_root
     from business.storage import get_storage_dirs
     from business.skill_versions import list_versions
 
@@ -1694,7 +1694,7 @@ def test_investment_skill_loader_extracts_suffix_target(investment_env):
 
 
 def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
-    from business.investment.component_paths import runtime_component_root, runtime_versions_root
+    from business.component_paths import runtime_component_root, runtime_versions_root
     from business.config_service import get_config
     from business.constants import ServiceType
     from business.skill_registry import list_investment_skills, match_investment_skill
@@ -1856,7 +1856,7 @@ def test_web_technical_analysis_script_component_returns_uploaded_text(investmen
 
 def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.component_paths import runtime_component_root
+    from business.component_paths import runtime_component_root
     from business.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
 
@@ -10358,7 +10358,7 @@ def test_daily_content_api_accepts_module_key_for_content_modules(investment_env
 
 
 def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(investment_env, tmp_path):
-    from business.investment.component_paths import runtime_component_root
+    from business.component_paths import runtime_component_root
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
@@ -11047,7 +11047,7 @@ def test_business_router_sets_module_key_on_reply(monkeypatch):
 def test_prompt_to_image_module_generates_image_from_customer_input(investment_env, tmp_path, monkeypatch):
     import json
 
-    from business.investment.component_paths import runtime_component_root
+    from business.component_paths import runtime_component_root
     from business.records import list_request_records
     from business.router import handle_text_message
 
@@ -11127,7 +11127,7 @@ def test_request_records_api_returns_module_label_for_custom_prompt_module(inves
     import json
 
     from business.constants import ServiceType
-    from business.investment.component_paths import runtime_component_root
+    from business.component_paths import runtime_component_root
     from business.records import create_request_record, fail_request_record
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentRequestRecordsHandler

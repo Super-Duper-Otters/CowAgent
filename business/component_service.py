@@ -12,7 +12,7 @@ from business.business_registry import (
 )
 
 from business.config_service import get_config, save_config
-from .component_paths import runtime_component_root, runtime_components_root
+from business.component_paths import runtime_component_root, runtime_components_root
 from business.skill_versions import list_versions
 
 

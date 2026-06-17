@@ -3889,7 +3889,7 @@ class InvestmentComponentsHandler:
     def GET(self):
         _require_investment_permission("skills.read")
         try:
-            from business.investment.component_service import list_components
+            from business.component_service import list_components
 
             return _investment_json_response({
                 "status": "success",
@@ -3906,7 +3906,7 @@ class InvestmentComponentSettingsHandler:
         try:
             from business.config_service import get_configs
             from business.business_registry import get_business_definition
-            from business.investment.component_service import list_components, save_component_settings
+            from business.component_service import list_components, save_component_settings
 
             definition = get_business_definition(component_key)
             body = _investment_json_body()
@@ -3951,7 +3951,7 @@ class InvestmentComponentDeleteHandler:
     def POST(self, component_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.investment.component_service import delete_runtime_component, list_components
+            from business.component_service import delete_runtime_component, list_components
 
             deleted = delete_runtime_component(
                 component_key,

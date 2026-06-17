@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
 from business.config_service import get_config, save_config
-from business.investment.component_paths import runtime_component_root, runtime_versions_root
+from business.component_paths import runtime_component_root, runtime_versions_root
 from business.skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
 
 
