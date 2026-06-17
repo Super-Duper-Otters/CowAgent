@@ -185,7 +185,7 @@ def test_default_cli_does_not_send_customer_service_image():
     assert args.no_auto_repair is False
 
 
-def test_default_content_queries_cover_three_investment_routes():
+def test_default_content_queries_cover_three_business_routes():
     mod = _load_script_module()
 
     queries = mod.default_content_queries("利率", "天娱数科 技术分析", "转债")
