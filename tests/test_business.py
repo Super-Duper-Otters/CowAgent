@@ -9316,19 +9316,19 @@ def test_stock_resolver_all_tushare_reports_market_counts_and_errors(business_en
 
 
 def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeypatch, capsys):
-    from scripts import refresh_investment_stocks
+    from scripts import refresh_business_stocks
 
     calls = []
-    monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: calls.append("init"))
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_all_symbols_from_tushare", lambda: calls.append("all") or {"a_share": {"count": 2}, "hk": {"count": 3}, "us": {"count": 4}})
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: calls.append("a_share") or 3)
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_hk_symbols_from_tushare", lambda: calls.append("hk") or 4)
-    monkeypatch.setattr(refresh_investment_stocks.stock_resolver, "refresh_us_symbols_from_tushare", lambda: calls.append("us") or 5)
+    monkeypatch.setattr(refresh_business_stocks.storage, "initialize_storage", lambda: calls.append("init"))
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_all_symbols_from_tushare", lambda: calls.append("all") or {"a_share": {"count": 2}, "hk": {"count": 3}, "us": {"count": 4}})
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: calls.append("a_share") or 3)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_hk_symbols_from_tushare", lambda: calls.append("hk") or 4)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_us_symbols_from_tushare", lambda: calls.append("us") or 5)
 
-    assert refresh_investment_stocks.main(["--source", "all", "--json"]) == 0
-    assert refresh_investment_stocks.main(["--source", "a_share", "--json"]) == 0
-    assert refresh_investment_stocks.main(["--source", "hk", "--json"]) == 0
-    assert refresh_investment_stocks.main(["--source", "us", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "all", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "a_share", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "hk", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "us", "--json"]) == 0
 
     assert calls == ["init", "all", "init", "a_share", "init", "hk", "init", "us"]
     payloads = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
@@ -9339,16 +9339,16 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
 
 
 def test_refresh_business_stocks_script_exits_one_when_all_sources_fail(business_env, monkeypatch, capsys):
-    from scripts import refresh_investment_stocks
+    from scripts import refresh_business_stocks
 
-    monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
+    monkeypatch.setattr(refresh_business_stocks.storage, "initialize_storage", lambda: None)
     monkeypatch.setattr(
-        refresh_investment_stocks.stock_resolver,
+        refresh_business_stocks.stock_resolver,
         "refresh_all_symbols_from_tushare",
         lambda: {"a_share": {"error": "a failed"}, "hk": {"error": "hk failed"}, "us": {"error": "us failed"}},
     )
 
-    assert refresh_investment_stocks.main(["--source", "all", "--json"]) == 1
+    assert refresh_business_stocks.main(["--source", "all", "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["source"] == "all"
@@ -9360,16 +9360,16 @@ def test_refresh_business_stocks_script_exits_one_when_all_sources_fail(business
 
 
 def test_refresh_business_stocks_script_reports_single_source_exceptions(business_env, monkeypatch, capsys):
-    from scripts import refresh_investment_stocks
+    from scripts import refresh_business_stocks
 
-    monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
+    monkeypatch.setattr(refresh_business_stocks.storage, "initialize_storage", lambda: None)
     monkeypatch.setattr(
-        refresh_investment_stocks.stock_resolver,
+        refresh_business_stocks.stock_resolver,
         "refresh_hk_symbols_from_tushare",
         lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
     )
 
-    assert refresh_investment_stocks.main(["--source", "hk", "--json"]) == 1
+    assert refresh_business_stocks.main(["--source", "hk", "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["source"] == "hk"
@@ -9382,7 +9382,7 @@ def test_refresh_business_stocks_script_runs_by_file_path():
     repo_root = Path(__file__).resolve().parents[1]
 
     result = subprocess.run(
-        [sys.executable, "scripts/refresh_investment_stocks.py", "--help"],
+        [sys.executable, "scripts/refresh_business_stocks.py", "--help"],
         cwd=repo_root,
         capture_output=True,
         text=True,

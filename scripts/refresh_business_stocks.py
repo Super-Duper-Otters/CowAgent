@@ -83,7 +83,7 @@ def _print_payload(payload: dict[str, Any], as_json: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Refresh the investment stock dictionary.")
+    parser = argparse.ArgumentParser(description="Refresh the business stock dictionary.")
     parser.add_argument("--source", choices=("all", "a_share", "hk", "us"), default="all")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args(argv)
