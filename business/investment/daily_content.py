@@ -11,7 +11,7 @@ from sqlalchemy import and_, insert, or_, select, update
 from .audit_service import AdminActor, actor_from_admin, record_operation_audit
 from .config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
-from .db import connect, row_to_dict
+from business.db import connect, row_to_dict
 from .records import create_business_workflow_record, finish_business_workflow_record, record_output_file
 from .render_service import DEFAULT_RENDERER_PATH, template_for_service
 from .schema import investment_daily_contents

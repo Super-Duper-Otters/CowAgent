@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import bindparam, insert, select, text, update
 
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
-from .db import connect
+from business.db import connect
 from .records import (
     GENERATING_TIMEOUT_MINUTES,
     RequestRecord,

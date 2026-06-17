@@ -39,7 +39,7 @@ def investment_postgres_env(tmp_path, monkeypatch):
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
 
-    from business.investment import db
+    from business import db
     from business import storage
 
     db.reset_engine_for_tests()
@@ -62,7 +62,7 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
     from business.investment.config_service import get_config, save_config
     from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
-    from business.investment.db import get_engine
+    from business.db import get_engine
     from business.investment.records import (
         create_request_record,
         fail_request_record,

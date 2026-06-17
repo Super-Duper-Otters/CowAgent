@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select
 
-from .db import connect
+from business.db import connect
 from .schema import (
     investment_admin_sessions,
     investment_cache_entries,

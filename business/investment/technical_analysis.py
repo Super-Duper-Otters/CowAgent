@@ -22,7 +22,7 @@ from .cache_service import (
 )
 from .config_service import get_config, sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType, user_message
-from .db import connect
+from business.db import connect
 from .market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from .render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from .schema import investment_cache_entries, investment_request_records

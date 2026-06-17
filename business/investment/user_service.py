@@ -12,7 +12,7 @@ from zipfile import ZipFile
 from sqlalchemy import func, or_, insert, select, update
 
 from business.constants import CUSTOMER_SERVICE_TYPES, ErrorCode, SERVICE_LABELS, ServiceType, normalize_service, user_message
-from .db import connect, row_to_dict
+from business.db import connect, row_to_dict
 from .schema import investment_users
 
 

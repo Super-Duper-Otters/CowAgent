@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from business.investment import db as investment_db  # noqa: E402
+from business import db as investment_db  # noqa: E402
 from business.investment import migrations as investment_migrations  # noqa: E402
 from business.investment import schema  # noqa: E402
 

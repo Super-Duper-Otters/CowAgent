@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import insert, select
 
 from .config_service import sanitize_sensitive_text
-from .db import connect, row_to_dict
+from business.db import connect, row_to_dict
 from .schema import request_events
 
 

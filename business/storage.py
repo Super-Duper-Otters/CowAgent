@@ -32,7 +32,7 @@ def get_db_path() -> Path:
 
 def get_connection():
     initialize_storage()
-    from business.investment.db import get_engine
+    from business.db import get_engine
 
     return get_engine().raw_connection()
 
@@ -43,7 +43,7 @@ def initialize_storage() -> None:
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
     from business.investment import migrations
-    from business.investment.db import get_database_url
+    from business.db import get_database_url
 
     database_url = get_database_url()
     if _MIGRATED_DATABASE_URL != database_url:

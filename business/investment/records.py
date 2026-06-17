@@ -10,7 +10,7 @@ from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from .config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
-from .db import connect, row_to_dict
+from business.db import connect, row_to_dict
 from .schema import (
     investment_cache_entries,
     investment_daily_contents,

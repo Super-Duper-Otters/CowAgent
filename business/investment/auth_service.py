@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, insert, select, update
 
-from .db import connect, row_to_dict
+from business.db import connect, row_to_dict
 from .schema import investment_admin_sessions, investment_admin_users
 
 HASH_ALGORITHM = "pbkdf2_sha256"

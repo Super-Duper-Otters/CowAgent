@@ -10,7 +10,7 @@ from sqlalchemy import inspect, select
 from . import config_service
 from .config_service import get_config
 from business.constants import SERVICE_LABELS, ServiceType
-from .db import connect, get_engine, row_to_dict
+from business.db import connect, get_engine, row_to_dict
 from .render_service import (
     DEFAULT_RENDERER_PATH,
     DEFAULT_TEMPLATE_BOND_PATH,

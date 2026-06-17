@@ -11,7 +11,7 @@ from sqlalchemy.engine import make_url
 
 @pytest.fixture()
 def investment_env(tmp_path, monkeypatch):
-    from business.investment import db
+    from business import db
     from business import storage
 
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
@@ -46,7 +46,7 @@ def investment_env(tmp_path, monkeypatch):
 
 
 def _investment_config_keys():
-    from business.investment import db
+    from business import db
     from business.investment.schema import investment_configs
 
     with db.connect() as conn:

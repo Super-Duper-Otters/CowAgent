@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from business.constants import ErrorCode
 from .config_service import get_config, mask_sensitive_value
-from .db import connect, row_to_dict, upsert_stock_symbols
+from business.db import connect, row_to_dict, upsert_stock_symbols
 from .schema import investment_stock_symbols
 
 
