@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from business.constants import EntryType, ServiceType, Status
 from business.db import connect, row_to_dict
-from business.investment.records import _visible_delivery_message, build_request_record_conditions
+from business.records import _visible_delivery_message, build_request_record_conditions
 from business.schema import investment_request_records, investment_users
 from business.user_service import _decode_services
 

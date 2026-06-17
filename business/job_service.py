@@ -7,7 +7,7 @@ from sqlalchemy import bindparam, insert, select, text, update
 
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
 from business.db import connect
-from business.investment.records import (
+from business.records import (
     GENERATING_TIMEOUT_MINUTES,
     RequestRecord,
     _audit_values,

@@ -63,7 +63,7 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
     from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.db import get_engine
-    from business.investment.records import (
+    from business.records import (
         create_request_record,
         fail_request_record,
         get_request_record,

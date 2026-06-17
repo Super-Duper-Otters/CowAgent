@@ -3507,7 +3507,7 @@ class InvestmentRequestRecordsHandler:
         _require_investment_permission("records.read")
         try:
             from business.business_records import list_output_files, list_request_records_page
-            from business.investment.event_service import list_request_events
+            from business.event_service import list_request_events
 
             params = web.input(
                 limit='50',

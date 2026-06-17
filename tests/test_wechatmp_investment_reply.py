@@ -24,8 +24,8 @@ def _default_investment_user_access(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _isolate_investment_record_writes(monkeypatch):
-    monkeypatch.setattr("business.investment.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
-    monkeypatch.setattr("business.investment.records.fail_request_record", lambda *args, **_kwargs: None)
+    monkeypatch.setattr("business.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
+    monkeypatch.setattr("business.records.fail_request_record", lambda *args, **_kwargs: None)
     monkeypatch.setattr("business.business_records.create_request_record", lambda *args, **_kwargs: "test-request-id")
     monkeypatch.setattr("business.business_records.fail_request_record", lambda *args, **_kwargs: None)
 
