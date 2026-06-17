@@ -135,7 +135,7 @@ def test_investment_schema_uses_simplified_physical_column_names():
     assert {"operation_category", "result_status", "error_message"}.isdisjoint(physical_names["operation_audits"])
 
 
-def test_investment_migration_removes_generation_records_table(investment_env):
+def test_investment_migration_removes_generation_records_table(business_env):
     from sqlalchemy import inspect
     from business.db import get_engine
 
@@ -238,7 +238,7 @@ def test_investment_migration_transfers_generation_records_to_new_tables(tmp_pat
             conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
 
 
-def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(investment_env):
+def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(business_env):
     from business.auth_service import (
         authenticate_admin,
         create_admin_session,
@@ -283,7 +283,7 @@ def test_investment_auth_service_hashes_passwords_and_checks_role_permissions(in
         create_admin_user("legacy-tech-a", "tech-pass", role="technical_admin")
 
 
-def test_technical_operator_only_has_config_permissions(investment_env):
+def test_technical_operator_only_has_config_permissions(business_env):
     from business.auth_service import authenticate_admin, create_admin_user, require_permission
 
     create_admin_user("tech-ops-a", "tech-pass", role="technical_operator")
@@ -301,7 +301,7 @@ def test_technical_operator_only_has_config_permissions(investment_env):
     assert require_permission(admin, "health.read").allowed is False
 
 
-def test_investment_migrations_seed_default_admin_and_posters(investment_env):
+def test_investment_migrations_seed_default_admin_and_posters(business_env):
     from business.auth_service import authenticate_admin
 
     admin = authenticate_admin("admin", "password")
@@ -314,7 +314,7 @@ def test_investment_migrations_seed_default_admin_and_posters(investment_env):
         assert poster.role == "content_operator"
 
 
-def test_admin_user_service_lists_updates_and_resets_password(investment_env):
+def test_admin_user_service_lists_updates_and_resets_password(business_env):
     from business.auth_service import (
         authenticate_admin,
         create_admin_user,
@@ -365,7 +365,7 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
         update_admin_user("solo-admin", enabled=False)
 
 
-def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
+def test_web_investment_api_enforces_admin_roles(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.records import get_content_record
@@ -507,7 +507,7 @@ def test_web_investment_api_enforces_admin_roles(investment_env, monkeypatch):
     assert "admin_user.reset_password" in actions
 
 
-def test_investment_auth_me_allows_content_operator_without_customer_or_audit_permission(investment_env, monkeypatch):
+def test_investment_auth_me_allows_content_operator_without_customer_or_audit_permission(business_env, monkeypatch):
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAuthMeHandler
@@ -529,7 +529,7 @@ def test_investment_auth_me_allows_content_operator_without_customer_or_audit_pe
     assert "audits.read" not in payload["admin"]["permissions"]
 
 
-def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
+def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(business_env, monkeypatch):
     from business.db import connect
     from business.schema import admin_sessions, admins
     from business.auth_service import create_admin_user
@@ -552,7 +552,7 @@ def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(inves
     assert denied["code"] == "unauthorized"
 
 
-def test_admin_login_with_web_password_enabled_also_authenticates_console(investment_env, monkeypatch):
+def test_admin_login_with_web_password_enabled_also_authenticates_console(business_env, monkeypatch):
     from business.auth_service import create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import AuthCheckHandler, AuthLoginHandler
@@ -651,7 +651,7 @@ def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
     assert redirects == ["/chat"]
 
 
-def test_content_operator_session_denies_records_and_cache(investment_env, monkeypatch):
+def test_content_operator_session_denies_records_and_cache(business_env, monkeypatch):
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentCacheHandler, InvestmentRequestRecordsHandler
@@ -757,7 +757,7 @@ def _xlsx_bytes(headers, rows):
 
 
 @pytest.fixture()
-def investment_env(tmp_path, monkeypatch):
+def business_env(tmp_path, monkeypatch):
     from business import db
     from business import storage
 
@@ -803,7 +803,7 @@ def test_investment_database_url_defaults_to_docker_postgres(monkeypatch):
     assert url == "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 
 
-def test_investment_database_url_prefers_postgres_env(investment_env, monkeypatch):
+def test_investment_database_url_prefers_postgres_env(business_env, monkeypatch):
     from business import db
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/cowagent")
@@ -850,7 +850,7 @@ def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
     assert (tmp_path / "storage" / "tmp").is_dir()
 
 
-def test_investment_migration_smoke_creates_schema(investment_env):
+def test_investment_migration_smoke_creates_schema(business_env):
     from business import storage
     from business.db import get_engine
     from sqlalchemy import inspect
@@ -883,7 +883,7 @@ def test_investment_migration_smoke_creates_schema(investment_env):
         assert legacy_names == []
 
 
-def test_request_events_record_customer_request_lifecycle(investment_env):
+def test_request_events_record_customer_request_lifecycle(business_env):
     from business.constants import ServiceType
     from business.event_service import list_request_events, record_request_event
     from business.records import create_request_record
@@ -924,7 +924,7 @@ def test_request_events_record_customer_request_lifecycle(investment_env):
     assert events[0].created_at
 
 
-def test_request_records_emit_lifecycle_events(investment_env):
+def test_request_records_emit_lifecycle_events(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.event_service import list_request_events
     from business.records import (
@@ -959,7 +959,7 @@ def test_request_records_emit_lifecycle_events(investment_env):
     assert failed_events[1].error == "no content"
 
 
-def test_external_request_record_declares_entry_and_actor(investment_env):
+def test_external_request_record_declares_entry_and_actor(business_env):
     from business.constants import ActionType, ActorType, EntryType, ServiceType
     from business.records import create_request_record, get_request_record
 
@@ -975,7 +975,7 @@ def test_external_request_record_declares_entry_and_actor(investment_env):
     assert record.actor_role == ""
 
 
-def test_internal_call_entries_are_separate_from_external_requests(investment_env):
+def test_internal_call_entries_are_separate_from_external_requests(business_env):
     from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.records import create_business_workflow_record, finish_business_workflow_record, get_request_record, list_request_records
 
@@ -1009,7 +1009,7 @@ def test_internal_call_entries_are_separate_from_external_requests(investment_en
     assert record.elapsed_ms == 31
 
 
-def test_ai_generation_audit_records_common_generation_metadata(investment_env):
+def test_ai_generation_audit_records_common_generation_metadata(business_env):
     from business.ai_generation_audit import (
         finish_ai_generation_audit,
         get_ai_generation_audit,
@@ -1062,7 +1062,7 @@ def test_ai_generation_audit_records_common_generation_metadata(investment_env):
     assert record.elapsed_ms == 45
 
 
-def test_operation_audit_infers_final_record_categories(investment_env):
+def test_operation_audit_infers_final_record_categories(business_env):
     from business.audit_service import list_operation_audits, record_operation_audit
 
     cases = [
@@ -1089,7 +1089,7 @@ def test_operation_audit_infers_final_record_categories(investment_env):
         assert by_action[action] == expected
 
 
-def test_daily_content_generation_records_backend_entry_in_business_records(investment_env, tmp_path):
+def test_daily_content_generation_records_backend_entry_in_business_records(business_env, tmp_path):
     from sqlalchemy import text
 
     from business.constants import ActionType, ActorType, EntryType, ServiceType
@@ -1147,7 +1147,7 @@ def test_daily_content_generation_records_backend_entry_in_business_records(inve
     assert ai_audits[0].output_text == "rate output"
 
 
-def test_request_records_api_includes_request_event_timeline(investment_env, monkeypatch):
+def test_request_records_api_includes_request_event_timeline(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.event_service import record_request_event
     from business.records import create_request_record
@@ -1177,7 +1177,7 @@ def test_request_records_api_includes_request_event_timeline(investment_env, mon
     assert payload["records"][0]["events"][1]["content"] == "1"
 
 
-def test_business_records_api_filters_internal_entry_type(investment_env, monkeypatch):
+def test_business_records_api_filters_internal_entry_type(business_env, monkeypatch):
     from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import (
@@ -1274,7 +1274,7 @@ def test_health_uses_investment_db_connection_helpers():
     assert not hasattr(health, "get_connection")
 
 
-def test_config_service_direct_call_initializes_storage_schema(investment_env):
+def test_config_service_direct_call_initializes_storage_schema(business_env):
     from business import db
     from business.config_service import get_config, save_config
     from sqlalchemy import inspect
@@ -1287,7 +1287,7 @@ def test_config_service_direct_call_initializes_storage_schema(investment_env):
     assert inspect(db.get_engine()).has_table("configs")
 
 
-def test_business_config_service_uses_existing_config_storage(investment_env):
+def test_business_config_service_uses_existing_config_storage(business_env):
     from business.config_service import get_config, save_config
 
     save_config("prompt.rate", "business prompt", operator_role="admin")
@@ -1297,7 +1297,7 @@ def test_business_config_service_uses_existing_config_storage(investment_env):
     assert get_config("prompt.convertible_bond") == "convertible bond prompt"
 
 
-def test_config_masks_sensitive_values_and_checks_permissions(investment_env, monkeypatch):
+def test_config_masks_sensitive_values_and_checks_permissions(business_env, monkeypatch):
     from business.config_service import (
         can_modify_config,
         get_config,
@@ -1320,14 +1320,14 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
     assert can_modify_config("tushare.token", "admin") is True
 
 
-def test_investment_user_message_uses_reply_config_defaults(investment_env):
+def test_investment_user_message_uses_reply_config_defaults(business_env):
     from business.constants import ErrorCode, user_message
 
     assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
 
 
-def test_investment_user_message_can_be_overridden_from_database(investment_env):
+def test_investment_user_message_can_be_overridden_from_database(business_env):
     from business.config_service import save_config
     from business.constants import ErrorCode, user_message
 
@@ -1337,7 +1337,7 @@ def test_investment_user_message_can_be_overridden_from_database(investment_env)
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
 
 
-def test_business_user_message_uses_config_service_before_reply_defaults(investment_env):
+def test_business_user_message_uses_config_service_before_reply_defaults(business_env):
     from business.config_service import save_config
     from business.constants import ErrorCode, user_message
 
@@ -1346,7 +1346,7 @@ def test_business_user_message_uses_config_service_before_reply_defaults(investm
     assert user_message(ErrorCode.NO_CONTENT) == "业务内容稍后更新。"
 
 
-def test_web_open_chat_config_is_admin_only(investment_env):
+def test_web_open_chat_config_is_admin_only(business_env):
     from business.config_service import can_modify_config, get_config, save_config
 
     assert get_config("router.enable_web_open_chat", False) is False
@@ -1360,7 +1360,7 @@ def test_web_open_chat_config_is_admin_only(investment_env):
     assert get_config("router.enable_web_open_chat") is True
 
 
-def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(investment_env):
+def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(business_env):
     from sqlalchemy import select
 
     from business import db
@@ -1387,7 +1387,7 @@ def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(in
     assert get_config("tushare.token", "") == ""
 
 
-def test_web_console_config_save_preserves_masked_investment_sensitive_values(investment_env):
+def test_web_console_config_save_preserves_masked_investment_sensitive_values(business_env):
     from business.config_service import get_config, get_configs, save_configs
 
     token = "ts-console-secret-1234567890"
@@ -1406,7 +1406,7 @@ def test_web_console_config_save_preserves_masked_investment_sensitive_values(in
     assert get_config("router.enable_agent_fallback") is True
 
 
-def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_skills(investment_env):
+def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_skills(business_env):
     from business.skill_registry import list_investment_skills
 
     keys = {item["skill_key"] for item in list_investment_skills()}
@@ -1416,7 +1416,7 @@ def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_sk
     assert "knowledge-wiki" not in keys
 
 
-def test_investment_builtin_components_have_explicit_component_types(investment_env):
+def test_investment_builtin_components_have_explicit_component_types(business_env):
     from business.business_registry import get_business_definition
 
     assert get_business_definition("technical-analysis").component_type == "active_script"
@@ -1446,7 +1446,7 @@ def test_content_strategy_components_are_manifest_backed():
     assert bond.default_triggers == ("转债",)
 
 
-def test_component_paths_define_builtin_and_runtime_roots(investment_env):
+def test_component_paths_define_builtin_and_runtime_roots(business_env):
     from business.component_paths import (
         builtin_components_root,
         runtime_component_root,
@@ -1478,7 +1478,7 @@ def test_builtin_component_manifests_are_clean_and_complete():
     assert renderer["config_key"] == "render.renderer_path"
 
 
-def test_default_component_runtime_paths_use_builtin_components(investment_env):
+def test_default_component_runtime_paths_use_builtin_components(business_env):
     from business.business_registry import get_business_definition
     from business.constants import ServiceType
     from business.render_service import (
@@ -1504,7 +1504,7 @@ def test_default_component_runtime_paths_use_builtin_components(investment_env):
     assert "skills" not in _configured_skill_path().resolve().parts
 
 
-def test_investment_component_trigger_ownership(investment_env):
+def test_investment_component_trigger_ownership(business_env):
     from business.business_registry import get_business_definition
 
     assert get_business_definition("technical-analysis").uses_triggers is True
@@ -1513,7 +1513,7 @@ def test_investment_component_trigger_ownership(investment_env):
     assert get_business_definition("signal-card-renderer").uses_triggers is False
 
 
-def test_component_service_lists_components_by_type(investment_env):
+def test_component_service_lists_components_by_type(business_env):
     from business.component_service import list_components
 
     items = {item["component_key"]: item for item in list_components()}
@@ -1538,7 +1538,7 @@ def test_component_service_marks_content_modules():
     assert by_key["signal-card-renderer"]["content_enabled"] is False
 
 
-def test_component_service_includes_prompt_and_version_data(investment_env):
+def test_component_service_includes_prompt_and_version_data(business_env):
     from business.component_service import list_components
     from business.config_service import save_config
 
@@ -1551,7 +1551,7 @@ def test_component_service_includes_prompt_and_version_data(investment_env):
     assert items["signal-card-renderer"]["versions"]
 
 
-def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(investment_env):
+def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(business_env):
     import json
 
     import pytest
@@ -1592,7 +1592,7 @@ def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(inv
         delete_runtime_component("rate", operator_role="admin", operator="pytest")
 
 
-def test_runtime_component_definition_overrides_builtin_definition(investment_env):
+def test_runtime_component_definition_overrides_builtin_definition(business_env):
     from business.business_registry import get_business_definition
     from business.component_paths import runtime_component_root
 
@@ -1630,7 +1630,7 @@ def test_runtime_component_definition_overrides_builtin_definition(investment_en
     assert definition.uses_triggers is True
 
 
-def test_skill_versions_list_only_new_runtime_versions(investment_env):
+def test_skill_versions_list_only_new_runtime_versions(business_env):
     from business.component_paths import runtime_versions_root
     from business.storage import get_storage_dirs
     from business.skill_versions import list_versions
@@ -1667,7 +1667,7 @@ def test_skill_versions_list_only_new_runtime_versions(investment_env):
     assert Path(versions[version_ids.index("skill-new")]["storage_path"]) == new_version
 
 
-def test_investment_skill_loader_applies_web_trigger_override(investment_env):
+def test_investment_skill_loader_applies_web_trigger_override(business_env):
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.skill_registry import match_investment_skill
@@ -1681,7 +1681,7 @@ def test_investment_skill_loader_applies_web_trigger_override(investment_env):
     assert matched.service_type == ServiceType.RATE
 
 
-def test_investment_skill_loader_extracts_suffix_target(investment_env):
+def test_investment_skill_loader_extracts_suffix_target(business_env):
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.skill_registry import match_investment_skill
@@ -1695,7 +1695,7 @@ def test_investment_skill_loader_extracts_suffix_target(investment_env):
     assert matched.target_text == "300502.SZ"
 
 
-def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
+def test_uploaded_investment_skill_package_appears_in_registry(business_env, tmp_path):
     from business.component_paths import runtime_component_root, runtime_versions_root
     from business.config_service import get_config
     from business.constants import ServiceType
@@ -1741,7 +1741,7 @@ investment:
     assert matched.service_type == ServiceType.UNMATCHED
 
 
-def test_uploaded_investment_skill_package_rejects_unsafe_skill_key(investment_env, tmp_path):
+def test_uploaded_investment_skill_package_rejects_unsafe_skill_key(business_env, tmp_path):
     import pytest
 
     from business.skill_versions import save_package_upload
@@ -1766,7 +1766,7 @@ investment:
         save_package_upload("unsafe.zip", package.read_bytes(), operator="pytest")
 
 
-def test_uploaded_script_investment_skill_executes_from_route(investment_env, tmp_path):
+def test_uploaded_script_investment_skill_executes_from_route(business_env, tmp_path):
     from business.constants import ServiceType
     from business.router import handle_text_message
     from business.skill_versions import save_package_upload
@@ -1816,7 +1816,7 @@ investment:
     assert reply.reply_text == "macro script ok"
 
 
-def test_web_technical_analysis_script_component_returns_uploaded_text(investment_env, tmp_path):
+def test_web_technical_analysis_script_component_returns_uploaded_text(business_env, tmp_path):
     from bridge.reply import ReplyType
     from business.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
@@ -1856,7 +1856,7 @@ def test_web_technical_analysis_script_component_returns_uploaded_text(investmen
     assert reply.content == "WEB_TEXT_COMPONENT:300502.SZ"
 
 
-def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(investment_env, tmp_path):
+def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(business_env, tmp_path):
     from bridge.reply import ReplyType
     from business.component_paths import runtime_component_root
     from business.skill_versions import save_package_upload
@@ -1898,7 +1898,7 @@ def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_
     assert reply.content == "ACTIVE_VERSION_MANIFEST:300502.SZ"
 
 
-def test_business_reply_technical_analysis_script_component_returns_uploaded_text(investment_env, tmp_path):
+def test_business_reply_technical_analysis_script_component_returns_uploaded_text(business_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.business_router import build_business_reply
@@ -1944,7 +1944,7 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
     assert reply.content == "CHAT_TEXT_COMPONENT:300502.SZ"
 
 
-def test_investment_skill_upload_python_file_creates_version_and_activates_it(investment_env):
+def test_investment_skill_upload_python_file_creates_version_and_activates_it(business_env):
     from pathlib import Path
 
     from business.config_service import get_config
@@ -1968,7 +1968,7 @@ def test_investment_skill_upload_python_file_creates_version_and_activates_it(in
     assert any(item["version_id"] == "builtin-default" for item in versions)
 
 
-def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(investment_env):
+def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(business_env):
     from io import BytesIO
     from zipfile import ZipFile
 
@@ -1990,7 +1990,7 @@ def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(inv
         save_upload("signal-card-renderer", "skill.zip", missing.getvalue(), operator="tester")
 
 
-def test_investment_skill_version_activation_switches_between_upload_and_builtin(investment_env):
+def test_investment_skill_version_activation_switches_between_upload_and_builtin(business_env):
     from business.config_service import get_config
     from business.skill_versions import activate_version, list_versions, save_upload
 
@@ -2007,7 +2007,7 @@ def test_investment_skill_version_activation_switches_between_upload_and_builtin
     assert get_config("render.renderer_path") == uploaded["script_path"]
 
 
-def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_falls_back_to_builtin(investment_env):
+def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_falls_back_to_builtin(business_env):
     import pytest
 
     from business.config_service import get_config
@@ -2026,7 +2026,7 @@ def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_fall
         delete_version("technical-analysis", "builtin-default", operator="tester")
 
 
-def test_investment_skill_versions_include_loaded_skills(investment_env):
+def test_investment_skill_versions_include_loaded_skills(business_env):
     from pathlib import Path
 
     from business.config_service import get_config
@@ -2054,7 +2054,7 @@ def test_investment_skill_versions_include_loaded_skills(investment_env):
     assert get_business_definition("technical-analysis").handler_type == "builtin_technical_analysis"
 
 
-def test_web_investment_skill_handlers_list_upload_and_activate_versions(investment_env, monkeypatch):
+def test_web_investment_skill_handlers_list_upload_and_activate_versions(business_env, monkeypatch):
     from business.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import (
@@ -2102,7 +2102,7 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
     assert get_config("render.renderer_path", "") == ""
 
 
-def test_web_user_disable_button_updates_permission_path(investment_env, monkeypatch):
+def test_web_user_disable_button_updates_permission_path(business_env, monkeypatch):
     from business.constants import ErrorCode, ServiceType
     from business.router import handle_text_message
     from business.user_service import create_user, get_user_by_openid
@@ -2124,7 +2124,7 @@ def test_web_user_disable_button_updates_permission_path(investment_env, monkeyp
     assert reply.reply_text == "您的服务已停用，如需恢复请联系服务人员。"
 
 
-def test_web_customer_search_enable_and_audits_use_customer_permissions(investment_env, monkeypatch):
+def test_web_customer_search_enable_and_audits_use_customer_permissions(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.constants import ServiceType
     from business.user_service import create_user, get_user_by_openid
@@ -2156,7 +2156,7 @@ def test_web_customer_search_enable_and_audits_use_customer_permissions(investme
     assert audits[0].operator == "audit-admin"
 
 
-def test_web_customer_create_audit_binds_session_admin_not_body_operator(investment_env, monkeypatch):
+def test_web_customer_create_audit_binds_session_admin_not_body_operator(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.auth_service import authenticate_admin
     from business.db import connect
@@ -2210,7 +2210,7 @@ def test_web_customer_create_audit_binds_session_admin_not_body_operator(investm
     assert row.updated_by_username == "session-admin"
 
 
-def test_web_user_management_apis_support_keyword_and_pagination(investment_env, monkeypatch):
+def test_web_user_management_apis_support_keyword_and_pagination(business_env, monkeypatch):
     from business.auth_service import create_admin_user
     from business.constants import ServiceType
     from business.user_service import create_user
@@ -2258,7 +2258,7 @@ def test_web_user_management_apis_support_keyword_and_pagination(investment_env,
     assert [user["username"] for user in admins["users"]] == ["ops-page-2", "ops-page-3"]
 
 
-def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_env, monkeypatch):
+def test_web_customer_keyword_search_keeps_rows_and_total_consistent(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.user_service import create_user
     from channel.web import web_channel
@@ -2284,7 +2284,7 @@ def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_
     assert [user["openid"] for user in payload["users"]] == ["o92zVw4BYH2qaib", "1o92zVw4BYH2qai"]
 
 
-def test_web_customer_keyword_search_supports_field_categories(investment_env, monkeypatch):
+def test_web_customer_keyword_search_supports_field_categories(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.user_service import create_user
     from channel.web import web_channel
@@ -2332,7 +2332,7 @@ def test_web_customer_keyword_search_supports_field_categories(investment_env, m
     assert all_payload["pagination"]["total"] == 2
 
 
-def test_router_authenticates_before_parsing_unmatched_input(investment_env, monkeypatch):
+def test_router_authenticates_before_parsing_unmatched_input(business_env, monkeypatch):
     import pytest
 
     from business.constants import ErrorCode, ServiceType
@@ -2362,7 +2362,7 @@ def test_router_authenticates_before_parsing_unmatched_input(investment_env, mon
     assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
 
 
-def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeypatch):
+def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypatch):
     from business.constants import ErrorCode, ServiceType
     from business.user_service import create_user, verify_permission
     from channel.web import web_channel
@@ -2399,7 +2399,7 @@ def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeyp
     assert technical.error_code == ErrorCode.UNAUTHORIZED
 
 
-def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_env, monkeypatch):
+def test_investment_skill_settings_post_updates_triggers_and_enabled(business_env, monkeypatch):
     from business.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
@@ -2426,7 +2426,7 @@ def test_investment_skill_settings_post_updates_triggers_and_enabled(investment_
     assert get_config("skill.rate.triggers") == ["今日利率", "利率观察"]
 
 
-def test_component_settings_save_updates_active_prompt_component(investment_env, monkeypatch):
+def test_component_settings_save_updates_active_prompt_component(business_env, monkeypatch):
     from business.business_registry import get_business_definition, resolve_triggers
     from business.config_service import get_config
     from channel.web import web_channel
@@ -2456,7 +2456,7 @@ def test_component_settings_save_updates_active_prompt_component(investment_env,
     assert get_config("prompt.rate") == "updated rate prompt"
 
 
-def test_component_settings_rejects_triggers_for_passive_component(investment_env, monkeypatch):
+def test_component_settings_rejects_triggers_for_passive_component(business_env, monkeypatch):
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentComponentSettingsHandler
 
@@ -2474,7 +2474,7 @@ def test_component_settings_rejects_triggers_for_passive_component(investment_en
     assert "triggers" in payload["message"]
 
 
-def test_investment_skill_settings_audit_records_before_and_after_values(investment_env, monkeypatch):
+def test_investment_skill_settings_audit_records_before_and_after_values(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.config_service import save_config
     from channel.web import web_channel
@@ -2545,7 +2545,7 @@ def _call_investment_bytes_handler(monkeypatch, handler, *, params=None):
     return raw
 
 
-def test_web_investment_config_returns_masked_tushare_token(investment_env, monkeypatch):
+def test_web_investment_config_returns_masked_tushare_token(business_env, monkeypatch):
     from business.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
@@ -2558,7 +2558,7 @@ def test_web_investment_config_returns_masked_tushare_token(investment_env, monk
     assert "ts-web-secret-1234567890" not in json.dumps(payload, ensure_ascii=False)
 
 
-def test_web_investment_config_returns_reply_text_metadata(investment_env, monkeypatch):
+def test_web_investment_config_returns_reply_text_metadata(business_env, monkeypatch):
     from channel.web.web_channel import InvestmentConfigHandler
 
     payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().GET)
@@ -2583,7 +2583,7 @@ def test_web_investment_config_returns_reply_text_metadata(investment_env, monke
     assert "reply.wechatmp.unmatched" not in payload["reply_texts"]["definitions"]
 
 
-def test_web_investment_config_saves_reply_text_values(investment_env, monkeypatch):
+def test_web_investment_config_saves_reply_text_values(business_env, monkeypatch):
     from business.config_service import get_config
     from channel.web.web_channel import InvestmentConfigHandler
 
@@ -2594,7 +2594,7 @@ def test_web_investment_config_saves_reply_text_values(investment_env, monkeypat
     assert get_config("reply.wechatmp.pending_result_invalidated") == "结果已失效，请重新发起。"
 
 
-def test_web_investment_config_audit_records_before_and_after_values(investment_env, monkeypatch):
+def test_web_investment_config_audit_records_before_and_after_values(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
@@ -2614,7 +2614,7 @@ def test_web_investment_config_audit_records_before_and_after_values(investment_
     assert audits[0].operator_username == "admin"
 
 
-def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_keys(investment_env, monkeypatch):
+def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_keys(business_env, monkeypatch):
     from sqlalchemy import select
 
     from business import db
@@ -2650,7 +2650,7 @@ def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_ke
     assert not any(key.startswith(("model.", "wechatmp.")) for key in get_payload["configs"])
 
 
-def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_env, monkeypatch):
+def test_web_stock_query_returns_matches_and_stats_without_refresh(business_env, monkeypatch):
     from business import stock_resolver
     import business.stock_resolver as web_stock_resolver
     from channel.web.web_channel import InvestmentStocksHandler
@@ -2679,7 +2679,7 @@ def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_en
     assert payload["stats"]["source_count"] == 1
 
 
-def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_env, monkeypatch):
+def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env, monkeypatch):
     import business.stock_resolver as stock_resolver
     from channel.web.web_channel import InvestmentStocksRefreshHandler
 
@@ -2708,7 +2708,7 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_en
     assert payload["result"] == {"a_share": {"error": "a failed"}, "hk": {"count": 4}, "us": {"count": 5}}
 
 
-def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(investment_env):
+def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(business_env):
     from business.db import connect
     from business.record_cleanup import cleanup_useless_business_records
     from business.schema import (
@@ -2779,7 +2779,7 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(inve
         assert conn.execute(text("select count(*) from request_records where request_id = 'old-unmatched-cleanup'")).scalar_one() == 0
 
 
-def test_web_daily_content_generate_marks_generating_before_background_task(investment_env, monkeypatch):
+def test_web_daily_content_generate_marks_generating_before_background_task(business_env, monkeypatch):
     from business.constants import ServiceType, Status
     from business.daily_content import create_rate_content_draft
     from business.records import get_content_record
@@ -2815,7 +2815,7 @@ def test_web_daily_content_generate_marks_generating_before_background_task(inve
     assert get_content_record(content_id).status == Status.GENERATING
 
 
-def test_web_daily_content_create_binds_session_admin_not_body_operator(investment_env, monkeypatch):
+def test_web_daily_content_create_binds_session_admin_not_body_operator(business_env, monkeypatch):
     from business.audit_service import list_operation_audits
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.db import connect
@@ -2869,7 +2869,7 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
     assert audit.operation_category == "content"
 
 
-def test_web_daily_content_get_returns_current_effective_content(investment_env, tmp_path, monkeypatch):
+def test_web_daily_content_get_returns_current_effective_content(business_env, tmp_path, monkeypatch):
     from pathlib import Path
 
     from business.constants import ServiceType
@@ -2904,7 +2904,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
     assert payload["current_effective"]["operator"] == "operator-current"
 
 
-def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_path, monkeypatch):
+def test_web_daily_content_get_returns_history_artifacts(business_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentDailyContentHandler
@@ -2933,7 +2933,7 @@ def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_pat
     assert history["output_artifacts"][0]["file_path"] == history["output_image"]
 
 
-def test_set_content_effective_archives_external_output_image(investment_env, tmp_path):
+def test_set_content_effective_archives_external_output_image(business_env, tmp_path):
     from pathlib import Path
 
     from business.constants import ServiceType, Status
@@ -2973,7 +2973,7 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
     assert artifacts[0]["file_path"] == record.output_image
 
 
-def test_list_content_records_filters_by_effective_date(investment_env):
+def test_list_content_records_filters_by_effective_date(business_env):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft
     from business.records import list_content_records
@@ -2991,7 +2991,7 @@ def test_list_content_records_filters_by_effective_date(investment_env):
     assert {record.effective_date for record in records} == {"2026-05-29"}
 
 
-def test_web_content_handlers_accept_effective_date_filter(investment_env, monkeypatch):
+def test_web_content_handlers_accept_effective_date_filter(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
@@ -3015,7 +3015,7 @@ def test_web_content_handlers_accept_effective_date_filter(investment_env, monke
     assert old_id not in {content["content_id"] for content in daily_payload["contents"]}
 
 
-def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(investment_env, monkeypatch):
+def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
@@ -3061,7 +3061,7 @@ def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(i
     assert cb_id not in {content["content_id"] for content in oversized_limit_payload["contents"]}
 
 
-def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch):
+def test_web_records_handlers_sanitize_invalid_limit(business_env, monkeypatch):
     from business.audit_service import record_operation_audit
     from business.constants import ServiceType
     from business.records import create_request_record
@@ -3087,7 +3087,7 @@ def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch
     assert [audit["audit_id"] for audit in audits_payload["audits"]] == [audit_id]
 
 
-def test_request_records_page_returns_total_offset_and_api_pagination(investment_env, monkeypatch):
+def test_request_records_page_returns_total_offset_and_api_pagination(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.db import connect
     from business.records import create_request_record, list_request_records_page
@@ -3128,7 +3128,7 @@ def test_request_records_page_returns_total_offset_and_api_pagination(investment
     assert capped_payload["pagination"]["total"] == 5
 
 
-def test_request_records_page_filters_by_openid_or_mobile(investment_env):
+def test_request_records_page_filters_by_openid_or_mobile(business_env):
     from business.constants import ServiceType
     from business.records import create_request_record, list_request_records_page, succeed_request_record
     from business.user_service import create_user
@@ -3155,7 +3155,7 @@ def test_request_records_page_filters_by_openid_or_mobile(investment_env):
     assert [record.openid for record in by_institution] == ["openid-b"]
 
 
-def test_request_records_page_unknown_service_returns_empty(investment_env):
+def test_request_records_page_unknown_service_returns_empty(business_env):
     from business.constants import ServiceType
     from business.records import create_request_record, list_request_records_page, succeed_request_record
 
@@ -3168,7 +3168,7 @@ def test_request_records_page_unknown_service_returns_empty(investment_env):
     assert total == 0
 
 
-def test_content_records_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+def test_content_records_page_returns_total_and_filter_pagination(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft
     from business.db import connect
@@ -3209,7 +3209,7 @@ def test_content_records_page_returns_total_and_filter_pagination(investment_env
     assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
 
 
-def test_operation_audits_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+def test_operation_audits_page_returns_total_and_filter_pagination(business_env, monkeypatch):
     from business.audit_service import list_operation_audits_page, record_operation_audit
     from business.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
@@ -3245,7 +3245,7 @@ def test_operation_audits_page_returns_total_and_filter_pagination(investment_en
     assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
 
 
-def test_operation_audit_records_admin_actor_fields(investment_env):
+def test_operation_audit_records_admin_actor_fields(business_env):
     from business.audit_service import AdminActor, list_operation_audits, record_operation_audit
 
     audit_id = record_operation_audit(
@@ -3277,7 +3277,7 @@ def test_operation_audit_records_admin_actor_fields(investment_env):
     assert audit.after_state == {"mobile": "bad-mobile"}
 
 
-def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
+def test_cache_entries_page_returns_total_and_filter_pagination(business_env, monkeypatch):
     from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
@@ -3329,7 +3329,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, 
     assert payload["market_dates"] == ["2026-05-29"]
 
 
-def test_cache_handler_without_market_date_returns_history_across_dates(investment_env, monkeypatch):
+def test_cache_handler_without_market_date_returns_history_across_dates(business_env, monkeypatch):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
@@ -3362,7 +3362,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(investme
     assert payload["pagination"]["total"] == 2
 
 
-def test_cache_handler_keyword_search_filters_backend_results_and_total(investment_env, monkeypatch, tmp_path):
+def test_cache_handler_keyword_search_filters_backend_results_and_total(business_env, monkeypatch, tmp_path):
     from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, update_generation_success
@@ -3411,7 +3411,7 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(investme
     assert code_entries[0]["normalized_target"] == "300502.SZ"
 
 
-def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(investment_env, monkeypatch, tmp_path):
+def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
@@ -3524,7 +3524,7 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(inve
     assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["input", "output", "intermediate"]
 
 
-def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_env, monkeypatch):
+def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
@@ -3598,7 +3598,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_
     assert package_payload["nodes"][0]["package_id"].startswith("technical_analysis:JUN-B:2026-06-08")
 
 
-def test_artifact_folder_api_includes_daily_content_records(investment_env, monkeypatch, tmp_path):
+def test_artifact_folder_api_includes_daily_content_records(business_env, monkeypatch, tmp_path):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, update_generation_success
     from business.db import connect
@@ -3700,7 +3700,7 @@ def test_artifact_folder_api_includes_daily_content_records(investment_env, monk
     assert cb_content_id
 
 
-def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
+def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatch):
     from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
@@ -3745,7 +3745,7 @@ def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypa
     assert payload["pagination"]["total"] == 2
 
 
-def test_generated_content_history_api_combines_cache_and_daily_content_records(investment_env, monkeypatch, tmp_path):
+def test_generated_content_history_api_combines_cache_and_daily_content_records(business_env, monkeypatch, tmp_path):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, update_generation_success
@@ -3801,7 +3801,7 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
     assert "2026-06-05" in payload["market_dates"]
 
 
-def test_generated_content_history_treats_expired_daily_content_as_invalidated(investment_env, tmp_path):
+def test_generated_content_history_treats_expired_daily_content_as_invalidated(business_env, tmp_path):
     from business.cache_service import list_generated_history_market_dates, list_generated_history_page
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, update_generation_success
@@ -3855,7 +3855,7 @@ def test_generated_content_history_treats_expired_daily_content_as_invalidated(i
     ]
 
 
-def test_generated_content_history_paginates_sources_without_bulk_fetch(investment_env, tmp_path):
+def test_generated_content_history_paginates_sources_without_bulk_fetch(business_env, tmp_path):
     import inspect
 
     from business import cache_service
@@ -3893,7 +3893,7 @@ def test_generated_content_history_paginates_sources_without_bulk_fetch(investme
     assert "offset + page_size" in source
 
 
-def test_request_records_api_filters_and_prefers_mobile_customer_display(investment_env, monkeypatch):
+def test_request_records_api_filters_and_prefers_mobile_customer_display(business_env, monkeypatch):
     from business.constants import ErrorCode, ServiceType
     from business.db import connect
     from business.records import create_request_record, fail_request_record, succeed_request_record
@@ -3960,7 +3960,7 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(investm
     assert openid_payload["records"][0]["customer_display"] == "openid-plain"
 
 
-def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(investment_env, monkeypatch):
+def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(business_env, monkeypatch):
     from business.audit_service import record_operation_audit
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
@@ -4086,7 +4086,7 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
     assert audits_payload["pagination"]["total"] == 1
 
 
-def test_internal_request_records_api_filters_by_keyword_and_date_range(investment_env, monkeypatch):
+def test_internal_request_records_api_filters_by_keyword_and_date_range(business_env, monkeypatch):
     from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.db import connect
     from business.records import create_business_workflow_record, finish_business_workflow_record
@@ -4168,7 +4168,7 @@ def test_internal_request_records_api_filters_by_keyword_and_date_range(investme
     assert content_payload["records"] == []
 
 
-def test_operation_audits_api_filters_by_operator_action_keyword_and_date(investment_env, monkeypatch):
+def test_operation_audits_api_filters_by_operator_action_keyword_and_date(business_env, monkeypatch):
     from business.audit_service import record_operation_audit
     from business.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
@@ -4225,7 +4225,7 @@ def test_operation_audits_api_filters_by_operator_action_keyword_and_date(invest
     assert excluded not in {audit["audit_id"] for audit in payload["audits"]}
 
 
-def test_investment_web_api_end_to_end_smoke_without_external_services(investment_env, tmp_path, monkeypatch):
+def test_investment_web_api_end_to_end_smoke_without_external_services(business_env, tmp_path, monkeypatch):
     from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.daily_content import update_generation_success
     from business.records import get_content_record
@@ -4389,7 +4389,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
     assert ("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") in headers
 
 
-def test_user_service_permission_edges_and_upsert(investment_env):
+def test_user_service_permission_edges_and_upsert(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.user_service import (
         ImportUserRow,
@@ -4437,7 +4437,7 @@ def test_user_service_permission_edges_and_upsert(investment_env):
     assert verify_permission("ok", ServiceType.CONVERTIBLE_BOND).allowed is False
 
 
-def test_user_service_crud_list_and_all_service_contract(investment_env):
+def test_user_service_crud_list_and_all_service_contract(business_env):
     from business.constants import ServiceType
     from business.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
 
@@ -4475,7 +4475,7 @@ def test_user_service_crud_list_and_all_service_contract(investment_env):
     assert list_users(enabled=False, openid="crud")[0].enabled is False
 
 
-def test_user_services_normalize_all_when_all_or_every_business_service_selected(investment_env):
+def test_user_services_normalize_all_when_all_or_every_business_service_selected(business_env):
     from business.constants import ServiceType
     from business.user_service import create_user, get_user_by_openid, update_user
 
@@ -4501,7 +4501,7 @@ def test_user_services_normalize_all_when_all_or_every_business_service_selected
     assert partial.allowed_services == [ServiceType.TECHNICAL_ANALYSIS, ServiceType.RATE]
 
 
-def test_user_service_excel_import_maps_fields_and_permissions_take_effect(investment_env):
+def test_user_service_excel_import_maps_fields_and_permissions_take_effect(business_env):
     from business.constants import ServiceType
     from business.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
 
@@ -4569,7 +4569,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(inves
     assert verify_permission("new-openid", ServiceType.TECHNICAL_ANALYSIS).allowed is True
 
 
-def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(investment_env):
+def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(business_env):
     from datetime import datetime
     from business.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
 
@@ -4592,7 +4592,7 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
     assert get_user_by_openid(rows[0].openid) is not None
 
 
-def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(investment_env):
+def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(business_env):
     from datetime import datetime
     from io import BytesIO
 
@@ -4613,7 +4613,7 @@ def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(inv
     assert rows[0].auth_end_at == datetime(2026, 12, 30, 16, 0)
 
 
-def test_user_service_excel_import_reports_invalid_date_with_row_and_field(investment_env):
+def test_user_service_excel_import_reports_invalid_date_with_row_and_field(business_env):
     from business.user_service import parse_users_excel
 
     payload = _xlsx_bytes(
@@ -4648,7 +4648,7 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(inves
     assert "Excel row 2 invalid date field: auth_end_at" in str(number_error.value)
 
 
-def test_user_service_excel_import_requires_authorization_start_end_and_services(investment_env):
+def test_user_service_excel_import_requires_authorization_start_end_and_services(business_env):
     from business.user_service import parse_users_excel
 
     missing_start = _xlsx_bytes(
@@ -4677,7 +4677,7 @@ def test_user_service_excel_import_requires_authorization_start_end_and_services
     assert "allowed_services" in message or "auth_start_at" in message or "auth_end_at" in message
 
 
-def test_user_import_template_headers_are_parseable(investment_env):
+def test_user_import_template_headers_are_parseable(business_env):
     from business.export_service import export_users_import_template_xlsx
     from business.user_service import parse_users_excel
 
@@ -4688,7 +4688,7 @@ def test_user_import_template_headers_are_parseable(investment_env):
     assert rows[0].allowed_services == "全部"
 
 
-def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, monkeypatch):
+def test_web_user_import_parses_before_confirm_and_then_commits(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
@@ -4751,7 +4751,7 @@ def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, 
     assert get_user_by_openid("new-import").name == "New User"
 
 
-def test_records_save_failure_success_and_order(investment_env):
+def test_records_save_failure_success_and_order(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.records import (
         append_request_warning,
@@ -4779,7 +4779,7 @@ def test_records_save_failure_success_and_order(investment_env):
     assert "14.153.6.203" in warned.status_warning
 
 
-def test_request_record_delivery_status_is_business_facing(investment_env):
+def test_request_record_delivery_status_is_business_facing(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.records import (
         append_request_warning,
@@ -4813,7 +4813,7 @@ def test_request_record_delivery_status_is_business_facing(investment_env):
     assert failed_record.delivery_detail == "no active content"
 
 
-def test_export_request_records_hides_internal_delivery_marker(investment_env):
+def test_export_request_records_hides_internal_delivery_marker(business_env):
     from business.constants import ServiceType
     from business.export_service import export_request_records_xlsx
     from business.records import create_request_record, mark_request_delivered, succeed_request_record
@@ -4829,7 +4829,7 @@ def test_export_request_records_hides_internal_delivery_marker(investment_env):
     assert "[delivery:delivered]" not in str(rows[1])
 
 
-def test_old_generating_request_records_are_flagged_without_mutating_status(investment_env):
+def test_old_generating_request_records_are_flagged_without_mutating_status(business_env):
     from business.constants import ServiceType, Status
     from business.db import connect
     from business.records import create_request_record, get_request_record, list_request_records
@@ -4855,7 +4855,7 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(inve
     assert persisted.status == Status.GENERATING
 
 
-def test_job_service_reuses_running_technical_analysis_record(investment_env):
+def test_job_service_reuses_running_technical_analysis_record(business_env):
     from business.constants import ServiceType
     from business.job_service import find_running_job, start_job_if_absent
     from business.records import succeed_request_record
@@ -4875,7 +4875,7 @@ def test_job_service_reuses_running_technical_analysis_record(investment_env):
     assert next_job.record.request_id != first.record.request_id
 
 
-def test_job_service_reuses_running_cache_job_across_users(investment_env):
+def test_job_service_reuses_running_cache_job_across_users(business_env):
     from business.constants import ServiceType
     from business.job_service import find_running_cache_job, start_cache_job_if_absent
     from business.records import succeed_request_record
@@ -4921,7 +4921,7 @@ def test_job_service_reuses_running_cache_job_across_users(investment_env):
     assert next_job.record.request_id != first.record.request_id
 
 
-def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(investment_env):
+def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(business_env):
     from business.constants import ServiceType, Status
     from business.db import connect
     from business.job_service import find_running_cache_job, start_cache_job_if_absent
@@ -4962,7 +4962,7 @@ def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(inv
     assert next_job.record.request_id != first.record.request_id
 
 
-def test_job_service_allows_different_cache_keys_to_run_together(investment_env):
+def test_job_service_allows_different_cache_keys_to_run_together(business_env):
     from business.constants import ServiceType
     from business.job_service import start_cache_job_if_absent
 
@@ -4988,7 +4988,7 @@ def test_job_service_allows_different_cache_keys_to_run_together(investment_env)
     assert second.record.request_id != first.record.request_id
 
 
-def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
+def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(business_env, monkeypatch):
     from business import config_service
     from business.constants import ErrorCode, ServiceType, Status
     from business.job_service import find_running_job
@@ -5015,7 +5015,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
     assert find_running_job("ok", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS) is None
 
 
-def test_router_delegates_technical_analysis_to_cowagent_business_handler(investment_env, monkeypatch):
+def test_router_delegates_technical_analysis_to_cowagent_business_handler(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.router import BusinessReply, handle_text_message
     from business.user_service import create_user
@@ -5050,7 +5050,7 @@ def test_router_delegates_technical_analysis_to_cowagent_business_handler(invest
     assert calls == [("ok", "300502.SZ 技术分析", "300502.SZ", True)]
 
 
-def test_job_service_ignores_stale_running_technical_analysis_record(investment_env):
+def test_job_service_ignores_stale_running_technical_analysis_record(business_env):
     from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import text
@@ -5077,7 +5077,7 @@ def test_job_service_ignores_stale_running_technical_analysis_record(investment_
     assert next_job.record.request_id != old_id
 
 
-def test_job_service_concurrent_start_creates_single_running_job(investment_env):
+def test_job_service_concurrent_start_creates_single_running_job(business_env):
     from concurrent.futures import ThreadPoolExecutor
 
     from business.constants import ServiceType
@@ -5100,7 +5100,7 @@ def test_job_service_concurrent_start_creates_single_running_job(investment_env)
 
 
 def test_router_concurrent_technical_analysis_reuses_running_job_without_duplicate_handler(
-    investment_env,
+    business_env,
     tmp_path,
 ):
     from concurrent.futures import ThreadPoolExecutor
@@ -5154,7 +5154,7 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
 
 
 def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_users(
-    investment_env,
+    business_env,
     tmp_path,
     monkeypatch,
 ):
@@ -5227,7 +5227,7 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
     assert records[0].market_date == "2026-05-25"
 
 
-def test_request_records_api_includes_generating_timeout_warning(investment_env, monkeypatch):
+def test_request_records_api_includes_generating_timeout_warning(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.db import connect
     from business.records import create_request_record
@@ -5257,7 +5257,7 @@ def test_request_records_api_includes_generating_timeout_warning(investment_env,
     assert record["status_warning"] == "未完成/可能超时"
 
 
-def test_batch_01_service_results_share_contract_fields(investment_env):
+def test_batch_01_service_results_share_contract_fields(business_env):
     from business.ai_generation import AIGenerationResult
     from business.daily_content import DailyContentResult
     from business.render_service import RenderResult
@@ -5277,7 +5277,7 @@ def test_batch_01_service_results_share_contract_fields(investment_env):
         assert required.issubset(result.__dataclass_fields__)
 
 
-def test_success_request_records_output_files_table(investment_env):
+def test_success_request_records_output_files_table(business_env):
     from business.constants import ServiceType
     from business.db import connect
     from business.records import record_success_request
@@ -5303,7 +5303,7 @@ def test_success_request_records_output_files_table(investment_env):
     ]
 
 
-def test_success_request_archives_generated_images_and_documents(investment_env, tmp_path):
+def test_success_request_archives_generated_images_and_documents(business_env, tmp_path):
     from business.constants import ServiceType
     from business.records import create_request_record, get_request_record, list_output_files, succeed_request_record
     from business.storage import get_storage_dirs
@@ -5346,7 +5346,7 @@ def test_success_request_archives_generated_images_and_documents(investment_env,
     assert all(item["file_url"].startswith("/api/file?id=") for item in artifacts)
 
 
-def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
+def test_legacy_output_paths_migrate_to_unified_files_dir(business_env):
     from business.cache_service import find_cache_entry_by_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
@@ -5429,7 +5429,7 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
     assert source_artifacts[0]["file_url"].startswith("/api/file?id=")
 
 
-def test_request_records_save_audit_metadata(investment_env):
+def test_request_records_save_audit_metadata(business_env):
     from business.constants import ServiceType
     from business.records import create_request_record, get_request_record, succeed_request_record
 
@@ -5504,7 +5504,7 @@ def test_investment_date_bound_treats_plain_dates_as_beijing_days():
     assert _investment_quarter_bounds(2026, 2) == ("2026-03-31T16:00:00", "2026-06-30T15:59:59.999999")
 
 
-def test_request_records_export_api_forces_external_request_entry_type(investment_env, monkeypatch):
+def test_request_records_export_api_forces_external_request_entry_type(business_env, monkeypatch):
     from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.records import (
         create_business_workflow_record,
@@ -5544,7 +5544,7 @@ def test_request_records_export_api_forces_external_request_entry_type(investmen
     assert all("backend export source" not in [str(cell) for cell in row] for row in rows)
 
 
-def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
+def test_export_request_records_xlsx_filters_and_includes_audit_fields(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.db import connect
     from business.export_service import export_request_records_xlsx
@@ -5644,7 +5644,7 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(investmen
     ]
 
 
-def test_export_request_records_xlsx_filters_by_service_customer_and_range(investment_env):
+def test_export_request_records_xlsx_filters_by_service_customer_and_range(business_env):
     from business.constants import ServiceType
     from business.db import connect
     from business.export_service import export_request_records_xlsx
@@ -5684,7 +5684,7 @@ def test_export_request_records_xlsx_filters_by_service_customer_and_range(inves
     assert rows[1][4] == "新易盛 技术分析"
 
 
-def test_request_records_keyword_search_matches_event_details(investment_env):
+def test_request_records_keyword_search_matches_event_details(business_env):
     from business.constants import ServiceType
     from business.event_service import record_request_event
     from business.records import create_request_record, list_request_records_page, succeed_request_record
@@ -5710,7 +5710,7 @@ def test_request_records_keyword_search_matches_event_details(investment_env):
     assert [record.request_id for record in records] == [included]
 
 
-def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(investment_env):
+def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(business_env):
     from business.constants import ServiceType
     from business.event_service import record_request_event
     from business.export_service import export_request_records_xlsx
@@ -5738,7 +5738,7 @@ def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(in
     assert [row[1] for row in rows[1:]] == ["openid-export-event"]
 
 
-def test_export_request_records_xlsx_unknown_service_returns_only_header(investment_env):
+def test_export_request_records_xlsx_unknown_service_returns_only_header(business_env):
     from business.constants import ServiceType
     from business.export_service import export_request_records_xlsx
     from business.records import create_request_record, succeed_request_record
@@ -5770,7 +5770,7 @@ def test_export_request_records_xlsx_unknown_service_returns_only_header(investm
     ]
 
 
-def test_export_request_records_xlsx_empty_records_contains_only_header(investment_env):
+def test_export_request_records_xlsx_empty_records_contains_only_header(business_env):
     from business.export_service import export_request_records_xlsx
 
     rows = _xlsx_sheet_rows(export_request_records_xlsx("2026-05-01T00:00:00", "2026-05-31T23:59:59"))
@@ -5779,7 +5779,7 @@ def test_export_request_records_xlsx_empty_records_contains_only_header(investme
     assert rows[0][0] == "请求时间"
 
 
-def test_export_users_xlsx_filters_enabled_users(investment_env):
+def test_export_users_xlsx_filters_enabled_users(business_env):
     from business.constants import ServiceType
     from business.export_service import export_users_xlsx
     from business.user_service import create_user
@@ -5815,7 +5815,7 @@ def test_export_users_xlsx_filters_enabled_users(investment_env):
     ]
 
 
-def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
+def test_web_export_handlers_return_xlsx_downloads(business_env, monkeypatch):
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentRequestRecordsExportHandler, InvestmentUsersExportHandler
 
@@ -5852,7 +5852,7 @@ def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
     )
 
 
-def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp_path):
+def test_artifact_service_records_role_size_hash_and_version(business_env, tmp_path):
     from business.artifact_service import record_artifact
     from business.constants import ServiceType
     from business.db import connect
@@ -5888,7 +5888,7 @@ def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp
     assert file_fingerprint(str(tmp_path / "missing.png")).startswith("missing:")
 
 
-def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp_path):
+def test_artifact_service_records_same_artifact_idempotently(business_env, tmp_path):
     from business.artifact_service import record_artifact
     from business.constants import ServiceType
     from business.db import connect
@@ -5926,7 +5926,7 @@ def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp
     assert rows[0]["version_tag"] == "sha256:second"
 
 
-def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
+def test_ai_and_renderer_failures_record_sanitized_backend_detail(business_env, monkeypatch):
     from business import config_service
     from business.config_service import safe_log_value
     from business.constants import ServiceType
@@ -5960,7 +5960,7 @@ def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env
     assert api_key not in safe_log_value("model.api_key", api_key)
 
 
-def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_rows(investment_env, monkeypatch):
+def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_rows(business_env, monkeypatch):
     from business.ai_generation import (
         AIGenerationRequest,
         generate_convertible_bond_text,
@@ -6045,7 +6045,7 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
     assert cb.generated_text == "standard:convertible_bond:CB prompt:cb source"
 
 
-def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(investment_env, monkeypatch):
+def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(business_env, monkeypatch):
     from business import config_service
     from business.ai_generation import build_generation_request
     from business.constants import ServiceType
@@ -6172,7 +6172,7 @@ def test_global_model_config_resolves_configured_and_inferred_providers(monkeypa
     assert _global_model_config() == expected
 
 
-def test_ai_generation_sends_image_source_files_as_multimodal_content(investment_env, tmp_path, monkeypatch):
+def test_ai_generation_sends_image_source_files_as_multimodal_content(business_env, tmp_path, monkeypatch):
     from business import config_service
     from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
@@ -6216,7 +6216,7 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(investment
     }
 
 
-def test_ai_generation_retries_transient_model_connection_errors(investment_env, monkeypatch):
+def test_ai_generation_retries_transient_model_connection_errors(business_env, monkeypatch):
     from business import config_service
     from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
@@ -6250,7 +6250,7 @@ def test_ai_generation_retries_transient_model_connection_errors(investment_env,
     assert bot.calls == 2
 
 
-def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_env, tmp_path, monkeypatch):
+def test_ai_generation_extracts_image_text_before_final_card_prompt(business_env, tmp_path, monkeypatch):
     from business import config_service
     from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
@@ -6291,7 +6291,7 @@ def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_e
     )
 
 
-def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_env):
+def test_ai_generation_blank_configured_prompt_falls_back_to_default(business_env):
     from business.ai_generation import AIGenerationRequest, generate_rate_text
     from business.config_service import save_config
 
@@ -6311,7 +6311,7 @@ def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_
     assert "当日核心信号" in seen[0].prompt
 
 
-def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(investment_env):
+def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(business_env):
     from business.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
@@ -6333,7 +6333,7 @@ def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(investment_en
     assert result.generated_text == result.text
 
 
-def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(investment_env):
+def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(business_env):
     from business.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
@@ -6360,7 +6360,7 @@ def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(invest
     assert "📊 周度全景复盘\n近一周整体信号：入场为主" in result.text
 
 
-def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env, monkeypatch):
+def test_ai_generation_failures_and_health_check_sanitize_model_config(business_env, monkeypatch):
     from business import config_service
     from business.ai_generation import AIGenerationRequest, generate_rate_text
     from business.constants import ErrorCode, Status
@@ -6390,7 +6390,7 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(investmen
     assert "model.api_key" not in model_health.detail or api_key not in model_health.detail
 
 
-def test_model_health_check_accepts_global_config_fallback(investment_env, monkeypatch):
+def test_model_health_check_accepts_global_config_fallback(business_env, monkeypatch):
     from business import config_service
     from business.health import run_health_checks
 
@@ -6412,7 +6412,7 @@ def test_model_health_check_accepts_global_config_fallback(investment_env, monke
     assert api_key not in model_health.detail
 
 
-def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investment_env, monkeypatch):
+def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(business_env, monkeypatch):
     from business import config_service
     from business import ai_generation
     from business.ai_generation import generate_rate_text
@@ -6471,7 +6471,7 @@ def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investmen
     ]
 
 
-def test_technical_analysis_failure_records_sanitized_backend_detail(investment_env, monkeypatch):
+def test_technical_analysis_failure_records_sanitized_backend_detail(business_env, monkeypatch):
     from business import config_service
     from business.constants import ErrorCode, ServiceType
     from business.records import list_request_records
@@ -6502,7 +6502,7 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(investment_
     assert api_key not in record.error_message
 
 
-def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business_env, tmp_path, monkeypatch):
     from business import technical_analysis
     from business.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
 
@@ -6596,7 +6596,7 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(investme
     ],
 )
 def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
-    investment_env, tmp_path, monkeypatch, raw_input, normalized_target, skill_symbol
+    business_env, tmp_path, monkeypatch, raw_input, normalized_target, skill_symbol
 ):
     from business import technical_analysis
     from business.technical_analysis import run_technical_analysis
@@ -6647,7 +6647,7 @@ def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
     ],
 )
 def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
-    investment_env, tmp_path, monkeypatch, raw_input, dictionary_code, expected_normalized, expected_skill_symbol
+    business_env, tmp_path, monkeypatch, raw_input, dictionary_code, expected_normalized, expected_skill_symbol
 ):
     from business import technical_analysis
     from business.stock_resolver import refresh_stock_symbols
@@ -6700,7 +6700,7 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
     ],
 )
 def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
-    investment_env, tmp_path, monkeypatch, raw_input, expected_detail
+    business_env, tmp_path, monkeypatch, raw_input, expected_detail
 ):
     from business import technical_analysis
     from business.constants import ErrorCode
@@ -6724,7 +6724,7 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
     assert expected_detail in result.detail
 
 
-def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env, monkeypatch):
+def test_technical_analysis_ambiguous_name_lists_candidate_codes(business_env, monkeypatch):
     from business import technical_analysis
     from business.constants import ErrorCode
     from business.stock_resolver import refresh_stock_symbols
@@ -6751,7 +6751,7 @@ def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env,
     )
 
 
-def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
+def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(business_env, tmp_path):
     from business.cache_service import find_cache_entry_by_key
     from business.constants import ServiceType
     from business.db import connect
@@ -6934,7 +6934,7 @@ def _write_legacy_technical_analysis_cache(
 
 
 def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_resolver_confirms_market_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -6973,7 +6973,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
 
 
 def test_technical_analysis_reuses_today_cache_before_close_cutoff(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from zoneinfo import ZoneInfo
 
@@ -7013,7 +7013,7 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
 
 
 def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_reruns(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from zoneinfo import ZoneInfo
 
@@ -7070,7 +7070,7 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
 
 
 def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from zoneinfo import ZoneInfo
 
@@ -7111,7 +7111,7 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
 
 
 def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -7149,7 +7149,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     assert cache_entry.artifact_owner_id == records[0].request_id
 
 
-def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(business_env, tmp_path, monkeypatch):
     from business import cache_service
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -7194,7 +7194,7 @@ def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(inve
 
 
 def test_router_default_technical_analysis_resolver_once_reuses_preview_resolution(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -7225,7 +7225,7 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
 
 
 def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -7256,7 +7256,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
     assert cache_entry.market_date == "2026-05-25"
 
 
-def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(business_env, tmp_path, monkeypatch):
     from business import technical_analysis
     from business.market_date_resolver import MarketDateResolver
     from business.records import list_request_records
@@ -7290,7 +7290,7 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(inve
 
 
 def test_technical_analysis_explicit_market_date_overrides_generated_output_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -7331,7 +7331,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
 
 
 def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7391,7 +7391,7 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
 
 
 def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_program_wrapper_changes(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7441,7 +7441,7 @@ def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_
 
 
 def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_version_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7518,7 +7518,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
 
 
 def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_latest_cache_without_context(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7564,7 +7564,7 @@ def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_lat
 
 
 def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7634,7 +7634,7 @@ def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_ca
 
 
 def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_lookup_would_find_incompatible_row(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7727,7 +7727,7 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
 
 
 def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_close_and_reruns(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from zoneinfo import ZoneInfo
 
@@ -7798,7 +7798,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 
 
 def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompatible(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7856,7 +7856,7 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
 
 
 def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in_window(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7911,7 +7911,7 @@ def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in
 
 
 def test_technical_analysis_known_market_date_reuses_legacy_program_version_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -7968,7 +7968,7 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
 
 
 def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -8023,7 +8023,7 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
 
 
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_legacy_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -8073,7 +8073,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_lega
 
 
 def test_technical_analysis_cache_key_version_changes_when_output_versions_change(
-    investment_env, monkeypatch
+    business_env, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import version_fingerprint
@@ -8106,7 +8106,7 @@ def test_technical_analysis_cache_key_version_changes_when_output_versions_chang
 
 
 def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fallback_window(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -8153,7 +8153,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
 
 
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business import technical_analysis
@@ -8199,7 +8199,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
     assert record.market_date == "2026-05-28"
 
 
-def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_stock_name_reuses_same_standard_code_cache(business_env, tmp_path, monkeypatch):
     from business import technical_analysis
     from business.constants import ServiceType
     from business.records import list_request_records
@@ -8233,7 +8233,7 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investmen
     assert records[1].normalized_target == "300502.SZ"
 
 
-def test_technical_analysis_different_market_date_misses_cache(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_different_market_date_misses_cache(business_env, tmp_path, monkeypatch):
     from business import technical_analysis
     from business.constants import ServiceType
     from business.records import list_request_records
@@ -8297,7 +8297,7 @@ def test_technical_analysis_different_market_date_misses_cache(investment_env, t
 
 
 def test_technical_analysis_unknown_generated_market_date_does_not_cache_current_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -8360,7 +8360,7 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
 
 
 def test_technical_analysis_invalid_generated_market_date_does_not_cache(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -8412,7 +8412,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
 
 
 def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_have_no_date(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import technical_analysis
     from business.cache_service import list_cache_entries
@@ -8499,7 +8499,7 @@ def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
     assert calls == []
 
 
-def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investment_env):
+def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(business_env):
     from business.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
@@ -8642,7 +8642,7 @@ def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing
     )
 
 
-def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing(investment_env):
+def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing(business_env):
     from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
@@ -8655,7 +8655,7 @@ def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing
     )
 
 
-def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_env):
+def test_technical_analysis_cache_policy_uses_configured_cutoff_time(business_env):
     from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
@@ -8671,7 +8671,7 @@ def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_
     )
 
 
-def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(investment_env):
+def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(business_env):
     from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
@@ -8687,7 +8687,7 @@ def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutof
     )
 
 
-def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment_env):
+def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(business_env):
     from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
@@ -8703,7 +8703,7 @@ def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment
     )
 
 
-def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_env):
+def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(business_env):
     from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
@@ -8821,7 +8821,7 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
     assert calls == ["600519.SH", "00700.HK", "AAPL.US"]
 
 
-def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):
+def test_find_cache_entry_missing_cache_file_invalidates_active_entry(business_env, tmp_path):
     from business.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
@@ -8860,7 +8860,7 @@ def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment
 
 
 def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_active_entry(
-    investment_env, tmp_path, monkeypatch
+    business_env, tmp_path, monkeypatch
 ):
     from business import cache_service
     from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
@@ -8912,7 +8912,7 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
     assert entries[0].artifact_owner_id == "request-new"
 
 
-def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investment_env):
+def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(business_env):
     from concurrent.futures import ThreadPoolExecutor
 
     from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
@@ -8945,7 +8945,7 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investme
     assert entries[0].artifact_owner_id in set(output_files)
 
 
-def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, monkeypatch):
+def test_web_investment_cache_handlers_list_and_clear_entries(business_env, monkeypatch):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
@@ -9008,7 +9008,7 @@ def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, mo
     assert clear_payload["removed"] == 1
 
 
-def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(investment_env, monkeypatch):
+def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
@@ -9042,7 +9042,7 @@ def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_serv
     assert unmatched_service_payload["entries"] == []
 
 
-def test_file_serve_handler_rejects_paths_outside_allowed_storage(investment_env, tmp_path, monkeypatch):
+def test_file_serve_handler_rejects_paths_outside_allowed_storage(business_env, tmp_path, monkeypatch):
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
 
@@ -9056,7 +9056,7 @@ def test_file_serve_handler_rejects_paths_outside_allowed_storage(investment_env
         FileServeHandler().GET()
 
 
-def test_file_serve_handler_allows_investment_storage_file(investment_env, monkeypatch):
+def test_file_serve_handler_allows_investment_storage_file(business_env, monkeypatch):
     from business.storage import get_storage_dirs
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
@@ -9070,7 +9070,7 @@ def test_file_serve_handler_allows_investment_storage_file(investment_env, monke
     assert FileServeHandler().GET() == b"png"
 
 
-def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monkeypatch):
+def test_file_serve_handler_allows_file_id_lookup(business_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
     from business.records import create_request_record, list_output_files, succeed_request_record
     from channel.web import web_channel
@@ -9095,7 +9095,7 @@ def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monk
     assert headers["Content-Type"] == "image/png"
 
 
-def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
+def test_stock_resolver_resolves_codes_names_and_business_prompts(business_env, monkeypatch):
     from business import stock_resolver
     from business.constants import ErrorCode, user_message
     from business.stock_resolver import (
@@ -9137,7 +9137,7 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env
     assert user_message(ambiguous_error) == "股票名称匹配到多个标的，请改用股票代码。"
 
 
-def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_env):
+def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(business_env):
     from business import stock_resolver
     from business.constants import ErrorCode
 
@@ -9149,7 +9149,7 @@ def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_
     assert stock_resolver.resolve_stock("苹果") == (None, ErrorCode.STOCK_NOT_FOUND)
 
 
-def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(investment_env, monkeypatch):
+def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(business_env, monkeypatch):
     from business import stock_resolver
 
     monkeypatch.setattr(stock_resolver, "get_tushare_token", lambda: "token")
@@ -9200,7 +9200,7 @@ def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functio
     assert "NOZH.US" not in rows
 
 
-def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env, monkeypatch):
+def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(business_env, monkeypatch):
     from business import stock_resolver
     from business.constants import ErrorCode
 
@@ -9218,7 +9218,7 @@ def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env,
     assert stock_resolver.resolve_stock("AAPL.US") == ("AAPL.US", None)
 
 
-def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(investment_env):
+def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(business_env):
     from business import stock_resolver
     from business.constants import ErrorCode
 
@@ -9242,7 +9242,7 @@ class _FakeDataFrame:
         return self._rows
 
 
-def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
+def test_stock_resolver_refreshes_large_symbol_batch(business_env):
     from business import stock_resolver
 
     rows = [
@@ -9254,7 +9254,7 @@ def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
     assert stock_resolver.stock_dictionary_stats()["total"] == 6000
 
 
-def test_stock_resolver_tushare_token_priority_and_masking(investment_env, tmp_path, monkeypatch):
+def test_stock_resolver_tushare_token_priority_and_masking(business_env, tmp_path, monkeypatch):
     from business import stock_resolver
     from business.config_service import get_config, save_config
 
@@ -9271,7 +9271,7 @@ def test_stock_resolver_tushare_token_priority_and_masking(investment_env, tmp_p
     assert get_config("tushare.token", masked=True) == "conf**********7890"
 
 
-def test_stock_resolver_tushare_token_falls_back_to_file(investment_env, tmp_path, monkeypatch):
+def test_stock_resolver_tushare_token_falls_back_to_file(business_env, tmp_path, monkeypatch):
     from business import stock_resolver
 
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
@@ -9281,7 +9281,7 @@ def test_stock_resolver_tushare_token_falls_back_to_file(investment_env, tmp_pat
     assert stock_resolver.get_tushare_token() == "file-token-1234567890"
 
 
-def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_path, monkeypatch):
+def test_stock_resolver_refresh_from_tushare_requires_token(business_env, tmp_path, monkeypatch):
     from business import stock_resolver
 
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
@@ -9291,7 +9291,7 @@ def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_
         stock_resolver.refresh_a_share_symbols_from_tushare()
 
 
-def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, monkeypatch):
+def test_stock_resolver_refreshes_from_tushare_fake_dataframe(business_env, monkeypatch):
     from business import stock_resolver
     from business.config_service import save_config
 
@@ -9326,7 +9326,7 @@ def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, mo
     assert rows["300502.SZ"]["source"] == "tushare_a"
 
 
-def test_stock_resolver_all_tushare_reports_market_counts_and_errors(investment_env, monkeypatch):
+def test_stock_resolver_all_tushare_reports_market_counts_and_errors(business_env, monkeypatch):
     from business import stock_resolver
 
     monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 2)
@@ -9350,7 +9350,7 @@ def test_stock_resolver_all_tushare_reports_market_counts_and_errors(investment_
     }
 
 
-def test_refresh_investment_stocks_script_dispatches_sources(investment_env, monkeypatch, capsys):
+def test_refresh_investment_stocks_script_dispatches_sources(business_env, monkeypatch, capsys):
     from scripts import refresh_investment_stocks
 
     calls = []
@@ -9373,7 +9373,7 @@ def test_refresh_investment_stocks_script_dispatches_sources(investment_env, mon
     assert all("db_path" in payload for payload in payloads)
 
 
-def test_refresh_investment_stocks_script_exits_one_when_all_sources_fail(investment_env, monkeypatch, capsys):
+def test_refresh_investment_stocks_script_exits_one_when_all_sources_fail(business_env, monkeypatch, capsys):
     from scripts import refresh_investment_stocks
 
     monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
@@ -9394,7 +9394,7 @@ def test_refresh_investment_stocks_script_exits_one_when_all_sources_fail(invest
     assert "us: us failed" in payload["error"]
 
 
-def test_refresh_investment_stocks_script_reports_single_source_exceptions(investment_env, monkeypatch, capsys):
+def test_refresh_investment_stocks_script_reports_single_source_exceptions(business_env, monkeypatch, capsys):
     from scripts import refresh_investment_stocks
 
     monkeypatch.setattr(refresh_investment_stocks.storage, "initialize_storage", lambda: None)
@@ -9724,7 +9724,7 @@ def test_sqlite_to_pg_migration_output_does_not_include_pg_url(tmp_path, monkeyp
     assert "super-secret-password" not in output
 
 
-def test_tushare_token_config_permission_is_sensitive(investment_env):
+def test_tushare_token_config_permission_is_sensitive(business_env):
     from business.config_service import can_modify_config, save_config
 
     assert can_modify_config("tushare.token", "uploader") is False
@@ -9736,7 +9736,7 @@ def test_tushare_token_config_permission_is_sensitive(investment_env):
         save_config("tushare.token", "blocked-token", operator_role="operator")
 
 
-def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_prompts(investment_env, tmp_path, monkeypatch):
+def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_prompts(business_env, tmp_path, monkeypatch):
     from business import technical_analysis
     from business.constants import ErrorCode, user_message
     from business.technical_analysis import run_technical_analysis
@@ -9795,7 +9795,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
     assert calls == ["600519"]
 
 
-def test_router_records_technical_analysis_report_chart_and_card_paths(investment_env, tmp_path):
+def test_router_records_technical_analysis_report_chart_and_card_paths(business_env, tmp_path):
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -9825,7 +9825,7 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(investmen
     assert record.output_files == [card, chart, report]
 
 
-def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(investment_env, tmp_path):
+def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(business_env, tmp_path):
     from business.constants import ServiceType
     from business.router import handle_text_message
     from business.technical_analysis import TechnicalAnalysisResult
@@ -9854,7 +9854,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
     assert reply.source_id == "technical_analysis:300502.SZ:2026-06-05:test"
 
 
-def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(investment_env, tmp_path):
+def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(business_env, tmp_path):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
@@ -9873,7 +9873,7 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(in
     assert reply.source_id == content_id
 
 
-def test_daily_content_activation_and_query(investment_env, tmp_path):
+def test_daily_content_activation_and_query(business_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
     from business.daily_content import (
         create_content_draft,
@@ -9900,7 +9900,7 @@ def test_daily_content_activation_and_query(investment_env, tmp_path):
     assert Path(latest.output_image).read_bytes() == b"png2"
 
 
-def test_daily_content_expired_effective_content_is_not_returned(investment_env, tmp_path):
+def test_daily_content_expired_effective_content_is_not_returned(business_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
     from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
@@ -9932,7 +9932,7 @@ def test_daily_content_expired_effective_content_is_not_returned(investment_env,
     assert get_content_record(persistent_id).expires_at == ""
 
 
-def test_daily_content_expiration_persists_invalidated_status(investment_env, tmp_path):
+def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_path):
     from business.constants import ServiceType, Status
     from business.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
     from business.records import get_content_record
@@ -9963,7 +9963,7 @@ def test_daily_content_expiration_persists_invalidated_status(investment_env, tm
     assert get_content_record(fresh_id).status == Status.EFFECTIVE
 
 
-def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(investment_env, tmp_path):
+def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(business_env, tmp_path):
     from business.constants import ServiceType, Status
     from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.records import get_content_record
@@ -9993,7 +9993,7 @@ def test_daily_content_republishing_historical_expired_record_clears_stale_expir
     assert get_latest_effective_content(ServiceType.RATE).content_id == historical_id
 
 
-def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_path):
+def test_daily_content_manual_invalidate_and_expiry_update(business_env, tmp_path):
     from business.audit_service import list_operation_audits
     from business.constants import ErrorCode, ServiceType, Status
     from business.daily_content import (
@@ -10031,7 +10031,7 @@ def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_p
     assert "content.invalidate" in actions
 
 
-def test_daily_content_auto_effective_after_generate_publishes_on_backend(investment_env, tmp_path):
+def test_daily_content_auto_effective_after_generate_publishes_on_backend(business_env, tmp_path):
     from business.constants import ServiceType, Status
     from business.daily_content import create_content_draft, generate_content
     from business.records import get_content_record
@@ -10063,7 +10063,7 @@ def test_daily_content_auto_effective_after_generate_publishes_on_backend(invest
     assert record.auto_effective_after_generate is True
 
 
-def test_daily_content_versions_are_effective_per_service_and_date(investment_env, tmp_path):
+def test_daily_content_versions_are_effective_per_service_and_date(business_env, tmp_path):
     from datetime import date, timedelta
 
     from business.constants import ServiceType, Status
@@ -10100,7 +10100,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
     assert get_latest_effective_content(ServiceType.RATE).content_id == yesterday_second
 
 
-def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
+def test_daily_content_operation_audits_track_create_generate_effective_and_archive(business_env, tmp_path):
     from business.audit_service import list_operation_audits
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, generate_content, set_content_effective
@@ -10129,7 +10129,7 @@ def test_daily_content_operation_audits_track_create_generate_effective_and_arch
     assert effective.detail["service_type"] == ServiceType.RATE
 
 
-def test_daily_content_create_upload_generate_and_failure_records(investment_env):
+def test_daily_content_create_upload_generate_and_failure_records(business_env):
     from business.constants import ErrorCode, ServiceType, Status
     from business.daily_content import (
         create_convertible_bond_content_draft,
@@ -10185,7 +10185,7 @@ def test_daily_content_create_upload_generate_and_failure_records(investment_env
     assert failed_record.error_message == "model rejected payload"
 
 
-def test_daily_content_default_generation_passes_uploaded_source_files(investment_env, tmp_path, monkeypatch):
+def test_daily_content_default_generation_passes_uploaded_source_files(business_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_rate_content_draft, generate_content
 
@@ -10218,7 +10218,7 @@ def test_daily_content_default_generation_passes_uploaded_source_files(investmen
     }
 
 
-def test_daily_content_default_image_generation_renders_png_with_fake_model(investment_env, tmp_path, monkeypatch):
+def test_daily_content_default_image_generation_renders_png_with_fake_model(business_env, tmp_path, monkeypatch):
     from business import config_service
     from business.config_service import save_configs
     from business.constants import ServiceType
@@ -10295,7 +10295,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     assert fake_bot.calls
 
 
-def test_daily_content_records_filter_by_service_type_for_console_pages(investment_env):
+def test_daily_content_records_filter_by_service_type_for_console_pages(business_env):
     from business.constants import ServiceType
     from business.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
     from business.records import list_content_records
@@ -10310,14 +10310,14 @@ def test_daily_content_records_filter_by_service_type_for_console_pages(investme
     assert [record.content_id for record in cb_records] == [cb_id]
 
 
-def test_daily_content_upload_saves_files_under_investment_files_dir(investment_env):
+def test_daily_content_upload_saves_files_under_investment_files_dir(business_env):
     from business.constants import ServiceType
     from business.daily_content import save_source_file
 
     saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data", owner_id="content-123", effective_date="2026-06-07")
 
     assert Path(saved).read_bytes() == b"rate-data"
-    assert investment_env / "storage" / "files" in Path(saved).parents
+    assert business_env / "storage" / "files" in Path(saved).parents
     path_parts = Path(saved).parts
     files_index = path_parts.index("files")
     assert path_parts[files_index + 1 : files_index + 5] == (
@@ -10333,7 +10333,7 @@ def test_daily_content_upload_saves_files_under_investment_files_dir(investment_
         save_source_file(ServiceType.RATE, "../escape.txt", b"bad")
 
 
-def test_daily_content_api_accepts_module_key_for_content_modules(investment_env, tmp_path, monkeypatch):
+def test_daily_content_api_accepts_module_key_for_content_modules(business_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, set_content_effective
     from business.records import get_content_record
@@ -10359,7 +10359,7 @@ def test_daily_content_api_accepts_module_key_for_content_modules(investment_env
     assert get_content_record(content_id).module_key == "rate"
 
 
-def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(investment_env, tmp_path):
+def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(business_env, tmp_path):
     from business.component_paths import runtime_component_root
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
@@ -10418,7 +10418,7 @@ def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_conten
     assert get_content_record(module_b_id).module_key == "module-b"
 
 
-def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(investment_env, monkeypatch):
+def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(business_env, monkeypatch):
     import io
 
     from business.records import get_content_record, list_output_files
@@ -10464,7 +10464,7 @@ def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(invest
     assert source_artifacts[0]["file_url"].startswith("/api/file?id=")
 
 
-def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env, tmp_path):
+def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(business_env, tmp_path):
     from business.constants import ServiceType, Status
     from business.daily_content import (
         create_rate_content_draft,
@@ -10520,7 +10520,7 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
     assert updated_record.status == Status.GENERATED
 
 
-def test_daily_content_convertible_bond_no_effective_content_prompt(investment_env):
+def test_daily_content_convertible_bond_no_effective_content_prompt(business_env):
     from business.constants import ErrorCode, ServiceType
     from business.daily_content import get_latest_effective_content
 
@@ -10531,7 +10531,7 @@ def test_daily_content_convertible_bond_no_effective_content_prompt(investment_e
 
 
 @pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
-def test_daily_content_effective_content_image_missing_returns_no_content(investment_env, tmp_path, service_type):
+def test_daily_content_effective_content_image_missing_returns_no_content(business_env, tmp_path, service_type):
     from business.constants import ErrorCode, ServiceType
     from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
 
@@ -10549,7 +10549,7 @@ def test_daily_content_effective_content_image_missing_returns_no_content(invest
     assert str(missing_image) in result.detail
 
 
-def test_render_service_validates_output_files(investment_env, tmp_path):
+def test_render_service_validates_output_files(business_env, tmp_path):
     from business.constants import ErrorCode, ServiceType
     from business.render_service import RenderRequest, render_card
 
@@ -10576,7 +10576,7 @@ def test_render_service_validates_output_files(investment_env, tmp_path):
     assert failed.error_code == ErrorCode.IMAGE_GENERATION_FAILED
 
 
-def test_render_service_contract_uses_skill_templates_and_configured_output_dir(investment_env, tmp_path):
+def test_render_service_contract_uses_skill_templates_and_configured_output_dir(business_env, tmp_path):
     from business.config_service import save_configs
     from business.constants import ServiceType, Status
     from business.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
@@ -10627,7 +10627,7 @@ def test_render_service_contract_uses_skill_templates_and_configured_output_dir(
     ]
 
 
-def test_render_health_check_reports_renderer_template_and_chromium_details(investment_env, tmp_path, monkeypatch):
+def test_render_health_check_reports_renderer_template_and_chromium_details(business_env, tmp_path, monkeypatch):
     from business import health
     from business.config_service import save_configs
 
@@ -10659,7 +10659,7 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(inve
     assert "chromium executable missing" in items["playwright_chromium"].detail
 
 
-def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, monkeypatch):
+def test_health_check_levels_dependencies_and_wechatmp_config(business_env, monkeypatch):
     from business import config_service
     from business import health
 
@@ -10705,7 +10705,7 @@ def test_health_check_levels_dependencies_and_wechatmp_config(investment_env, mo
     assert items["wechatmp_aes_key"].level == "warning"
 
 
-def test_health_dependency_import_failure_reports_error_detail(investment_env, monkeypatch):
+def test_health_dependency_import_failure_reports_error_detail(business_env, monkeypatch):
     from business import health
 
     def fake_import(module_name):
@@ -10723,7 +10723,7 @@ def test_health_dependency_import_failure_reports_error_detail(investment_env, m
     assert "DLL load failed" in item.detail
 
 
-def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(investment_env, monkeypatch):
+def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(business_env, monkeypatch):
     from business import health
 
     calls = []
@@ -10759,7 +10759,7 @@ def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(invest
     assert full_items["smoke_renderer_cb"].level == "ok"
 
 
-def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(investment_env):
+def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(business_env):
     from business.config_service import save_config
     from business.health import run_health_checks
     from business.stock_resolver import refresh_stock_symbols
@@ -10789,7 +10789,7 @@ def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking
     assert "ts-health-secret-1234567890" not in details
 
 
-def test_health_check_reports_missing_and_unwritable_directories(investment_env, tmp_path, monkeypatch):
+def test_health_check_reports_missing_and_unwritable_directories(business_env, tmp_path, monkeypatch):
     from business import health
     from business.config_service import save_configs
 
@@ -10821,7 +10821,7 @@ def test_health_check_reports_missing_and_unwritable_directories(investment_env,
     assert "readonly" in items["tmp_dir"].detail
 
 
-def test_health_check_reports_all_dependencies_available(investment_env, tmp_path, monkeypatch):
+def test_health_check_reports_all_dependencies_available(business_env, tmp_path, monkeypatch):
     from business import health
     from business import config_service
     from business.config_service import save_configs
@@ -10872,7 +10872,7 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     assert all(item.ok for item in items.values())
 
 
-def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_path):
+def test_router_handles_rate_success_unauthorized_and_miss(business_env, tmp_path):
     from business.constants import ErrorCode
     from business.constants import ServiceType
     from business.config_service import save_config
@@ -10938,7 +10938,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     assert miss_record.user_prompt == DEFAULT_UNMATCHED_PROMPT
 
 
-def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
+def test_parse_route_uses_configured_investment_skill_triggers(business_env):
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.router import parse_route
@@ -10955,7 +10955,7 @@ def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
     assert route.target_text == "300502.SZ"
 
 
-def test_parse_route_rejects_markdown_link_targets(investment_env):
+def test_parse_route_rejects_markdown_link_targets(business_env):
     from business.router import parse_route
 
     route = parse_route("[300502.SZ](http://300502.sz/) 技术分析")
@@ -10963,7 +10963,7 @@ def test_parse_route_rejects_markdown_link_targets(investment_env):
     assert route.matched is False
 
 
-def test_parse_route_ignores_disabled_investment_skill(investment_env):
+def test_parse_route_ignores_disabled_investment_skill(business_env):
     from business.config_service import save_config
     from business.router import parse_route
 
@@ -10972,7 +10972,7 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
     assert parse_route("利率").matched is False
 
 
-def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(investment_env, monkeypatch):
+def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(business_env, monkeypatch):
     from business.constants import ServiceType
     from business.router import parse_route
     import business.skill_registry as investment_skill_registry
@@ -10989,7 +10989,7 @@ def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matche
     assert technical.target_text == "300502.SZ"
 
 
-def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
+def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(business_env):
     from business.config_service import save_config
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
@@ -11005,7 +11005,7 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(inve
     assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
 
 
-def test_router_dispatches_daily_content_by_handler_type(investment_env, tmp_path, monkeypatch):
+def test_router_dispatches_daily_content_by_handler_type(business_env, tmp_path, monkeypatch):
     from business.constants import ServiceType
     from business.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
@@ -11046,7 +11046,7 @@ def test_business_router_sets_module_key_on_reply(monkeypatch):
     assert reply.business_module_key == "rate"
 
 
-def test_prompt_to_image_module_generates_image_from_customer_input(investment_env, tmp_path, monkeypatch):
+def test_prompt_to_image_module_generates_image_from_customer_input(business_env, tmp_path, monkeypatch):
     import json
 
     from business.component_paths import runtime_component_root
@@ -11125,7 +11125,7 @@ def test_prompt_to_image_module_generates_image_from_customer_input(investment_e
     assert record.module_key == "macro-brief"
 
 
-def test_request_records_api_returns_module_label_for_custom_prompt_module(investment_env, monkeypatch):
+def test_request_records_api_returns_module_label_for_custom_prompt_module(business_env, monkeypatch):
     import json
 
     from business.constants import ServiceType
@@ -11200,7 +11200,7 @@ def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
     assert "只输出" in prompt
 
 
-def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_env, tmp_path):
+def test_business_router_builds_reply_and_allows_unmatched_fallback(business_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.config_service import save_config
@@ -11234,7 +11234,7 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     assert build_business_reply(context) is None
 
 
-def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(investment_env):
+def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(business_env):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.router import DEFAULT_UNMATCHED_PROMPT
@@ -11264,7 +11264,7 @@ def test_context_kwargs_are_not_shared_between_instances():
     assert "channel_type" not in second
 
 
-def test_business_router_ignores_unmatched_text_without_auth_or_handler(investment_env, monkeypatch):
+def test_business_router_ignores_unmatched_text_without_auth_or_handler(business_env, monkeypatch):
     from bridge.context import Context, ContextType
     import business.router as business_route
     import business.business_router as business_router
@@ -11281,7 +11281,7 @@ def test_business_router_ignores_unmatched_text_without_auth_or_handler(investme
     assert business_router.build_business_reply(context) is None
 
 
-def test_business_router_routes_technical_analysis_without_investment_router_handler(investment_env, monkeypatch):
+def test_business_router_routes_technical_analysis_without_investment_router_handler(business_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.constants import ServiceType
@@ -11319,7 +11319,7 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
     assert calls == [("openid-ta", "300502.SZ 技术分析", "300502.SZ", None)]
 
 
-def test_business_router_routes_daily_content_through_module_dispatcher(investment_env, monkeypatch):
+def test_business_router_routes_daily_content_through_module_dispatcher(business_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.constants import ServiceType
@@ -11362,7 +11362,7 @@ def test_business_router_routes_daily_content_through_module_dispatcher(investme
     assert calls == [("openid-rate", "利率", ServiceType.RATE, True)]
 
 
-def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, tmp_path):
+def test_web_channel_routes_investment_commands_from_admin_chat(business_env, tmp_path):
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT
@@ -11391,7 +11391,7 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
     assert WebChannel().channel_type == "web"
 
 
-def test_web_channel_uses_configured_investment_skill_triggers(investment_env, tmp_path):
+def test_web_channel_uses_configured_investment_skill_triggers(business_env, tmp_path):
     from bridge.reply import ReplyType
     from business.config_service import save_config
     from business.constants import ServiceType
@@ -11415,7 +11415,7 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
     assert "/api/file?path=" not in reply.content
 
 
-def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
+def test_web_channel_uses_admin_session_instead_of_customer_permission(business_env, tmp_path):
     from bridge.reply import ReplyType
     from business.constants import ActorType, EntryType, ServiceType, Status
     from business.daily_content import create_content_draft, set_content_effective
@@ -11452,7 +11452,7 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
     assert backend_items[0].request_id == records[0].request_id
 
 
-def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(investment_env, tmp_path, monkeypatch):
+def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
     from business.constants import ServiceType, Status
     from business.records import list_request_records
@@ -11517,7 +11517,7 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
     assert cache_item["artifact_owner_id"] == records[0].request_id
 
 
-def test_web_technical_analysis_without_cache_key_appears_in_request_history(investment_env, tmp_path, monkeypatch):
+def test_web_technical_analysis_without_cache_key_appears_in_request_history(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
     from business.constants import ServiceType, Status
     from business.records import list_request_records
@@ -11574,7 +11574,7 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(inv
     assert records[0].status == Status.SUCCESS
 
 
-def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, monkeypatch):
+def test_web_open_chat_uses_plain_model_without_agent_bridge(business_env, monkeypatch):
     from bridge.reply import Reply, ReplyType
     from business.config_service import save_config
     from bridge.context import Context, ContextType
@@ -11607,7 +11607,7 @@ def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, mon
     assert calls == [("普通聊天", "web-session")]
 
 
-def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investment_env, tmp_path, monkeypatch):
+def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business_env, tmp_path, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.constants import ServiceType

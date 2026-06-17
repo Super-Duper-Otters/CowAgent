@@ -31,7 +31,7 @@ def _isolate_investment_record_writes(monkeypatch):
 
 
 @pytest.fixture()
-def investment_env(tmp_path, monkeypatch):
+def business_env(tmp_path, monkeypatch):
     from business import db
     from business import storage
 
@@ -466,7 +466,7 @@ def _context(openid="openid", msg_id="msg-1", content="利率"):
     )
 
 
-def test_wechatmp_investment_success_returns_image_reply(investment_env, monkeypatch, tmp_path):
+def test_wechatmp_investment_success_returns_image_reply(business_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import BusinessReply
@@ -495,7 +495,7 @@ def test_wechatmp_investment_success_returns_image_reply(investment_env, monkeyp
     assert reply.business_service_type == ServiceType.RATE
 
 
-def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(investment_env, monkeypatch, tmp_path):
+def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(business_env, monkeypatch, tmp_path):
     from business.constants import ServiceType
     from business.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
     import business.router as business_route
@@ -1444,7 +1444,7 @@ def test_wechatmp_passive_technical_analysis_ack_uses_route_target(monkeypatch):
 
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
-def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_env, monkeypatch):
+def test_wechatmp_passive_technical_ack_uses_configured_reply_text(business_env, monkeypatch):
     from business.config_service import save_config
     from channel.wechatmp import passive_reply
 
@@ -1455,7 +1455,7 @@ def test_wechatmp_passive_technical_ack_uses_configured_reply_text(investment_en
 
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
-def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, monkeypatch):
+def test_wechatmp_passive_cache_hit_uses_configured_reply_text(business_env, monkeypatch):
     from business.config_service import save_config
     from channel.wechatmp import passive_reply
 
@@ -1466,14 +1466,14 @@ def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, m
 
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
-def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_config(investment_env):
+def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_config(business_env):
     from business.router import DEFAULT_UNMATCHED_PROMPT
     from channel.wechatmp import passive_reply
 
     assert passive_reply._unmatched_prompt() == DEFAULT_UNMATCHED_PROMPT
 
 
-def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(investment_env):
+def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(business_env):
     from business.config_service import save_config
     from channel.wechatmp import passive_reply
 

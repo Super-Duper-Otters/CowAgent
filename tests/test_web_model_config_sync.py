@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 
 
 @pytest.fixture()
-def investment_env(tmp_path, monkeypatch):
+def business_env(tmp_path, monkeypatch):
     from business import db
     from business import storage
 
@@ -55,10 +55,10 @@ def _investment_config_keys():
 
 
 def test_investment_config_save_rejects_global_model_keys_and_does_not_touch_project_config(
-    investment_env,
+    business_env,
     monkeypatch,
 ):
-    cfg_path = investment_env / "config.json"
+    cfg_path = business_env / "config.json"
     original = {
         "bot_type": "custom",
         "model": "old-model",
@@ -93,8 +93,8 @@ def test_investment_config_save_rejects_global_model_keys_and_does_not_touch_pro
     assert not any(key.startswith("model.") for key in _investment_config_keys())
 
 
-def test_global_config_post_does_not_create_investment_model_aliases(investment_env, monkeypatch):
-    cfg_path = investment_env / "fake_app" / "config.json"
+def test_global_config_post_does_not_create_investment_model_aliases(business_env, monkeypatch):
+    cfg_path = business_env / "fake_app" / "config.json"
     cfg_path.parent.mkdir(parents=True)
     cfg_path.write_text(
         json.dumps(
