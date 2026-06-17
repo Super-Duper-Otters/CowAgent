@@ -14,7 +14,7 @@ from models.openai.openai_http_client import OpenAIHTTPError
 
 from . import config_service
 from .config_service import get_config, safe_log_value, sanitize_sensitive_text
-from .constants import ErrorCode, ServiceType, Status, user_message
+from business.constants import ErrorCode, ServiceType, Status, user_message
 
 IMAGE_MIME_TYPES = {
     ".jpg": "image/jpeg",

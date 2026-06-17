@@ -880,7 +880,7 @@ def test_investment_migration_smoke_creates_schema(investment_env):
 
 
 def test_request_events_record_customer_request_lifecycle(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.event_service import list_request_events, record_request_event
     from business.investment.records import create_request_record
 
@@ -921,7 +921,7 @@ def test_request_events_record_customer_request_lifecycle(investment_env):
 
 
 def test_request_records_emit_lifecycle_events(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.event_service import list_request_events
     from business.investment.records import (
         create_request_record,
@@ -956,7 +956,7 @@ def test_request_records_emit_lifecycle_events(investment_env):
 
 
 def test_external_request_record_declares_entry_and_actor(investment_env):
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.constants import ActionType, ActorType, EntryType, ServiceType
     from business.investment.records import create_request_record, get_request_record
 
     request_id = create_request_record("openid-entry", "利率", ServiceType.RATE)
@@ -972,7 +972,7 @@ def test_external_request_record_declares_entry_and_actor(investment_env):
 
 
 def test_internal_call_entries_are_separate_from_external_requests(investment_env):
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.records import create_business_workflow_record, finish_business_workflow_record, get_request_record, list_request_records
 
     request_id = create_business_workflow_record(
@@ -1011,7 +1011,7 @@ def test_ai_generation_audit_records_common_generation_metadata(investment_env):
         get_ai_generation_audit,
         start_ai_generation_audit,
     )
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.constants import ActionType, ActorType, EntryType, ServiceType
 
     audit_id = start_ai_generation_audit(
         entry_type=EntryType.INTERNAL_CALL,
@@ -1088,7 +1088,7 @@ def test_operation_audit_infers_final_record_categories(investment_env):
 def test_daily_content_generation_records_backend_entry_in_business_records(investment_env, tmp_path):
     from sqlalchemy import text
 
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.constants import ActionType, ActorType, EntryType, ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.ai_generation_audit import list_ai_generation_audits_for_business
     from business.investment.db import connect
@@ -1144,7 +1144,7 @@ def test_daily_content_generation_records_backend_entry_in_business_records(inve
 
 
 def test_request_records_api_includes_request_event_timeline(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.event_service import record_request_event
     from business.investment.records import create_request_record
     from channel.web.web_channel import InvestmentRequestRecordsHandler
@@ -1174,7 +1174,7 @@ def test_request_records_api_includes_request_event_timeline(investment_env, mon
 
 
 def test_business_records_api_filters_internal_entry_type(investment_env, monkeypatch):
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import (
         InvestmentContentRecordsHandler,
@@ -1318,7 +1318,7 @@ def test_config_masks_sensitive_values_and_checks_permissions(investment_env, mo
 
 
 def test_investment_user_message_uses_reply_config_defaults(investment_env):
-    from business.investment.constants import ErrorCode, user_message
+    from business.constants import ErrorCode, user_message
 
     assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
@@ -1326,7 +1326,7 @@ def test_investment_user_message_uses_reply_config_defaults(investment_env):
 
 def test_investment_user_message_can_be_overridden_from_database(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.constants import ErrorCode, user_message
+    from business.constants import ErrorCode, user_message
 
     save_config("reply.investment.unauthorized", "请联系客户经理开通权限。", operator_role="admin", operator="pytest")
 
@@ -1483,7 +1483,7 @@ def test_builtin_component_manifests_are_clean_and_complete():
 
 def test_default_component_runtime_paths_use_builtin_components(investment_env):
     from business.business_registry import get_business_definition
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.render_service import (
         DEFAULT_RENDERER_PATH,
         DEFAULT_TEMPLATE_BOND_PATH,
@@ -1672,7 +1672,7 @@ def test_skill_versions_list_only_new_runtime_versions(investment_env):
 
 def test_investment_skill_loader_applies_web_trigger_override(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.skill_registry import match_investment_skill
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
@@ -1686,7 +1686,7 @@ def test_investment_skill_loader_applies_web_trigger_override(investment_env):
 
 def test_investment_skill_loader_extracts_suffix_target(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.skill_registry import match_investment_skill
 
     save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
@@ -1701,7 +1701,7 @@ def test_investment_skill_loader_extracts_suffix_target(investment_env):
 def test_uploaded_investment_skill_package_appears_in_registry(investment_env, tmp_path):
     from business.investment.component_paths import runtime_component_root, runtime_versions_root
     from business.investment.config_service import get_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.skill_registry import list_investment_skills, match_investment_skill
     from business.investment.skill_versions import save_package_upload
 
@@ -1770,7 +1770,7 @@ investment:
 
 
 def test_uploaded_script_investment_skill_executes_from_route(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import handle_text_message
     from business.investment.skill_versions import save_package_upload
     from business.investment.user_service import create_user
@@ -1905,7 +1905,7 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.business_router import build_business_reply
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.skill_versions import save_package_upload
     from business.investment.user_service import create_user
 
@@ -2106,7 +2106,7 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
 
 
 def test_web_user_disable_button_updates_permission_path(investment_env, monkeypatch):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.router import handle_text_message
     from business.investment.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
@@ -2129,7 +2129,7 @@ def test_web_user_disable_button_updates_permission_path(investment_env, monkeyp
 
 def test_web_customer_search_enable_and_audits_use_customer_permissions(investment_env, monkeypatch):
     from business.investment.audit_service import list_operation_audits
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserStatusHandler, InvestmentUsersHandler
@@ -2215,7 +2215,7 @@ def test_web_customer_create_audit_binds_session_admin_not_body_operator(investm
 
 def test_web_user_management_apis_support_keyword_and_pagination(investment_env, monkeypatch):
     from business.investment.auth_service import create_admin_user
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAdminUsersHandler, InvestmentUsersHandler
@@ -2262,7 +2262,7 @@ def test_web_user_management_apis_support_keyword_and_pagination(investment_env,
 
 
 def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
@@ -2288,7 +2288,7 @@ def test_web_customer_keyword_search_keeps_rows_and_total_consistent(investment_
 
 
 def test_web_customer_keyword_search_supports_field_categories(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
@@ -2338,7 +2338,7 @@ def test_web_customer_keyword_search_supports_field_categories(investment_env, m
 def test_router_authenticates_before_parsing_unmatched_input(investment_env, monkeypatch):
     import pytest
 
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     import business.router as router
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
     from business.investment.user_service import create_user
@@ -2366,7 +2366,7 @@ def test_router_authenticates_before_parsing_unmatched_input(investment_env, mon
 
 
 def test_web_user_edit_updates_existing_user_permissions(investment_env, monkeypatch):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.user_service import create_user, verify_permission
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
@@ -2783,7 +2783,7 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(inve
 
 
 def test_web_daily_content_generate_marks_generating_before_background_task(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import create_rate_content_draft
     from business.investment.records import get_content_record
     from channel.web.web_channel import InvestmentDailyContentGenerateHandler
@@ -2875,7 +2875,7 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(investme
 def test_web_daily_content_get_returns_current_effective_content(investment_env, tmp_path, monkeypatch):
     from pathlib import Path
 
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.storage import get_storage_dirs
     from channel.web.web_channel import InvestmentDailyContentHandler
@@ -2908,7 +2908,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
 
 
 def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_path, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentDailyContentHandler
 
@@ -2939,7 +2939,7 @@ def test_web_daily_content_get_returns_history_artifacts(investment_env, tmp_pat
 def test_set_content_effective_archives_external_output_image(investment_env, tmp_path):
     from pathlib import Path
 
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_output_files
     from business.investment.storage import get_storage_dirs
@@ -2977,7 +2977,7 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
 
 
 def test_list_content_records_filters_by_effective_date(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from business.investment.records import list_content_records
 
@@ -2995,7 +2995,7 @@ def test_list_content_records_filters_by_effective_date(investment_env):
 
 
 def test_web_content_handlers_accept_effective_date_filter(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
@@ -3019,7 +3019,7 @@ def test_web_content_handlers_accept_effective_date_filter(investment_env, monke
 
 
 def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
@@ -3066,7 +3066,7 @@ def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(i
 
 def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch):
     from business.investment.audit_service import record_operation_audit
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record
     from channel.web.web_channel import InvestmentOperationAuditsHandler, InvestmentRequestRecordsHandler
 
@@ -3091,7 +3091,7 @@ def test_web_records_handlers_sanitize_invalid_limit(investment_env, monkeypatch
 
 
 def test_request_records_page_returns_total_offset_and_api_pagination(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import create_request_record, list_request_records_page
     from channel.web.web_channel import InvestmentRequestRecordsHandler
@@ -3132,7 +3132,7 @@ def test_request_records_page_returns_total_offset_and_api_pagination(investment
 
 
 def test_request_records_page_filters_by_openid_or_mobile(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
     from business.investment.user_service import create_user
 
@@ -3159,7 +3159,7 @@ def test_request_records_page_filters_by_openid_or_mobile(investment_env):
 
 
 def test_request_records_page_unknown_service_returns_empty(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
@@ -3172,7 +3172,7 @@ def test_request_records_page_unknown_service_returns_empty(investment_env):
 
 
 def test_content_records_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from business.investment.db import connect
     from business.investment.records import list_content_records_page
@@ -3282,7 +3282,7 @@ def test_operation_audit_records_admin_actor_fields(investment_env):
 
 def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -3334,7 +3334,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, 
 
 def test_cache_handler_without_market_date_returns_history_across_dates(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -3367,7 +3367,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(investme
 
 def test_cache_handler_keyword_search_filters_backend_results_and_total(investment_env, monkeypatch, tmp_path):
     from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -3416,7 +3416,7 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(investme
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(investment_env, monkeypatch, tmp_path):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
     from business.investment.schema import investment_cache_entries
@@ -3529,7 +3529,7 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(inve
 
 def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.schema import investment_cache_entries
     from business.investment.records import list_artifact_folder_nodes
@@ -3602,7 +3602,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_
 
 
 def test_artifact_folder_api_includes_daily_content_records(investment_env, monkeypatch, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from business.investment.db import connect
     from business.investment.schema import investment_daily_contents, investment_output_files
@@ -3705,7 +3705,7 @@ def test_artifact_folder_api_includes_daily_content_records(investment_env, monk
 
 def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     for market_date, target in [
@@ -3750,7 +3750,7 @@ def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypa
 
 def test_generated_content_history_api_combines_cache_and_daily_content_records(investment_env, monkeypatch, tmp_path):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -3806,7 +3806,7 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
 
 def test_generated_content_history_treats_expired_daily_content_as_invalidated(investment_env, tmp_path):
     from business.investment.cache_service import list_generated_history_market_dates, list_generated_history_page
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
 
     expired_image = tmp_path / "expired-rate.png"
@@ -3863,7 +3863,7 @@ def test_generated_content_history_paginates_sources_without_bulk_fetch(investme
 
     from business.investment import cache_service
     from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
 
     for index in range(3):
@@ -3897,7 +3897,7 @@ def test_generated_content_history_paginates_sources_without_bulk_fetch(investme
 
 
 def test_request_records_api_filters_and_prefers_mobile_customer_display(investment_env, monkeypatch):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.db import connect
     from business.investment.records import create_request_record, fail_request_record, succeed_request_record
     from business.investment.user_service import create_user
@@ -3966,7 +3966,7 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(investm
 def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(investment_env, monkeypatch):
     from business.investment.audit_service import record_operation_audit
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from business.investment.db import connect
     from business.investment.records import create_request_record
@@ -4090,7 +4090,7 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(invest
 
 
 def test_internal_request_records_api_filters_by_keyword_and_date_range(investment_env, monkeypatch):
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.db import connect
     from business.investment.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentRequestRecordsHandler
@@ -4393,7 +4393,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
 
 
 def test_user_service_permission_edges_and_upsert(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.user_service import (
         ImportUserRow,
         create_user,
@@ -4441,7 +4441,7 @@ def test_user_service_permission_edges_and_upsert(investment_env):
 
 
 def test_user_service_crud_list_and_all_service_contract(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
 
     user_id = create_user(
@@ -4479,7 +4479,7 @@ def test_user_service_crud_list_and_all_service_contract(investment_env):
 
 
 def test_user_services_normalize_all_when_all_or_every_business_service_selected(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user, get_user_by_openid, update_user
 
     create_user(
@@ -4505,7 +4505,7 @@ def test_user_services_normalize_all_when_all_or_every_business_service_selected
 
 
 def test_user_service_excel_import_maps_fields_and_permissions_take_effect(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
 
     create_user("existing-openid", name="old", allowed_services=["利率"])
@@ -4692,7 +4692,7 @@ def test_user_import_template_headers_are_parseable(investment_env):
 
 
 def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersImportHandler
@@ -4755,7 +4755,7 @@ def test_web_user_import_parses_before_confirm_and_then_commits(investment_env, 
 
 
 def test_records_save_failure_success_and_order(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.records import (
         append_request_warning,
         create_request_record,
@@ -4783,7 +4783,7 @@ def test_records_save_failure_success_and_order(investment_env):
 
 
 def test_request_record_delivery_status_is_business_facing(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.records import (
         append_request_warning,
         create_request_record,
@@ -4817,7 +4817,7 @@ def test_request_record_delivery_status_is_business_facing(investment_env):
 
 
 def test_export_request_records_hides_internal_delivery_marker(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, mark_request_delivered, succeed_request_record
 
@@ -4833,7 +4833,7 @@ def test_export_request_records_hides_internal_delivery_marker(investment_env):
 
 
 def test_old_generating_request_records_are_flagged_without_mutating_status(investment_env):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.db import connect
     from business.investment.records import create_request_record, get_request_record, list_request_records
 
@@ -4859,7 +4859,7 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(inve
 
 
 def test_job_service_reuses_running_technical_analysis_record(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.job_service import find_running_job, start_job_if_absent
     from business.investment.records import succeed_request_record
 
@@ -4879,7 +4879,7 @@ def test_job_service_reuses_running_technical_analysis_record(investment_env):
 
 
 def test_job_service_reuses_running_cache_job_across_users(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
     from business.investment.records import succeed_request_record
 
@@ -4925,7 +4925,7 @@ def test_job_service_reuses_running_cache_job_across_users(investment_env):
 
 
 def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(investment_env):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.db import connect
     from business.investment.job_service import find_running_cache_job, start_cache_job_if_absent
     from business.investment.records import get_request_record
@@ -4966,7 +4966,7 @@ def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(inv
 
 
 def test_job_service_allows_different_cache_keys_to_run_together(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.job_service import start_cache_job_if_absent
 
     first = start_cache_job_if_absent(
@@ -4993,7 +4993,7 @@ def test_job_service_allows_different_cache_keys_to_run_together(investment_env)
 
 def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(investment_env, monkeypatch):
     from business.investment import config_service
-    from business.investment.constants import ErrorCode, ServiceType, Status
+    from business.constants import ErrorCode, ServiceType, Status
     from business.investment.job_service import find_running_job
     from business.investment.records import get_content_record, list_request_records
     from business.router import handle_text_message
@@ -5019,7 +5019,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
 
 
 def test_router_delegates_technical_analysis_to_cowagent_business_handler(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import BusinessReply, handle_text_message
     from business.investment.user_service import create_user
     import business.investment.executors.technical_analysis_executor as investment_ta_executor
@@ -5058,7 +5058,7 @@ def test_job_service_ignores_stale_running_technical_analysis_record(investment_
 
     from sqlalchemy import text
 
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.db import connect
     from business.investment.job_service import find_running_job, start_job_if_absent
     from business.investment.records import create_request_record, get_request_record
@@ -5083,7 +5083,7 @@ def test_job_service_ignores_stale_running_technical_analysis_record(investment_
 def test_job_service_concurrent_start_creates_single_running_job(investment_env):
     from concurrent.futures import ThreadPoolExecutor
 
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.job_service import start_job_if_absent
     from business.investment.records import get_content_record, list_request_records
 
@@ -5109,7 +5109,7 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
     from concurrent.futures import ThreadPoolExecutor
     import time
 
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -5165,7 +5165,7 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
     import time
 
     from business.investment import technical_analysis
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -5231,7 +5231,7 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
 
 
 def test_request_records_api_includes_generating_timeout_warning(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import create_request_record
     from channel.web.web_channel import InvestmentRequestRecordsHandler
@@ -5281,7 +5281,7 @@ def test_batch_01_service_results_share_contract_fields(investment_env):
 
 
 def test_success_request_records_output_files_table(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import record_success_request
 
@@ -5307,7 +5307,7 @@ def test_success_request_records_output_files_table(investment_env):
 
 
 def test_success_request_archives_generated_images_and_documents(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, get_request_record, list_output_files, succeed_request_record
     from business.investment.storage import get_storage_dirs
 
@@ -5351,7 +5351,7 @@ def test_success_request_archives_generated_images_and_documents(investment_env,
 
 def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
     from business.investment.cache_service import find_cache_entry_by_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.file_migration import migrate_legacy_files_to_unified_storage
     from business.investment.daily_content import create_content_draft
@@ -5433,7 +5433,7 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
 
 
 def test_request_records_save_audit_metadata(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, get_request_record, succeed_request_record
 
     request_id = create_request_record(
@@ -5472,7 +5472,7 @@ def test_request_records_save_audit_metadata(investment_env):
 
 
 def test_unauthorized_request_service_type_is_normalized_and_labeled():
-    from business.investment.constants import SERVICE_LABELS, ServiceType, normalize_service
+    from business.constants import SERVICE_LABELS, ServiceType, normalize_service
 
     assert ServiceType.UNAUTHORIZED_REQUEST == "unauthorized_request"
     assert SERVICE_LABELS[ServiceType.UNAUTHORIZED_REQUEST] == "无权限请求"
@@ -5508,7 +5508,7 @@ def test_investment_date_bound_treats_plain_dates_as_beijing_days():
 
 
 def test_request_records_export_api_forces_external_request_entry_type(investment_env, monkeypatch):
-    from business.investment.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
     from business.investment.records import (
         create_business_workflow_record,
         create_request_record,
@@ -5548,7 +5548,7 @@ def test_request_records_export_api_forces_external_request_entry_type(investmen
 
 
 def test_export_request_records_xlsx_filters_and_includes_audit_fields(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.db import connect
     from business.investment.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, fail_request_record, succeed_request_record
@@ -5648,7 +5648,7 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(investmen
 
 
 def test_export_request_records_xlsx_filters_by_service_customer_and_range(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, succeed_request_record
@@ -5688,7 +5688,7 @@ def test_export_request_records_xlsx_filters_by_service_customer_and_range(inves
 
 
 def test_request_records_keyword_search_matches_event_details(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.event_service import record_request_event
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
 
@@ -5714,7 +5714,7 @@ def test_request_records_keyword_search_matches_event_details(investment_env):
 
 
 def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.event_service import record_request_event
     from business.investment.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, list_request_records_page, succeed_request_record
@@ -5742,7 +5742,7 @@ def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(in
 
 
 def test_export_request_records_xlsx_unknown_service_returns_only_header(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.export_service import export_request_records_xlsx
     from business.investment.records import create_request_record, succeed_request_record
 
@@ -5783,7 +5783,7 @@ def test_export_request_records_xlsx_empty_records_contains_only_header(investme
 
 
 def test_export_users_xlsx_filters_enabled_users(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.export_service import export_users_xlsx
     from business.investment.user_service import create_user
 
@@ -5857,7 +5857,7 @@ def test_web_export_handlers_return_xlsx_downloads(investment_env, monkeypatch):
 
 def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp_path):
     from business.investment.artifact_service import record_artifact
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.versioning import file_fingerprint
 
@@ -5893,7 +5893,7 @@ def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp
 
 def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp_path):
     from business.investment.artifact_service import record_artifact
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
 
     artifact = tmp_path / "card.png"
@@ -5932,7 +5932,7 @@ def test_artifact_service_records_same_artifact_idempotently(investment_env, tmp
 def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env, monkeypatch):
     from business.investment import config_service
     from business.investment.config_service import safe_log_value
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, regenerate_content
     from business.investment.records import get_content_record
 
@@ -5972,7 +5972,7 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
     )
     from business.investment import config_service, db
     from business.investment.config_service import save_configs
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
 
     api_key = "sk-global-contract-1234567890"
     monkeypatch.setattr(
@@ -6050,7 +6050,7 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
 def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(investment_env, monkeypatch):
     from business.investment import config_service
     from business.investment.ai_generation import build_generation_request
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
 
     monkeypatch.setattr(
         config_service,
@@ -6365,7 +6365,7 @@ def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(invest
 def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env, monkeypatch):
     from business.investment import config_service
     from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
-    from business.investment.constants import ErrorCode, Status
+    from business.constants import ErrorCode, Status
     from business.investment.health import run_health_checks
 
     api_key = "sk-ai-failure-1234567890"
@@ -6475,7 +6475,7 @@ def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investmen
 
 def test_technical_analysis_failure_records_sanitized_backend_detail(investment_env, monkeypatch):
     from business.investment import config_service
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -6705,7 +6705,7 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
     investment_env, tmp_path, monkeypatch, raw_input, expected_detail
 ):
     from business.investment import technical_analysis
-    from business.investment.constants import ErrorCode
+    from business.constants import ErrorCode
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.technical_analysis import run_technical_analysis
 
@@ -6728,7 +6728,7 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
 
 def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env, monkeypatch):
     from business.investment import technical_analysis
-    from business.investment.constants import ErrorCode
+    from business.constants import ErrorCode
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.technical_analysis import run_technical_analysis
 
@@ -6755,7 +6755,7 @@ def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env,
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
     from business.investment.cache_service import find_cache_entry_by_key
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import get_content_record, list_request_records
     from business.router import handle_text_message
@@ -6893,7 +6893,7 @@ def _write_legacy_technical_analysis_cache(
     template_version="sha256:template-v1",
 ):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, succeed_request_record
 
     cached_card = tmp_path / f"cached-card-{market_date}.png"
@@ -6940,7 +6940,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -6982,7 +6982,7 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
     from business.investment import cache_policy, technical_analysis
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7020,7 +7020,7 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
 
     from business.investment import cache_policy, technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import list_request_records
     from business.router import handle_text_message
@@ -7075,7 +7075,7 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
     from business.investment import cache_policy, technical_analysis
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7112,7 +7112,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -7149,7 +7149,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
 def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(investment_env, tmp_path, monkeypatch):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.db import connect
     from business.investment.records import get_request_record, list_request_records
     from business.router import handle_text_message
@@ -7194,7 +7194,7 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -7225,7 +7225,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -7257,7 +7257,7 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(inve
     from business.investment.market_date_resolver import MarketDateResolver
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7290,7 +7290,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -7331,7 +7331,7 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -7390,7 +7390,7 @@ def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7439,7 +7439,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, succeed_request_record
     from business.investment.stock_resolver import refresh_stock_symbols
 
@@ -7560,7 +7560,7 @@ def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_ca
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7629,7 +7629,7 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records, succeed_request_record
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -7723,7 +7723,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 
     from business.investment import cache_policy, cache_service, technical_analysis
     from business.investment.cache_service import list_cache_entries, version_fingerprint
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import list_request_records
     from business.router import handle_text_message
@@ -7789,7 +7789,7 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import list_cache_entries, version_fingerprint
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.db import connect
     from business.investment.schema import request_records
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -7900,7 +7900,7 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -7956,7 +7956,7 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8010,7 +8010,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_lega
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8092,7 +8092,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8138,7 +8138,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8181,7 +8181,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
 
 def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investment_env, tmp_path, monkeypatch):
     from business.investment import technical_analysis
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
@@ -8215,7 +8215,7 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investmen
 
 def test_technical_analysis_different_market_date_misses_cache(investment_env, tmp_path, monkeypatch):
     from business.investment import technical_analysis
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8281,7 +8281,7 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8344,7 +8344,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8396,7 +8396,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import list_cache_entries
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -8481,7 +8481,7 @@ def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
 
 def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investment_env):
     from business.investment.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
     write_cache_entry(
@@ -8803,7 +8803,7 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):
     from business.investment.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
 
     card = tmp_path / "card.png"
     chart = tmp_path / "chart.png"
@@ -8844,7 +8844,7 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
 ):
     from business.investment import cache_service
     from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
 
     old_card = tmp_path / "old-card.png"
     new_card = tmp_path / "new-card.png"
@@ -8896,7 +8896,7 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investme
     from concurrent.futures import ThreadPoolExecutor
 
     from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
 
@@ -8927,7 +8927,7 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investme
 
 def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -8990,7 +8990,7 @@ def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, mo
 
 def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(investment_env, monkeypatch):
     from business.investment.cache_service import build_cache_key, write_cache_entry
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -9051,7 +9051,7 @@ def test_file_serve_handler_allows_investment_storage_file(investment_env, monke
 
 
 def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import create_request_record, list_output_files, succeed_request_record
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
@@ -9077,7 +9077,7 @@ def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monk
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
     from business.investment import stock_resolver
-    from business.investment.constants import ErrorCode, user_message
+    from business.constants import ErrorCode, user_message
     from business.investment.stock_resolver import (
         list_stock_symbols,
         refresh_stock_symbols,
@@ -9119,7 +9119,7 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env
 
 def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_env):
     from business.investment import stock_resolver
-    from business.investment.constants import ErrorCode
+    from business.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
         [{"code": "AAPL.US", "name": "苹果", "market": "US", "source": "akshare"}],
@@ -9182,7 +9182,7 @@ def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functio
 
 def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env, monkeypatch):
     from business.investment import stock_resolver
-    from business.investment.constants import ErrorCode
+    from business.constants import ErrorCode
 
     monkeypatch.setattr(
         stock_resolver,
@@ -9200,7 +9200,7 @@ def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env,
 
 def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(investment_env):
     from business.investment import stock_resolver
-    from business.investment.constants import ErrorCode
+    from business.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
         [
@@ -9718,7 +9718,7 @@ def test_tushare_token_config_permission_is_sensitive(investment_env):
 
 def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_prompts(investment_env, tmp_path, monkeypatch):
     from business.investment import technical_analysis
-    from business.investment.constants import ErrorCode, user_message
+    from business.constants import ErrorCode, user_message
     from business.investment.technical_analysis import run_technical_analysis
 
     report = tmp_path / "600519_技术分析报告_2026-05-25.md"
@@ -9776,7 +9776,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
 
 
 def test_router_records_technical_analysis_report_chart_and_card_paths(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
@@ -9806,7 +9806,7 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(investmen
 
 
 def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
@@ -9835,7 +9835,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
 
 
 def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(investment_env, tmp_path):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.router import handle_text_message
     from business.investment.user_service import create_user
@@ -9854,7 +9854,7 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(in
 
 
 def test_daily_content_activation_and_query(investment_env, tmp_path):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.daily_content import (
         create_content_draft,
         get_latest_effective_content,
@@ -9881,7 +9881,7 @@ def test_daily_content_activation_and_query(investment_env, tmp_path):
 
 
 def test_daily_content_expired_effective_content_is_not_returned(investment_env, tmp_path):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.investment.records import get_content_record
 
@@ -9913,7 +9913,7 @@ def test_daily_content_expired_effective_content_is_not_returned(investment_env,
 
 
 def test_daily_content_expiration_persists_invalidated_status(investment_env, tmp_path):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
     from business.investment.records import get_content_record
 
@@ -9944,7 +9944,7 @@ def test_daily_content_expiration_persists_invalidated_status(investment_env, tm
 
 
 def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(investment_env, tmp_path):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.investment.records import get_content_record
 
@@ -9975,7 +9975,7 @@ def test_daily_content_republishing_historical_expired_record_clears_stale_expir
 
 def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_path):
     from business.investment.audit_service import list_operation_audits
-    from business.investment.constants import ErrorCode, ServiceType, Status
+    from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import (
         create_content_draft,
         get_latest_effective_content,
@@ -10012,7 +10012,7 @@ def test_daily_content_manual_invalidate_and_expiry_update(investment_env, tmp_p
 
 
 def test_daily_content_auto_effective_after_generate_publishes_on_backend(investment_env, tmp_path):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, generate_content
     from business.investment.records import get_content_record
 
@@ -10046,7 +10046,7 @@ def test_daily_content_auto_effective_after_generate_publishes_on_backend(invest
 def test_daily_content_versions_are_effective_per_service_and_date(investment_env, tmp_path):
     from datetime import date, timedelta
 
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import (
         create_content_draft,
         get_latest_effective_content,
@@ -10082,7 +10082,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(investment_en
 
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(investment_env, tmp_path):
     from business.investment.audit_service import list_operation_audits
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, generate_content, set_content_effective
 
     first = create_content_draft(ServiceType.RATE, source_text="first", operator="operator-a")
@@ -10110,7 +10110,7 @@ def test_daily_content_operation_audits_track_create_generate_effective_and_arch
 
 
 def test_daily_content_create_upload_generate_and_failure_records(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType, Status
+    from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import (
         create_convertible_bond_content_draft,
         create_rate_content_draft,
@@ -10166,7 +10166,7 @@ def test_daily_content_create_upload_generate_and_failure_records(investment_env
 
 
 def test_daily_content_default_generation_passes_uploaded_source_files(investment_env, tmp_path, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
 
     uploaded = tmp_path / "uploaded-rate.png"
@@ -10201,7 +10201,7 @@ def test_daily_content_default_generation_passes_uploaded_source_files(investmen
 def test_daily_content_default_image_generation_renders_png_with_fake_model(investment_env, tmp_path, monkeypatch):
     from business.investment import config_service
     from business.investment.config_service import save_configs
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.records import get_content_record
     from business.investment.storage import get_storage_dirs
@@ -10276,7 +10276,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
 
 
 def test_daily_content_records_filter_by_service_type_for_console_pages(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
     from business.investment.records import list_content_records
 
@@ -10291,7 +10291,7 @@ def test_daily_content_records_filter_by_service_type_for_console_pages(investme
 
 
 def test_daily_content_upload_saves_files_under_investment_files_dir(investment_env):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import save_source_file
 
     saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data", owner_id="content-123", effective_date="2026-06-07")
@@ -10341,7 +10341,7 @@ def test_daily_content_api_accepts_module_key_for_content_modules(investment_env
 
 def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(investment_env, tmp_path):
     from business.investment.component_paths import runtime_component_root
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
     from business.investment.records import get_content_record
 
@@ -10445,7 +10445,7 @@ def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(invest
 
 
 def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(investment_env, tmp_path):
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.daily_content import (
         create_rate_content_draft,
         generate_content,
@@ -10501,7 +10501,7 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(in
 
 
 def test_daily_content_convertible_bond_no_effective_content_prompt(investment_env):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.daily_content import get_latest_effective_content
 
     empty = get_latest_effective_content(ServiceType.CONVERTIBLE_BOND)
@@ -10512,7 +10512,7 @@ def test_daily_content_convertible_bond_no_effective_content_prompt(investment_e
 
 @pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
 def test_daily_content_effective_content_image_missing_returns_no_content(investment_env, tmp_path, service_type):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
 
     service = ServiceType(service_type)
@@ -10530,7 +10530,7 @@ def test_daily_content_effective_content_image_missing_returns_no_content(invest
 
 
 def test_render_service_validates_output_files(investment_env, tmp_path):
-    from business.investment.constants import ErrorCode, ServiceType
+    from business.constants import ErrorCode, ServiceType
     from business.investment.render_service import RenderRequest, render_card
 
     output = tmp_path / "card.png"
@@ -10558,7 +10558,7 @@ def test_render_service_validates_output_files(investment_env, tmp_path):
 
 def test_render_service_contract_uses_skill_templates_and_configured_output_dir(investment_env, tmp_path):
     from business.investment.config_service import save_configs
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
 
     template_ta = tmp_path / "template_ta.html"
@@ -10852,8 +10852,8 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
 
 
 def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_path):
-    from business.investment.constants import ErrorCode
-    from business.investment.constants import ServiceType
+    from business.constants import ErrorCode
+    from business.constants import ServiceType
     from business.investment.config_service import save_config
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_request_records
@@ -10919,7 +10919,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
 
 def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import parse_route
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
@@ -10952,7 +10952,7 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
 
 
 def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(investment_env, monkeypatch):
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import parse_route
     import business.investment.skill_registry as investment_skill_registry
 
@@ -10970,7 +10970,7 @@ def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matche
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
     from business.investment.user_service import create_user
 
@@ -11183,7 +11183,7 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
     from business.business_router import build_business_reply
@@ -11218,7 +11218,7 @@ def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(investm
     from bridge.reply import ReplyType
     from business.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.user_service import create_user
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.business_router import build_business_reply
 
     create_user("wechatmp-openid", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11263,7 +11263,7 @@ def test_business_router_ignores_unmatched_text_without_auth_or_handler(investme
 def test_business_router_routes_technical_analysis_without_investment_router_handler(investment_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import BusinessReply
     from business.investment.user_service import create_user
     import business.router as business_route
@@ -11301,7 +11301,7 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
 def test_business_router_routes_daily_content_through_module_dispatcher(investment_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import BusinessReply
     from business.investment.user_service import create_user
     import business.business_router as business_router
@@ -11343,7 +11343,7 @@ def test_business_router_routes_daily_content_through_module_dispatcher(investme
 
 def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
@@ -11373,7 +11373,7 @@ def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, 
 def test_web_channel_uses_configured_investment_skill_triggers(investment_env, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.config_service import save_config
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
@@ -11396,7 +11396,7 @@ def test_web_channel_uses_configured_investment_skill_triggers(investment_env, t
 
 def test_web_channel_uses_admin_session_instead_of_customer_permission(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.constants import ActorType, EntryType, ServiceType, Status
+    from business.constants import ActorType, EntryType, ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import list_request_records, list_request_records_page
     from business.investment.user_service import create_user
@@ -11433,7 +11433,7 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(investmen
 
 def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(investment_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.records import list_request_records
     from business.investment.schema import investment_cache_entries
     from business.investment.db import connect
@@ -11498,7 +11498,7 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
 
 def test_web_technical_analysis_without_cache_key_appears_in_request_history(investment_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType, Status
+    from business.constants import ServiceType, Status
     from business.investment.records import list_request_records
     from business.investment.schema import investment_cache_entries
     from business.investment.db import connect
@@ -11589,7 +11589,7 @@ def test_web_open_chat_uses_plain_model_without_agent_bridge(investment_env, mon
 def test_wechatmp_channel_uses_effective_content_and_permission_prompts(investment_env, tmp_path, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.investment.constants import ServiceType
+    from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
     import channel.wechatmp.wechatmp_channel as wechatmp_channel

@@ -8,7 +8,7 @@ from business.business_registry import (
 )
 
 from .business_definitions import BusinessDefinition, from_cowagent_definition
-from .constants import ServiceType
+from business.constants import ServiceType
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 # encoding:utf-8
 from dataclasses import dataclass, field
 
-from .constants import ServiceType
+from business.constants import ServiceType
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import insert, select, update
 
 from .config_service import sanitize_sensitive_text
-from .constants import ActionType, ActorType, EntryType, ServiceType
+from business.constants import ActionType, ActorType, EntryType, ServiceType
 from .db import connect, row_to_dict
 from .schema import ai_generation_audits
 

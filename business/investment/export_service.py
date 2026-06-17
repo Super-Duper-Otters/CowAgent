@@ -6,7 +6,7 @@ from typing import Iterable
 from openpyxl import Workbook
 from sqlalchemy import select
 
-from .constants import EntryType, ServiceType, Status
+from business.constants import EntryType, ServiceType, Status
 from .db import connect, row_to_dict
 from .records import _visible_delivery_message, build_request_record_conditions
 from .schema import investment_request_records, investment_users

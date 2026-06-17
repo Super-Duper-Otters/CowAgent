@@ -1,5 +1,5 @@
 # encoding:utf-8
-from ..constants import ServiceType
+from business.constants import ServiceType
 
 
 def get_daily_content_business(service_type: ServiceType, *, module_key: str = ""):

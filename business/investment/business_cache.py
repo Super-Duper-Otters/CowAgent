@@ -1,5 +1,5 @@
 # encoding:utf-8
-from .constants import ServiceType
+from business.constants import ServiceType
 
 
 def get_cached_business_result(

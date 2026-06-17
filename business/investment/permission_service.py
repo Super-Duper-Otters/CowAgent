@@ -1,5 +1,5 @@
 # encoding:utf-8
-from .constants import ServiceType, normalize_service
+from business.constants import ServiceType, normalize_service
 
 
 def verify_customer_access(openid: str):

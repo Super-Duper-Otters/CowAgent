@@ -1,5 +1,5 @@
 # encoding:utf-8
-from .constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType
+from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType
 
 
 def _coerce_entry_type(value) -> EntryType:

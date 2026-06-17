@@ -64,7 +64,7 @@ def _configured_prompt(prompt_key: str, *, template_key: str = "") -> str:
 def _module_generation_result(service_type: ServiceType, source_text: str, source_files: list[str], prompt_key: str, template_key: str = ""):
     from business.investment.ai_generation import AIGenerationRequest, ExistingModelAdapter, AIGenerationResult
     from business.investment.ai_generation import _global_model_config, normalize_generated_text
-    from business.investment.constants import Status
+    from business.constants import Status
 
     model_config = _global_model_config()
     request = AIGenerationRequest(

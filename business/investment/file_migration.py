@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from .artifact_service import archive_artifact_file
-from .constants import ServiceType
+from business.constants import ServiceType
 from .db import connect, row_to_dict
 from .schema import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records
 from .storage import get_storage_dirs
