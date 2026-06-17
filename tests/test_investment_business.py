@@ -1405,7 +1405,7 @@ def test_web_console_config_save_preserves_masked_investment_sensitive_values(in
 
 
 def test_investment_skill_loader_reads_builtin_packages_and_excludes_cowagent_skills(investment_env):
-    from business.investment.skill_registry import list_investment_skills
+    from business.skill_registry import list_investment_skills
 
     keys = {item["skill_key"] for item in list_investment_skills()}
 
@@ -1631,7 +1631,7 @@ def test_runtime_component_definition_overrides_builtin_definition(investment_en
 def test_skill_versions_list_only_new_runtime_versions(investment_env):
     from business.investment.component_paths import runtime_versions_root
     from business.storage import get_storage_dirs
-    from business.investment.skill_versions import list_versions
+    from business.skill_versions import list_versions
 
     new_version = runtime_versions_root("technical-analysis") / "skill-new"
     old_version = get_storage_dirs()["root"] / "skills" / "technical-analysis" / "skill-old"
@@ -1668,7 +1668,7 @@ def test_skill_versions_list_only_new_runtime_versions(investment_env):
 def test_investment_skill_loader_applies_web_trigger_override(investment_env):
     from business.config_service import save_config
     from business.constants import ServiceType
-    from business.investment.skill_registry import match_investment_skill
+    from business.skill_registry import match_investment_skill
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
 
@@ -1682,7 +1682,7 @@ def test_investment_skill_loader_applies_web_trigger_override(investment_env):
 def test_investment_skill_loader_extracts_suffix_target(investment_env):
     from business.config_service import save_config
     from business.constants import ServiceType
-    from business.investment.skill_registry import match_investment_skill
+    from business.skill_registry import match_investment_skill
 
     save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
 
@@ -1697,8 +1697,8 @@ def test_uploaded_investment_skill_package_appears_in_registry(investment_env, t
     from business.investment.component_paths import runtime_component_root, runtime_versions_root
     from business.config_service import get_config
     from business.constants import ServiceType
-    from business.investment.skill_registry import list_investment_skills, match_investment_skill
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_registry import list_investment_skills, match_investment_skill
+    from business.skill_versions import save_package_upload
 
     package = tmp_path / "macro.zip"
     skill_md = """---
@@ -1742,7 +1742,7 @@ investment:
 def test_uploaded_investment_skill_package_rejects_unsafe_skill_key(investment_env, tmp_path):
     import pytest
 
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_versions import save_package_upload
 
     package = tmp_path / "unsafe.zip"
     skill_md = """---
@@ -1767,9 +1767,9 @@ investment:
 def test_uploaded_script_investment_skill_executes_from_route(investment_env, tmp_path):
     from business.constants import ServiceType
     from business.router import handle_text_message
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_versions import save_package_upload
     from business.user_service import create_user
-    import business.investment.skill_registry as investment_skill_registry
+    import business.skill_registry as investment_skill_registry
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     package = tmp_path / "macro.zip"
@@ -1816,7 +1816,7 @@ investment:
 
 def test_web_technical_analysis_script_component_returns_uploaded_text(investment_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
 
     package = tmp_path / "ta-text.zip"
@@ -1857,7 +1857,7 @@ def test_web_technical_analysis_script_component_returns_uploaded_text(investmen
 def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(investment_env, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.component_paths import runtime_component_root
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
 
     package = tmp_path / "ta-text.zip"
@@ -1901,7 +1901,7 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
     from bridge.reply import ReplyType
     from business.business_router import build_business_reply
     from business.constants import ServiceType
-    from business.investment.skill_versions import save_package_upload
+    from business.skill_versions import save_package_upload
     from business.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
@@ -1946,7 +1946,7 @@ def test_investment_skill_upload_python_file_creates_version_and_activates_it(in
     from pathlib import Path
 
     from business.config_service import get_config
-    from business.investment.skill_versions import list_versions, save_upload
+    from business.skill_versions import list_versions, save_upload
 
     result = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
 
@@ -1972,7 +1972,7 @@ def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(inv
 
     import pytest
 
-    from business.investment.skill_versions import save_upload
+    from business.skill_versions import save_upload
 
     unsafe = BytesIO()
     with ZipFile(unsafe, "w") as archive:
@@ -1990,7 +1990,7 @@ def test_investment_skill_upload_zip_rejects_path_escape_and_requires_script(inv
 
 def test_investment_skill_version_activation_switches_between_upload_and_builtin(investment_env):
     from business.config_service import get_config
-    from business.investment.skill_versions import activate_version, list_versions, save_upload
+    from business.skill_versions import activate_version, list_versions, save_upload
 
     uploaded = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v2')", operator="tester")
 
@@ -2009,7 +2009,7 @@ def test_investment_skill_uploaded_version_can_be_deleted_and_active_delete_fall
     import pytest
 
     from business.config_service import get_config
-    from business.investment.skill_versions import delete_version, list_versions, save_upload
+    from business.skill_versions import delete_version, list_versions, save_upload
 
     uploaded = save_upload("technical-analysis", "analyze_universal.py", b"print('ta delete')", operator="tester")
     assert get_config("technical_analysis.skill_path") == uploaded["script_path"]
@@ -2028,7 +2028,7 @@ def test_investment_skill_versions_include_loaded_skills(investment_env):
     from pathlib import Path
 
     from business.config_service import get_config
-    from business.investment.skill_versions import activate_version, list_all_skills, save_upload
+    from business.skill_versions import activate_version, list_all_skills, save_upload
     from business.business_registry import get_business_definition
 
     technical = save_upload("technical-analysis", "analyze_universal.py", b"print('ta v1')", operator="tester")
@@ -10955,7 +10955,7 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
 def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(investment_env, monkeypatch):
     from business.constants import ServiceType
     from business.router import parse_route
-    import business.investment.skill_registry as investment_skill_registry
+    import business.skill_registry as investment_skill_registry
 
     monkeypatch.setattr(
         investment_skill_registry,
