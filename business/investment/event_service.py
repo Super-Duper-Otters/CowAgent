@@ -7,7 +7,7 @@ from sqlalchemy import insert, select
 
 from .config_service import sanitize_sensitive_text
 from business.db import connect, row_to_dict
-from .schema import request_events
+from business.schema import request_events
 
 
 @dataclass

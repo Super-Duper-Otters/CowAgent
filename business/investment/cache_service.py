@@ -9,7 +9,7 @@ from sqlalchemy import and_, desc, func, or_, select, update
 
 from business.constants import ServiceType, Status
 from business.db import connect, row_to_dict
-from .schema import investment_cache_entries, investment_daily_contents
+from business.schema import investment_cache_entries, investment_daily_contents
 
 
 CACHE_STATUS_ACTIVE = "active"

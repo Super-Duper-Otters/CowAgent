@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 
 
 def test_investment_schema_declares_all_tables():
-    from business.investment.schema import metadata
+    from business.schema import metadata
 
     assert {
         "customers",
@@ -105,7 +105,7 @@ def test_investment_schema_declares_all_tables():
 
 
 def test_investment_schema_uses_simplified_physical_column_names():
-    from business.investment.schema import metadata
+    from business.schema import metadata
 
     physical_names = {
         table_name: {column.name for column in metadata.tables[table_name].columns}
@@ -148,7 +148,8 @@ def test_investment_migration_removes_generation_records_table(investment_env):
 
 def test_investment_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
     from sqlalchemy import inspect
-    from business import db, migrations
+    from business import db
+    from business.investment import migrations
 
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_migration_{uuid4().hex}"
@@ -348,7 +349,7 @@ def test_admin_user_service_lists_updates_and_resets_password(investment_env):
         reset_admin_password("missing-admin", "new-pass")
 
     from business.db import connect
-    from business.investment.schema import admins
+    from business.schema import admins
 
     update_admin_user("ops-a", role="content_operator")
     create_admin_user("solo-admin", "admin-pass", role="admin")
@@ -530,7 +531,7 @@ def test_investment_auth_me_allows_content_operator_without_customer_or_audit_pe
 
 def test_web_investment_auth_falls_back_to_web_password_until_admin_exists(investment_env, monkeypatch):
     from business.db import connect
-    from business.investment.schema import admin_sessions, admins
+    from business.schema import admin_sessions, admins
     from business.investment.auth_service import create_admin_user
     from channel.web import web_channel
 
@@ -832,7 +833,8 @@ def test_investment_database_url_rejects_sqlite_config(monkeypatch):
 
 
 def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
-    from business.investment import migrations, schema
+    from business.investment import migrations
+    from business import schema
     from business import storage
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
@@ -1370,7 +1372,7 @@ def test_investment_config_rejects_model_and_wechatmp_keys_without_persisting(in
 
     from business import db
     from business.investment.config_service import get_config, save_config, save_configs
-    from business.investment.schema import configs
+    from business.schema import configs
 
     forbidden = {
         "model.name": "investment-model",
@@ -2623,7 +2625,7 @@ def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_ke
     from sqlalchemy import select
 
     from business import db
-    from business.investment.schema import configs
+    from business.schema import configs
     from channel.web.web_channel import InvestmentConfigHandler
 
     body = {
@@ -2716,7 +2718,7 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(investment_en
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(investment_env):
     from business.db import connect
     from business.investment.record_cleanup import cleanup_useless_business_records
-    from business.investment.schema import (
+    from business.schema import (
         admin_sessions,
         configs,
         request_records,
@@ -3421,7 +3423,7 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(inve
     from business.constants import ServiceType
     from business.db import connect
     from business.investment.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
-    from business.investment.schema import investment_cache_entries
+    from business.schema import investment_cache_entries
     from channel.web.web_channel import InvestmentArtifactPackagesHandler
 
     signal = tmp_path / "signal-card.png"
@@ -3533,7 +3535,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_
     from business.investment.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
-    from business.investment.schema import investment_cache_entries
+    from business.schema import investment_cache_entries
     from business.investment.records import list_artifact_folder_nodes
     from channel.web.web_channel import InvestmentArtifactFoldersHandler
 
@@ -3607,7 +3609,7 @@ def test_artifact_folder_api_includes_daily_content_records(investment_env, monk
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from business.db import connect
-    from business.investment.schema import investment_daily_contents, investment_output_files
+    from business.schema import investment_daily_contents, investment_output_files
     from business.investment.records import list_artifact_folder_nodes, list_artifact_packages_page
     from channel.web.web_channel import InvestmentArtifactFoldersHandler, InvestmentArtifactPackagesHandler
 
@@ -7025,12 +7027,14 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     from business.investment.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.db import connect
+    from business.config_service import save_config
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.schema import cache_entries
+    from business.schema import cache_entries
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
     monkeypatch.setattr(
         cache_policy,
@@ -7728,13 +7732,15 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     from business.investment.cache_service import list_cache_entries, version_fingerprint
     from business.constants import ServiceType
     from business.db import connect
+    from business.config_service import save_config
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.schema import cache_entries
+    from business.schema import cache_entries
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
     legacy_cache_version = version_fingerprint(
@@ -7794,7 +7800,7 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
     from business.investment.cache_service import list_cache_entries, version_fingerprint
     from business.constants import ServiceType
     from business.db import connect
-    from business.investment.schema import request_records
+    from business.schema import request_records
     from business.investment.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -9439,7 +9445,7 @@ def test_sqlite_to_pg_migration_rejects_non_postgresql_url(tmp_path):
 def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
 
-    from business.investment import schema
+    from business import schema
     from scripts import migrate_investment_sqlite_to_pg
 
     sqlite_path = tmp_path / "investment.db"
@@ -11438,7 +11444,7 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
     from bridge.reply import ReplyType
     from business.constants import ServiceType, Status
     from business.investment.records import list_request_records
-    from business.investment.schema import investment_cache_entries
+    from business.schema import investment_cache_entries
     from business.db import connect
     from business.investment.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
@@ -11503,7 +11509,7 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(inv
     from bridge.reply import ReplyType
     from business.constants import ServiceType, Status
     from business.investment.records import list_request_records
-    from business.investment.schema import investment_cache_entries
+    from business.schema import investment_cache_entries
     from business.db import connect
     from channel.web.web_channel import _build_investment_web_reply
     import business.technical_analysis_handler as ta_handler

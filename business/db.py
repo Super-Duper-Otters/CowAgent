@@ -93,7 +93,7 @@ def upsert_config(
     updated_by_username: str = "",
     updated_by_role: str = "",
 ) -> None:
-    from business.investment.schema import investment_configs
+    from business.schema import investment_configs
 
     table = investment_configs
     if conn.dialect.name == "postgresql":
@@ -125,7 +125,7 @@ def upsert_config(
 
 
 def upsert_stock_symbols(conn, rows: list[dict]) -> None:
-    from business.investment.schema import investment_stock_symbols
+    from business.schema import investment_stock_symbols
 
     if not rows:
         return

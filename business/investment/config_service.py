@@ -8,7 +8,7 @@ from sqlalchemy import select
 from config import conf
 
 from business.db import connect, row_to_dict, upsert_config
-from .schema import investment_configs
+from business.schema import investment_configs
 
 
 SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")

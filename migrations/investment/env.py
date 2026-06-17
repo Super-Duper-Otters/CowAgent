@@ -5,7 +5,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from business.db import get_database_url
-from business.investment.schema import metadata
+from business.schema import metadata
 
 
 def _alembic_option_value(value: str) -> str:

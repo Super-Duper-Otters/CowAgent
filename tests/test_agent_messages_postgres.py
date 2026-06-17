@@ -49,7 +49,7 @@ def agent_messages_pg_env(tmp_path, monkeypatch):
 
 
 def test_agent_messages_schema_is_declared():
-    from business.investment.schema import metadata
+    from business.schema import metadata
 
     assert "agent_sessions" in metadata.tables
     assert "agent_messages" in metadata.tables
@@ -66,7 +66,7 @@ def test_agent_messages_schema_is_declared():
 def test_conversation_store_persists_agent_messages_to_postgres(agent_messages_pg_env):
     from agent.memory.conversation_store import get_conversation_store
     from business.db import connect
-    from business.investment.schema import agent_messages
+    from business.schema import agent_messages
 
     store = get_conversation_store()
     store.append_messages(

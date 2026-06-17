@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, insert, select, update
 
 from business.constants import CUSTOMER_SERVICE_TYPES, ErrorCode, SERVICE_LABELS, ServiceType, normalize_service, user_message
 from business.db import connect, row_to_dict
-from .schema import investment_users
+from business.schema import investment_users
 
 
 @dataclass

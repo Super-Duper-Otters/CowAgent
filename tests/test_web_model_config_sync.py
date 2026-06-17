@@ -47,7 +47,7 @@ def investment_env(tmp_path, monkeypatch):
 
 def _investment_config_keys():
     from business import db
-    from business.investment.schema import investment_configs
+    from business.schema import investment_configs
 
     with db.connect() as conn:
         rows = conn.execute(select(investment_configs.c.config_key)).fetchall()

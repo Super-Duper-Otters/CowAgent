@@ -17,7 +17,7 @@ from .records import (
     business_record_identity_values,
     external_request_identity_values,
 )
-from .schema import investment_request_records
+from business.schema import investment_request_records
 
 
 @dataclass
