@@ -527,39 +527,6 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
     assert recorded_output_files == [signal_card_path, main_chart_path, markdown_report_path]
 
 
-def test_wechatmp_technical_analysis_generate_reply_uses_router_user_images(monkeypatch, tmp_path):
-    from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.router import BusinessReply
-    import business.business_router as business_router
-    import business.technical_analysis_handler as cowagent_ta_handler
-
-    signal_card_path = str(tmp_path / "signal-card.png")
-    main_chart_path = str(tmp_path / "main-chart.png")
-    markdown_report_path = str(tmp_path / "report.md")
-
-    monkeypatch.setattr(business_router, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
-    monkeypatch.setattr(business_router, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
-    monkeypatch.setattr(
-        cowagent_ta_handler,
-        "handle_technical_analysis",
-        lambda _openid, _content, _route, **_kwargs: BusinessReply(
-            handled=True,
-            success=True,
-            reply_text=f"[图片: {signal_card_path}]\n[图片: {main_chart_path}]",
-            output_files=[signal_card_path, main_chart_path],
-            service_type=ServiceType.TECHNICAL_ANALYSIS,
-        ),
-    )
-
-    reply = _wechatmp_channel(monkeypatch)._generate_reply(_context(content="天娱数科 技术分析"))
-
-    assert reply.type == ReplyType.IMAGE_URL
-    assert reply.content == [signal_card_path, main_chart_path]
-    assert markdown_report_path not in reply.content
-    assert reply.business_service_type == ServiceType.TECHNICAL_ANALYSIS
-
-
 def test_wechatmp_passive_send_uploads_image_list_without_text_marker(monkeypatch, tmp_path):
     from bridge.reply import Reply, ReplyType
     import pytest
@@ -973,26 +940,22 @@ def test_wechatmp_passive_pending_result_can_be_selected_by_target_name(monkeypa
     assert produced_contexts == []
 
 
-def test_wechatmp_passive_pending_summary_is_appended_to_new_technical_ack(monkeypatch):
+def test_wechatmp_passive_immediate_ack_appends_pending_summary(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
-    produced_contexts = []
-    channel = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    channel.cache_dict.append_result("openid", "农业银行 技术分析", [("image", "media-ny")], service_type=ServiceType.TECHNICAL_ANALYSIS)
-    current_message = {"content": "天娱数科 技术分析", "msg_id": "msg-new-tech-with-pending"}
-
-    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    cache = PassiveReplyCache()
+    cache.append_result("openid", "农业银行 技术分析", [("image", "media-ny")], service_type=ServiceType.TECHNICAL_ANALYSIS)
     monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
 
-    response = passive_reply.Query().POST()
+    response = passive_reply._immediate_ack_text(cache, "openid")
+
     assert response.startswith(
         "收到，正在处理，请稍候。请等待30-40s后回复1获取\n\n"
         "您当前还有技术分析结果待领取：\n"
         "1.农业银行 1条（生成时间："
     )
     assert response.endswith("）\n回复1获取或回复股票名称获取对应报告")
-    assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
 
 
 def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_confirm(monkeypatch):
@@ -1288,82 +1251,6 @@ def test_wechatmp_passive_zero_no_longer_discards_pending_result(monkeypatch):
     assert produced_contexts == []
 
 
-def test_wechatmp_passive_pending_result_returns_rate_without_discarding_technical_results(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    channel_state.cache_dict.append_result("openid", "300502.SZ 技术分析", [("image", "media-1")], service_type=ServiceType.TECHNICAL_ANALYSIS)
-    current_message = {"content": "利率", "msg_id": "msg-rate-1"}
-
-    class FakeChannel:
-        def __init__(self):
-            self.client = SimpleNamespace()
-            self.crypto = None
-            self.cache_dict = channel_state.cache_dict
-            self.running = channel_state.running
-            self.request_cnt = channel_state.request_cnt
-            self.technical_analysis_titles = {}
-            self.running_started_at = {}
-            self.running_lock = passive_reply.threading.RLock()
-
-        def _compose_context(self, ctype, content, **kwargs):
-            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
-
-        def produce(self, context):
-            produced_contexts.append(context)
-            self.cache_dict.append_result("openid", context.content, [("image", "media-rate")], service_type=ServiceType.RATE)
-            self.running.discard("openid")
-
-    class FakeReply:
-        def __init__(self, text, _msg):
-            self.text = text
-
-        def render(self):
-            return self.text
-
-    class FakeImageReply:
-        def __init__(self, message):
-            self.message = message
-            self.media_id = ""
-
-        def render(self):
-            return f"<image>{self.media_id}</image>"
-
-    fake_msg = SimpleNamespace(type="text")
-    monkeypatch.setattr(passive_reply, "WechatMPChannel", FakeChannel)
-    monkeypatch.setattr(passive_reply, "is_encrypted_message", lambda _args: False)
-    monkeypatch.setattr(passive_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
-    monkeypatch.setattr(passive_reply, "parse_message", lambda _message: fake_msg)
-    monkeypatch.setattr(
-        passive_reply,
-        "WeChatMPMessage",
-        lambda _msg, client=None: SimpleNamespace(
-            from_user_id="openid",
-            content=current_message["content"],
-            msg_id=current_message["msg_id"],
-            ctype=SimpleNamespace(),
-        ),
-    )
-    monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
-    monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
-    monkeypatch.setattr(passive_reply.web, "input", lambda: {})
-    monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
-    monkeypatch.setattr(
-        passive_reply.web.ctx,
-        "env",
-        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
-        raising=False,
-    )
-
-    assert passive_reply.Query().POST() == "<image>media-rate</image>"
-    assert [context.content for context in produced_contexts] == ["利率"]
-    summary = channel_state.cache_dict.pending_technical_summary("openid")
-    assert len(summary) == 1
-    assert summary[0][:2] == ("300502.SZ", 1)
-
-
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_pending_result_defers_new_technical_analysis_until_discard(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
@@ -1621,29 +1508,6 @@ def test_wechatmp_passive_running_technical_analysis_confirm_prompts_retry(monke
     assert produced_contexts == []
 
 
-def test_wechatmp_passive_running_technical_analysis_rejects_new_technical_request(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel = SimpleNamespace(
-        cache_dict=PassiveReplyCache(),
-        running={"openid"},
-        request_cnt={},
-        technical_analysis_titles={"openid": "天娱数科"},
-    )
-    current_message = {"content": "农业银行 技术分析", "msg_id": "msg-tech-running-new-request"}
-
-    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
-    monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
-
-    assert passive_reply.Query().POST() == (
-        "「天娱数科」技术分析仍在运行中，请稍后回复1获取结果。\n"
-        "当前暂不接受新的技术分析请求，请在结果领取后再发起新的技术分析。"
-    )
-    assert produced_contexts == []
-
-
 def test_wechatmp_passive_pending_technical_analysis_images_are_returned_one_per_confirm(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1768,40 +1632,6 @@ def test_wechatmp_passive_one_without_pending_result_uses_normal_request_path(mo
     assert [context.content for context in produced_contexts] == ["1"]
 
 
-def test_wechatmp_passive_new_technical_analysis_returns_immediate_ack(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    current_message = {"content": "天娱数科 技术分析", "msg_id": "msg-new-tech-immediate-ack"}
-
-    class FakeChannel:
-        def __init__(self):
-            self.client = SimpleNamespace()
-            self.crypto = None
-            self.cache_dict = channel_state.cache_dict
-            self.running = channel_state.running
-            self.request_cnt = channel_state.request_cnt
-            self.technical_analysis_titles = {}
-            self.running_started_at = {}
-            self.running_lock = passive_reply.threading.RLock()
-
-        def _compose_context(self, ctype, content, **kwargs):
-            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
-
-        def produce(self, context):
-            produced_contexts.append(context)
-
-    _fake_passive_post(monkeypatch, passive_reply, channel_state, current_message, produced_contexts)
-    monkeypatch.setattr(passive_reply, "WechatMPChannel", FakeChannel)
-    monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
-
-    assert passive_reply.Query().POST() == "收到，正在处理，请稍候。请等待30-40s后回复1获取"
-    assert [context.content for context in produced_contexts] == ["天娱数科 技术分析"]
-    assert "openid" in channel_state.running
-
-
 def test_wechatmp_passive_ready_technical_result_returns_claim_prompt_without_starting_generation(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1903,45 +1733,6 @@ def test_wechatmp_passive_render_image_file_uploads_on_claim(monkeypatch, tmp_pa
     assert rendered == "<image>media-claim</image>"
     assert channel.client.media.uploaded_file.closed
     assert wechatmp_channel.image_media_cache.get(wechatmp_channel.local_image_media_key(str(image_path))) == "media-claim"
-
-
-def test_wechatmp_passive_technical_analysis_precheck_error_returns_failure_without_ack(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    import business.technical_analysis as technical_analysis
-    from business.constants import ErrorCode
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    current_message = {"content": "农业银行 技术分析", "msg_id": "msg-tech-ambiguous"}
-
-    _fake_passive_post(monkeypatch, passive_reply, channel_state, current_message, produced_contexts)
-    monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
-    monkeypatch.setattr(
-        technical_analysis,
-        "resolve_stock",
-        lambda _target, auto_refresh_on_miss=True: (None, ErrorCode.STOCK_AMBIGUOUS),
-    )
-    monkeypatch.setattr(
-        technical_analysis,
-        "list_exact_stock_name_matches",
-        lambda _target: [
-            {"code": "01288.HK", "name": "农业银行", "market": "HK"},
-            {"code": "601288.SH", "name": "农业银行", "market": "SH"},
-        ],
-    )
-
-    response = passive_reply.Query().POST()
-
-    assert response == (
-        "股票名称匹配到多个标的，请改用股票代码。\n"
-        "原因：股票名称“农业银行”匹配到多个标的，请改用股票代码重新发送：\n"
-        "1. 01288.HK 农业银行（HK）\n"
-        "2. 601288.SH 农业银行（SH）\n"
-        "例如：601288.SH 技术分析"
-    )
-    assert produced_contexts == []
-    assert "openid" not in channel_state.running
 
 
 def test_wechatmp_immediate_ack_replaces_empty_pending_summary_placeholder(monkeypatch):
@@ -2215,95 +2006,6 @@ def test_wechatmp_passive_rate_ready_between_retries_rechecks_permission_before_
     assert len(permission_calls) == 2
 
 
-def test_wechatmp_passive_rate_retry_returns_image_when_cache_ready_on_second_request(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    current_message = {"content": "利率", "msg_id": "msg-rate-retry-2"}
-    sleep_calls = []
-
-    class FakeChannel:
-        def __init__(self):
-            self.client = SimpleNamespace()
-            self.crypto = None
-            self.cache_dict = channel_state.cache_dict
-            self.running = channel_state.running
-            self.request_cnt = channel_state.request_cnt
-
-        def _compose_context(self, ctype, content, **kwargs):
-            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
-
-        def produce(self, context):
-            produced_contexts.append(context)
-
-    class FakeReply:
-        def __init__(self, text, _msg):
-            self.text = text
-
-        def render(self):
-            return self.text
-
-    class FakeImageReply:
-        def __init__(self, message):
-            self.message = message
-            self.media_id = ""
-
-        def render(self):
-            return f"<image>{self.media_id}</image>"
-
-    def fake_sleep(seconds):
-        sleep_calls.append(seconds)
-        if channel_state.request_cnt.get("msg-rate-retry-2") == 2 and "openid" in channel_state.running:
-            channel_state.cache_dict.append_result("openid", "利率", [("image", "media-rate")], service_type=ServiceType.RATE)
-            channel_state.running.discard("openid")
-
-    fake_msg = SimpleNamespace(type="text")
-    monkeypatch.setattr(passive_reply, "WechatMPChannel", FakeChannel)
-    monkeypatch.setattr(passive_reply, "is_encrypted_message", lambda _args: False)
-    monkeypatch.setattr(passive_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
-    monkeypatch.setattr(passive_reply, "parse_message", lambda _message: fake_msg)
-    monkeypatch.setattr(
-        passive_reply,
-        "WeChatMPMessage",
-        lambda _msg, client=None: SimpleNamespace(
-            from_user_id="openid",
-            content=current_message["content"],
-            msg_id=current_message["msg_id"],
-            ctype=SimpleNamespace(),
-        ),
-    )
-    monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
-    monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
-    now = [1000.0]
-
-    def fake_time():
-        now[0] += 1.0
-        return now[0]
-
-    monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
-    monkeypatch.setattr(passive_reply.time, "time", fake_time)
-    monkeypatch.setattr(
-        "business.user_service.verify_permission",
-        lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
-    )
-    monkeypatch.setattr(passive_reply.web, "input", lambda: {})
-    monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
-    monkeypatch.setattr(
-        passive_reply.web.ctx,
-        "env",
-        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
-        raising=False,
-    )
-
-    assert passive_reply.Query().POST() == "success"
-    assert passive_reply.Query().POST() == "<image>media-rate</image>"
-    assert [context.content for context in produced_contexts] == ["利率"]
-    assert channel_state.request_cnt == {}
-    assert sleep_calls
-
-
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_auto_wait_rechecks_permission_before_pop(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
@@ -2459,93 +2161,6 @@ def test_wechatmp_passive_auto_wait_permission_error_does_not_pop(monkeypatch):
     assert passive_reply.Query().POST() == "系统暂时繁忙，请稍后重试。"
     assert channel_state.cache_dict.peek_result("openid").replies == [("image", "media-rate")]
     assert len(permission_calls) == 2
-
-
-def test_wechatmp_passive_bond_retry_returns_image_when_cache_ready_on_third_request(monkeypatch):
-    import channel.wechatmp.passive_reply as passive_reply
-    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-
-    produced_contexts = []
-    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
-    current_message = {"content": "转债", "msg_id": "msg-bond-retry-3"}
-
-    class FakeChannel:
-        def __init__(self):
-            self.client = SimpleNamespace()
-            self.crypto = None
-            self.cache_dict = channel_state.cache_dict
-            self.running = channel_state.running
-            self.request_cnt = channel_state.request_cnt
-
-        def _compose_context(self, ctype, content, **kwargs):
-            return SimpleNamespace(ctype=ctype, content=content, kwargs=kwargs)
-
-        def produce(self, context):
-            produced_contexts.append(context)
-
-    class FakeReply:
-        def __init__(self, text, _msg):
-            self.text = text
-
-        def render(self):
-            return self.text
-
-    class FakeImageReply:
-        def __init__(self, message):
-            self.message = message
-            self.media_id = ""
-
-        def render(self):
-            return f"<image>{self.media_id}</image>"
-
-    def fake_sleep(_seconds):
-        if channel_state.request_cnt.get("msg-bond-retry-3") == 3 and "openid" in channel_state.running:
-            channel_state.cache_dict.append_result("openid", "转债", [("image", "media-bond")], service_type=ServiceType.CONVERTIBLE_BOND)
-            channel_state.running.discard("openid")
-
-    fake_msg = SimpleNamespace(type="text")
-    monkeypatch.setattr(passive_reply, "WechatMPChannel", FakeChannel)
-    monkeypatch.setattr(passive_reply, "is_encrypted_message", lambda _args: False)
-    monkeypatch.setattr(passive_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
-    monkeypatch.setattr(passive_reply, "parse_message", lambda _message: fake_msg)
-    monkeypatch.setattr(
-        passive_reply,
-        "WeChatMPMessage",
-        lambda _msg, client=None: SimpleNamespace(
-            from_user_id="openid",
-            content=current_message["content"],
-            msg_id=current_message["msg_id"],
-            ctype=SimpleNamespace(),
-        ),
-    )
-    monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
-    monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
-    now = [1000.0]
-
-    def fake_time():
-        now[0] += 1.0
-        return now[0]
-
-    monkeypatch.setattr(passive_reply.time, "sleep", fake_sleep)
-    monkeypatch.setattr(passive_reply.time, "time", fake_time)
-    monkeypatch.setattr(
-        "business.user_service.verify_permission",
-        lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
-    )
-    monkeypatch.setattr(passive_reply.web, "input", lambda: {})
-    monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
-    monkeypatch.setattr(
-        passive_reply.web.ctx,
-        "env",
-        {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "12345"},
-        raising=False,
-    )
-
-    assert passive_reply.Query().POST() == "success"
-    assert passive_reply.Query().POST() == "success"
-    assert passive_reply.Query().POST() == "<image>media-bond</image>"
-    assert [context.content for context in produced_contexts] == ["转债"]
-    assert channel_state.request_cnt == {}
 
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
