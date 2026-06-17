@@ -19,7 +19,7 @@ from business.investment.render_service import (
 )
 from business.schema import stock_symbols
 from business.storage import get_storage_dirs
-from business.investment.stock_resolver import get_tushare_token, stock_dictionary_stats
+from business.stock_resolver import get_tushare_token, stock_dictionary_stats
 
 
 @dataclass

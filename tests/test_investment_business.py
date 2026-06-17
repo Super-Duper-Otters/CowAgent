@@ -1261,7 +1261,7 @@ def test_daily_content_service_uses_investment_db_connection_helpers():
 
 
 def test_stock_resolver_uses_investment_db_connection_helpers():
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     assert not hasattr(stock_resolver, "get_connection")
 
@@ -2649,7 +2649,7 @@ def test_web_investment_config_excludes_and_rejects_global_model_and_wechatmp_ke
 
 
 def test_web_stock_query_returns_matches_and_stats_without_refresh(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     import business.stock_resolver as web_stock_resolver
     from channel.web.web_channel import InvestmentStocksHandler
 
@@ -6648,7 +6648,7 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
     investment_env, tmp_path, monkeypatch, raw_input, dictionary_code, expected_normalized, expected_skill_symbol
 ):
     from business.investment import technical_analysis
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.investment.technical_analysis import run_technical_analysis
 
     name = raw_input.replace(" 技术分析", "")
@@ -6702,7 +6702,7 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
 ):
     from business.investment import technical_analysis
     from business.constants import ErrorCode
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.investment.technical_analysis import run_technical_analysis
 
     refresh_stock_symbols(
@@ -6725,7 +6725,7 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
 def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env, monkeypatch):
     from business.investment import technical_analysis
     from business.constants import ErrorCode
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.investment.technical_analysis import run_technical_analysis
 
     refresh_stock_symbols(
@@ -7332,7 +7332,7 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7389,7 +7389,7 @@ def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     old_cache_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
@@ -7439,7 +7439,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.investment.records import create_request_record, succeed_request_record
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -7513,7 +7513,7 @@ def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_lat
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -7559,7 +7559,7 @@ def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_ca
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -7630,7 +7630,7 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
     from business.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records, succeed_request_record
     from business.router import handle_text_message
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7727,7 +7727,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     from business.investment.records import list_request_records
     from business.router import handle_text_message
     from business.schema import cache_entries
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7792,7 +7792,7 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
     from business.constants import ServiceType
     from business.db import connect
     from business.schema import request_records
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -7846,7 +7846,7 @@ def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in
 ):
     from business.investment import cache_service, technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -7903,7 +7903,7 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8059,7 +8059,7 @@ def test_technical_analysis_cache_key_version_changes_when_output_versions_chang
 ):
     from business.investment import technical_analysis
     from business.investment.cache_service import version_fingerprint
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
 
@@ -8184,7 +8184,7 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investmen
     from business.constants import ServiceType
     from business.investment.records import list_request_records
     from business.router import handle_text_message
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
     from business.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -9076,9 +9076,9 @@ def test_file_serve_handler_allows_file_id_lookup(investment_env, tmp_path, monk
 
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.constants import ErrorCode, user_message
-    from business.investment.stock_resolver import (
+    from business.stock_resolver import (
         list_stock_symbols,
         refresh_stock_symbols,
         resolve_stock as core_resolve_stock,
@@ -9118,7 +9118,7 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(investment_env
 
 
 def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_env):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
@@ -9130,7 +9130,7 @@ def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(investment_
 
 
 def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     monkeypatch.setattr(stock_resolver, "get_tushare_token", lambda: "token")
     fake_tushare = SimpleNamespace(
@@ -9181,7 +9181,7 @@ def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functio
 
 
 def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.constants import ErrorCode
 
     monkeypatch.setattr(
@@ -9199,7 +9199,7 @@ def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(investment_env,
 
 
 def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(investment_env):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
@@ -9223,7 +9223,7 @@ class _FakeDataFrame:
 
 
 def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     rows = [
         {"code": f"{index:06d}.SZ", "name": f"Test Stock {index}", "market": "SZ"}
@@ -9235,7 +9235,7 @@ def test_stock_resolver_refreshes_large_symbol_batch(investment_env):
 
 
 def test_stock_resolver_tushare_token_priority_and_masking(investment_env, tmp_path, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.config_service import get_config, save_config
 
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
@@ -9252,7 +9252,7 @@ def test_stock_resolver_tushare_token_priority_and_masking(investment_env, tmp_p
 
 
 def test_stock_resolver_tushare_token_falls_back_to_file(investment_env, tmp_path, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
@@ -9262,7 +9262,7 @@ def test_stock_resolver_tushare_token_falls_back_to_file(investment_env, tmp_pat
 
 
 def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_path, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
@@ -9272,7 +9272,7 @@ def test_stock_resolver_refresh_from_tushare_requires_token(investment_env, tmp_
 
 
 def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
     from business.config_service import save_config
 
     calls = []
@@ -9307,7 +9307,7 @@ def test_stock_resolver_refreshes_from_tushare_fake_dataframe(investment_env, mo
 
 
 def test_stock_resolver_all_tushare_reports_market_counts_and_errors(investment_env, monkeypatch):
-    from business.investment import stock_resolver
+    from business import stock_resolver
 
     monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 2)
     monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: 3)
@@ -10742,7 +10742,7 @@ def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(invest
 def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(investment_env):
     from business.config_service import save_config
     from business.health import run_health_checks
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     save_config("tushare.token", "ts-health-secret-1234567890", operator_role="admin")
     refresh_stock_symbols(
@@ -10805,7 +10805,7 @@ def test_health_check_reports_all_dependencies_available(investment_env, tmp_pat
     from business import health
     from business import config_service
     from business.config_service import save_configs
-    from business.investment.stock_resolver import refresh_stock_symbols
+    from business.stock_resolver import refresh_stock_symbols
 
     files = {
         "technical_analysis.skill_path": tmp_path / "analyze_universal.py",

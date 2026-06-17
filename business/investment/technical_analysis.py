@@ -27,7 +27,7 @@ from .market_date_resolver import MarketDateResolution, MarketDateResolver, norm
 from .render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from business.schema import investment_cache_entries, investment_request_records
 from business.storage import get_storage_dirs
-from .stock_resolver import list_exact_stock_name_matches, resolve_stock
+from business.stock_resolver import list_exact_stock_name_matches, resolve_stock
 from .versioning import file_fingerprint
 
 

@@ -70,7 +70,7 @@ def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_pa
         list_request_records,
         succeed_request_record,
     )
-    from business.investment.stock_resolver import list_stock_symbols, refresh_stock_symbols, resolve_stock
+    from business.stock_resolver import list_stock_symbols, refresh_stock_symbols, resolve_stock
     from business.user_service import create_user, get_user_by_openid, verify_permission
 
     suffix = uuid4().hex
