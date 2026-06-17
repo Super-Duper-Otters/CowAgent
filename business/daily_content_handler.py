@@ -8,7 +8,7 @@ from business.business_records import (
 )
 from business.config_service import sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType
-from business.investment.executors.daily_content_executor import get_daily_content_business
+from business.executors.daily_content_executor import get_daily_content_business
 
 
 def _image_reply(paths: list[str]) -> str:

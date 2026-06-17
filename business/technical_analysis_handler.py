@@ -9,7 +9,7 @@ from business.business_records import (
 )
 from business.config_service import sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType, user_message
-from business.investment.executors.technical_analysis_executor import (
+from business.executors.technical_analysis_executor import (
     prepare_technical_analysis_business_context,
     run_technical_analysis_business,
 )

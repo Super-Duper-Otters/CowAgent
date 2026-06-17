@@ -5017,7 +5017,7 @@ def test_router_delegates_technical_analysis_to_cowagent_business_handler(invest
     from business.constants import ServiceType
     from business.router import BusinessReply, handle_text_message
     from business.user_service import create_user
-    import business.investment.executors.technical_analysis_executor as investment_ta_executor
+    import business.executors.technical_analysis_executor as investment_ta_executor
     import business.technical_analysis_handler as cowagent_ta_handler
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
