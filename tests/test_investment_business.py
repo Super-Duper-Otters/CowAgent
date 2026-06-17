@@ -3276,7 +3276,7 @@ def test_operation_audit_records_admin_actor_fields(investment_env):
 
 
 def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
     from channel.web.web_channel import InvestmentCacheHandler
@@ -3328,7 +3328,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(investment_env, 
 
 
 def test_cache_handler_without_market_date_returns_history_across_dates(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -3361,7 +3361,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(investme
 
 
 def test_cache_handler_keyword_search_filters_backend_results_and_total(investment_env, monkeypatch, tmp_path):
-    from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
@@ -3410,7 +3410,7 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(investme
 
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(investment_env, monkeypatch, tmp_path):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
     from business.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
@@ -3523,7 +3523,7 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(inve
 
 
 def test_artifact_folder_api_returns_lightweight_directory_summaries(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
     from business.schema import investment_cache_entries
@@ -3699,7 +3699,7 @@ def test_artifact_folder_api_includes_daily_content_records(investment_env, monk
 
 
 def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -3744,7 +3744,7 @@ def test_cache_entries_api_filters_by_market_date_range(investment_env, monkeypa
 
 
 def test_generated_content_history_api_combines_cache_and_daily_content_records(investment_env, monkeypatch, tmp_path):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
@@ -3800,7 +3800,7 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
 
 
 def test_generated_content_history_treats_expired_daily_content_as_invalidated(investment_env, tmp_path):
-    from business.investment.cache_service import list_generated_history_market_dates, list_generated_history_page
+    from business.cache_service import list_generated_history_market_dates, list_generated_history_page
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
 
@@ -3856,8 +3856,8 @@ def test_generated_content_history_treats_expired_daily_content_as_invalidated(i
 def test_generated_content_history_paginates_sources_without_bulk_fetch(investment_env, tmp_path):
     import inspect
 
-    from business.investment import cache_service
-    from business.investment.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business import cache_service
+    from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, update_generation_success
 
@@ -3960,7 +3960,7 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(investm
 
 def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(investment_env, monkeypatch):
     from business.audit_service import record_operation_audit
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft
     from business.db import connect
@@ -5345,7 +5345,7 @@ def test_success_request_archives_generated_images_and_documents(investment_env,
 
 
 def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
-    from business.investment.cache_service import find_cache_entry_by_key, write_cache_entry
+    from business.cache_service import find_cache_entry_by_key, write_cache_entry
     from business.constants import ServiceType
     from business.db import connect
     from business.investment.file_migration import migrate_legacy_files_to_unified_storage
@@ -6750,7 +6750,7 @@ def test_technical_analysis_ambiguous_name_lists_candidate_codes(investment_env,
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(investment_env, tmp_path):
-    from business.investment.cache_service import find_cache_entry_by_key
+    from business.cache_service import find_cache_entry_by_key
     from business.constants import ServiceType
     from business.db import connect
     from business.records import get_content_record, list_request_records
@@ -6888,7 +6888,7 @@ def _write_legacy_technical_analysis_cache(
     renderer_version="sha256:renderer-v1",
     template_version="sha256:template-v1",
 ):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from business.records import create_request_record, succeed_request_record
 
@@ -6935,7 +6935,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -6975,7 +6975,8 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
 ):
     from zoneinfo import ZoneInfo
 
-    from business.investment import cache_policy, technical_analysis
+    from business import cache_policy
+    from business.investment import technical_analysis
     from business.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
@@ -7014,8 +7015,9 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
 ):
     from zoneinfo import ZoneInfo
 
-    from business.investment import cache_policy, technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business import cache_policy
+    from business.investment import technical_analysis
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.db import connect
     from business.config_service import save_config
@@ -7070,7 +7072,8 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
 ):
     from zoneinfo import ZoneInfo
 
-    from business.investment import cache_policy, technical_analysis
+    from business import cache_policy
+    from business.investment import technical_analysis
     from business.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
@@ -7109,7 +7112,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7145,8 +7148,9 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
 
 
 def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(investment_env, tmp_path, monkeypatch):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType, Status
     from business.db import connect
     from business.records import get_request_record, list_request_records
@@ -7191,7 +7195,7 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7222,7 +7226,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7287,7 +7291,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7327,8 +7331,9 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
 def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7386,8 +7391,9 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
 def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_program_wrapper_changes(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.stock_resolver import refresh_stock_symbols
 
@@ -7435,8 +7441,9 @@ def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_
 def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_version_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.records import create_request_record, succeed_request_record
     from business.stock_resolver import refresh_stock_symbols
@@ -7511,8 +7518,9 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
 def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_latest_cache_without_context(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint
     from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7556,8 +7564,9 @@ def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_lat
 def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.stock_resolver import refresh_stock_symbols
 
@@ -7625,8 +7634,9 @@ def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_ca
 def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_lookup_would_find_incompatible_row(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.records import create_request_record, list_request_records, succeed_request_record
     from business.router import handle_text_message
@@ -7719,8 +7729,9 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 ):
     from zoneinfo import ZoneInfo
 
-    from business.investment import cache_policy, cache_service, technical_analysis
-    from business.investment.cache_service import list_cache_entries, version_fingerprint
+    from business import cache_policy, cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import list_cache_entries, version_fingerprint
     from business.constants import ServiceType
     from business.db import connect
     from business.config_service import save_config
@@ -7787,8 +7798,9 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompatible(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import list_cache_entries, version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import list_cache_entries, version_fingerprint
     from business.constants import ServiceType
     from business.db import connect
     from business.schema import request_records
@@ -7844,8 +7856,9 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
 def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in_window(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint
     from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -7898,8 +7911,9 @@ def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in
 def test_technical_analysis_known_market_date_reuses_legacy_program_version_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -7954,8 +7968,9 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
 def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8008,8 +8023,9 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_legacy_date(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import version_fingerprint
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8058,7 +8074,7 @@ def test_technical_analysis_cache_key_version_changes_when_output_versions_chang
     investment_env, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import version_fingerprint
+    from business.cache_service import version_fingerprint
     from business.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8090,8 +8106,9 @@ def test_technical_analysis_cache_key_version_changes_when_output_versions_chang
 def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fallback_window(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8136,8 +8153,9 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cache(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service, technical_analysis
-    from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business import cache_service
+    from business.investment import technical_analysis
+    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8280,7 +8298,7 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8343,7 +8361,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8395,7 +8413,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     investment_env, tmp_path, monkeypatch
 ):
     from business.investment import technical_analysis
-    from business.investment.cache_service import list_cache_entries
+    from business.cache_service import list_cache_entries
     from business.constants import ServiceType
     from business.records import list_request_records
     from business.router import handle_text_message
@@ -8480,7 +8498,7 @@ def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
 
 
 def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investment_env):
-    from business.investment.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
+    from business.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -8518,7 +8536,7 @@ def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(investme
 
 
 def test_beijing_now_returns_beijing_timezone_datetime():
-    from business.investment.cache_policy import beijing_now
+    from business.cache_policy import beijing_now
 
     now = beijing_now()
 
@@ -8528,7 +8546,7 @@ def test_beijing_now_returns_beijing_timezone_datetime():
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8541,7 +8559,7 @@ def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
 
 
 def test_technical_analysis_cache_policy_expires_today_cache_written_before_close_cutoff():
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8554,7 +8572,7 @@ def test_technical_analysis_cache_policy_expires_today_cache_written_before_clos
 
 
 def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close_cutoff():
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8567,7 +8585,7 @@ def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff_even_without_probe_update(monkeypatch):
-    import business.investment.cache_policy as cache_policy
+    import business.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
 
@@ -8589,7 +8607,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff
 
 
 def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_close_cutoff():
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8602,7 +8620,7 @@ def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_c
 
 
 def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing_time():
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8623,7 +8641,7 @@ def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing
 
 
 def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing(investment_env):
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -8636,7 +8654,7 @@ def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing
 
 
 def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_env):
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45", operator_role="admin")
@@ -8652,7 +8670,7 @@ def test_technical_analysis_cache_policy_uses_configured_cutoff_time(investment_
 
 
 def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(investment_env):
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45:00", operator_role="admin")
@@ -8668,7 +8686,7 @@ def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutof
 
 
 def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment_env):
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "1:02", operator_role="admin")
@@ -8684,7 +8702,7 @@ def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(investment
 
 
 def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_env):
-    from business.investment.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache_policy import technical_analysis_cache_expired_after_close
     from business.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", " 14:45", operator_role="admin")
@@ -8700,7 +8718,7 @@ def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(investment_
 
 
 def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
-    from business.investment.cache_policy import market_from_symbol
+    from business.cache_policy import market_from_symbol
 
     assert market_from_symbol("600519.SH") == "a_share"
     assert market_from_symbol("000001.SZ") == "a_share"
@@ -8710,7 +8728,7 @@ def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
-    import business.investment.cache_policy as cache_policy
+    import business.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -8735,7 +8753,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
-    import business.investment.cache_policy as cache_policy
+    import business.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
 
@@ -8757,7 +8775,7 @@ def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeyp
 
 
 def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monkeypatch):
-    import business.investment.cache_policy as cache_policy
+    import business.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -8783,7 +8801,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
 
 
 def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
-    import business.investment.cache_policy as cache_policy
+    import business.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -8802,7 +8820,7 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
 
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment_env, tmp_path):
-    from business.investment.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
+    from business.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
     card = tmp_path / "card.png"
@@ -8842,8 +8860,8 @@ def test_find_cache_entry_missing_cache_file_invalidates_active_entry(investment
 def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_active_entry(
     investment_env, tmp_path, monkeypatch
 ):
-    from business.investment import cache_service
-    from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business import cache_service
+    from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
     old_card = tmp_path / "old-card.png"
@@ -8895,7 +8913,7 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
 def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investment_env):
     from concurrent.futures import ThreadPoolExecutor
 
-    from business.investment.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
     from business.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -8926,7 +8944,7 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(investme
 
 
 def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
 
@@ -8989,7 +9007,7 @@ def test_web_investment_cache_handlers_list_and_clear_entries(investment_env, mo
 
 
 def test_web_investment_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(investment_env, monkeypatch):
-    from business.investment.cache_service import build_cache_key, write_cache_entry
+    from business.cache_service import build_cache_key, write_cache_entry
     from business.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
