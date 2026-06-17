@@ -27,7 +27,7 @@ def _js_function_body(js: str, name: str) -> str:
     return js[match.end():index - 1]
 
 
-def test_web_console_uses_investment_assistant_branding():
+def test_web_console_uses_business_assistant_branding():
     html = CHAT_HTML.read_text(encoding="utf-8")
     login_html = LOGIN_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
@@ -45,7 +45,7 @@ def test_web_console_uses_investment_assistant_branding():
     assert "chatgpt-on-wechat/releases" not in html
 
 
-def test_non_investment_management_pages_are_removed_from_frontend_navigation():
+def test_non_business_management_pages_are_removed_from_frontend_navigation():
     html = CHAT_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
     removed_views = ("memory", "knowledge", "tasks")
@@ -163,7 +163,7 @@ def test_ai_model_config_is_system_config_subpage():
     assert 'id="cfg-provider"' not in html
 
 
-def test_investment_tables_are_bounded_and_have_sticky_headers():
+def test_business_tables_are_bounded_and_have_sticky_headers():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
     assert ".investment-table-scroll" in css
@@ -177,7 +177,7 @@ def test_investment_tables_are_bounded_and_have_sticky_headers():
     assert "@media (max-width: 640px)" in css
 
 
-def test_investment_table_wrappers_expose_scroll_regions():
+def test_business_table_wrappers_expose_scroll_regions():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     table_wrap_body = _js_function_body(js, "investmentTableWrap")
     record_shell_body = _js_function_body(js, "investmentRecordTableShell")
@@ -188,7 +188,7 @@ def test_investment_table_wrappers_expose_scroll_regions():
     assert 'investmentTableWrap(tableHtml, true, \'业务记录表格\')' in record_shell_body
 
 
-def test_investment_selects_reuse_cowagent_dropdown_ui():
+def test_business_selects_reuse_cowagent_dropdown_ui():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     dropdown_body = _js_function_body(js, "investmentDropdown")
@@ -231,7 +231,7 @@ def test_investment_selects_reuse_cowagent_dropdown_ui():
     assert "min-width: 0;" in css
 
 
-def test_investment_date_inputs_have_visible_calendar_controls():
+def test_business_date_inputs_have_visible_calendar_controls():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
     assert "input[type=\"date\"]" in css
@@ -239,7 +239,7 @@ def test_investment_date_inputs_have_visible_calendar_controls():
     assert "color-scheme: dark;" in css
 
 
-def test_investment_table_like_views_use_wide_containers():
+def test_business_table_like_views_use_wide_containers():
     html = CHAT_HTML.read_text(encoding="utf-8")
 
     users_start = html.index('id="view-invest-users"')
@@ -270,7 +270,7 @@ def test_investment_table_like_views_use_wide_containers():
     assert "max-w-6xl mx-auto" not in config_body
 
 
-def test_investment_content_is_a_top_level_view():
+def test_business_content_is_a_top_level_view():
     html = CHAT_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -284,7 +284,7 @@ def test_investment_content_is_a_top_level_view():
     assert "'invest-content': 'content.read'" in js
 
 
-def test_investment_generated_content_uses_shared_artifact_file_tree():
+def test_business_generated_content_uses_shared_artifact_file_tree():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
@@ -347,7 +347,7 @@ def test_daily_content_tabs_are_built_from_content_components():
     assert "currentInvestmentContentModuleKey" in js
 
 
-def test_rate_and_convertible_bond_content_are_merged_under_investment_content_page():
+def test_rate_and_convertible_bond_content_are_merged_under_business_content_page():
     html = CHAT_HTML.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -433,7 +433,7 @@ def test_chat_header_omits_external_nav_buttons():
     assert "https://cowagent.ai" not in html
 
 
-def test_investment_user_edit_and_record_details_use_modal_dialogs():
+def test_business_user_edit_and_record_details_use_modal_dialogs():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -447,7 +447,7 @@ def test_investment_user_edit_and_record_details_use_modal_dialogs():
     assert ".investment-modal" in css
 
 
-def test_investment_config_fields_save_individually_after_change():
+def test_business_config_fields_save_individually_after_change():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "function renderInvestmentConfigField(" in js
@@ -458,7 +458,7 @@ def test_investment_config_fields_save_individually_after_change():
     assert "保存全部配置" not in js
 
 
-def test_investment_operations_show_unified_feedback_toasts():
+def test_business_operations_show_unified_feedback_toasts():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -472,7 +472,7 @@ def test_investment_operations_show_unified_feedback_toasts():
     assert ".investment-toast.error" in css
 
 
-def test_investment_config_actions_align_with_controls():
+def test_business_config_actions_align_with_controls():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
@@ -482,7 +482,7 @@ def test_investment_config_actions_align_with_controls():
     assert ".investment-config-field.textarea-config .investment-config-actions" in css
 
 
-def test_investment_skill_has_own_navigation_page():
+def test_business_skill_has_own_navigation_page():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     html = CHAT_HTML.read_text(encoding="utf-8")
 
@@ -513,7 +513,7 @@ def test_investment_skill_has_own_navigation_page():
     assert "investment-skill-card" not in js
 
 
-def test_investment_components_page_uses_wide_container():
+def test_business_components_page_uses_wide_container():
     html = CHAT_HTML.read_text(encoding="utf-8")
     start = html.index('id="view-invest-skills"')
     end = html.index('id="view-invest-health"')
@@ -523,7 +523,7 @@ def test_investment_components_page_uses_wide_container():
     assert "max-w-6xl mx-auto" not in body
 
 
-def test_investment_components_page_groups_component_types():
+def test_business_components_page_groups_component_types():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "/api/investment/components" in js
@@ -535,7 +535,7 @@ def test_investment_components_page_groups_component_types():
     assert "renderInvestmentSkillConfigTable" not in js
 
 
-def test_investment_component_cards_scope_controls_by_type():
+def test_business_component_cards_scope_controls_by_type():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     card_body = _js_function_body(js, "renderInvestmentComponentCard")
     config_dialog_body = _js_function_body(js, "renderInvestmentComponentConfigDialogBody")
@@ -553,7 +553,7 @@ def test_investment_component_cards_scope_controls_by_type():
     assert "invest-component-modal-prompt" in config_dialog_body
 
 
-def test_investment_component_cards_hide_business_details():
+def test_business_component_cards_hide_business_details():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     card_body = _js_function_body(js, "renderInvestmentComponentCard")
 
@@ -567,7 +567,7 @@ def test_investment_component_cards_hide_business_details():
     assert "openInvestmentComponentVersionDialog" in card_body
 
 
-def test_investment_component_upload_copy_uses_component_wording():
+def test_business_component_upload_copy_uses_component_wording():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     upload_body = _js_function_body(js, "uploadInvestmentSkill")
     activate_body = _js_function_body(js, "activateInvestmentSkillVersion")
@@ -594,7 +594,7 @@ def test_only_versioned_components_show_upload_controls():
     assert "该组件无脚本版本" not in card_body
 
 
-def test_investment_user_and_skill_edit_buttons_call_write_apis():
+def test_business_user_and_skill_edit_buttons_call_write_apis():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "setInvestmentUserStatus('${encodeURIComponent(user.openid)}'" in js
@@ -607,7 +607,7 @@ def test_investment_user_and_skill_edit_buttons_call_write_apis():
     assert "await investmentFetchJson(`/api/investment/skills/${encodeURIComponent(skillKey)}/versions/${encodeURIComponent(selectedVersion)}/activate`, {" in js
 
 
-def test_investment_user_save_requires_authorization_fields():
+def test_business_user_save_requires_authorization_fields():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     save_user_body = _js_function_body(js, "saveInvestmentUser")
     user_dialog_body = _js_function_body(js, "openInvestmentUserDialog")
@@ -624,7 +624,7 @@ def test_investment_user_save_requires_authorization_fields():
     assert "auth_end_at: investmentBeijingDateTimeToUtc(authEndDate, '00:00')" in save_user_body
 
 
-def test_investment_users_page_splits_customers_and_admin_staff():
+def test_business_users_page_splits_customers_and_admin_staff():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "let currentInvestmentUserPanel = 'customers';" in js
@@ -643,7 +643,7 @@ def test_investment_users_page_splits_customers_and_admin_staff():
     assert "role_poster" not in js
 
 
-def test_investment_users_page_is_list_first_with_dialog_forms():
+def test_business_users_page_is_list_first_with_dialog_forms():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -668,7 +668,7 @@ def test_investment_users_page_is_list_first_with_dialog_forms():
     assert ".investment-user-toolbar" in css
 
 
-def test_investment_boolean_controls_use_green_switches():
+def test_business_boolean_controls_use_green_switches():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     html = CHAT_HTML.read_text(encoding="utf-8")
@@ -702,7 +702,7 @@ def test_investment_boolean_controls_use_green_switches():
     assert "background: #35A85B;" in css
 
 
-def test_investment_user_service_switches_normalize_all_selection():
+def test_business_user_service_switches_normalize_all_selection():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     table_body = _js_function_body(js, "renderInvestmentUsersTable")
     service_checks_body = _js_function_body(js, "investmentUserServiceChecks")
@@ -724,7 +724,7 @@ def test_investment_user_service_switches_normalize_all_selection():
     assert "join(', ')" not in table_body
 
 
-def test_investment_users_toolbar_is_grouped_and_paginated():
+def test_business_users_toolbar_is_grouped_and_paginated():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -744,7 +744,7 @@ def test_investment_users_toolbar_is_grouped_and_paginated():
     assert ".investment-user-pagination" in css
 
 
-def test_investment_customer_toolbar_has_separate_action_bar():
+def test_business_customer_toolbar_has_separate_action_bar():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentCustomerUsers")
 
@@ -780,7 +780,7 @@ def test_investment_customer_toolbar_has_separate_action_bar():
     assert "window.clearInvestmentCustomerSearch = clearInvestmentCustomerSearch" in js
 
 
-def test_investment_admin_toolbar_and_table_spacing_are_polished():
+def test_business_admin_toolbar_and_table_spacing_are_polished():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentAdminUsers")
@@ -843,7 +843,7 @@ def test_investment_admin_toolbar_and_table_spacing_are_polished():
     assert '<td title="${escapeHtml(user.username || \'\')}">${escapeHtml(user.username || \'\')}</td>' in admin_table_body
 
 
-def test_investment_customer_import_uses_dialog_with_template_and_result():
+def test_business_customer_import_uses_dialog_with_template_and_result():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentCustomerUsers")
     user_dialog_body = _js_function_body(js, "openInvestmentUserDialog")
@@ -871,7 +871,7 @@ def test_investment_customer_import_uses_dialog_with_template_and_result():
     assert "window.openInvestmentUsersImportDialog = openInvestmentUsersImportDialog" in js
 
 
-def test_investment_customer_export_uses_dedicated_dialog():
+def test_business_customer_export_uses_dedicated_dialog():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     toolbar_body = _js_function_body(js, "renderInvestmentCustomerUsers")
     export_body = _js_function_body(js, "openInvestmentCustomerExportDialog")
@@ -886,7 +886,7 @@ def test_investment_customer_export_uses_dedicated_dialog():
     assert "openInvestmentCustomerExportDialog()" in legacy_body
 
 
-def test_investment_customer_render_uses_response_rows_with_response_pagination():
+def test_business_customer_render_uses_response_rows_with_response_pagination():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     body = _js_function_body(js, "renderInvestmentCustomerUsers")
 
@@ -897,7 +897,7 @@ def test_investment_customer_render_uses_response_rows_with_response_pagination(
     assert "${renderInvestmentUserPagination('customers', data.pagination)}" in body
 
 
-def test_investment_config_no_longer_embeds_skill_manager():
+def test_business_config_no_longer_embeds_skill_manager():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     config_start = js.index("async function renderInvestmentConfig()")
@@ -1296,7 +1296,7 @@ def test_daily_content_expiry_dialog_defaults_to_next_midnight_when_empty_or_pas
     assert "return {date: local.slice(0, 10), time: local.slice(11, 16) || '00:00'};" in default_body
 
 
-def test_investment_modal_date_picker_opens_upward_without_clipping():
+def test_business_modal_date_picker_opens_upward_without_clipping():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
     assert ".investment-modal .investment-date-popover" in css
@@ -1306,7 +1306,7 @@ def test_investment_modal_date_picker_opens_upward_without_clipping():
     assert "overflow: visible !important;" in css
 
 
-def test_investment_console_hides_actions_by_admin_role():
+def test_business_console_hides_actions_by_admin_role():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "let currentInvestmentAdmin = null;" in js
@@ -1323,7 +1323,7 @@ def test_investment_console_hides_actions_by_admin_role():
     assert "investmentCanView(" in js
 
 
-def test_investment_config_page_loads_sections_by_permission():
+def test_business_config_page_loads_sections_by_permission():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "'invest-config': ['config.read', 'stocks.read']" in js
@@ -1339,7 +1339,7 @@ def test_investment_config_page_loads_sections_by_permission():
     assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in js
 
 
-def test_investment_layout_separates_table_settings_and_card_styles():
+def test_business_layout_separates_table_settings_and_card_styles():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     shell_body = _js_function_body(js, "renderInvestmentConfigShell")
@@ -1355,7 +1355,7 @@ def test_investment_layout_separates_table_settings_and_card_styles():
     assert ".investment-settings-page .investment-panel" in css
 
 
-def test_investment_config_uses_dedicated_layout_instead_of_shared_workbench():
+def test_business_config_uses_dedicated_layout_instead_of_shared_workbench():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1384,7 +1384,7 @@ def test_investment_config_uses_dedicated_layout_instead_of_shared_workbench():
     assert "position: sticky;" not in css[css.index(".investment-config-nav {"):css.index(".investment-config-tab {")]
 
 
-def test_investment_config_inline_handlers_are_not_html_escaped():
+def test_business_config_inline_handlers_are_not_html_escaped():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     config_field_body = _js_function_body(js, "renderInvestmentConfigField")
 
@@ -1394,7 +1394,7 @@ def test_investment_config_inline_handlers_are_not_html_escaped():
     assert "escapeHtml(`markInvestmentConfigDirty" not in config_field_body
 
 
-def test_investment_config_page_uses_task_based_tabs():
+def test_business_config_page_uses_task_based_tabs():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1445,7 +1445,7 @@ def test_investment_config_page_uses_task_based_tabs():
     assert "flex-wrap: wrap;" in css
 
 
-def test_investment_config_subpages_use_aligned_section_layouts():
+def test_business_config_subpages_use_aligned_section_layouts():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1491,7 +1491,7 @@ def test_investment_config_subpages_use_aligned_section_layouts():
     assert "align-self: stretch;" in css
 
 
-def test_investment_stock_data_page_combines_dictionary_config_and_tools():
+def test_business_stock_data_page_combines_dictionary_config_and_tools():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
@@ -1508,7 +1508,7 @@ def test_investment_stock_data_page_combines_dictionary_config_and_tools():
     assert "股票字典维护" not in stock_tools_body
 
 
-def test_investment_stock_refresh_requires_tushare_token_and_sends_market():
+def test_business_stock_refresh_requires_tushare_token_and_sends_market():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     refresh_body = _js_function_body(js, "refreshInvestmentStocks")
     token_body = _js_function_body(js, "investmentHasConfiguredTushareToken")
@@ -1523,7 +1523,7 @@ def test_investment_stock_refresh_requires_tushare_token_and_sends_market():
     assert "'akshare'" not in refresh_body
 
 
-def test_investment_config_page_renders_reply_text_section():
+def test_business_config_page_renders_reply_text_section():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     reply_panel_body = _js_function_body(js, "renderInvestmentConfigReplyTextsPanel")
     groups_body = _js_function_body(js, "renderInvestmentReplyConfigGroups")
@@ -1538,7 +1538,7 @@ def test_investment_config_page_renders_reply_text_section():
     assert "INVEST_REPLY_CONFIG_REFERENCE_KEYS" not in js
 
 
-def test_investment_reply_config_fields_render_collapsed_edit_rows():
+def test_business_reply_config_fields_render_collapsed_edit_rows():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     reply_field_body = _js_function_body(js, "renderInvestmentReplyConfigField")
@@ -1561,7 +1561,7 @@ def test_investment_reply_config_fields_render_collapsed_edit_rows():
     assert "grid-template-columns: minmax(0, 1fr) auto;" in css
 
 
-def test_investment_reply_config_dialog_edits_and_saves_single_value():
+def test_business_reply_config_dialog_edits_and_saves_single_value():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     dialog_body = _js_function_body(js, "openInvestmentReplyConfigDialog")
@@ -1589,7 +1589,7 @@ def test_investment_reply_config_dialog_edits_and_saves_single_value():
     assert ".investment-reply-dialog-field textarea" in css
 
 
-def test_investment_content_and_records_ui_respect_cache_and_export_permissions():
+def test_business_content_and_records_ui_respect_cache_and_export_permissions():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "if (viewId === 'invest-content') return renderInvestmentGeneratedContent();" in js
@@ -1599,7 +1599,7 @@ def test_investment_content_and_records_ui_respect_cache_and_export_permissions(
     assert "investmentButtonIfCan('records.export', 'fa-file-export', '更多导出', 'openInvestmentRequestExportDialog()'" in js
 
 
-def test_investment_records_filters_and_export_share_toolbar_without_title_topbar():
+def test_business_records_filters_and_export_share_toolbar_without_title_topbar():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1625,7 +1625,7 @@ def test_investment_records_filters_and_export_share_toolbar_without_title_topba
     assert ".investment-records-filter-grid {\n        grid-template-columns: repeat(2, minmax(0, 1fr));" in css
 
 
-def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
+def test_business_request_export_dialog_is_mode_based_and_prefills_filters():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1681,7 +1681,7 @@ def test_investment_request_export_dialog_is_mode_based_and_prefills_filters():
     assert ".investment-request-export-footer" in css
 
 
-def test_investment_request_export_exposes_unauthorized_and_customer_filter():
+def test_business_request_export_exposes_unauthorized_and_customer_filter():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     panel_body = _js_function_body(js, "renderInvestmentRequestExportDialogBody")
@@ -1707,7 +1707,7 @@ def test_investment_request_export_exposes_unauthorized_and_customer_filter():
     assert "customer: investmentExportCustomer()" in quarter_body
 
 
-def test_investment_records_default_to_beijing_today_filters():
+def test_business_records_default_to_beijing_today_filters():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     state_start = js.index("let investmentRecordsState =")
@@ -1726,7 +1726,7 @@ def test_investment_records_default_to_beijing_today_filters():
     assert "timeZone: 'Asia/Shanghai'" in _js_function_body(js, "investmentTodayDate")
 
 
-def test_investment_request_records_support_day_month_date_filter_modes():
+def test_business_request_records_support_day_month_date_filter_modes():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
@@ -1751,7 +1751,7 @@ def test_investment_request_records_support_day_month_date_filter_modes():
     assert "investmentRecordsQueryParams('requests')" in export_body
 
 
-def test_investment_request_records_filter_toolbar_uses_grouped_layout():
+def test_business_request_records_filter_toolbar_uses_grouped_layout():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1769,7 +1769,7 @@ def test_investment_request_records_filter_toolbar_uses_grouped_layout():
     assert ".investment-request-date-controls {" in css
 
 
-def test_investment_content_and_audit_records_filter_toolbars_use_grouped_layouts():
+def test_business_content_and_audit_records_filter_toolbars_use_grouped_layouts():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1800,7 +1800,7 @@ def test_investment_content_and_audit_records_filter_toolbars_use_grouped_layout
     assert ".investment-records-filter-grid.investment-audit-records-filter-grid" in css
 
 
-def test_investment_cache_empty_date_falls_back_to_today_before_loading():
+def test_business_cache_empty_date_falls_back_to_today_before_loading():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
@@ -1809,7 +1809,7 @@ def test_investment_cache_empty_date_falls_back_to_today_before_loading():
     assert "await loadInvestmentGeneratedContent()" in apply_body
 
 
-def test_investment_records_page_uses_tab_workspace_without_side_drawer():
+def test_business_records_page_uses_tab_workspace_without_side_drawer():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1834,7 +1834,7 @@ def test_investment_records_page_uses_tab_workspace_without_side_drawer():
     assert "grid-template-columns: minmax(0, 1fr) !important;" in css
 
 
-def test_investment_records_page_uses_human_filters_customer_display_and_compact_tables():
+def test_business_records_page_uses_human_filters_customer_display_and_compact_tables():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -1871,7 +1871,7 @@ def test_investment_records_page_uses_human_filters_customer_display_and_compact
     assert "field('operator', '操作人')" in js
 
 
-def test_investment_content_page_uses_date_grouped_category_view():
+def test_business_content_page_uses_date_grouped_category_view():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "function renderInvestmentDailyGeneratedContent(" in js
@@ -1892,7 +1892,7 @@ def test_investment_content_page_uses_date_grouped_category_view():
     assert "investment-records-date-list" not in js
 
 
-def test_investment_content_page_defaults_to_history_overview():
+def test_business_content_page_defaults_to_history_overview():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
@@ -1923,7 +1923,7 @@ def test_investment_content_page_defaults_to_history_overview():
     assert "query.delete('market_date')" in load_body
 
 
-def test_investment_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
+def test_business_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
@@ -1962,7 +1962,7 @@ def test_daily_content_history_panel_does_not_overlap_top_cards():
 
 
 
-def test_investment_generated_content_page_avoids_duplicate_date_controls_and_wide_three_column_lists():
+def test_business_generated_content_page_avoids_duplicate_date_controls_and_wide_three_column_lists():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -2019,7 +2019,7 @@ def test_investment_generated_content_page_avoids_duplicate_date_controls_and_wi
     assert "grid-template-columns: repeat(3, minmax(180px, 1fr));" not in css
 
 
-def test_investment_generated_content_page_uses_file_explorer_layout_and_range_query():
+def test_business_generated_content_page_uses_file_explorer_layout_and_range_query():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
@@ -2066,7 +2066,7 @@ def test_investment_generated_content_page_uses_file_explorer_layout_and_range_q
     assert "@media (max-width: 900px)" in css
 
 
-def test_investment_generated_content_filters_use_month_and_year_dropdowns_with_delayed_refresh():
+def test_business_generated_content_filters_use_month_and_year_dropdowns_with_delayed_refresh():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     normalize_body = _js_function_body(js, "investmentNormalizeCacheDateFilters")
@@ -2096,7 +2096,7 @@ def test_investment_generated_content_filters_use_month_and_year_dropdowns_with_
     assert "await loadInvestmentGeneratedContent()" not in select_body
 
 
-def test_investment_generated_content_category_detail_is_compact():
+def test_business_generated_content_category_detail_is_compact():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -2119,7 +2119,7 @@ def test_investment_generated_content_category_detail_is_compact():
     assert "investmentTextButtonIfCan('cache.write'" in actions_body
 
 
-def test_investment_generated_content_rows_treat_daily_content_as_content_records():
+def test_business_generated_content_rows_treat_daily_content_as_content_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     row_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
@@ -2133,7 +2133,7 @@ def test_investment_generated_content_rows_treat_daily_content_as_content_record
     assert "openInvestmentRecordDrawer('${drawerType}'" in row_body
 
 
-def test_investment_generated_content_drawer_hides_low_value_long_cache_fields():
+def test_business_generated_content_drawer_hides_low_value_long_cache_fields():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "选择记录查看详情" in js
@@ -2146,7 +2146,7 @@ def test_investment_generated_content_drawer_hides_low_value_long_cache_fields()
     assert "生成内容详情" in js
 
 
-def test_investment_content_drawer_shows_source_images_like_output_image():
+def test_business_content_drawer_shows_source_images_like_output_image():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     drawer_body = _js_function_body(js, "renderInvestmentContentDrawer")
@@ -2158,7 +2158,7 @@ def test_investment_content_drawer_shows_source_images_like_output_image():
     assert drawer_body.index("输入图片") < drawer_body.index("输出图片")
 
 
-def test_investment_file_links_prefer_file_id_urls_over_absolute_paths():
+def test_business_file_links_prefer_file_id_urls_over_absolute_paths():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     file_url_body = _js_function_body(js, "investmentFileUrl")
@@ -2171,7 +2171,7 @@ def test_investment_file_links_prefer_file_id_urls_over_absolute_paths():
     assert "investmentImageUrl(path)" not in links_body
 
 
-def test_investment_request_drawer_keeps_error_details_and_audit_fields():
+def test_business_request_drawer_keeps_error_details_and_audit_fields():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     request_table = _js_function_body(js, "renderInvestmentRequestRecordsTable")
@@ -2210,7 +2210,7 @@ def test_investment_request_drawer_keeps_error_details_and_audit_fields():
     assert "text-overflow: ellipsis;" in css
 
 
-def test_investment_request_drawer_shows_request_event_timeline():
+def test_business_request_drawer_shows_request_event_timeline():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     drawer_body = _js_function_body(js, "renderInvestmentRequestDrawer")
@@ -2225,7 +2225,7 @@ def test_investment_request_drawer_shows_request_event_timeline():
     assert "showInvestmentRequestDetail" not in open_body
 
 
-def test_investment_record_detail_buttons_escape_apostrophes_in_encoded_records():
+def test_business_record_detail_buttons_escape_apostrophes_in_encoded_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     encoded_body = _js_function_body(js, "investmentEncodedRecord")
@@ -2237,7 +2237,7 @@ def test_investment_record_detail_buttons_escape_apostrophes_in_encoded_records(
     assert "openInvestmentRecordDrawer('backendRequest', '${investmentEncodedRecord(record)}')" in backend_table
 
 
-def test_investment_records_page_links_to_entry_filtered_business_records():
+def test_business_records_page_links_to_entry_filtered_business_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     table_body = _js_function_body(js, "renderInvestmentBackendRequestRecordsTable")
@@ -2268,7 +2268,7 @@ def test_investment_records_page_links_to_entry_filtered_business_records():
     assert "record.output_files" in drawer_body
 
 
-def test_investment_content_records_show_input_prompt():
+def test_business_content_records_show_input_prompt():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     history_body = _js_function_body(js, "renderInvestmentContentHistoryGroups")
@@ -2286,7 +2286,7 @@ def test_investment_content_records_show_input_prompt():
     assert "record.input_prompt" in records_drawer_body
 
 
-def test_investment_audit_drawer_shows_before_and_after_state():
+def test_business_audit_drawer_shows_before_and_after_state():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     drawer_body = _js_function_body(js, "renderInvestmentAuditDrawer")
@@ -2297,7 +2297,7 @@ def test_investment_audit_drawer_shows_before_and_after_state():
     assert "record.after_state" in drawer_body
 
 
-def test_investment_records_times_are_formatted_as_beijing_time():
+def test_business_records_times_are_formatted_as_beijing_time():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "function investmentFormatBeijingTime(" in js
@@ -2310,7 +2310,7 @@ def test_investment_records_times_are_formatted_as_beijing_time():
     assert "investmentFormatBeijingTime(audit.created_at)" in audit_body
 
 
-def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
+def test_business_console_uses_beijing_time_for_all_backend_timestamps():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     stock_stats_body = _js_function_body(js, "investmentStockStats")
@@ -2348,7 +2348,7 @@ def test_investment_console_uses_beijing_time_for_all_backend_timestamps():
     assert "investmentFormatBeijingTime(active.uploaded_at)" not in component_card_body
 
 
-def test_investment_records_tabs_use_independent_loaders_and_filters():
+def test_business_records_tabs_use_independent_loaders_and_filters():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "function renderInvestmentRecordsFilters(" in js
@@ -2386,7 +2386,7 @@ def test_request_records_service_column_prefers_module_label():
     assert "${investmentServiceLabel(record.service_type)}</td>" not in request_table_body
 
 
-def test_investment_records_tabs_keep_independent_pagination_state():
+def test_business_records_tabs_keep_independent_pagination_state():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     state_start = js.index("let investmentRecordsState =")
@@ -2403,7 +2403,7 @@ def test_investment_records_tabs_keep_independent_pagination_state():
     assert "page: '1'" not in switch_body
 
 
-def test_investment_records_filters_reset_page_and_queries_page_size():
+def test_business_records_filters_reset_page_and_queries_page_size():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     query_body = _js_function_body(js, "investmentRecordsQueryParams")
@@ -2437,7 +2437,7 @@ def test_generated_content_keyword_search_is_backend_query_not_page_filter():
     assert "values.filter(entry => {" not in render_body
 
 
-def test_investment_records_pagination_controls_are_rendered():
+def test_business_records_pagination_controls_are_rendered():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -2456,7 +2456,7 @@ def test_investment_records_pagination_controls_are_rendered():
     assert ".investment-records-page-size" in css
 
 
-def test_investment_cache_category_selection_uses_server_side_filtering():
+def test_business_cache_category_selection_uses_server_side_filtering():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     select_body = _js_function_body(js, "selectInvestmentCacheCategory")
@@ -2471,7 +2471,7 @@ def test_investment_cache_category_selection_uses_server_side_filtering():
     assert "await loadInvestmentGeneratedContent()" in back_body
 
 
-def test_investment_content_and_cache_date_filters_are_exposed():
+def test_business_content_and_cache_date_filters_are_exposed():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     assert "invest-content-history-effective-date-rate" in js
@@ -2486,7 +2486,7 @@ def test_investment_content_and_cache_date_filters_are_exposed():
     assert "investmentRecordFileSummary(entry.output_files || [])" not in js
 
 
-def test_investment_content_history_date_filters_are_scoped_by_service_type():
+def test_business_content_history_date_filters_are_scoped_by_service_type():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     effective_date_body = _js_function_body(js, "investmentContentHistoryEffectiveDate")
     render_content_body = _js_function_body(js, "renderInvestmentContent")
@@ -2508,7 +2508,7 @@ def test_investment_content_history_date_filters_are_scoped_by_service_type():
     assert "investmentContentHistoryEffectiveDate(serviceType)" in refresh_records_body
 
 
-def test_investment_health_ui_exposes_manual_full_check_and_levels():
+def test_business_health_ui_exposes_manual_full_check_and_levels():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     html = CHAT_HTML.read_text(encoding="utf-8")

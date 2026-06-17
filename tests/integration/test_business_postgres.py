@@ -4,7 +4,7 @@
 Local run example:
 docker run --name cowagent-pg -e POSTGRES_PASSWORD=cowagent -e POSTGRES_USER=cowagent -e POSTGRES_DB=cowagent -p 5432:5432 -d postgres:16
 $env:COWAGENT_TEST_POSTGRES_URL="postgresql+psycopg://cowagent:cowagent@127.0.0.1:5432/cowagent"
-py -m pytest tests/integration/test_investment_postgres.py -q
+py -m pytest tests/integration/test_business_postgres.py -q
 """
 
 import os
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def investment_postgres_env(tmp_path, monkeypatch):
+def business_postgres_env(tmp_path, monkeypatch):
     pg_url = os.environ["COWAGENT_TEST_POSTGRES_URL"]
     schema_name = f"cowagent_it_{uuid4().hex}"
     url = make_url(pg_url)
@@ -55,7 +55,7 @@ def investment_postgres_env(tmp_path, monkeypatch):
         admin_engine.dispose()
 
 
-def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_path):
+def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
     from sqlalchemy import inspect
 
     from business import storage

@@ -86,7 +86,7 @@ def _fake_passive_post(monkeypatch, passive_reply, channel, current_message, pro
     )
 
 
-def test_wechatmp_stage8_channel_modules_do_not_import_investment_runtime():
+def test_wechatmp_stage8_channel_modules_do_not_import_business_runtime():
     for path in (
         "channel/wechatmp/passive_reply.py",
         "channel/wechatmp/active_reply.py",
@@ -424,7 +424,7 @@ def _context(openid="openid", msg_id="msg-1", content="利率"):
     )
 
 
-def test_wechatmp_investment_success_returns_image_reply(business_env, monkeypatch, tmp_path):
+def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.constants import ServiceType
     from business.router import BusinessReply

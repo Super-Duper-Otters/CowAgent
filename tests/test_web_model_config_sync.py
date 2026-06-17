@@ -14,7 +14,7 @@ def _investment_config_keys():
     return {row[0] for row in rows}
 
 
-def test_investment_config_save_rejects_global_model_keys_and_does_not_touch_project_config(
+def test_business_config_save_rejects_global_model_keys_and_does_not_touch_project_config(
     business_env,
     monkeypatch,
 ):
@@ -53,7 +53,7 @@ def test_investment_config_save_rejects_global_model_keys_and_does_not_touch_pro
     assert not any(key.startswith("model.") for key in _investment_config_keys())
 
 
-def test_global_config_post_does_not_create_investment_model_aliases(business_env, monkeypatch):
+def test_global_config_post_does_not_create_business_model_aliases(business_env, monkeypatch):
     cfg_path = business_env / "fake_app" / "config.json"
     cfg_path.parent.mkdir(parents=True)
     cfg_path.write_text(
