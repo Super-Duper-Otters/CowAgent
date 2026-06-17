@@ -1771,7 +1771,7 @@ investment:
 
 def test_uploaded_script_investment_skill_executes_from_route(investment_env, tmp_path):
     from business.investment.constants import ServiceType
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.skill_versions import save_package_upload
     from business.investment.user_service import create_user
     import business.investment.skill_registry as investment_skill_registry
@@ -2107,7 +2107,7 @@ def test_web_investment_skill_handlers_list_upload_and_activate_versions(investm
 
 def test_web_user_disable_button_updates_permission_path(investment_env, monkeypatch):
     from business.investment.constants import ErrorCode, ServiceType
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserDisableHandler
@@ -2339,8 +2339,8 @@ def test_router_authenticates_before_parsing_unmatched_input(investment_env, mon
     import pytest
 
     from business.investment.constants import ErrorCode, ServiceType
-    import business.investment.router as router
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    import business.router as router
+    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
     from business.investment.user_service import create_user
 
     monkeypatch.setattr(router, "parse_route", lambda _raw_input: pytest.fail("unauthorized input must not be parsed"))
@@ -4232,7 +4232,7 @@ def test_investment_web_api_end_to_end_smoke_without_external_services(investmen
     from business.investment.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from business.investment.daily_content import update_generation_success
     from business.investment.records import get_content_record
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentDailyContentEffectiveHandler,
@@ -4996,7 +4996,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
     from business.investment.constants import ErrorCode, ServiceType, Status
     from business.investment.job_service import find_running_job
     from business.investment.records import get_content_record, list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": "sk-secret-123"})
@@ -5020,7 +5020,7 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
 
 def test_router_delegates_technical_analysis_to_cowagent_business_handler(investment_env, monkeypatch):
     from business.investment.constants import ServiceType
-    from business.investment.router import BusinessReply, handle_text_message
+    from business.router import BusinessReply, handle_text_message
     from business.investment.user_service import create_user
     import business.investment.executors.technical_analysis_executor as investment_ta_executor
     import business.technical_analysis_handler as cowagent_ta_handler
@@ -5111,7 +5111,7 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
 
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -5167,7 +5167,7 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
     from business.investment import technical_analysis
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -5264,7 +5264,7 @@ def test_batch_01_service_results_share_contract_fields(investment_env):
     from business.investment.ai_generation import AIGenerationResult
     from business.investment.daily_content import DailyContentResult
     from business.investment.render_service import RenderResult
-    from business.investment.router import BusinessReply
+    from business.router import BusinessReply
     from business.investment.technical_analysis import TechnicalAnalysisResult
 
     required = {"success", "error_code", "user_prompt", "detail", "output_files"}
@@ -6477,7 +6477,7 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(investment_
     from business.investment import config_service
     from business.investment.constants import ErrorCode, ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -6758,7 +6758,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
     from business.investment.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import get_content_record, list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.storage import get_storage_dirs
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
@@ -6942,7 +6942,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -6981,7 +6981,7 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
 
     from business.investment import cache_policy, technical_analysis
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.constants import ServiceType
     from business.investment.user_service import create_user
 
@@ -7023,7 +7023,7 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     from business.investment.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.schema import cache_entries
     from business.investment.user_service import create_user
 
@@ -7074,7 +7074,7 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
 
     from business.investment import cache_policy, technical_analysis
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.constants import ServiceType
     from business.investment.user_service import create_user
 
@@ -7114,7 +7114,7 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7152,7 +7152,7 @@ def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(inve
     from business.investment.constants import ServiceType, Status
     from business.investment.db import connect
     from business.investment.records import get_request_record, list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7196,7 +7196,7 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7227,7 +7227,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7256,7 +7256,7 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(inve
     from business.investment import technical_analysis
     from business.investment.market_date_resolver import MarketDateResolver
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.constants import ServiceType
     from business.investment.user_service import create_user
 
@@ -7292,7 +7292,7 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7333,7 +7333,7 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     from business.investment.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
 
@@ -7631,7 +7631,7 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
     from business.investment.cache_service import version_fingerprint, write_cache_entry
     from business.investment.constants import ServiceType
     from business.investment.records import create_request_record, list_request_records, succeed_request_record
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
 
@@ -7726,7 +7726,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     from business.investment.constants import ServiceType
     from business.investment.db import connect
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.schema import cache_entries
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
@@ -7902,7 +7902,7 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
     from business.investment.cache_service import version_fingerprint
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
 
@@ -7958,7 +7958,7 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
     from business.investment.cache_service import version_fingerprint
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8012,7 +8012,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_lega
     from business.investment.cache_service import version_fingerprint
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8094,7 +8094,7 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8140,7 +8140,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
     from business.investment.cache_service import build_cache_key, version_fingerprint, write_cache_entry
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8183,7 +8183,7 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(investmen
     from business.investment import technical_analysis
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.stock_resolver import refresh_stock_symbols
     from business.investment.user_service import create_user
 
@@ -8217,7 +8217,7 @@ def test_technical_analysis_different_market_date_misses_cache(investment_env, t
     from business.investment import technical_analysis
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8283,7 +8283,7 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8346,7 +8346,7 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8398,7 +8398,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     from business.investment.cache_service import list_cache_entries
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -9778,7 +9778,7 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
 def test_router_records_technical_analysis_report_chart_and_card_paths(investment_env, tmp_path):
     from business.investment.constants import ServiceType
     from business.investment.records import list_request_records
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -9807,7 +9807,7 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(investmen
 
 def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(investment_env, tmp_path):
     from business.investment.constants import ServiceType
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -9837,7 +9837,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
 def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(investment_env, tmp_path):
     from business.investment.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.router import handle_text_message
+    from business.router import handle_text_message
     from business.investment.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -10857,7 +10857,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
     from business.investment.config_service import save_config
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_request_records
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
+    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
     from business.investment.user_service import create_user
 
     secret = "sk-secret"
@@ -10920,7 +10920,7 @@ def test_router_handles_rate_success_unauthorized_and_miss(investment_env, tmp_p
 def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
     from business.investment.config_service import save_config
     from business.investment.constants import ServiceType
-    from business.investment.router import parse_route
+    from business.router import parse_route
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
     save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
@@ -10935,7 +10935,7 @@ def test_parse_route_uses_configured_investment_skill_triggers(investment_env):
 
 
 def test_parse_route_rejects_markdown_link_targets(investment_env):
-    from business.investment.router import parse_route
+    from business.router import parse_route
 
     route = parse_route("[300502.SZ](http://300502.sz/) 技术分析")
 
@@ -10944,7 +10944,7 @@ def test_parse_route_rejects_markdown_link_targets(investment_env):
 
 def test_parse_route_ignores_disabled_investment_skill(investment_env):
     from business.investment.config_service import save_config
-    from business.investment.router import parse_route
+    from business.router import parse_route
 
     save_config("skill.rate.enabled", False, operator_role="admin", operator="pytest")
 
@@ -10953,7 +10953,7 @@ def test_parse_route_ignores_disabled_investment_skill(investment_env):
 
 def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matcher(investment_env, monkeypatch):
     from business.investment.constants import ServiceType
-    from business.investment.router import parse_route
+    from business.router import parse_route
     import business.investment.skill_registry as investment_skill_registry
 
     monkeypatch.setattr(
@@ -10971,7 +10971,7 @@ def test_parse_route_uses_cowagent_business_registry_not_investment_skill_matche
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(investment_env):
     from business.investment.config_service import save_config
     from business.investment.constants import ServiceType
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
     from business.investment.user_service import create_user
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
@@ -11023,7 +11023,6 @@ def test_business_router_sets_module_key_on_reply(monkeypatch):
     reply = _reply_from_business(business_reply)
 
     assert reply.business_module_key == "rate"
-    assert reply.investment_module_key == "rate"
 
 
 def test_prompt_to_image_module_generates_image_from_customer_input(investment_env, tmp_path, monkeypatch):
@@ -11206,7 +11205,6 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
     assert Path(reply.content[0]).is_file()
     assert Path(reply.content[0]).name.startswith("output_image_rate_")
     assert reply.business_service_type == ServiceType.RATE
-    assert reply.investment_service_type == ServiceType.RATE
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
     context = Context(ContextType.TEXT, "普通聊天")
@@ -11218,7 +11216,7 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(investment_e
 def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(investment_env):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from business.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.user_service import create_user
     from business.investment.constants import ServiceType
     from business.business_router import build_business_reply
@@ -11273,11 +11271,6 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
     import business.technical_analysis_handler as cowagent_ta_handler
 
     create_user("openid-ta", enabled=True, allowed_services=[ServiceType.ALL])
-    monkeypatch.setattr(
-        business_route,
-        "handle_text_message",
-        lambda *_args, **_kwargs: pytest.fail("technical analysis must use native handler short path"),
-    )
     calls = []
 
     def fake_handler(openid, raw_input, route, **kwargs):
@@ -11302,8 +11295,6 @@ def test_business_router_routes_technical_analysis_without_investment_router_han
     assert reply.content == ["/tmp/signal.png"]
     assert reply.business_service_type == ServiceType.TECHNICAL_ANALYSIS
     assert reply.business_request_id == "ta-request"
-    assert reply.investment_service_type == ServiceType.TECHNICAL_ANALYSIS
-    assert reply.investment_request_id == "ta-request"
     assert calls == [("openid-ta", "300502.SZ 技术分析", "300502.SZ", None)]
 
 
@@ -11347,16 +11338,13 @@ def test_business_router_routes_daily_content_through_module_dispatcher(investme
     assert reply.business_source_type == "content"
     assert reply.business_source_id == "content-rate"
     assert reply.business_module_key == "rate"
-    assert reply.investment_service_type == ServiceType.RATE
-    assert reply.investment_request_id == "rate-request"
-    assert reply.investment_module_key == "rate"
     assert calls == [("openid-rate", "利率", ServiceType.RATE, True)]
 
 
 def test_web_channel_routes_investment_commands_from_admin_chat(investment_env, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from business.router import DEFAULT_UNMATCHED_PROMPT
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply

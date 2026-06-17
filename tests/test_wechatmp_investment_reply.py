@@ -465,16 +465,16 @@ def _context(openid="openid", msg_id="msg-1", content="利率"):
     )
 
 
-def test_wechatmp_investment_success_returns_image_reply(monkeypatch, tmp_path):
+def test_wechatmp_investment_success_returns_image_reply(investment_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
-    from business.investment.router import BusinessReply
-    import business.business_router as business_router
+    from business.router import BusinessReply
     import business.daily_content_handler as cowagent_content_handler
+    import business.router as business_route
 
     image_path = str(tmp_path / "rate_card.png")
-    monkeypatch.setattr(business_router, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
-    monkeypatch.setattr(business_router, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(business_route, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(business_route, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
     monkeypatch.setattr(
         cowagent_content_handler,
         "handle_daily_content",
@@ -486,20 +486,15 @@ def test_wechatmp_investment_success_returns_image_reply(monkeypatch, tmp_path):
             service_type=ServiceType.RATE,
         ),
     )
-    monkeypatch.setattr(
-        "business.investment.message_handler.handle_inbound_message",
-        lambda *_args, **_kwargs: pytest.fail("wechatmp must route business through ChatChannel main chain"),
-    )
 
     reply = _wechatmp_channel(monkeypatch)._generate_reply(_context())
 
     assert reply.type == ReplyType.IMAGE_URL
     assert reply.content == [image_path]
     assert reply.business_service_type == ServiceType.RATE
-    assert reply.investment_service_type == ServiceType.RATE
 
 
-def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(monkeypatch, tmp_path):
+def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(investment_env, monkeypatch, tmp_path):
     from business.investment.constants import ServiceType
     from business.investment.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
     import business.router as business_route
@@ -572,7 +567,7 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
 def test_wechatmp_technical_analysis_generate_reply_uses_router_user_images(monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.investment.constants import ServiceType
-    from business.investment.router import BusinessReply
+    from business.router import BusinessReply
     import business.business_router as business_router
     import business.technical_analysis_handler as cowagent_ta_handler
 
@@ -600,7 +595,6 @@ def test_wechatmp_technical_analysis_generate_reply_uses_router_user_images(monk
     assert reply.content == [signal_card_path, main_chart_path]
     assert markdown_report_path not in reply.content
     assert reply.business_service_type == ServiceType.TECHNICAL_ANALYSIS
-    assert reply.investment_service_type == ServiceType.TECHNICAL_ANALYSIS
 
 
 def test_wechatmp_passive_send_uploads_image_list_without_text_marker(monkeypatch, tmp_path):
@@ -682,21 +676,6 @@ def test_wechatmp_send_caches_business_module_key(monkeypatch):
     channel.send(reply, _context(openid="openid", msg_id="m1", content="宏观简报 xxx"))
 
     assert channel.cache_dict.peek_result("openid").module_key == "macro-brief"
-
-
-def test_wechatmp_passive_send_preserves_legacy_investment_metadata_in_cache(monkeypatch):
-    from bridge.reply import Reply, ReplyType
-
-    channel = _wechatmp_channel(monkeypatch)
-    text_reply = Reply(ReplyType.TEXT, "ready")
-    text_reply.investment_request_id = "legacy-request"
-    text_reply.investment_service_type = ServiceType.RATE
-
-    channel.send(text_reply, _context(openid="openid-legacy", msg_id="msg-legacy"))
-
-    cached = channel.cache_dict.peek_result("openid-legacy")
-    assert cached.request_id == "legacy-request"
-    assert cached.service_type == ServiceType.RATE
 
 
 def test_wechatmp_passive_send_closes_local_image_file_after_upload_success(monkeypatch, tmp_path):
@@ -1487,7 +1466,7 @@ def test_wechatmp_passive_cache_hit_uses_configured_reply_text(investment_env, m
 
 @STAGE8_WECHATMP_BUSINESS_PRECHECK_REMOVED
 def test_wechatmp_passive_unmatched_prompt_preserves_router_default_without_config(investment_env):
-    from business.investment.router import DEFAULT_UNMATCHED_PROMPT
+    from business.router import DEFAULT_UNMATCHED_PROMPT
     from channel.wechatmp import passive_reply
 
     assert passive_reply._unmatched_prompt() == DEFAULT_UNMATCHED_PROMPT

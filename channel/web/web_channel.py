@@ -388,24 +388,24 @@ def _build_investment_web_reply(session_id: str, prompt: str):
     if route.matched:
         from bridge.context import Context, ContextType
         from business.business_router import build_business_reply
-        from business.investment.constants import ActorType, EntryType
+        from business.constants import ActorType, EntryType
 
         context = Context(ContextType.TEXT, prompt)
         context["session_id"] = session_id
         context["channel_type"] = "web"
-        context["investment_entry_type"] = EntryType.INTERNAL_CALL
-        context["investment_actor_type"] = ActorType.ADMIN
-        context["investment_actor_id"] = str(session_id or "web")
-        context["investment_actor_name"] = "web"
-        context["investment_actor_role"] = "admin"
+        context["business_entry_type"] = EntryType.INTERNAL_CALL
+        context["business_actor_type"] = ActorType.ADMIN
+        context["business_actor_id"] = str(session_id or "web")
+        context["business_actor_name"] = "web"
+        context["business_actor_role"] = "admin"
         try:
             admin = _current_investment_admin()
         except Exception:
             admin = None
         if admin is not None:
-            context["investment_actor_id"] = str(getattr(admin, "id", "") or getattr(admin, "username", "") or session_id or "web")
-            context["investment_actor_name"] = str(getattr(admin, "username", "") or "web")
-            context["investment_actor_role"] = str(getattr(admin, "role", "") or "admin")
+            context["business_actor_id"] = str(getattr(admin, "id", "") or getattr(admin, "username", "") or session_id or "web")
+            context["business_actor_name"] = str(getattr(admin, "username", "") or "web")
+            context["business_actor_role"] = str(getattr(admin, "role", "") or "admin")
         reply = build_business_reply(context, skip_permission=True)
         if reply is None:
             return None
@@ -3193,7 +3193,7 @@ def _investment_content_module_payload(record, definition=None):
     }
 
 
-def _investment_module_label(module_key: str) -> str:
+def _business_module_label(module_key: str) -> str:
     module_key = str(module_key or "").strip()
     if not module_key:
         return ""
@@ -3205,7 +3205,7 @@ def _investment_module_label(module_key: str) -> str:
         return ""
 
 
-def _investment_module_key_for_request_record(record) -> str:
+def _business_module_key_for_request_record(record) -> str:
     module_key = str(getattr(record, "module_key", "") or "").strip()
     if module_key:
         return module_key
@@ -3553,8 +3553,8 @@ class InvestmentRequestRecordsHandler:
                 "records": [record.__dict__ | {
                     "record_type": "business_record",
                     "service_type": str(record.service_type) if record.service_type else "",
-                    "module_key": _investment_module_key_for_request_record(record),
-                    "module_label": _investment_module_label(_investment_module_key_for_request_record(record)),
+                    "module_key": _business_module_key_for_request_record(record),
+                    "module_label": _business_module_label(_business_module_key_for_request_record(record)),
                     "entry_type": str(record.entry_type),
                     "action_type": str(record.action_type),
                     "actor_type": str(record.actor_type),
