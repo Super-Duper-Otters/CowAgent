@@ -5256,7 +5256,7 @@ def test_request_records_api_includes_generating_timeout_warning(investment_env,
 
 
 def test_batch_01_service_results_share_contract_fields(investment_env):
-    from business.investment.ai_generation import AIGenerationResult
+    from business.ai_generation import AIGenerationResult
     from business.daily_content import DailyContentResult
     from business.render_service import RenderResult
     from business.router import BusinessReply
@@ -5959,7 +5959,7 @@ def test_ai_and_renderer_failures_record_sanitized_backend_detail(investment_env
 
 
 def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_rows(investment_env, monkeypatch):
-    from business.investment.ai_generation import (
+    from business.ai_generation import (
         AIGenerationRequest,
         generate_convertible_bond_text,
         generate_rate_text,
@@ -6045,7 +6045,7 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_investment_ro
 
 def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(investment_env, monkeypatch):
     from business import config_service
-    from business.investment.ai_generation import build_generation_request
+    from business.ai_generation import build_generation_request
     from business.constants import ServiceType
 
     monkeypatch.setattr(
@@ -6163,7 +6163,7 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
 )
 def test_global_model_config_resolves_configured_and_inferred_providers(monkeypatch, global_config, expected):
     from business import config_service
-    from business.investment.ai_generation import _global_model_config
+    from business.ai_generation import _global_model_config
 
     monkeypatch.setattr(config_service, "conf", lambda: global_config)
 
@@ -6172,7 +6172,7 @@ def test_global_model_config_resolves_configured_and_inferred_providers(monkeypa
 
 def test_ai_generation_sends_image_source_files_as_multimodal_content(investment_env, tmp_path, monkeypatch):
     from business import config_service
-    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_bytes = b"\x89PNG\r\n\x1a\nimage"
     image_path = tmp_path / "rate-source.png"
@@ -6216,7 +6216,7 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(investment
 
 def test_ai_generation_retries_transient_model_connection_errors(investment_env, monkeypatch):
     from business import config_service
-    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
     monkeypatch.setattr(
         config_service,
@@ -6250,7 +6250,7 @@ def test_ai_generation_retries_transient_model_connection_errors(investment_env,
 
 def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_env, tmp_path, monkeypatch):
     from business import config_service
-    from business.investment.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_path = tmp_path / "rate-source.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
@@ -6290,7 +6290,7 @@ def test_ai_generation_extracts_image_text_before_final_card_prompt(investment_e
 
 
 def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_env):
-    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.ai_generation import AIGenerationRequest, generate_rate_text
     from business.config_service import save_config
 
     save_config("prompt.rate", "", operator_role="admin")
@@ -6310,7 +6310,7 @@ def test_ai_generation_blank_configured_prompt_falls_back_to_default(investment_
 
 
 def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(investment_env):
-    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
@@ -6332,7 +6332,7 @@ def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(investment_en
 
 
 def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(investment_env):
-    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
@@ -6360,7 +6360,7 @@ def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(invest
 
 def test_ai_generation_failures_and_health_check_sanitize_model_config(investment_env, monkeypatch):
     from business import config_service
-    from business.investment.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.ai_generation import AIGenerationRequest, generate_rate_text
     from business.constants import ErrorCode, Status
     from business.health import run_health_checks
 
@@ -6412,8 +6412,8 @@ def test_model_health_check_accepts_global_config_fallback(investment_env, monke
 
 def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(investment_env, monkeypatch):
     from business import config_service
-    from business.investment import ai_generation
-    from business.investment.ai_generation import generate_rate_text
+    from business import ai_generation
+    from business.ai_generation import generate_rate_text
     from business.config_service import save_configs
 
     monkeypatch.setattr(
@@ -10199,7 +10199,7 @@ def test_daily_content_default_generation_passes_uploaded_source_files(investmen
         return SimpleNamespace(success=True, text="standard rate text")
 
     monkeypatch.setattr(
-        "business.investment.ai_generation.generate_standard_text",
+        "business.ai_generation.generate_standard_text",
         fake_generate_standard_text,
     )
 
@@ -10264,7 +10264,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
             assert typename == "chat"
             return fake_bot
 
-    monkeypatch.setattr("business.investment.ai_generation.Bridge", lambda: FakeBridge())
+    monkeypatch.setattr("business.ai_generation.Bridge", lambda: FakeBridge())
 
     content_id = create_rate_content_draft(
         source_files=[str(source_image)],

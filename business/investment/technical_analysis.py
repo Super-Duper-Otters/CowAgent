@@ -10,7 +10,7 @@ import os
 from sqlalchemy import and_, desc, select
 
 from business import cache_service
-from .ai_generation import generate_technical_analysis_text
+from business.ai_generation import generate_technical_analysis_text
 from business.cache_policy import technical_analysis_cache_expired_after_close
 from business.cache_service import (
     build_cache_key,

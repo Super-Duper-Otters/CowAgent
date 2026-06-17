@@ -61,7 +61,7 @@ def _check_file(name: str, value: str | None) -> HealthItem:
 
 
 def _check_model_config() -> HealthItem:
-    from business.investment.ai_generation import _global_model_config
+    from business.ai_generation import _global_model_config
 
     model_config = _global_model_config()
     missing = [

@@ -488,7 +488,7 @@ def _default_ai_generator(
             prompt_key=prompt_key,
             module_key=module_key,
         )
-    from business.investment.ai_generation import generate_standard_text
+    from business.ai_generation import generate_standard_text
 
     return generate_standard_text(service_type, source_text, source_files=source_files)
 
