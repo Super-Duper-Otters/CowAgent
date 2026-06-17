@@ -10,7 +10,7 @@ from business.constants import ServiceType
 from business.db import connect, row_to_dict
 from business.schema import investment_daily_contents, investment_output_files, investment_request_records
 from business.storage import get_storage_dirs
-from business.investment.versioning import file_fingerprint
+from business.versioning import file_fingerprint
 
 
 def _now() -> str:

@@ -5854,7 +5854,7 @@ def test_artifact_service_records_role_size_hash_and_version(investment_env, tmp
     from business.artifact_service import record_artifact
     from business.constants import ServiceType
     from business.db import connect
-    from business.investment.versioning import file_fingerprint
+    from business.versioning import file_fingerprint
 
     artifact = tmp_path / "card.png"
     artifact.write_bytes(b"card-bytes")
@@ -7256,7 +7256,7 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
 
 def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(investment_env, tmp_path, monkeypatch):
     from business import technical_analysis
-    from business.investment.market_date_resolver import MarketDateResolver
+    from business.market_date_resolver import MarketDateResolver
     from business.records import list_request_records
     from business.router import handle_text_message
     from business.constants import ServiceType
@@ -8476,7 +8476,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
 
 
 def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
-    from business.investment.market_date_resolver import MarketDateResolver
+    from business.market_date_resolver import MarketDateResolver
 
     calls = []
 

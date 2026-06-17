@@ -16,7 +16,7 @@ from business.records import create_business_workflow_record, finish_business_wo
 from business.render_service import DEFAULT_RENDERER_PATH, template_for_service
 from business.schema import investment_daily_contents
 from business.storage import get_storage_dirs
-from business.investment.versioning import file_fingerprint
+from business.versioning import file_fingerprint
 
 
 @dataclass
