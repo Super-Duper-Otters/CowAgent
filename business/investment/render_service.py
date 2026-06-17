@@ -7,7 +7,7 @@ from typing import Callable
 
 from .config_service import get_config, sanitize_sensitive_text
 from business.constants import ErrorCode, ServiceType, Status, user_message
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 
 
 DEFAULT_RENDERER_PATH = "builtin/components/signal-card-renderer/scripts/render_card.py"

@@ -757,7 +757,8 @@ def _xlsx_bytes(headers, rows):
 
 @pytest.fixture()
 def investment_env(tmp_path, monkeypatch):
-    from business.investment import db, storage
+    from business.investment import db
+    from business import storage
 
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_test_{uuid4().hex}"
@@ -831,7 +832,8 @@ def test_investment_database_url_rejects_sqlite_config(monkeypatch):
 
 
 def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
-    from business.investment import migrations, schema, storage
+    from business.investment import migrations, schema
+    from business import storage
 
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
     calls = []
@@ -847,7 +849,7 @@ def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
 
 
 def test_investment_migration_smoke_creates_schema(investment_env):
-    from business.investment import storage
+    from business import storage
     from business.investment.db import get_engine
     from sqlalchemy import inspect
     from sqlalchemy import text
@@ -1456,7 +1458,7 @@ def test_component_paths_define_builtin_and_runtime_roots(investment_env):
         runtime_components_root,
         runtime_versions_root,
     )
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
 
     assert builtin_components_root() == Path.cwd() / "builtin" / "components"
     assert runtime_components_root() == get_storage_dirs()["root"] / "components"
@@ -1635,7 +1637,7 @@ def test_runtime_component_definition_overrides_builtin_definition(investment_en
 
 def test_skill_versions_list_only_new_runtime_versions(investment_env):
     from business.investment.component_paths import runtime_versions_root
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
     from business.investment.skill_versions import list_versions
 
     new_version = runtime_versions_root("technical-analysis") / "skill-new"
@@ -2877,7 +2879,7 @@ def test_web_daily_content_get_returns_current_effective_content(investment_env,
 
     from business.constants import ServiceType
     from business.investment.daily_content import create_content_draft, set_content_effective
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-current.png"
@@ -2942,7 +2944,7 @@ def test_set_content_effective_archives_external_output_image(investment_env, tm
     from business.constants import ServiceType, Status
     from business.investment.daily_content import create_content_draft, set_content_effective
     from business.investment.records import get_content_record, list_output_files
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
 
     image = tmp_path / "rate_card.png"
     image.write_bytes(b"legacy-rate-card")
@@ -5309,7 +5311,7 @@ def test_success_request_records_output_files_table(investment_env):
 def test_success_request_archives_generated_images_and_documents(investment_env, tmp_path):
     from business.constants import ServiceType
     from business.investment.records import create_request_record, get_request_record, list_output_files, succeed_request_record
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
 
     image = tmp_path / "rate_card.png"
     report = tmp_path / "rate_report.md"
@@ -5356,7 +5358,7 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(investment_env):
     from business.investment.file_migration import migrate_legacy_files_to_unified_storage
     from business.investment.daily_content import create_content_draft
     from business.investment.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
 
     legacy_dir = get_storage_dirs()["root"] / "generated" / "archive" / "legacy"
     legacy_dir.mkdir(parents=True, exist_ok=True)
@@ -6759,7 +6761,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
     from business.investment.db import connect
     from business.investment.records import get_content_record, list_request_records
     from business.router import handle_text_message
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
     from business.investment.technical_analysis import TechnicalAnalysisResult
     from business.investment.user_service import create_user
 
@@ -9037,7 +9039,7 @@ def test_file_serve_handler_rejects_paths_outside_allowed_storage(investment_env
 
 
 def test_file_serve_handler_allows_investment_storage_file(investment_env, monkeypatch):
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
 
@@ -10204,7 +10206,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(inve
     from business.constants import ServiceType
     from business.investment.daily_content import create_rate_content_draft, generate_content
     from business.investment.records import get_content_record
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
 
     source_image = tmp_path / "uploaded-rate.png"
     source_image.write_bytes(b"\x89PNG\r\n\x1a\nimage")
@@ -10402,7 +10404,7 @@ def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(invest
     import io
 
     from business.investment.records import get_content_record, list_output_files
-    from business.investment.storage import get_storage_dirs
+    from business.storage import get_storage_dirs
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentDailyContentHandler
 

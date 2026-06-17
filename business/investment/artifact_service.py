@@ -9,7 +9,7 @@ from sqlalchemy import insert, select, update
 from business.constants import ServiceType
 from .db import connect, row_to_dict
 from .schema import investment_daily_contents, investment_output_files, investment_request_records
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 from .versioning import file_fingerprint
 
 

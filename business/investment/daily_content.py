@@ -15,7 +15,7 @@ from .db import connect, row_to_dict
 from .records import create_business_workflow_record, finish_business_workflow_record, record_output_file
 from .render_service import DEFAULT_RENDERER_PATH, template_for_service
 from .schema import investment_daily_contents
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 from .versioning import file_fingerprint
 
 

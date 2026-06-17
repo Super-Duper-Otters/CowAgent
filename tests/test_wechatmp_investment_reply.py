@@ -32,7 +32,8 @@ def _isolate_investment_record_writes(monkeypatch):
 
 @pytest.fixture()
 def investment_env(tmp_path, monkeypatch):
-    from business.investment import db, storage
+    from business.investment import db
+    from business import storage
 
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_test_{uuid4().hex}"

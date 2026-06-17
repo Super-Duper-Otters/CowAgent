@@ -12,7 +12,8 @@ def agent_messages_pg_env(tmp_path, monkeypatch):
     if not os.environ.get("COWAGENT_TEST_POSTGRES_URL"):
         pytest.skip("COWAGENT_TEST_POSTGRES_URL not configured")
 
-    from business.investment import db, storage
+    from business.investment import db
+    from business import storage
     import agent.memory.conversation_store as conversation_store
 
     base_url = os.environ["COWAGENT_TEST_POSTGRES_URL"]

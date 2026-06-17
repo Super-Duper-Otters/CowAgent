@@ -1,7 +1,7 @@
 # encoding:utf-8
 from pathlib import Path
 
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 
 
 def builtin_components_root() -> Path:

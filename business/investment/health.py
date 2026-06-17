@@ -18,7 +18,7 @@ from .render_service import (
     DEFAULT_TEMPLATE_TA_PATH,
 )
 from .schema import stock_symbols
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 from .stock_resolver import get_tushare_token, stock_dictionary_stats
 
 

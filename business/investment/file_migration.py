@@ -10,7 +10,7 @@ from .artifact_service import archive_artifact_file
 from business.constants import ServiceType
 from .db import connect, row_to_dict
 from .schema import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records
-from .storage import get_storage_dirs
+from business.storage import get_storage_dirs
 
 
 def _load_list(value: str | None) -> list[str]:

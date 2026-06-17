@@ -7,7 +7,7 @@ from typing import Iterator
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection, Engine
 
-from . import storage
+from business import storage
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 _ENGINE: Engine | None = None

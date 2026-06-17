@@ -39,7 +39,8 @@ def investment_postgres_env(tmp_path, monkeypatch):
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
     monkeypatch.setenv("COWAGENT_INVESTMENT_STORAGE_ROOT", str(tmp_path / "storage"))
 
-    from business.investment import db, storage
+    from business.investment import db
+    from business import storage
 
     db.reset_engine_for_tests()
     storage._MIGRATED_DATABASE_URL = None
@@ -57,7 +58,7 @@ def investment_postgres_env(tmp_path, monkeypatch):
 def test_postgres_runs_critical_investment_flows(investment_postgres_env, tmp_path):
     from sqlalchemy import inspect
 
-    from business.investment import storage
+    from business import storage
     from business.investment.config_service import get_config, save_config
     from business.constants import ErrorCode, ServiceType, Status
     from business.investment.daily_content import create_content_draft, get_latest_effective_content, set_content_effective

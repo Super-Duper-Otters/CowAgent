@@ -9,7 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from business.investment import stock_resolver, storage  # noqa: E402
+from business.investment import stock_resolver
+from business import storage  # noqa: E402
 
 
 def _count_successes(result: dict[str, Any]) -> tuple[int, list[str]]:
