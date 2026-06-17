@@ -497,7 +497,7 @@ def test_wechatmp_investment_success_returns_image_reply(investment_env, monkeyp
 
 def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(investment_env, monkeypatch, tmp_path):
     from business.constants import ServiceType
-    from business.investment.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
+    from business.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
     import business.router as business_route
     import business.technical_analysis_handler as cowagent_ta_handler
 
@@ -517,7 +517,7 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(
-        "business.investment.technical_analysis.prepare_technical_analysis_cache_context",
+        "business.technical_analysis.prepare_technical_analysis_cache_context",
         lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
     )
     monkeypatch.setattr(
@@ -1945,7 +1945,7 @@ def test_wechatmp_passive_render_image_file_uploads_on_claim(monkeypatch, tmp_pa
 
 def test_wechatmp_passive_technical_analysis_precheck_error_returns_failure_without_ack(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
-    import business.investment.technical_analysis as technical_analysis
+    import business.technical_analysis as technical_analysis
     from business.constants import ErrorCode
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 

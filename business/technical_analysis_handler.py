@@ -32,7 +32,7 @@ def _failure_reply_with_detail(prompt: str, detail: str) -> str:
 
 def validate_technical_analysis_request(raw_input: str, route) -> str:
     """Return a user-facing error when a technical-analysis request cannot start."""
-    from business.investment.technical_analysis import (
+    from business.technical_analysis import (
         _target_and_requested_market_date,
         _technical_analysis_target_from_input,
         parse_target,

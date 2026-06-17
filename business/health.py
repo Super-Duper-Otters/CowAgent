@@ -266,7 +266,7 @@ def _check_tushare_token() -> HealthItem:
 
 def _run_technical_analysis_smoke() -> HealthItem:
     try:
-        from business.investment.technical_analysis import run_technical_analysis
+        from business.technical_analysis import run_technical_analysis
 
         result = run_technical_analysis("health-smoke", "300502.SZ 技术分析", "300502.SZ")
         if result.success:
@@ -313,7 +313,7 @@ def run_health_checks(run_smoke: bool = False) -> list[HealthItem]:
     dirs = get_storage_dirs()
     items.append(_check_writable_dir("files_dir", Path(str(get_config("storage.files_dir") or dirs["files"]))))
     items.append(_check_writable_dir("tmp_dir", Path(str(get_config("storage.tmp_dir") or dirs["tmp"]))))
-    from business.investment.technical_analysis import DEFAULT_TECHNICAL_ANALYSIS_PATH
+    from business.technical_analysis import DEFAULT_TECHNICAL_ANALYSIS_PATH
 
     items.append(_check_file("technical_analysis_skill", get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     items.append(_check_file("signal_card_renderer", get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))

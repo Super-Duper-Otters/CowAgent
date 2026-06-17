@@ -8,7 +8,7 @@ from typing import Any
 
 from business.constants import ErrorCode, user_message
 from business.daily_content import get_latest_effective_content
-from business.investment.technical_analysis import run_technical_analysis
+from business.technical_analysis import run_technical_analysis
 
 
 @dataclass
