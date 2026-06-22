@@ -2515,11 +2515,11 @@ class LogsHandler:
         web.header('X-Accel-Buffering', 'no')
 
         from config import get_root
-        log_path = os.path.join(get_root(), "run.log")
+        log_path = os.path.join(get_root(), "nohup.out")
 
         def generate():
             if not os.path.isfile(log_path):
-                yield b"data: {\"type\": \"error\", \"message\": \"run.log not found\"}\n\n"
+                yield b"data: {\"type\": \"error\", \"message\": \"nohup.out not found\"}\n\n"
                 return
 
             # Read last 200 lines for initial display
@@ -3897,6 +3897,91 @@ class InvestmentComponentsHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] components GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentPromptComponentHandler:
+    def POST(self):
+        admin = _require_investment_permission("skills.write")
+        try:
+            from business.component_service import create_prompt_component, list_components
+
+            body = _investment_json_body()
+            component = create_prompt_component(
+                body,
+                operator_role=admin.role,
+                operator=admin.username,
+                actor=admin,
+            )
+            _record_investment_operation(
+                "component.prompt.create",
+                "investment_component",
+                component.get("component_key", ""),
+                admin=admin,
+                detail={"creation_method": "manual_prompt"},
+            )
+            return _investment_json_response({
+                "status": "success",
+                "component": component,
+                "components": list_components(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] prompt component create error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentComponentImportPreviewHandler:
+    def POST(self):
+        admin = _require_investment_permission("skills.write")
+        try:
+            from business.component_import_service import preview_skill_zip
+
+            params = _raw_web_input()
+            file_obj = params.get("file")
+            if file_obj is None:
+                return _investment_json_response({"status": "error", "message": "file required"})
+            filename = getattr(file_obj, "filename", "") or getattr(file_obj, "name", "") or "skill.zip"
+            preview = preview_skill_zip(
+                os.path.basename(filename),
+                _read_uploaded_file_bytes(file_obj),
+                operator=admin.username,
+            )
+            _record_investment_operation(
+                "component_import.preview",
+                "investment_component_import",
+                preview.get("import", {}).get("import_id", ""),
+                admin=admin,
+                detail={"filename": os.path.basename(filename)},
+            )
+            return _investment_json_response(preview)
+        except Exception as e:
+            logger.error(f"[Investment] component import preview error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentComponentImportCreateHandler:
+    def POST(self, import_id):
+        admin = _require_investment_permission("skills.write")
+        try:
+            from business.component_import_service import create_component_from_import
+            from business.component_service import list_components
+
+            body = _investment_json_body()
+            created = create_component_from_import(import_id, body, operator=admin.username)
+            _record_investment_operation(
+                "component_import.create",
+                "investment_component",
+                created.get("component_key", ""),
+                admin=admin,
+                detail={"import_id": import_id, "version_id": created.get("version_id", "")},
+            )
+            return _investment_json_response({
+                "status": "success",
+                "created": created,
+                "components": list_components(),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] component import create error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

@@ -1,0 +1,19 @@
+{
+  "component_key": "technical-analysis",
+  "label": "技术分析文本测试组件",
+  "description": "测试组件更新链路：技术分析命中后返回固定文本，不生成图片。",
+  "service_type": "technical_analysis",
+  "match_type": "suffix",
+  "default_triggers": ["技术分析"],
+  "handler_type": "script",
+  "entry": "scripts/analyze_universal.py",
+  "output_mode": "text",
+  "routable": true,
+  "config_key": "technical_analysis.skill_path",
+  "script_name": "analyze_universal.py",
+  "storage_name": "technical-analysis",
+  "component_type": "active_script",
+  "prompt_key": "",
+  "renderer_component_key": "",
+  "template_key": ""
+}

@@ -2003,6 +2003,57 @@
     margin-top: auto;
 }
 
+.investment-component-import-info {
+    display: inline-flex;
+    position: relative;
+    width: 16px;
+    height: 16px;
+    margin-left: 6px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(100, 116, 139, 0.55);
+    border-radius: 999px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    vertical-align: text-bottom;
+}
+
+.investment-component-import-info:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 180;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    width: max-content;
+    max-width: 280px;
+    transform: translateX(-50%);
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.45;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.24);
+    white-space: normal;
+    pointer-events: none;
+}
+
+.investment-component-import-info:hover::before {
+    content: "";
+    position: absolute;
+    z-index: 181;
+    left: 50%;
+    bottom: calc(100% + 3px);
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #0f172a;
+    pointer-events: none;
+}
+
 .investment-daily-upload-stage {
     display: grid;
     gap: 12px;

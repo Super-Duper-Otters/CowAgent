@@ -47,6 +47,12 @@ class BusinessDefinition:
     generation_mode: str = ""
     delivery_mode: str = "direct"
     content_enabled: bool = False
+    creation_method: str = "builtin"
+    execution: dict[str, Any] = field(default_factory=dict)
+    postprocess: dict[str, Any] = field(default_factory=dict)
+    reply: dict[str, Any] = field(default_factory=dict)
+    archive: dict[str, Any] = field(default_factory=dict)
+    prompt: dict[str, Any] = field(default_factory=dict)
 
     @property
     def enabled_config_key(self) -> str:
@@ -94,6 +100,12 @@ class BusinessDefinition:
             "generation_mode": self.generation_mode,
             "delivery_mode": self.delivery_mode,
             "content_enabled": self.content_enabled,
+            "creation_method": self.creation_method,
+            "execution": self.execution,
+            "postprocess": self.postprocess,
+            "reply": self.reply,
+            "archive": self.archive,
+            "prompt": self.prompt,
             "uses_triggers": self.uses_triggers,
             "versioned": self.versioned,
         }
@@ -163,6 +175,12 @@ def _definition(
     generation_mode: str | None = None,
     delivery_mode: str | None = None,
     content_enabled: bool | None = None,
+    creation_method: str = "builtin",
+    execution: dict[str, Any] | None = None,
+    postprocess: dict[str, Any] | None = None,
+    reply: dict[str, Any] | None = None,
+    archive: dict[str, Any] | None = None,
+    prompt: dict[str, Any] | None = None,
 ) -> BusinessDefinition:
     return BusinessDefinition(
         business_key=business_key,
@@ -191,6 +209,12 @@ def _definition(
         generation_mode=generation_mode if generation_mode is not None else _generation_mode_for_handler(handler_type),
         delivery_mode=delivery_mode if delivery_mode is not None else _delivery_mode_for_handler(handler_type),
         content_enabled=content_enabled if content_enabled is not None else handler_type == "daily_content",
+        creation_method=creation_method,
+        execution=execution or {},
+        postprocess=postprocess or {},
+        reply=reply or {},
+        archive=archive or {},
+        prompt=prompt or {},
     )
 
 
@@ -291,6 +315,15 @@ def _optional_str_value(data: dict, key: str) -> str | None:
     return str(value)
 
 
+def _default_creation_method(component_dir: Path) -> str:
+    try:
+        if component_dir.resolve().is_relative_to(builtin_components_root().resolve()):
+            return "builtin"
+    except ValueError:
+        pass
+    return "runtime"
+
+
 def _contains_markdown_link(raw_input: str) -> bool:
     return bool(re.search(r"\[[^\]]+\]\([^)]+\)", raw_input or ""))
 
@@ -385,6 +418,12 @@ def read_component_definition(component_dir: Path) -> BusinessDefinition | None:
         generation_mode=_optional_str_value(manifest, "generation_mode"),
         delivery_mode=_optional_str_value(manifest, "delivery_mode"),
         content_enabled=_bool_value(manifest.get("content_enabled"), False) if "content_enabled" in manifest else None,
+        creation_method=str(manifest.get("creation_method") or _default_creation_method(component_dir)),
+        execution=manifest.get("execution") if isinstance(manifest.get("execution"), dict) else None,
+        postprocess=manifest.get("postprocess") if isinstance(manifest.get("postprocess"), dict) else None,
+        reply=manifest.get("reply") if isinstance(manifest.get("reply"), dict) else None,
+        archive=manifest.get("archive") if isinstance(manifest.get("archive"), dict) else None,
+        prompt=manifest.get("prompt") if isinstance(manifest.get("prompt"), dict) else None,
     )
 
 

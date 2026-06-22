@@ -77,6 +77,134 @@ def dispatch_module(
             elapsed=elapsed,
         )
 
+    if handler_type == "prompt_component":
+        from business.business_records import create_business_record, mark_business_failed, mark_business_success
+        from business.executors.prompt_component_executor import run_prompt_component
+        from business.router import BusinessReply
+
+        customer_metadata = customer_metadata or {}
+        request_id = create_business_record(
+            openid,
+            raw_input,
+            route.service_type,
+            record_context=record_context,
+            module_key=module_key,
+            customer_name=customer_metadata.get("customer_name", ""),
+            institution=customer_metadata.get("institution", ""),
+        )
+        try:
+            result = run_prompt_component(definition, openid, raw_input, getattr(route, "target_text", ""))
+            if not result.success:
+                code = result.error_code or ErrorCode.SYSTEM_ERROR
+                prompt = result.user_prompt or user_message(code)
+                detail = sanitize_sensitive_text(result.detail)
+                mark_business_failed(request_id, code, prompt, detail, elapsed())
+                return BusinessReply(
+                    True,
+                    False,
+                    _failure_reply_with_detail(prompt, detail),
+                    [],
+                    route.service_type,
+                    code,
+                    prompt,
+                    detail,
+                    request_id,
+                    module_key=module_key,
+                )
+            mark_business_success(request_id, output_files=[], artifact_roles={}, elapsed_ms=elapsed())
+            return BusinessReply(
+                True,
+                True,
+                result.reply_text,
+                [],
+                route.service_type,
+                request_id=request_id,
+                module_key=module_key,
+            )
+        except Exception as exc:
+            detail = sanitize_sensitive_text(str(exc))
+            prompt = user_message(ErrorCode.SYSTEM_ERROR)
+            mark_business_failed(request_id, ErrorCode.SYSTEM_ERROR, prompt, detail, elapsed())
+            return BusinessReply(
+                True,
+                False,
+                prompt,
+                [],
+                route.service_type,
+                ErrorCode.SYSTEM_ERROR,
+                prompt,
+                detail,
+                request_id,
+                module_key=module_key,
+            )
+
+    if handler_type == "command_script" or getattr(definition, "execution", {}):
+        from business.business_records import create_business_record, mark_business_failed, mark_business_success
+        from business.constants import ErrorCode, user_message
+        from business.executors.command_script_executor import run_command_script_component
+        from business.router import BusinessReply
+
+        customer_metadata = customer_metadata or {}
+        request_id = create_business_record(
+            openid,
+            raw_input,
+            route.service_type,
+            record_context=record_context,
+            module_key=module_key,
+            customer_name=customer_metadata.get("customer_name", ""),
+            institution=customer_metadata.get("institution", ""),
+        )
+        try:
+            result = run_command_script_component(definition, openid, raw_input, getattr(route, "target_text", ""))
+            if not result.success:
+                code = result.error_code or ErrorCode.SYSTEM_ERROR
+                prompt = result.user_prompt or user_message(code)
+                detail = sanitize_sensitive_text(result.detail)
+                mark_business_failed(request_id, code, prompt, detail, elapsed())
+                return BusinessReply(
+                    True,
+                    False,
+                    _failure_reply_with_detail(prompt, detail),
+                    [],
+                    route.service_type,
+                    code,
+                    prompt,
+                    detail,
+                    request_id,
+                    module_key=module_key,
+                )
+            mark_business_success(
+                request_id,
+                output_files=result.archive_files,
+                artifact_roles=result.artifact_roles,
+                elapsed_ms=elapsed(),
+            )
+            return BusinessReply(
+                True,
+                True,
+                result.reply_text,
+                result.reply_files,
+                route.service_type,
+                request_id=request_id,
+                module_key=module_key,
+            )
+        except Exception as exc:
+            detail = sanitize_sensitive_text(str(exc))
+            prompt = user_message(ErrorCode.SYSTEM_ERROR)
+            mark_business_failed(request_id, ErrorCode.SYSTEM_ERROR, prompt, detail, elapsed())
+            return BusinessReply(
+                True,
+                False,
+                prompt,
+                [],
+                route.service_type,
+                ErrorCode.SYSTEM_ERROR,
+                prompt,
+                detail,
+                request_id,
+                module_key=module_key,
+            )
+
     if handler_type == "script":
         from business.business_records import create_business_record, mark_business_failed, mark_business_success
         from business.router import BusinessReply

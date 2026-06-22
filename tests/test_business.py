@@ -1510,10 +1510,51 @@ def test_component_service_includes_prompt_and_version_data(business_env):
     save_config("prompt.rate", "rate prompt v1", operator_role="admin")
     items = {item["component_key"]: item for item in list_components()}
 
+    assert items["rate"]["creation_method"] == "builtin"
+    assert items["rate"]["prompt"] == {}
     assert items["rate"]["settings"]["prompt"] == "rate prompt v1"
     assert items["rate"]["versions"] == []
     assert items["technical-analysis"]["versions"]
     assert items["signal-card-renderer"]["versions"]
+
+
+def test_manual_prompt_component_create_generates_runtime_manifest(business_env):
+    from business.business_registry import get_business_definition, match_business
+    from business.component_paths import runtime_component_root
+    from business.component_service import create_prompt_component, list_components
+
+    created = create_prompt_component(
+        {
+            "component_key": "macro-commentary",
+            "label": "宏观点评",
+            "match_type": "suffix",
+            "default_triggers": ["宏观点评"],
+            "prompt": {
+                "template": "请基于用户输入生成宏观点评：{target_text}",
+                "output_type": "markdown",
+            },
+            "enabled": True,
+        },
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    manifest = json.loads((runtime_component_root("macro-commentary") / "component.json").read_text(encoding="utf-8"))
+    definition = get_business_definition("macro-commentary")
+    components = {item["component_key"]: item for item in list_components()}
+    matched = match_business("新能源 宏观点评")
+
+    assert created["component_key"] == "macro-commentary"
+    assert manifest["creation_method"] == "manual_prompt"
+    assert manifest["component_type"] == "active_prompt"
+    assert manifest["handler_type"] == "prompt_component"
+    assert manifest["prompt"]["template"] == "请基于用户输入生成宏观点评：{target_text}"
+    assert definition.prompt["output_type"] == "markdown"
+    assert components["macro-commentary"]["prompt"]["template"].startswith("请基于")
+    assert components["macro-commentary"]["settings"]["triggers"] == ["宏观点评"]
+    assert matched is not None
+    assert matched.business_key == "macro-commentary"
+    assert matched.target_text == "新能源"
 
 
 def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(business_env):
@@ -1704,6 +1745,466 @@ investment:
     assert matched is not None
     assert matched.skill_key == "macro-analysis"
     assert matched.service_type == ServiceType.UNMATCHED
+
+
+def test_component_import_preview_reads_standard_skill_zip(business_env, tmp_path):
+    from business.component_import_service import preview_skill_zip
+
+    package = tmp_path / "ta.zip"
+    skill_md = """---
+name: ta-pattern
+description: 技术分析导入样板
+---
+# 技术分析
+根据标的输出 Markdown 报告和主图。
+"""
+    with ZipFile(package, "w") as archive:
+        archive.writestr("技术分析v0.2/SKILL.md", skill_md)
+        archive.writestr("技术分析v0.2/README.md", "# 技术分析 README\n")
+        archive.writestr("技术分析v0.2/scripts/analyze_universal.py", "print('ok')\n")
+        archive.writestr("技术分析v0.2/scripts/indicator_query.py", "print('query')\n")
+
+    result = preview_skill_zip("技术分析v0.2.zip", package.read_bytes(), operator="pytest")
+
+    preview = result["import"]
+    assert preview["import_id"].startswith("import-")
+    assert preview["root_dir"] == "技术分析v0.2"
+    assert preview["skill_name"] == "ta-pattern"
+    assert preview["description"] == "技术分析导入样板"
+    assert "技术分析v0.2/scripts/analyze_universal.py" in preview["scripts"]
+    assert preview["skill_summary"].startswith("# 技术分析")
+    assert preview["readme_summary"].startswith("# 技术分析 README")
+
+
+def test_component_import_preview_rejects_path_escape_zip(business_env, tmp_path):
+    import pytest
+
+    from business.component_import_service import preview_skill_zip
+
+    package = tmp_path / "unsafe.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("../escape/SKILL.md", "# unsafe\n")
+
+    with pytest.raises(ValueError, match="unsafe zip member path"):
+        preview_skill_zip("unsafe.zip", package.read_bytes(), operator="pytest")
+
+
+def test_component_import_create_generates_runtime_component(business_env, tmp_path):
+    from business.component_import_service import create_component_from_import, preview_skill_zip
+    from business.component_paths import runtime_component_root
+    from business.component_service import list_components
+    from business.config_service import get_config
+
+    package = tmp_path / "ta.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("技术分析v0.2/SKILL.md", "# 技术分析\n")
+        archive.writestr("技术分析v0.2/scripts/analyze_universal.py", "print('ok')\n")
+
+    preview = preview_skill_zip("技术分析v0.2.zip", package.read_bytes(), operator="pytest")["import"]
+    created = create_component_from_import(
+        preview["import_id"],
+        {
+            "component_key": "ta-imported",
+            "label": "技术分析导入组件",
+            "description": "从 Skill ZIP 表单创建",
+            "component_type": "active_script",
+            "match_type": "suffix",
+            "default_triggers": ["技术分析"],
+            "entry": "技术分析v0.2/scripts/analyze_universal.py",
+            "execution": {
+                "command": ["python", "{entry}", "--symbol", "{target_text}", "--output", "{work_dir}"],
+                "outputs": {
+                    "report": {"type": "markdown", "pattern": "*技术分析报告*.md"},
+                    "main_chart": {"type": "image", "pattern": "*_TA_*.png"},
+                },
+                "default_output": "report",
+            },
+            "reply": {"outputs": ["report"]},
+            "archive": {"outputs": ["report", "main_chart"]},
+        },
+        operator="pytest",
+    )
+
+    component_root = runtime_component_root("ta-imported")
+    version_root = component_root / "versions" / created["version_id"]
+    component_manifest = json.loads((component_root / "component.json").read_text(encoding="utf-8"))
+    version_manifest = json.loads((version_root / "manifest.json").read_text(encoding="utf-8"))
+
+    assert created["component_key"] == "ta-imported"
+    assert component_manifest["handler_type"] == "command_script"
+    assert component_manifest["component_type"] == "active_script"
+    assert component_manifest["execution"]["default_output"] == "report"
+    assert version_manifest["component_key"] == "ta-imported"
+    assert (version_root / "技术分析v0.2" / "scripts" / "analyze_universal.py").is_file()
+    assert get_config("skill.ta-imported.script_path") == str(version_root / "技术分析v0.2" / "scripts" / "analyze_universal.py")
+
+    components = {item["component_key"]: item for item in list_components()}
+    assert components["ta-imported"]["label"] == "技术分析导入组件"
+    assert components["ta-imported"]["execution"]["default_output"] == "report"
+
+
+def test_component_import_create_prompt_component_from_no_script_zip(business_env, tmp_path):
+    from business.component_import_service import create_component_from_import, preview_skill_zip
+    from business.component_paths import runtime_component_root
+    from business.component_service import list_components
+
+    package = tmp_path / "prompt.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "prompt-only/SKILL.md",
+            "---\nname: prompt-only\n"
+            "description: 无脚本提示词组件\n---\n"
+            "# 宏观点评\n根据用户输入生成投研点评。\n",
+        )
+        archive.writestr("prompt-only/README.md", "# 使用说明\n这是一个无脚本提示词组件。\n")
+
+    preview = preview_skill_zip("prompt.zip", package.read_bytes(), operator="pytest")["import"]
+    created = create_component_from_import(
+        preview["import_id"],
+        {
+            "component_key": "macro-from-zip",
+            "label": "ZIP 宏观点评",
+            "component_type": "active_prompt",
+            "match_type": "suffix",
+            "default_triggers": ["宏观点评"],
+            "prompt": {
+                "template": "请基于 Skill 说明和用户输入生成点评：{target_text}",
+                "output_type": "markdown",
+            },
+        },
+        operator="pytest",
+    )
+
+    manifest = json.loads((runtime_component_root("macro-from-zip") / "component.json").read_text(encoding="utf-8"))
+    components = {item["component_key"]: item for item in list_components()}
+
+    assert preview["scripts"] == []
+    assert created["component_key"] == "macro-from-zip"
+    assert created["version_id"] == ""
+    assert manifest["creation_method"] == "zip"
+    assert manifest["component_type"] == "active_prompt"
+    assert manifest["handler_type"] == "prompt_component"
+    assert manifest["prompt"]["template"].startswith("请基于 Skill")
+    assert components["macro-from-zip"]["prompt"]["output_type"] == "markdown"
+
+
+def test_component_import_create_rejects_missing_preview(business_env):
+    import pytest
+
+    from business.component_import_service import create_component_from_import
+
+    with pytest.raises(ValueError, match="component import not found"):
+        create_component_from_import(
+            "import-missing",
+            {
+                "component_key": "macro-missing",
+                "component_type": "active_prompt",
+                "default_triggers": ["宏观点评"],
+                "prompt": {"template": "hi {target_text}"},
+            },
+            operator="pytest",
+        )
+
+
+def test_command_script_executor_collects_default_markdown_output(tmp_path):
+    from business.executors.command_script_executor import run_command_script_component
+
+    script = tmp_path / "scripts" / "analyze_universal.py"
+    script.parent.mkdir()
+    script.write_text(
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser=argparse.ArgumentParser()\n"
+        "parser.add_argument('--symbol')\n"
+        "parser.add_argument('--output')\n"
+        "args=parser.parse_args()\n"
+        "out=Path(args.output)\n"
+        "out.mkdir(parents=True, exist_ok=True)\n"
+        "(out / f'{args.symbol}_技术分析报告.md').write_text('# 报告\\n' + args.symbol, encoding='utf-8')\n"
+        "(out / f'{args.symbol}_TA_main.png').write_bytes(b'png')\n",
+        encoding="utf-8",
+    )
+    definition = type(
+        "Definition",
+        (),
+        {
+            "business_key": "ta-imported",
+            "config_key": "",
+            "entry": str(script),
+            "execution": {
+                "command": ["python", "{entry}", "--symbol", "{target_text}", "--output", "{work_dir}"],
+                "outputs": {
+                    "report": {"type": "markdown", "pattern": "*技术分析报告*.md"},
+                    "main_chart": {"type": "image", "pattern": "*_TA_*.png"},
+                },
+                "default_output": "report",
+            },
+            "reply": {"outputs": ["report"]},
+            "archive": {"outputs": ["report", "main_chart"]},
+            "postprocess": {"enabled": False},
+        },
+    )()
+
+    result = run_command_script_component(definition, "openid", "300502.SZ 技术分析", "300502.SZ")
+
+    assert result.success is True
+    assert result.reply_text == "# 报告\n300502.SZ"
+    assert result.reply_files == []
+    assert len(result.archive_files) == 2
+    assert result.outputs["report"].type == "markdown"
+    assert result.outputs["main_chart"].type == "image"
+
+
+def test_command_script_executor_requires_default_output(tmp_path):
+    from business.executors.command_script_executor import run_command_script_component
+
+    script = tmp_path / "run.py"
+    script.write_text("print('no outputs')\n", encoding="utf-8")
+    definition = type(
+        "Definition",
+        (),
+        {
+            "business_key": "bad-component",
+            "config_key": "",
+            "entry": str(script),
+            "execution": {
+                "command": ["python", "{entry}"],
+                "outputs": {"report": {"type": "markdown", "pattern": "*.md"}},
+                "default_output": "report",
+            },
+            "reply": {"outputs": ["report"]},
+            "archive": {"outputs": ["report"]},
+            "postprocess": {"enabled": False},
+        },
+    )()
+
+    result = run_command_script_component(definition, "openid", "坏组件", "")
+
+    assert result.success is False
+    assert "default output missing" in result.detail
+
+
+def test_prompt_component_executor_renders_template_and_returns_markdown(monkeypatch):
+    from business.executors.prompt_component_executor import run_prompt_component
+
+    calls = []
+
+    class FakeAdapter:
+        def generate(self, request):
+            calls.append(request)
+            return "## 宏观点评\n新能源景气度改善。"
+
+    definition = type(
+        "Definition",
+        (),
+        {
+            "business_key": "macro-commentary",
+            "prompt": {
+                "template": "请基于用户输入生成宏观点评：{target_text}\n原文：{raw_input}",
+                "output_type": "markdown",
+            },
+        },
+    )()
+
+    result = run_prompt_component(definition, "openid", "新能源 宏观点评", "新能源", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert result.reply_text == "## 宏观点评\n新能源景气度改善。"
+    assert result.output_type == "markdown"
+    assert calls[0].source_text == "新能源"
+    assert calls[0].prompt == "请基于用户输入生成宏观点评：新能源\n原文：新能源 宏观点评"
+
+
+def test_prompt_component_executes_from_business_route_and_records_module_key(business_env, monkeypatch):
+    from business.business_records import get_request_record
+    from business.component_service import create_prompt_component
+    from business.constants import ServiceType
+    from business.router import handle_text_message
+    from business.user_service import create_user
+    import business.executors.prompt_component_executor as prompt_executor
+
+    class FakeAdapter:
+        def generate(self, request):
+            return f"宏观点评结果：{request.source_text}"
+
+    monkeypatch.setattr(prompt_executor, "ExistingModelAdapter", lambda: FakeAdapter())
+    create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    create_prompt_component(
+        {
+            "component_key": "macro-commentary",
+            "label": "宏观点评",
+            "match_type": "suffix",
+            "default_triggers": ["宏观点评"],
+            "prompt": {"template": "请点评：{target_text}", "output_type": "markdown"},
+            "enabled": True,
+        },
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    reply = handle_text_message("customer-openid", "新能源 宏观点评")
+
+    assert reply.success is True
+    assert reply.reply_text == "宏观点评结果：新能源"
+    assert reply.module_key == "macro-commentary"
+    record = get_request_record(reply.request_id)
+    assert record.module_key == "macro-commentary"
+    assert record.output_files == []
+
+
+def test_command_script_component_executes_from_business_route(business_env, tmp_path):
+    from business.business_records import get_request_record
+    from business.component_import_service import create_component_from_import, preview_skill_zip
+    from business.constants import ServiceType
+    from business.router import handle_text_message
+    from business.user_service import create_user
+
+    create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
+    script = (
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser=argparse.ArgumentParser()\n"
+        "parser.add_argument('--symbol')\n"
+        "parser.add_argument('--output')\n"
+        "args=parser.parse_args()\n"
+        "out=Path(args.output)\n"
+        "out.mkdir(parents=True, exist_ok=True)\n"
+        "(out / f'{args.symbol}_技术分析报告.md').write_text('导入报告:' + args.symbol, encoding='utf-8')\n"
+        "(out / f'{args.symbol}_TA_main.png').write_bytes(b'png')\n"
+    )
+    package = tmp_path / "ta.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("技术分析v0.2/SKILL.md", "# 技术分析\n")
+        archive.writestr("技术分析v0.2/scripts/analyze_universal.py", script)
+    preview = preview_skill_zip("技术分析v0.2.zip", package.read_bytes(), operator="pytest")["import"]
+    create_component_from_import(
+        preview["import_id"],
+        {
+            "component_key": "technical-analysis",
+            "label": "技术分析路由组件",
+            "component_type": "active_script",
+            "match_type": "suffix",
+            "default_triggers": ["技术分析"],
+            "entry": "技术分析v0.2/scripts/analyze_universal.py",
+            "execution": {
+                "command": ["python", "{entry}", "--symbol", "{target_text}", "--output", "{work_dir}"],
+                "outputs": {
+                    "report": {"type": "markdown", "pattern": "*技术分析报告*.md"},
+                    "main_chart": {"type": "image", "pattern": "*_TA_*.png"},
+                },
+                "default_output": "report",
+            },
+            "reply": {"outputs": ["report"]},
+            "archive": {"outputs": ["report", "main_chart"]},
+        },
+        operator="pytest",
+    )
+
+    reply = handle_text_message("customer-openid", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert reply.reply_text == "导入报告:300502.SZ"
+    assert reply.output_files == []
+    assert reply.module_key == "technical-analysis"
+    record = get_request_record(reply.request_id)
+    assert record.module_key == "technical-analysis"
+    assert len(record.output_files) == 2
+
+
+def test_command_script_component_can_postprocess_default_output_once(business_env, tmp_path):
+    from business.business_records import get_request_record
+    from business.component_import_service import create_component_from_import, preview_skill_zip
+    from business.constants import ServiceType
+    from business.router import handle_text_message
+    from business.user_service import create_user
+
+    create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
+
+    renderer_package = tmp_path / "renderer.zip"
+    renderer_script = (
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser=argparse.ArgumentParser()\n"
+        "parser.add_argument('--text')\n"
+        "parser.add_argument('--output')\n"
+        "args=parser.parse_args()\n"
+        "Path(args.output).write_bytes(('card:' + args.text).encode('utf-8'))\n"
+    )
+    with ZipFile(renderer_package, "w") as archive:
+        archive.writestr("signal-card-renderer/SKILL.md", "# renderer\n")
+        archive.writestr("signal-card-renderer/scripts/render_card.py", renderer_script)
+    renderer_preview = preview_skill_zip("renderer.zip", renderer_package.read_bytes(), operator="pytest")["import"]
+    create_component_from_import(
+        renderer_preview["import_id"],
+        {
+            "component_key": "signal-card-renderer",
+            "label": "信号卡渲染",
+            "component_type": "passive_script",
+            "entry": "signal-card-renderer/scripts/render_card.py",
+            "execution": {
+                "command": ["python", "{entry}", "--text", "{input_text}", "--output", "{output_file}"],
+                "outputs": {"image": {"type": "image", "pattern": "*.png"}},
+            },
+            "reply": {"outputs": ["image"]},
+            "archive": {"outputs": ["image"]},
+        },
+        operator="pytest",
+    )
+
+    ta_package = tmp_path / "ta.zip"
+    ta_script = (
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser=argparse.ArgumentParser()\n"
+        "parser.add_argument('--symbol')\n"
+        "parser.add_argument('--output')\n"
+        "args=parser.parse_args()\n"
+        "out=Path(args.output)\n"
+        "out.mkdir(parents=True, exist_ok=True)\n"
+        "(out / f'{args.symbol}_技术分析报告.md').write_text('后处理报告:' + args.symbol, encoding='utf-8')\n"
+        "(out / f'{args.symbol}_TA_main.png').write_bytes(b'chart')\n"
+    )
+    with ZipFile(ta_package, "w") as archive:
+        archive.writestr("技术分析v0.2/SKILL.md", "# 技术分析\n")
+        archive.writestr("技术分析v0.2/scripts/analyze_universal.py", ta_script)
+    ta_preview = preview_skill_zip("技术分析v0.2.zip", ta_package.read_bytes(), operator="pytest")["import"]
+    create_component_from_import(
+        ta_preview["import_id"],
+        {
+            "component_key": "technical-analysis",
+            "label": "技术分析路由组件",
+            "component_type": "active_script",
+            "match_type": "suffix",
+            "default_triggers": ["技术分析"],
+            "entry": "技术分析v0.2/scripts/analyze_universal.py",
+            "execution": {
+                "command": ["python", "{entry}", "--symbol", "{target_text}", "--output", "{work_dir}"],
+                "outputs": {
+                    "report": {"type": "markdown", "pattern": "*技术分析报告*.md"},
+                    "main_chart": {"type": "image", "pattern": "*_TA_*.png"},
+                },
+                "default_output": "report",
+            },
+            "postprocess": {
+                "enabled": True,
+                "component_key": "signal-card-renderer",
+                "input": "report",
+                "output": "signal_card",
+            },
+            "reply": {"outputs": ["signal_card", "main_chart"]},
+            "archive": {"outputs": ["signal_card", "main_chart", "report"]},
+        },
+        operator="pytest",
+    )
+
+    reply = handle_text_message("customer-openid", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert reply.reply_text == ""
+    assert len(reply.output_files) == 2
+    assert any(Path(path).name == "signal_card.png" for path in reply.output_files)
+    record = get_request_record(reply.request_id)
+    assert len(record.output_files) == 3
 
 
 def test_uploaded_business_skill_package_rejects_unsafe_skill_key(business_env, tmp_path):
@@ -2437,6 +2938,174 @@ def test_component_settings_rejects_triggers_for_passive_component(business_env,
 
     assert payload["status"] == "error"
     assert "triggers" in payload["message"]
+
+
+def test_component_settings_updates_runtime_command_script_manifest(business_env, monkeypatch):
+    from business.component_paths import runtime_component_root
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    component_dir = runtime_component_root("editable-command")
+    component_dir.mkdir(parents=True, exist_ok=True)
+    (component_dir / "component.json").write_text(
+        json.dumps(
+            {
+                "component_key": "editable-command",
+                "label": "旧名称",
+                "service_type": "unmatched",
+                "match_type": "suffix",
+                "default_triggers": ["旧"],
+                "handler_type": "command_script",
+                "entry": "sample/scripts/run_text.py",
+                "routable": True,
+                "config_key": "skill.editable-command.script_path",
+                "script_name": "run_text.py",
+                "storage_name": "editable-command",
+                "component_type": "active_script",
+                "execution": {
+                    "command": ["python", "{entry}", "--symbol", "{target_text}", "--output", "{work_dir}"],
+                    "outputs": {"result": {"type": "text", "pattern": "result.txt"}},
+                    "default_output": "result",
+                },
+                "postprocess": {"enabled": False},
+                "reply": {"outputs": ["result"]},
+                "archive": {"outputs": ["result"]},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "component_config": {
+                    "label": "新名称",
+                    "match_type": "exact",
+                    "execution": {
+                        "command": ["python", "{entry}", "--input", "{target_text}", "--output", "{work_dir}"],
+                        "outputs": {"result": {"type": "text", "pattern": "result.txt"}},
+                        "default_output": "result",
+                    },
+                    "postprocess": {"enabled": False},
+                    "reply": {"outputs": ["result"]},
+                    "archive": {"outputs": ["result"]},
+                }
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("editable-command"))
+    manifest = json.loads((component_dir / "component.json").read_text(encoding="utf-8"))
+
+    assert payload["status"] == "success"
+    assert manifest["label"] == "新名称"
+    assert manifest["match_type"] == "exact"
+    assert manifest["execution"]["command"][2] == "--input"
+    assert payload["component"]["label"] == "新名称"
+
+
+def test_component_settings_updates_runtime_prompt_component_manifest(business_env, monkeypatch):
+    from business.component_service import create_prompt_component
+    from business.component_paths import runtime_component_root
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    create_prompt_component(
+        {
+            "component_key": "editable-prompt",
+            "label": "旧提示词组件",
+            "match_type": "suffix",
+            "default_triggers": ["旧点评"],
+            "prompt": {"template": "旧模板：{target_text}", "output_type": "markdown"},
+            "enabled": True,
+        },
+        operator_role="admin",
+        operator="pytest",
+    )
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "triggers": ["新点评"],
+                "component_config": {
+                    "label": "新提示词组件",
+                    "match_type": "prefix",
+                    "prompt": {"template": "新模板：{target_text}", "output_type": "text"},
+                    "reply": {"outputs": ["text"]},
+                    "archive": {"outputs": ["text"]},
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("editable-prompt"))
+    manifest = json.loads((runtime_component_root("editable-prompt") / "component.json").read_text(encoding="utf-8"))
+
+    assert payload["status"] == "success"
+    assert manifest["label"] == "新提示词组件"
+    assert manifest["match_type"] == "prefix"
+    assert manifest["prompt"] == {"template": "新模板：{target_text}", "output_type": "text"}
+    assert payload["component"]["settings"]["triggers"] == ["新点评"]
+
+
+def test_prompt_component_create_web_api(business_env, monkeypatch):
+    from business.component_paths import runtime_component_root
+    from channel.web import investment_handlers, web_channel
+    from channel.web.web_channel import InvestmentPromptComponentHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "component_key": "macro-web",
+                "label": "Web 宏观点评",
+                "match_type": "suffix",
+                "default_triggers": ["宏观点评"],
+                "prompt": {"template": "请点评：{target_text}", "output_type": "markdown"},
+                "enabled": True,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentPromptComponentHandler().POST())
+    manifest = json.loads((runtime_component_root("macro-web") / "component.json").read_text(encoding="utf-8"))
+
+    assert "/api/investment/components/prompt" in investment_handlers.INVESTMENT_API_URLS
+    assert payload["status"] == "success"
+    assert payload["component"]["component_key"] == "macro-web"
+    assert manifest["creation_method"] == "manual_prompt"
+    assert manifest["handler_type"] == "prompt_component"
+
+
+def test_component_settings_rejects_manifest_update_for_builtin_component(business_env, monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"component_config": {"label": "不允许"}}).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("rate"))
+
+    assert payload["status"] == "error"
+    assert "runtime command components" in payload["message"]
 
 
 def test_business_skill_settings_audit_records_before_and_after_values(business_env, monkeypatch):

@@ -581,6 +581,80 @@ def test_business_component_upload_copy_uses_component_wording():
     assert "Skill 版本" not in combined
 
 
+def test_business_component_import_dialog_uses_minimal_skill_flow():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    handlers = (ROOT / "channel" / "web" / "investment_handlers.py").read_text(encoding="utf-8")
+    dialog_body = _js_function_body(js, "renderInvestmentComponentImportDialogBody")
+
+    assert "/api/investment/component-imports/preview" in handlers
+    assert "/api/investment/component-imports/(.*)/create" in handlers
+    assert "openInvestmentComponentImportDialog" in js
+    assert "previewInvestmentComponentImport" in js
+    assert "createInvestmentComponentFromImport" in js
+    assert "从 ZIP 创建组件" in js
+    assert "手动创建提示词组件" in js
+    assert "/api/investment/component-imports/preview" in js
+    assert "/api/investment/component-imports/${encodeURIComponent(importId)}/create" in js
+    assert "/api/investment/components/prompt" in handlers
+    assert "/api/investment/components/prompt" in js
+    assert "主动脚本组件" in js
+    assert "被动脚本组件" in js
+    assert "主动提示词组件" in js
+    assert "postprocess" in js
+    assert "default_output" in js
+    assert "prompt" in _js_function_body(js, "investmentComponentImportPayload")
+    assert "investmentImportInfo" in js
+    assert "investment-component-import-info" in js
+    assert "请先上传并预览 Skill ZIP" in dialog_body
+    assert "disabled" in dialog_body
+    assert 'value="technical-analysis"' not in dialog_body
+    assert "DAG" not in js
+    assert "工作流编辑器" not in js
+
+
+def test_prompt_component_create_and_config_ui_are_separate_from_zip_fields():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    manager_body = _js_function_body(js, "renderInvestmentComponentManager")
+    manual_body = _js_function_body(js, "renderInvestmentPromptComponentDialogBody")
+    import_payload_body = _js_function_body(js, "investmentComponentImportPayload")
+    config_body = _js_function_body(js, "renderInvestmentComponentConfigDialogBody")
+    prompt_config_body = _js_function_body(js, "renderInvestmentPromptComponentConfigFields")
+    settings_body = _js_function_body(js, "investmentComponentSettingsBody")
+
+    assert "openInvestmentComponentImportDialog()" in manager_body
+    assert "openInvestmentPromptComponentDialog()" in manager_body
+    assert "invest-component-prompt-file" not in manual_body
+    assert "invest-component-prompt-template" in manual_body
+    assert "createInvestmentPromptComponent" in js
+    assert "active_prompt" in import_payload_body
+    assert "execution" in import_payload_body
+    assert "component.handler_type === 'prompt_component'" in config_body
+    assert "renderInvestmentPromptComponentConfigFields" in config_body
+    assert "invest-component-modal-prompt-template" in prompt_config_body
+    assert "invest-component-modal-command" not in prompt_config_body
+    assert "component_config.prompt" in settings_body
+
+
+def test_command_component_config_dialog_edits_execution_fields_and_tooltips():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    config_body = _js_function_body(js, "renderInvestmentComponentConfigDialogBody")
+    command_config_body = _js_function_body(js, "renderInvestmentCommandComponentConfigFields")
+    settings_body = _js_function_body(js, "investmentComponentSettingsBody")
+
+    assert "renderInvestmentCommandComponentConfigFields" in js
+    assert "component.handler_type === 'command_script'" in config_body
+    assert "invest-component-modal-command" in js
+    assert "invest-component-modal-default-output" in js
+    assert "invest-component-modal-outputs-json" in js
+    assert "invest-component-modal-postprocess-component" in js
+    assert "component_config" in settings_body
+    assert "investmentImportInfo" in command_config_body
+    assert "data-tooltip" in js
+    assert ".investment-component-import-info:hover::after" in css
+    assert "title=" not in _js_function_body(js, "investmentImportInfo")
+
+
 def test_only_versioned_components_show_upload_controls():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     card_body = _js_function_body(js, "renderInvestmentComponentCard")
@@ -1366,10 +1440,9 @@ def test_business_config_uses_dedicated_layout_instead_of_shared_workbench():
     shell_body = _js_function_body(js, "renderInvestmentConfigShell")
     stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
     reply_panel_body = _js_function_body(js, "renderInvestmentConfigReplyTextsPanel")
-    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
     web_chat_body = _js_function_body(js, "renderInvestmentConfigWebChatPanel")
 
-    combined_panels = "\n".join([stock_panel_body, reply_panel_body, generation_body, web_chat_body])
+    combined_panels = "\n".join([stock_panel_body, reply_panel_body, web_chat_body])
     assert "investment-config-grid" in combined_panels
     assert 'class="investment-workbench ' not in combined_panels
     assert ".investment-config-grid" in css
@@ -1405,9 +1478,6 @@ def test_business_config_page_uses_task_based_tabs():
     config_body = _js_function_body(js, "renderInvestmentConfig")
     shell_body = _js_function_body(js, "renderInvestmentConfigShell")
     stock_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
-    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
-    directories_body = _js_function_body(js, "renderInvestmentConfigDirectoriesPanel")
-    directories_group = js[js.index("title: '目录配置'"):js.index("const INVEST_ADMIN_ONLY_CONFIG_KEYS")]
 
     assert "let currentInvestmentConfigPanel = 'stock-data';" in js
     assert "function switchInvestmentConfigPanel(" in js
@@ -1417,28 +1487,29 @@ def test_business_config_page_uses_task_based_tabs():
     assert "function investmentConfigTabDefinitions(" in js
     assert "key: 'stock-data'" in js
     assert "key: 'reply-texts'" in js
-    assert "key: 'generation'" in js
-    assert "key: 'directories'" in js
+    assert "key: 'generation'" not in js
+    assert "key: 'directories'" not in js
     assert "key: 'web-chat'" in js
     assert "switchInvestmentConfigPanel('${escapeHtml(tab.key)}')" in shell_body
     assert "股票数据" in js
     assert "公众号回复词" in js
-    assert "业务生成配置" in js
-    assert "目录配置" in js
+    assert "业务生成配置" not in js
+    assert "目录配置" not in js
     assert "后台 Web 对话" in js
 
     assert "renderInvestmentConfigGroupByTitle('股票字典'" not in stock_body
     assert "investmentStockTools(stockData.stats || {}, configs, canReadConfig, canReadStocks)" in stock_body
-    assert "renderInvestmentConfigGroupByTitle('技术分析参数'" not in generation_body
+    assert "renderInvestmentConfigGenerationPanel" not in js
+    assert "renderInvestmentConfigGroupByTitle('技术分析参数'" not in js
     assert "title: '技术分析参数'" not in js
     assert "technical_analysis.default_chart_days" not in js
     assert "默认图表天数" not in js
-    assert "renderInvestmentConfigGroupByTitle('图片生成模板'" not in generation_body
-    assert "提示词已迁移到“投研组件”页面" in generation_body
-    assert "renderInvestmentConfigGroupByTitle('目录配置', configs, {sectionClass: 'investment-config-section investment-workbench-full'})" in directories_body
-    assert "technical_analysis.output_dir" in directories_group
-    assert "storage.files_dir" in directories_group
-    assert "storage.tmp_dir" in directories_group
+    assert "renderInvestmentConfigGroupByTitle('图片生成模板'" not in js
+    assert "提示词已迁移到“投研组件”页面" not in js
+    assert "renderInvestmentConfigDirectoriesPanel" not in js
+    assert "technical_analysis.output_dir" not in js
+    assert "storage.files_dir" not in js
+    assert "storage.tmp_dir" not in js
     assert "render.template_ta_path" not in js
     assert "render.template_rate_path" not in js
     assert "render.template_cb_path" not in js
@@ -1455,17 +1526,11 @@ def test_business_config_subpages_use_aligned_section_layouts():
 
     stock_body = _js_function_body(js, "investmentStockTools")
     stock_panel_body = _js_function_body(js, "renderInvestmentConfigStockDataPanel")
-    generation_body = _js_function_body(js, "renderInvestmentConfigGenerationPanel")
-    directories_body = _js_function_body(js, "renderInvestmentConfigDirectoriesPanel")
     web_chat_body = _js_function_body(js, "renderInvestmentConfigWebChatPanel")
 
     assert "investment-config-panel" in stock_panel_body
     assert "investment-stock-data-panel" in stock_panel_body
     assert "investment-config-section" in stock_body
-    assert "investment-config-panel" in generation_body
-    assert "investment-config-section" in generation_body
-    assert "investment-config-panel" in directories_body
-    assert "investment-config-section" in directories_body
     assert "investment-config-panel" in web_chat_body
     assert "investment-config-section" in web_chat_body
 

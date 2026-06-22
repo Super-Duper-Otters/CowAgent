@@ -95,8 +95,8 @@ const I18N = {
         feishu_mode_scan: '扫码创建', feishu_mode_manual: '手动填写',
         tasks_title: '定时任务', tasks_desc: '查看和管理定时任务',
         tasks_coming: '即将推出', tasks_coming_desc: '定时任务管理功能即将在此提供',
-        logs_title: '日志', logs_desc: '实时日志输出 (run.log)',
-        logs_live: '实时', logs_coming_msg: '日志流即将在此提供。将连接 run.log 实现类似 tail -f 的实时输出。',
+        logs_title: '日志', logs_desc: '实时日志输出 (nohup.out)',
+        logs_live: '实时', logs_coming_msg: '日志流即将在此提供。将连接 nohup.out 实现类似 tail -f 的实时输出。',
         new_chat: '新对话',
         session_history: '历史会话',
         auth_logged_in: '已登录',
@@ -203,8 +203,8 @@ const I18N = {
         feishu_mode_scan: 'Scan QR', feishu_mode_manual: 'Manual',
         tasks_title: 'Scheduled Tasks', tasks_desc: 'View and manage scheduled tasks',
         tasks_coming: 'Coming Soon', tasks_coming_desc: 'Scheduled task management will be available here',
-        logs_title: 'Logs', logs_desc: 'Real-time log output (run.log)',
-        logs_live: 'Live', logs_coming_msg: 'Log streaming will be available here. Connects to run.log for real-time output similar to tail -f.',
+        logs_title: 'Logs', logs_desc: 'Real-time log output (nohup.out)',
+        logs_live: 'Live', logs_coming_msg: 'Log streaming will be available here. Connects to nohup.out for real-time output similar to tail -f.',
         new_chat: 'New Chat',
         session_history: 'History',
         auth_logged_in: 'Signed in',
@@ -463,6 +463,7 @@ let investmentPendingUserImportFile = null;
 let investmentPendingUserImportParsed = false;
 let currentInvestmentSkills = [];
 let currentInvestmentSkillDialogKey = '';
+let currentInvestmentComponentImportPreview = null;
 let investmentRecordsState = {
     tab: 'requests',
     selected: null,
@@ -555,14 +556,6 @@ const INVEST_CONFIG_GROUPS = [
         title: '股票字典',
         keys: [
             ['tushare.token', 'Tushare Token', 'text'],
-        ],
-    },
-    {
-        title: '目录配置',
-        keys: [
-            ['technical_analysis.output_dir', '技术分析输出目录', 'text'],
-            ['storage.files_dir', '统一文件目录', 'text'],
-            ['storage.tmp_dir', '临时工作目录', 'text'],
         ],
     },
 ];
@@ -4859,8 +4852,6 @@ function investmentConfigTabDefinitions(canReadConfig, canReadStocks) {
         {key: 'ai-model', label: 'AI模型配置', icon: 'fa-microchip', visible: canReadConfig},
         {key: 'stock-data', label: '股票数据', icon: 'fa-chart-line', visible: canReadConfig || canReadStocks},
         {key: 'reply-texts', label: '公众号回复词', icon: 'fa-comments', visible: canReadConfig},
-        {key: 'generation', label: '业务生成配置', icon: 'fa-wand-magic-sparkles', visible: canReadConfig},
-        {key: 'directories', label: '目录配置', icon: 'fa-folder-open', visible: canReadConfig},
         {key: 'web-chat', label: '后台 Web 对话', icon: 'fa-message', visible: canReadConfig},
         {key: 'channels', label: '通道管理', icon: 'fa-tower-broadcast', visible: canReadConfig},
     ].filter(tab => tab.visible);
@@ -4895,12 +4886,6 @@ function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadCon
     if (panel === 'reply-texts') {
         return canReadConfig ? renderInvestmentConfigReplyTextsPanel(data, configs) : '<div class="investment-empty">暂无配置权限</div>';
     }
-    if (panel === 'generation') {
-        return canReadConfig ? renderInvestmentConfigGenerationPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
-    }
-    if (panel === 'directories') {
-        return canReadConfig ? renderInvestmentConfigDirectoriesPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
-    }
     if (panel === 'web-chat') {
         return canReadConfig ? renderInvestmentConfigWebChatPanel(configs) : '<div class="investment-empty">暂无配置权限</div>';
     }
@@ -4921,23 +4906,6 @@ function renderInvestmentConfigReplyTextsPanel(data, configs) {
     return `
         <div class="investment-config-grid investment-config-panel investment-settings-panel">
             ${renderInvestmentReplyConfigGroups(data.reply_texts || {}, configs)}
-        </div>`;
-}
-
-function renderInvestmentConfigGenerationPanel(configs) {
-    return `
-        <div class="investment-config-grid investment-config-panel investment-settings-panel">
-            <section class="investment-panel investment-config-section investment-workbench-full">
-                <div class="investment-panel-title"><i class="fas fa-cubes"></i><span>组件生成配置</span></div>
-                <div class="investment-subtitle">技术分析、利率和转债的提示词已迁移到“投研组件”页面，由各组件单独维护。</div>
-            </section>
-        </div>`;
-}
-
-function renderInvestmentConfigDirectoriesPanel(configs) {
-    return `
-        <div class="investment-config-grid investment-config-panel investment-settings-panel">
-            ${renderInvestmentConfigGroupByTitle('目录配置', configs, {sectionClass: 'investment-config-section investment-workbench-full'})}
         </div>`;
 }
 
@@ -5051,7 +5019,7 @@ function renderInvestmentConfigChannelsPanel() {
 }
 
 function switchInvestmentConfigPanel(panel) {
-    currentInvestmentConfigPanel = ['ai-model', 'stock-data', 'reply-texts', 'generation', 'directories', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
+    currentInvestmentConfigPanel = ['ai-model', 'stock-data', 'reply-texts', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
     renderInvestmentConfig();
 }
 
@@ -5074,8 +5042,10 @@ function renderInvestmentComponentManager() {
                 </div>
                 <div class="investment-panel-actions">
                     ${investmentButton('fa-arrows-rotate', '刷新组件', 'loadInvestmentComponents()')}
+                    ${investmentButtonIfCan('skills.write', 'fa-file-zipper', '从 ZIP 创建组件', 'openInvestmentComponentImportDialog()', 'primary')}
+                    ${investmentButtonIfCan('skills.write', 'fa-message', '手动创建提示词组件', 'openInvestmentPromptComponentDialog()', 'primary')}
                     <input id="invest-skill-package-file" class="hidden" type="file" accept=".zip" onchange="uploadInvestmentSkillPackage()">
-                    ${investmentButtonIfCan('skills.write', 'fa-upload', '上传组件包', "document.getElementById('invest-skill-package-file')?.click()", 'primary')}
+                    ${investmentButtonIfCan('skills.write', 'fa-upload', '上传组件包', "document.getElementById('invest-skill-package-file')?.click()")}
                 </div>
             </div>
             <div id="invest-skill-result" class="investment-muted"></div>
@@ -5182,6 +5152,8 @@ function renderInvestmentComponentConfigDialogBody(component) {
             <span>提示词</span>
             <textarea id="invest-component-modal-prompt-${escapeHtml(componentKey)}" rows="8">${escapeHtml(settings.prompt || '')}</textarea>
         </label>` : '';
+    const commandConfigEditor = component.handler_type === 'command_script' ? renderInvestmentCommandComponentConfigFields(component) : '';
+    const promptConfigEditor = component.handler_type === 'prompt_component' ? renderInvestmentPromptComponentConfigFields(component) : '';
     return `
         <div class="investment-component-dialog">
             <div class="investment-component-dialog-title">
@@ -5191,11 +5163,117 @@ function renderInvestmentComponentConfigDialogBody(component) {
             ${investmentSwitch('启用', `invest-component-modal-enabled-${escapeHtml(componentKey)}`, settings.enabled !== false)}
             ${triggerEditor}
             ${promptEditor}
+            ${commandConfigEditor}
+            ${promptConfigEditor}
         </div>
         <div class="investment-actions investment-modal-actions">
             ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存配置', `saveInvestmentComponentSettings('${escapeHtml(componentKey)}', 'modal')`, 'primary')}
         </div>
     `;
+}
+
+function renderInvestmentCommandComponentConfigFields(component) {
+    const execution = component.execution || {};
+    const postprocess = component.postprocess || {};
+    const reply = component.reply || {};
+    const archive = component.archive || {};
+    const commandText = Array.isArray(execution.command) ? execution.command.join(' ') : '';
+    const outputsJson = JSON.stringify(execution.outputs || {}, null, 2);
+    const passiveOptions = investmentPassiveComponentOptions(postprocess.component_key || '');
+    return `
+        <div class="investment-detail-block">
+            <span>执行配置 ${investmentImportInfo('仅运行期 command_script 组件可编辑。保存后会更新组件 component.json。')}</span>
+        </div>
+        <div class="investment-grid cols-2">
+            <label class="investment-field">
+                <span>组件名称 ${investmentImportInfo('后台展示名称，不改变组件 key。')}</span>
+                <input id="invest-component-modal-label" value="${escapeHtml(component.label || '')}">
+            </label>
+            <label class="investment-field">
+                <span>匹配方式 ${investmentImportInfo('exact 精确匹配；prefix/suffix 会把剩余文本作为 target_text。')}</span>
+                <select id="invest-component-modal-match-type">
+                    <option value="suffix" ${component.match_type === 'suffix' ? 'selected' : ''}>后缀匹配</option>
+                    <option value="prefix" ${component.match_type === 'prefix' ? 'selected' : ''}>前缀匹配</option>
+                    <option value="exact" ${component.match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
+                </select>
+            </label>
+            <label class="investment-field">
+                <span>命令模板 ${investmentImportInfo('必须和脚本参数一致。文本样例通常是 --input，技术分析样例通常是 --symbol。')}</span>
+                <input id="invest-component-modal-command" value="${escapeHtml(commandText)}">
+            </label>
+            <label class="investment-field">
+                <span>默认输出 ${investmentImportInfo('主动组件执行后必须能匹配到该输出名。')}</span>
+                <input id="invest-component-modal-default-output" value="${escapeHtml(execution.default_output || '')}">
+            </label>
+            <label class="investment-field">
+                <span>后处理组件 ${investmentImportInfo('可选，只能连接一个被动组件。')}</span>
+                <select id="invest-component-modal-postprocess-component">
+                    <option value="">不连接</option>
+                    ${passiveOptions}
+                </select>
+            </label>
+            <label class="investment-field">
+                <span>后处理输出名 ${investmentImportInfo('被动组件输出加入结果集合时使用的名称。')}</span>
+                <input id="invest-component-modal-postprocess-output" value="${escapeHtml(postprocess.output || 'signal_card')}">
+            </label>
+            <label class="investment-field">
+                <span>回复输出 ${investmentImportInfo('多个输出名用逗号分隔。text/markdown 作为文本回复，image/file 作为文件回复。')}</span>
+                <input id="invest-component-modal-reply-outputs" value="${escapeHtml((reply.outputs || []).join(','))}">
+            </label>
+            <label class="investment-field">
+                <span>归档输出 ${investmentImportInfo('多个输出名用逗号分隔，会写入请求记录产物。')}</span>
+                <input id="invest-component-modal-archive-outputs" value="${escapeHtml((archive.outputs || []).join(','))}">
+            </label>
+        </div>
+        <label class="investment-field textarea">
+            <span>输出定义 JSON ${investmentImportInfo('键是输出名，type 支持 text/markdown/image/file，pattern 是 work_dir 下的 glob。')}</span>
+            <textarea id="invest-component-modal-outputs-json" rows="8">${escapeHtml(outputsJson)}</textarea>
+        </label>
+        <input id="invest-component-modal-postprocess-enabled" type="hidden" value="${postprocess.enabled ? '1' : ''}">
+        <input id="invest-component-modal-postprocess-input" type="hidden" value="${escapeHtml(postprocess.input || execution.default_output || '')}">`;
+}
+
+function renderInvestmentPromptComponentConfigFields(component) {
+    const prompt = component.prompt || {};
+    const reply = component.reply || {};
+    const archive = component.archive || {};
+    return `
+        <div class="investment-detail-block">
+            <span>提示词配置 ${investmentImportInfo('仅运行期 prompt_component 组件可编辑。模板支持 {target_text}、{raw_input}。')}</span>
+        </div>
+        <div class="investment-grid cols-2">
+            <label class="investment-field">
+                <span>组件名称 ${investmentImportInfo('后台展示名称，不改变组件 key。')}</span>
+                <input id="invest-component-modal-label" value="${escapeHtml(component.label || '')}">
+            </label>
+            <label class="investment-field">
+                <span>匹配方式 ${investmentImportInfo('exact 精确匹配；prefix/suffix 会把剩余文本作为 target_text。')}</span>
+                <select id="invest-component-modal-match-type">
+                    <option value="suffix" ${component.match_type === 'suffix' ? 'selected' : ''}>后缀匹配</option>
+                    <option value="prefix" ${component.match_type === 'prefix' ? 'selected' : ''}>前缀匹配</option>
+                    <option value="exact" ${component.match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
+                </select>
+            </label>
+            <label class="investment-field">
+                <span>输出类型 ${investmentImportInfo('第一版只支持 text/markdown 文本返回。')}</span>
+                <select id="invest-component-modal-prompt-output-type">
+                    <option value="markdown" ${prompt.output_type !== 'text' ? 'selected' : ''}>Markdown</option>
+                    <option value="text" ${prompt.output_type === 'text' ? 'selected' : ''}>文本</option>
+                </select>
+            </label>
+            <label class="investment-field">
+                <span>回复输出 ${investmentImportInfo('提示词组件固定输出 text。')}</span>
+                <input id="invest-component-modal-reply-outputs" value="${escapeHtml((reply.outputs || ['text']).join(','))}">
+            </label>
+            <label class="investment-field">
+                <span>归档输出 ${investmentImportInfo('提示词组件固定输出 text。')}</span>
+                <input id="invest-component-modal-archive-outputs" value="${escapeHtml((archive.outputs || ['text']).join(','))}">
+            </label>
+        </div>
+        <label class="investment-field textarea">
+            <span>提示词模板 ${investmentImportInfo('用户触发文本会替换 {raw_input}，触发词之外的文本会替换 {target_text}。')}</span>
+            <textarea id="invest-component-modal-prompt-template" rows="8">${escapeHtml(prompt.template || '')}</textarea>
+        </label>`;
 }
 
 function openInvestmentComponentConfigDialog(componentKey) {
@@ -5253,24 +5331,146 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const enabled = document.getElementById(`${prefix}-enabled-${componentKey}`);
     const triggers = document.getElementById(`${prefix}-triggers-${componentKey}`);
     const prompt = document.getElementById(`${prefix}-prompt-${componentKey}`);
+    const command = document.getElementById('invest-component-modal-command');
+    const promptTemplate = document.getElementById('invest-component-modal-prompt-template');
     if (enabled) body.enabled = enabled.checked;
     if (triggers) body.triggers = triggers.value;
     if (prompt) body.prompt = prompt.value;
+    if (command) {
+        const postprocessComponent = document.getElementById('invest-component-modal-postprocess-component')?.value || '';
+        body.component_config = {
+            label: document.getElementById('invest-component-modal-label')?.value || '',
+            match_type: document.getElementById('invest-component-modal-match-type')?.value || 'suffix',
+            execution: {
+                command: investmentSplitCommand(command.value),
+                outputs: JSON.parse(document.getElementById('invest-component-modal-outputs-json')?.value || '{}'),
+                default_output: document.getElementById('invest-component-modal-default-output')?.value || '',
+            },
+            postprocess: {
+                enabled: Boolean(postprocessComponent),
+                component_key: postprocessComponent,
+                input: document.getElementById('invest-component-modal-postprocess-input')?.value || document.getElementById('invest-component-modal-default-output')?.value || '',
+                output: document.getElementById('invest-component-modal-postprocess-output')?.value || 'processed',
+            },
+            reply: {outputs: document.getElementById('invest-component-modal-reply-outputs')?.value || ''},
+            archive: {outputs: document.getElementById('invest-component-modal-archive-outputs')?.value || ''},
+        };
+    }
+    if (promptTemplate) {
+        body.component_config = {
+            label: document.getElementById('invest-component-modal-label')?.value || '',
+            match_type: document.getElementById('invest-component-modal-match-type')?.value || 'suffix',
+            reply: {outputs: document.getElementById('invest-component-modal-reply-outputs')?.value || 'text'},
+            archive: {outputs: document.getElementById('invest-component-modal-archive-outputs')?.value || 'text'},
+        };
+        body.component_config.prompt = {
+            template: promptTemplate.value || '',
+            output_type: document.getElementById('invest-component-modal-prompt-output-type')?.value || 'markdown',
+        };
+    }
     return body;
 }
 
 async function saveInvestmentComponentSettings(componentKey, source = '') {
-    await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/settings`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(investmentComponentSettingsBody(componentKey, source)),
-    });
-    await loadInvestmentComponents();
-    if (source === 'modal') hideInvestmentModal();
+    try {
+        await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/settings`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(investmentComponentSettingsBody(componentKey, source)),
+        });
+        await loadInvestmentComponents();
+        if (source === 'modal') hideInvestmentModal();
+    } catch (error) {
+        showInvestmentToast(`保存配置失败：${String(error.message || error)}`, 'error');
+    }
 }
 
 async function saveInvestmentComponentEnabled(componentKey) {
     await saveInvestmentComponentSettings(componentKey);
+}
+
+function renderInvestmentPromptComponentDialogBody() {
+    return `
+        <div class="investment-component-dialog">
+            <div class="investment-grid cols-2">
+                <label class="investment-field">
+                    <span>组件 key ${investmentImportInfo('运行期组件唯一标识，只允许字母、数字、点、下划线和连字符。')}</span>
+                    <input id="invest-component-prompt-key" placeholder="例如 macro-commentary" oninput="refreshInvestmentPromptComponentPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>组件名称 ${investmentImportInfo('后台卡片展示名称。')}</span>
+                    <input id="invest-component-prompt-label" placeholder="例如 宏观点评" oninput="refreshInvestmentPromptComponentPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>匹配方式 ${investmentImportInfo('建议使用后缀匹配，例如“新能源 宏观点评”。')}</span>
+                    <select id="invest-component-prompt-match" onchange="refreshInvestmentPromptComponentPreview()">
+                        <option value="suffix" selected>后缀匹配</option>
+                        <option value="prefix">前缀匹配</option>
+                        <option value="exact">精确匹配</option>
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>触发词 ${investmentImportInfo('多个触发词用逗号分隔。')}</span>
+                    <input id="invest-component-prompt-triggers" placeholder="例如 宏观点评" oninput="refreshInvestmentPromptComponentPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>输出类型 ${investmentImportInfo('第一版只支持 text/markdown。')}</span>
+                    <select id="invest-component-prompt-output-type" onchange="refreshInvestmentPromptComponentPreview()">
+                        <option value="markdown" selected>Markdown</option>
+                        <option value="text">文本</option>
+                    </select>
+                </label>
+            </div>
+            <label class="investment-field textarea">
+                <span>提示词模板 ${investmentImportInfo('支持 {target_text}、{raw_input}。')}</span>
+                <textarea id="invest-component-prompt-template" rows="8" oninput="refreshInvestmentPromptComponentPreview()" placeholder="请基于用户输入生成投研风格点评：{target_text}"></textarea>
+            </label>
+            <label class="investment-field textarea">
+                <span>生成配置预览 ${investmentImportInfo('提交后会写入运行期 component.json。')}</span>
+                <textarea id="invest-component-prompt-config-preview" rows="10" readonly></textarea>
+            </label>
+        </div>
+        <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('skills.write', 'fa-circle-check', '创建提示词组件', 'createInvestmentPromptComponent()', 'primary')}
+            ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
+        </div>`;
+}
+
+function openInvestmentPromptComponentDialog() {
+    showInvestmentModal('手动创建提示词组件', renderInvestmentPromptComponentDialogBody());
+    refreshInvestmentPromptComponentPreview();
+}
+
+function investmentPromptComponentPayload() {
+    return {
+        component_key: document.getElementById('invest-component-prompt-key')?.value || '',
+        label: document.getElementById('invest-component-prompt-label')?.value || '',
+        component_type: 'active_prompt',
+        match_type: document.getElementById('invest-component-prompt-match')?.value || 'suffix',
+        default_triggers: document.getElementById('invest-component-prompt-triggers')?.value || '',
+        prompt: {
+            template: document.getElementById('invest-component-prompt-template')?.value || '',
+            output_type: document.getElementById('invest-component-prompt-output-type')?.value || 'markdown',
+        },
+        enabled: true,
+    };
+}
+
+function refreshInvestmentPromptComponentPreview() {
+    const target = document.getElementById('invest-component-prompt-config-preview');
+    if (!target) return;
+    target.value = JSON.stringify(investmentPromptComponentPayload(), null, 2);
+}
+
+async function createInvestmentPromptComponent() {
+    await investmentFetchJson('/api/investment/components/prompt', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(investmentPromptComponentPayload()),
+    });
+    hideInvestmentModal();
+    showInvestmentToast('提示词组件已创建');
+    await loadInvestmentComponents();
 }
 
 async function saveInvestmentSkillSettings(skillKey) {
@@ -5306,6 +5506,343 @@ async function uploadInvestmentSkill(skillKey, fileInput = null) {
         if (result) result.textContent = String(error.message || error);
         showInvestmentToast('组件版本上传失败', 'error');
     }
+}
+
+function investmentComponentImportScriptsOptions(preview) {
+    const scripts = preview?.scripts || [];
+    if (!scripts.length) return '<option value="">请先上传 ZIP 预览</option>';
+    return scripts.map(script => `<option value="${escapeHtml(script)}">${escapeHtml(script)}</option>`).join('');
+}
+
+function investmentPassiveComponentOptions(selectedValue = '') {
+    const passive = (currentInvestmentSkills || []).filter(component => component.routable === false || component.component_type === 'passive_script');
+    return passive.map(component => {
+        const key = component.component_key || component.skill_key || '';
+        return `<option value="${escapeHtml(key)}" ${key === selectedValue ? 'selected' : ''}>${escapeHtml(component.label || key)}</option>`;
+    }).join('');
+}
+
+function investmentImportInfo(text) {
+    return `<span class="investment-component-import-info" data-tooltip="${escapeHtml(text)}">i</span>`;
+}
+
+function investmentComponentImportDefaults(preview) {
+    const scripts = preview?.scripts || [];
+    const firstScript = scripts[0] || '';
+    const skillName = preview?.skill_name || '';
+    const defaults = {
+        componentKey: skillName,
+        label: skillName,
+        componentType: scripts.length ? 'active_script' : 'active_prompt',
+        matchType: 'suffix',
+        triggers: '',
+        entry: firstScript,
+        command: '',
+        defaultOutput: '',
+        defaultType: 'text',
+        defaultPattern: '',
+        chartPattern: '',
+        promptTemplate: '',
+        promptOutputType: 'markdown',
+    };
+    if (!scripts.length) {
+        defaults.triggers = '';
+        defaults.promptTemplate = `请基于以下投研组件说明和用户输入生成专业回复。\n\n组件说明：\n${preview?.skill_summary || preview?.readme_summary || ''}\n\n用户输入：{target_text}`;
+    }
+    if (firstScript.includes('analyze_universal.py')) {
+        defaults.triggers = '技术分析';
+        defaults.command = 'python {entry} --symbol {target_text} --output {work_dir}';
+        defaults.defaultOutput = 'report';
+        defaults.defaultType = 'markdown';
+        defaults.defaultPattern = '*技术分析报告*.md';
+        defaults.chartPattern = '*_TA_*.png';
+    } else if (firstScript.includes('run_text.py')) {
+        defaults.triggers = '分析';
+        defaults.command = 'python {entry} --input {target_text} --output {work_dir}';
+        defaults.defaultOutput = 'result';
+        defaults.defaultType = 'text';
+        defaults.defaultPattern = 'result.txt';
+    } else if (firstScript.includes('render_card.py')) {
+        defaults.componentType = 'passive_script';
+        defaults.componentKey = skillName || 'signal-card-renderer';
+        defaults.label = skillName || '图片生成组件';
+        defaults.matchType = 'exact';
+        defaults.triggers = '';
+        defaults.command = 'python {entry} --text {input_text} --output {output_file}';
+        defaults.defaultOutput = 'image';
+        defaults.defaultType = 'image';
+        defaults.defaultPattern = '*.png';
+    }
+    return defaults;
+}
+
+function renderInvestmentComponentImportDialogBody() {
+    const preview = currentInvestmentComponentImportPreview;
+    const defaults = investmentComponentImportDefaults(preview);
+    const disabled = preview ? '' : ' disabled';
+    const activeChecked = defaults.componentType === 'active_script' ? 'selected' : '';
+    const passiveChecked = defaults.componentType === 'passive_script' ? 'selected' : '';
+    const promptChecked = defaults.componentType === 'active_prompt' ? 'selected' : '';
+    const passiveOptions = investmentPassiveComponentOptions();
+    return `
+        <div class="investment-component-dialog">
+            <label class="investment-field">
+                <span>Skill ZIP ${investmentImportInfo('上传标准 Skill ZIP 后，平台会先预览 SKILL.md、README.md 和 scripts/*.py。')}</span>
+                <input id="invest-component-import-file" type="file" accept=".zip">
+            </label>
+            <div class="investment-actions investment-modal-actions">
+                ${investmentButtonIfCan('skills.write', 'fa-magnifying-glass-chart', '预览包内容', 'previewInvestmentComponentImport()', 'primary')}
+            </div>
+            <div id="invest-component-import-preview" class="investment-detail-block">
+                <span>导入预览</span>
+                <div>${preview ? `
+                    <strong>${escapeHtml(preview.skill_name || '-')}</strong>
+                    <p>${escapeHtml(preview.description || '')}</p>
+                    <p>根目录：${escapeHtml(preview.root_dir || '-')}</p>
+                    <p>入口脚本：${(preview.scripts || []).map(escapeHtml).join('，') || '-'}</p>
+                ` : '请先上传并预览 Skill ZIP，然后再配置组件。'}</div>
+            </div>
+            <div class="investment-grid cols-2">
+                <label class="investment-field">
+                    <span>组件模板 ${investmentImportInfo('主动脚本组件可被用户触发；被动脚本组件不参与路由；主动提示词组件用于无脚本 ZIP。')}</span>
+                    <select id="invest-component-import-type" onchange="changeInvestmentComponentImportType()"${disabled}>
+                        <option value="active_script" ${activeChecked}>主动脚本组件</option>
+                        <option value="passive_script" ${passiveChecked}>被动脚本组件</option>
+                        <option value="active_prompt" ${promptChecked}>主动提示词组件</option>
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>组件 key ${investmentImportInfo('运行期组件唯一标识。使用 technical-analysis 会覆盖运行期技术分析定义，测试包建议使用自己的 key。')}</span>
+                    <input id="invest-component-import-key" value="${escapeHtml(defaults.componentKey)}" placeholder="例如 active-text-sample"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>组件名称 ${investmentImportInfo('后台卡片展示名称，不参与路由匹配。')}</span>
+                    <input id="invest-component-import-label" value="${escapeHtml(defaults.label)}" placeholder="例如 文本测试组件"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>匹配方式 ${investmentImportInfo('后缀匹配会把触发词前面的文本作为 target_text 传给脚本。')}</span>
+                    <select id="invest-component-import-match" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
+                        <option value="suffix" ${defaults.matchType === 'suffix' ? 'selected' : ''}>后缀匹配</option>
+                        <option value="prefix" ${defaults.matchType === 'prefix' ? 'selected' : ''}>前缀匹配</option>
+                        <option value="exact" ${defaults.matchType === 'exact' ? 'selected' : ''}>精确匹配</option>
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>触发词 ${investmentImportInfo('主动组件必填。多个触发词可用逗号分隔；被动组件不需要触发词。')}</span>
+                    <input id="invest-component-import-triggers" value="${escapeHtml(defaults.triggers)}" placeholder="例如 分析"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>入口脚本 ${investmentImportInfo('来自 ZIP 内 scripts/*.py。命令模板中的 {entry} 会替换成该脚本路径。')}</span>
+                    <select id="invest-component-import-entry" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
+                        ${investmentComponentImportScriptsOptions(preview)}
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>默认输出名 ${investmentImportInfo('主动组件必须有默认输出。它会作为直接回复或后处理输入。')}</span>
+                    <input id="invest-component-import-default-output" value="${escapeHtml(defaults.defaultOutput)}" placeholder="例如 result"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>默认输出类型 ${investmentImportInfo('text/markdown 会作为文本回复；image/file 会作为文件回复。')}</span>
+                    <select id="invest-component-import-default-type" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
+                        <option value="markdown" ${defaults.defaultType === 'markdown' ? 'selected' : ''}>Markdown</option>
+                        <option value="text" ${defaults.defaultType === 'text' ? 'selected' : ''}>文本</option>
+                        <option value="image" ${defaults.defaultType === 'image' ? 'selected' : ''}>图片</option>
+                        <option value="file" ${defaults.defaultType === 'file' ? 'selected' : ''}>文件</option>
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>默认输出匹配 ${investmentImportInfo('脚本执行后在 work_dir 里按 glob 匹配输出文件，例如 result.txt。')}</span>
+                    <input id="invest-component-import-default-pattern" value="${escapeHtml(defaults.defaultPattern)}" placeholder="例如 result.txt"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>附加图片匹配 ${investmentImportInfo('可选。需要同时归档或返回主图时填写；纯文本组件可留空。')}</span>
+                    <input id="invest-component-import-chart-pattern" value="${escapeHtml(defaults.chartPattern)}" placeholder="例如 *_TA_*.png"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>命令模板 ${investmentImportInfo('必须和脚本 argparse 参数一致。文本样例使用 --input，技术分析样例使用 --symbol。')}</span>
+                    <input id="invest-component-import-command" value="${escapeHtml(defaults.command)}" placeholder="python {entry} --input {target_text} --output {work_dir}"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">
+                </label>
+                <label class="investment-field">
+                    <span>被动组件 ${investmentImportInfo('可选，只支持连接一个被动组件处理默认输出。')}</span>
+                    <select id="invest-component-import-postprocess-component" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
+                        <option value="">不连接</option>
+                        ${passiveOptions}
+                    </select>
+                </label>
+                <label class="investment-field">
+                    <span>提示词输出类型 ${investmentImportInfo('主动提示词组件第一版只支持 text/markdown。')}</span>
+                    <select id="invest-component-import-prompt-output-type" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
+                        <option value="markdown" ${defaults.promptOutputType !== 'text' ? 'selected' : ''}>Markdown</option>
+                        <option value="text" ${defaults.promptOutputType === 'text' ? 'selected' : ''}>文本</option>
+                    </select>
+                </label>
+            </div>
+            <label class="investment-field textarea">
+                <span>提示词模板 ${investmentImportInfo('主动提示词组件使用；支持 {target_text}、{raw_input}。')}</span>
+                <textarea id="invest-component-import-prompt-template" rows="8"${disabled} oninput="refreshInvestmentComponentImportConfigPreview()">${escapeHtml(defaults.promptTemplate)}</textarea>
+            </label>
+            <label class="investment-field textarea">
+                <span>生成配置预览 ${investmentImportInfo('提交前请确认 command、outputs 和 default_output 与脚本实际输出一致。')}</span>
+                <textarea id="invest-component-import-config-preview" rows="10" readonly></textarea>
+            </label>
+        </div>
+        <div class="investment-actions investment-modal-actions">
+            ${investmentCan('skills.write') ? `<button class="investment-btn primary" type="button" onclick="createInvestmentComponentFromImport()"${disabled}><i class="fas fa-circle-check"></i><span>创建组件</span></button>` : ''}
+            ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
+        </div>`;
+}
+
+function openInvestmentComponentImportDialog() {
+    currentInvestmentComponentImportPreview = null;
+    showInvestmentModal('导入 Skill 创建组件', renderInvestmentComponentImportDialogBody());
+    refreshInvestmentComponentImportConfigPreview();
+}
+
+function changeInvestmentComponentImportType() {
+    const componentType = document.getElementById('invest-component-import-type')?.value || 'active_script';
+    const key = document.getElementById('invest-component-import-key');
+    const label = document.getElementById('invest-component-import-label');
+    const triggers = document.getElementById('invest-component-import-triggers');
+    const command = document.getElementById('invest-component-import-command');
+    const defaultOutput = document.getElementById('invest-component-import-default-output');
+    const defaultType = document.getElementById('invest-component-import-default-type');
+    const defaultPattern = document.getElementById('invest-component-import-default-pattern');
+    const chartPattern = document.getElementById('invest-component-import-chart-pattern');
+    const promptTemplate = document.getElementById('invest-component-import-prompt-template');
+    if (componentType === 'active_prompt') {
+        if (triggers && !triggers.value) triggers.value = '点评';
+        if (command) command.value = '';
+        if (defaultOutput) defaultOutput.value = '';
+        if (defaultPattern) defaultPattern.value = '';
+        if (chartPattern) chartPattern.value = '';
+        if (promptTemplate && !promptTemplate.value) promptTemplate.value = '请基于用户输入生成投研回复：{target_text}';
+    } else if (componentType === 'passive_script') {
+        if (key && !key.value) key.value = 'signal-card-renderer';
+        if (label && !label.value) label.value = '图片生成组件';
+        if (triggers) triggers.value = '';
+        if (command) command.value = 'python {entry} --text {input_text} --output {output_file}';
+        if (defaultOutput) defaultOutput.value = 'image';
+        if (defaultType) defaultType.value = 'image';
+        if (defaultPattern) defaultPattern.value = '*.png';
+        if (chartPattern) chartPattern.value = '';
+    } else {
+        if (triggers && !triggers.value) triggers.value = '分析';
+        if (command && !command.value) command.value = 'python {entry} --input {target_text} --output {work_dir}';
+        if (defaultOutput && !defaultOutput.value) defaultOutput.value = 'result';
+        if (defaultType && !defaultType.value) defaultType.value = 'text';
+        if (defaultPattern && !defaultPattern.value) defaultPattern.value = 'result.txt';
+    }
+    refreshInvestmentComponentImportConfigPreview();
+}
+
+async function previewInvestmentComponentImport() {
+    const input = document.getElementById('invest-component-import-file');
+    if (!input?.files?.length) {
+        showInvestmentToast('请选择标准 Skill ZIP', 'error');
+        return;
+    }
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    const data = await investmentFetchJson('/api/investment/component-imports/preview', {method: 'POST', body: form});
+    currentInvestmentComponentImportPreview = data.import || null;
+    const body = document.getElementById('investment-modal-body');
+    if (body) {
+        body.innerHTML = renderInvestmentComponentImportDialogBody();
+        refreshInvestmentComponentImportConfigPreview();
+    }
+}
+
+function investmentSplitCommand(commandText) {
+    return String(commandText || '').trim().split(/\s+/).filter(Boolean);
+}
+
+function investmentOutputNamesFromPayload(payload) {
+    return Object.keys(payload.execution?.outputs || {});
+}
+
+function investmentComponentImportPayload() {
+    const componentType = document.getElementById('invest-component-import-type')?.value || 'active_script';
+    const entry = document.getElementById('invest-component-import-entry')?.value || '';
+    const defaultName = document.getElementById('invest-component-import-default-output')?.value || 'report';
+    const defaultType = document.getElementById('invest-component-import-default-type')?.value || 'markdown';
+    const defaultPattern = document.getElementById('invest-component-import-default-pattern')?.value || '';
+    const chartPattern = document.getElementById('invest-component-import-chart-pattern')?.value || '';
+    const postprocessComponent = document.getElementById('invest-component-import-postprocess-component')?.value || '';
+    const outputs = {};
+    if (defaultPattern) outputs[defaultName] = {type: defaultType, pattern: defaultPattern};
+    if (componentType === 'active_script' && chartPattern) outputs.main_chart = {type: 'image', pattern: chartPattern};
+    const commandText = document.getElementById('invest-component-import-command')?.value || '';
+    if (componentType === 'passive_script') {
+        outputs.image = outputs.image || {type: 'image', pattern: '*.png'};
+    }
+    const payload = {
+        component_key: document.getElementById('invest-component-import-key')?.value || '',
+        label: document.getElementById('invest-component-import-label')?.value || '',
+        description: currentInvestmentComponentImportPreview?.description || '',
+        component_type: componentType,
+        match_type: document.getElementById('invest-component-import-match')?.value || 'suffix',
+        default_triggers: document.getElementById('invest-component-import-triggers')?.value || '',
+        entry,
+        execution: {
+            command: investmentSplitCommand(commandText),
+            outputs,
+            default_output: componentType === 'active_script' ? defaultName : '',
+        },
+        postprocess: {
+            enabled: componentType === 'active_script' && Boolean(postprocessComponent),
+            component_key: postprocessComponent,
+            input: defaultName,
+            output: 'signal_card',
+        },
+        reply: {outputs: componentType === 'active_script' && postprocessComponent ? ['signal_card', 'main_chart'] : [defaultName]},
+        archive: {outputs: componentType === 'active_script' && postprocessComponent ? ['signal_card', 'main_chart', defaultName] : investmentOutputNamesFromPayload({execution: {outputs}})},
+    };
+    if (componentType === 'active_prompt') {
+        return {
+            component_key: payload.component_key,
+            label: payload.label,
+            description: payload.description,
+            component_type: 'active_prompt',
+            match_type: payload.match_type,
+            default_triggers: payload.default_triggers,
+            prompt: {
+                template: document.getElementById('invest-component-import-prompt-template')?.value || '',
+                output_type: document.getElementById('invest-component-import-prompt-output-type')?.value || 'markdown',
+            },
+            reply: {outputs: ['text']},
+            archive: {outputs: ['text']},
+        };
+    }
+    if (componentType === 'passive_script') {
+        payload.match_type = 'exact';
+        payload.default_triggers = [];
+        payload.reply = {outputs: ['image']};
+        payload.archive = {outputs: ['image']};
+        payload.execution.default_output = '';
+    }
+    return payload;
+}
+
+function refreshInvestmentComponentImportConfigPreview() {
+    const target = document.getElementById('invest-component-import-config-preview');
+    if (!target) return;
+    target.value = JSON.stringify(investmentComponentImportPayload(), null, 2);
+}
+
+async function createInvestmentComponentFromImport() {
+    const importId = currentInvestmentComponentImportPreview?.import_id || '';
+    if (!importId) {
+        showInvestmentToast('请先预览 Skill ZIP', 'error');
+        return;
+    }
+    await investmentFetchJson(`/api/investment/component-imports/${encodeURIComponent(importId)}/create`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(investmentComponentImportPayload()),
+    });
+    hideInvestmentModal();
+    showInvestmentToast('组件已创建');
+    await loadInvestmentComponents();
 }
 
 async function uploadInvestmentSkillPackage() {
@@ -5874,6 +6411,12 @@ window.uploadInvestmentSkillPackage = uploadInvestmentSkillPackage;
 window.openInvestmentSkillDialog = openInvestmentSkillDialog;
 window.openInvestmentComponentConfigDialog = openInvestmentComponentConfigDialog;
 window.openInvestmentComponentVersionDialog = openInvestmentComponentVersionDialog;
+window.openInvestmentComponentImportDialog = openInvestmentComponentImportDialog;
+window.previewInvestmentComponentImport = previewInvestmentComponentImport;
+window.createInvestmentComponentFromImport = createInvestmentComponentFromImport;
+window.openInvestmentPromptComponentDialog = openInvestmentPromptComponentDialog;
+window.refreshInvestmentPromptComponentPreview = refreshInvestmentPromptComponentPreview;
+window.createInvestmentPromptComponent = createInvestmentPromptComponent;
 window.saveInvestmentComponentSettings = saveInvestmentComponentSettings;
 window.saveInvestmentComponentEnabled = saveInvestmentComponentEnabled;
 window.saveInvestmentSkillSettings = saveInvestmentSkillSettings;
