@@ -1,9 +1,14 @@
 ---
 name: prompt-only-no-script-sample
-description: Negative sample for current importer. It has no scripts directory.
+description: Scriptless sample for creating an active prompt component.
 ---
 # Prompt Only No Script Sample
 
-This package is for testing the current limitation.
+This package is for testing active prompt component creation from a ZIP that has no scripts directory.
 
-The current component import flow previews this package, but component creation is not supported because the first version only creates command script components.
+Expected behavior:
+
+- preview can identify `SKILL.md`
+- preview shows no `scripts/*.py`
+- creation can use the `active_prompt` component type
+- runtime execution uses the prompt template instead of a script

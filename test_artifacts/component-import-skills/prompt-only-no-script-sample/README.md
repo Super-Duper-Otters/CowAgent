@@ -2,7 +2,9 @@
 
 This is intentionally scriptless.
 
-Current expected behavior:
+Expected behavior:
 
 - preview can identify `SKILL.md`
-- creation as an imported component should not be used until generic no-script active components are implemented
+- preview shows no `scripts/*.py`
+- creation can use the `active_prompt` component type
+- runtime execution uses the configured prompt template instead of a script
