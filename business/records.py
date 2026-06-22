@@ -510,8 +510,9 @@ def succeed_request_record(
     renderer_version: str = "",
     template_version: str = "",
     warning: str = "",
-) -> None:
+) -> dict[str, str]:
     service_type: ServiceType | None = None
+    path_map: dict[str, str] = {}
     stored_output_files = list(output_files or [])
     stored_artifact_roles = dict(artifact_roles or {})
     stored_artifact_versions = dict(artifact_versions or {})
@@ -555,7 +556,7 @@ def succeed_request_record(
     if service_type is not None:
         from business.artifact_service import archive_output_files
 
-        stored_output_files, stored_artifact_roles, stored_artifact_versions, _path_map = archive_output_files(
+        stored_output_files, stored_artifact_roles, stored_artifact_versions, path_map = archive_output_files(
             request_id,
             stored_output_files,
             service_type,
@@ -583,6 +584,7 @@ def succeed_request_record(
         content=raw_input,
         result="success",
     )
+    return path_map
 
 
 def fail_request_record(

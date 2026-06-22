@@ -81,8 +81,8 @@ def mark_business_success(
     output_files: list[str],
     elapsed_ms: int,
     **metadata,
-) -> None:
-    succeed_request_record(request_id, output_files=output_files, elapsed_ms=elapsed_ms, **metadata)
+) -> dict[str, str]:
+    return succeed_request_record(request_id, output_files=output_files, elapsed_ms=elapsed_ms, **metadata)
 
 
 def mark_business_failed(

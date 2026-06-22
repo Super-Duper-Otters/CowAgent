@@ -173,17 +173,18 @@ def dispatch_module(
                     request_id,
                     module_key=module_key,
                 )
-            mark_business_success(
+            archived_path_map = mark_business_success(
                 request_id,
                 output_files=result.archive_files,
                 artifact_roles=result.artifact_roles,
                 elapsed_ms=elapsed(),
             )
+            reply_files = [archived_path_map.get(path, path) for path in result.reply_files]
             return BusinessReply(
                 True,
                 True,
                 result.reply_text,
-                result.reply_files,
+                reply_files,
                 route.service_type,
                 request_id=request_id,
                 module_key=module_key,

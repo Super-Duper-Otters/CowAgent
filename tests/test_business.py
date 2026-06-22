@@ -2202,9 +2202,12 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     assert reply.success is True
     assert reply.reply_text == ""
     assert len(reply.output_files) == 2
-    assert any(Path(path).name == "signal_card.png" for path in reply.output_files)
+    assert all(Path(path).is_file() for path in reply.output_files)
+    assert all("component-runs" not in Path(path).parts for path in reply.output_files)
+    assert any("signal_card" in Path(path).name for path in reply.output_files)
     record = get_request_record(reply.request_id)
     assert len(record.output_files) == 3
+    assert set(reply.output_files).issubset(set(record.output_files))
 
 
 def test_uploaded_business_skill_package_rejects_unsafe_skill_key(business_env, tmp_path):
