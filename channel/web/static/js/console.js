@@ -6498,6 +6498,14 @@ const md = createMd();
 const VIDEO_EXT_RE = /\.(?:mp4|webm|mov|avi|mkv)$/i;  // tested against URL without query string
 const IMAGE_EXT_RE = /\.(?:jpg|jpeg|png|gif|webp|bmp|svg)$/i;  // tested against URL without query string
 
+function _looksLikeImageUrl(url) {
+    const value = String(url || '');
+    const bare = value.split('?')[0];
+    if (IMAGE_EXT_RE.test(bare)) return true;
+    if (value.startsWith('/api/file?')) return true;
+    return /[?&](?:path|id)=/i.test(value) && /\.(?:jpg|jpeg|png|gif|webp|bmp|svg)(?:$|[&#?])/i.test(value);
+}
+
 function _toWebUrl(url) {
     if (/^\/[A-Za-z]/.test(url) && !url.startsWith('/api/')) {
         return '/api/file?path=' + encodeURIComponent(url);
@@ -6575,8 +6583,8 @@ function injectVideoPlayers(html) {
 function injectImagePreviews(html) {
     // Step 1: anchor whose href points to an image file -> replace with <img> preview.
     const step1 = html.replace(
-        /<a\s+href="(https?:\/\/[^"]+)"[^>]*>[^<]*<\/a>/gi,
-        (match, url) => IMAGE_EXT_RE.test(url.split('?')[0]) ? _buildImageHtml(url) : match
+        /<a\s+href="([^"]+)"[^>]*>[^<]*<\/a>/gi,
+        (match, url) => _looksLikeImageUrl(url) ? _buildImageHtml(url) : match
     );
     // Step 2: bare image URLs left in text nodes (rare — markdown-it's linkify usually catches them).
     return step1.split(/(<[^>]+>)/).map((chunk, idx) => {
@@ -6593,8 +6601,10 @@ function _rewriteLocalImgSrc(html) {
         const webSrc = _toWebUrl(src);
         const safeSrc = webSrc.replace(/"/g, '&quot;');
         const hasClick = /onclick/i.test(pre + post);
-        const clickAttr = hasClick ? '' : ` onclick="_openImageLightbox(this.src)" style="cursor:zoom-in;"`;
-        return `<img ${pre}src="${safeSrc}"${post}${clickAttr}>`;
+        const hasStyle = /style=/i.test(pre + post);
+        const clickAttr = hasClick ? '' : ` onclick="_openImageLightbox(this.src)"`;
+        const styleAttr = hasStyle ? '' : ` style="max-width:520px;width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;cursor:zoom-in;"`;
+        return `<img ${pre}src="${safeSrc}"${post}${clickAttr}${styleAttr}>`;
     });
 }
 
