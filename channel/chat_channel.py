@@ -39,6 +39,11 @@ class ChatChannel(Channel):
         _thread.setDaemon(True)
         _thread.start()
 
+    def _plugins_enabled_for_context(self, context: Context) -> bool:
+        if context.get("skip_plugins"):
+            return False
+        return context.get("channel_type") not in {"wechatmp", "web"}
+
     # 根据消息构造context，消息内容相关的触发项写在这里
     def _compose_context(self, ctype: ContextType, content, **kwargs):
         context = Context(ctype, content)
@@ -93,7 +98,9 @@ class ChatChannel(Channel):
             else:
                 context["session_id"] = cmsg.other_user_id
                 context["receiver"] = cmsg.other_user_id
-            e_context = PluginManager().emit_event(EventContext(Event.ON_RECEIVE_MESSAGE, {"channel": self, "context": context}))
+            e_context = EventContext(Event.ON_RECEIVE_MESSAGE, {"channel": self, "context": context})
+            if self._plugins_enabled_for_context(context):
+                e_context = PluginManager().emit_event(e_context)
             context = e_context["context"]
             if e_context.is_pass() or context is None:
                 return context
@@ -196,7 +203,7 @@ class ChatChannel(Channel):
             Event.ON_HANDLE_CONTEXT,
             {"channel": self, "context": context, "reply": reply},
         )
-        if not context.get("skip_plugins") and context.get("channel_type") != "wechatmp":
+        if self._plugins_enabled_for_context(context):
             e_context = PluginManager().emit_event(e_context)
         reply = e_context["reply"]
         if not e_context.is_pass():
@@ -260,12 +267,12 @@ class ChatChannel(Channel):
 
     def _decorate_reply(self, context: Context, reply: Reply) -> Reply:
         if reply and reply.type:
-            e_context = PluginManager().emit_event(
-                EventContext(
-                    Event.ON_DECORATE_REPLY,
-                    {"channel": self, "context": context, "reply": reply},
-                )
+            e_context = EventContext(
+                Event.ON_DECORATE_REPLY,
+                {"channel": self, "context": context, "reply": reply},
             )
+            if self._plugins_enabled_for_context(context):
+                e_context = PluginManager().emit_event(e_context)
             reply = e_context["reply"]
             desire_rtype = context.get("desire_rtype")
             if not e_context.is_pass() and reply and reply.type:
@@ -299,12 +306,12 @@ class ChatChannel(Channel):
 
     def _send_reply(self, context: Context, reply: Reply):
         if reply and reply.type:
-            e_context = PluginManager().emit_event(
-                EventContext(
-                    Event.ON_SEND_REPLY,
-                    {"channel": self, "context": context, "reply": reply},
-                )
+            e_context = EventContext(
+                Event.ON_SEND_REPLY,
+                {"channel": self, "context": context, "reply": reply},
             )
+            if self._plugins_enabled_for_context(context):
+                e_context = PluginManager().emit_event(e_context)
             reply = e_context["reply"]
             if not e_context.is_pass() and reply and reply.type:
                 logger.debug("[chat_channel] sending reply: {}, context: {}".format(reply, context))

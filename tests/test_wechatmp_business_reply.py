@@ -460,6 +460,22 @@ def test_wechatmp_business_reply_bypasses_plugins(business_env, monkeypatch, tmp
     assert reply.business_service_type == ServiceType.RATE
 
 
+def test_investment_channels_disable_chat_plugin_hooks():
+    from bridge.context import Context, ContextType
+    from channel.chat_channel import ChatChannel
+
+    channel = ChatChannel.__new__(ChatChannel)
+    for channel_type in ("wechatmp", "web"):
+        context = Context(ContextType.TEXT, "利率", {"channel_type": channel_type})
+        assert channel._plugins_enabled_for_context(context) is False
+
+    skipped = Context(ContextType.TEXT, "利率", {"channel_type": "terminal", "skip_plugins": True})
+    assert channel._plugins_enabled_for_context(skipped) is False
+
+    general = Context(ContextType.TEXT, "hello", {"channel_type": "terminal"})
+    assert channel._plugins_enabled_for_context(general) is True
+
+
 def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.config.constants import ServiceType
