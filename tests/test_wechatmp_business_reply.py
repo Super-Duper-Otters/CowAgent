@@ -424,6 +424,42 @@ def _context(openid="openid", msg_id="msg-1", content="利率"):
     )
 
 
+def test_wechatmp_business_reply_bypasses_plugins(business_env, monkeypatch, tmp_path):
+    from bridge.reply import ReplyType
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply
+    import business.content.daily_content_handler as cowagent_content_handler
+    import business.routing.router as business_route
+    import channel.chat_channel as chat_channel
+
+    image_path = str(tmp_path / "rate_card.png")
+
+    class FailingPluginManager:
+        def emit_event(self, *_args, **_kwargs):
+            pytest.fail("wechatmp business messages must not trigger plugins")
+
+    monkeypatch.setattr(chat_channel, "PluginManager", lambda: FailingPluginManager())
+    monkeypatch.setattr(business_route, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(business_route, "verify_permission", lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""))
+    monkeypatch.setattr(
+        cowagent_content_handler,
+        "handle_daily_content",
+        lambda _openid, _content, _route, **_kwargs: BusinessReply(
+            handled=True,
+            success=True,
+            reply_text=f"[图片: {image_path}]",
+            output_files=[image_path],
+            service_type=ServiceType.RATE,
+        ),
+    )
+
+    reply = _wechatmp_channel(monkeypatch)._generate_reply(_context(content="利率"))
+
+    assert reply.type == ReplyType.IMAGE_URL
+    assert reply.content == [image_path]
+    assert reply.business_service_type == ServiceType.RATE
+
+
 def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
     from business.config.constants import ServiceType

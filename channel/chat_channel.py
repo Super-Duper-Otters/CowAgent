@@ -192,12 +192,12 @@ class ChatChannel(Channel):
             self._send_reply(context, reply)
 
     def _generate_reply(self, context: Context, reply: Reply = Reply()) -> Reply:
-        e_context = PluginManager().emit_event(
-            EventContext(
-                Event.ON_HANDLE_CONTEXT,
-                {"channel": self, "context": context, "reply": reply},
-            )
+        e_context = EventContext(
+            Event.ON_HANDLE_CONTEXT,
+            {"channel": self, "context": context, "reply": reply},
         )
+        if not context.get("skip_plugins") and context.get("channel_type") != "wechatmp":
+            e_context = PluginManager().emit_event(e_context)
         reply = e_context["reply"]
         if not e_context.is_pass():
             logger.debug("[chat_channel] type={}, content={}".format(context.type, context.content))
