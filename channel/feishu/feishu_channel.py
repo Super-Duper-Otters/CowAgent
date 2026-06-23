@@ -60,7 +60,7 @@ def _print_qr_to_terminal(qr_url: str):
 
     走 logger 而非 print 是为了避免 nohup/cow 后台启动场景下 stdout 块缓冲导致
     二维码滞后输出（看起来像出现了两次）。logger 的 StreamHandler 是行缓冲，
-    既能在前台终端看到，也能进 run.log。
+    既能在前台终端看到，也能进后台服务日志。
     """
     qr_lines = []
     try:

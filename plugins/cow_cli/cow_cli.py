@@ -323,7 +323,6 @@ class CowCliPlugin(Plugin):
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         candidates = [
             os.path.join(project_root, "nohup.out"),
-            os.path.join(project_root, "run.log"),
         ]
         import glob as glob_mod
         candidates.extend(sorted(glob_mod.glob(os.path.join(project_root, "logs", "*.log")), reverse=True))

@@ -49,7 +49,7 @@ COPY requirements.txt requirements-business.txt requirements-optional.txt pyproj
 COPY cli ${BUILD_PREFIX}/cli
 
 RUN apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends bash ca-certificates \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends bash ca-certificates fontconfig fonts-wqy-microhei fonts-wqy-zenhei \
     && if [ "$INSTALL_MEDIA_TOOLS" = "true" ]; then \
         apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg espeak libavcodec-extra; \
     fi \
@@ -66,8 +66,7 @@ RUN apt-get -o Acquire::Retries=5 update \
         pip install --no-cache -e .; \
     fi \
     && if [ "$INSTALL_BROWSER" = "true" ]; then \
-        apt-get -o Acquire::Retries=5 install -y --no-install-recommends fonts-wqy-zenhei \
-        && pip install --no-cache "playwright==1.52.0" \
+        pip install --no-cache "playwright==1.52.0" \
         && python -m playwright install-deps chromium \
         && mkdir -p /app/ms-playwright \
         && if [ "$USE_CN_MIRROR" = "true" ]; then \
@@ -77,6 +76,7 @@ RUN apt-get -o Acquire::Retries=5 update \
             python -m playwright install chromium; \
         fi; \
     fi \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /home/agent/cow \
     && groupadd -r agent \

@@ -27,7 +27,15 @@ import glob
 from datetime import datetime
 
 # 字体配置
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'Arial Unicode MS']
+plt.rcParams['font.sans-serif'] = [
+    'SimHei',
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    'Source Han Sans SC',
+    'WenQuanYi Micro Hei',
+    'WenQuanYi Zen Hei',
+    'Arial Unicode MS',
+]
 plt.rcParams['axes.unicode_minus'] = False
 
 

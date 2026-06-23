@@ -216,7 +216,7 @@ def channel_mode(config: dict[str, Any]) -> str:
 def discover_tunnel_base_url(root: Path) -> str | None:
     candidates: list[tuple[float, int, str]] = []
     log_files = list((root / "logs").glob("cloudflared*.log"))
-    log_files += [root / "run.log", root / "nohup.out"]
+    log_files.append(root / "nohup.out")
     for file_path in log_files:
         if not file_path.exists() or not file_path.is_file():
             continue
@@ -489,14 +489,14 @@ def post_wechat_text(
 
 
 def log_offset(root: Path) -> int:
-    log_path = root / "run.log"
+    log_path = root / "nohup.out"
     if not log_path.exists():
         return 0
     return log_path.stat().st_size
 
 
 def count_log_pattern_since(root: Path, start_offset: int, pattern: str) -> int:
-    log_path = root / "run.log"
+    log_path = root / "nohup.out"
     if not log_path.exists():
         return 0
     with log_path.open("rb") as handle:
