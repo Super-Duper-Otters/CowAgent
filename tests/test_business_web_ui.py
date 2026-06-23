@@ -583,6 +583,7 @@ def test_business_component_upload_copy_uses_component_wording():
 
 def test_business_component_import_dialog_uses_minimal_skill_flow():
     js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
     handlers = (ROOT / "channel" / "web" / "investment_handlers.py").read_text(encoding="utf-8")
     dialog_body = _js_function_body(js, "renderInvestmentComponentImportDialogBody")
 
@@ -605,6 +606,18 @@ def test_business_component_import_dialog_uses_minimal_skill_flow():
     assert "prompt" in _js_function_body(js, "investmentComponentImportPayload")
     assert "investmentImportInfo" in js
     assert "investment-component-import-info" in js
+    assert '<select id="invest-component' not in js
+    assert "invest-component-import-match" in dialog_body
+    assert "investmentDropdown('invest-component-import-match'" in dialog_body
+    assert "investmentSetDropdownValue" in js
+    assert "cfg-dropdown investment-cow-dropdown" in _js_function_body(js, "investmentDropdown")
+    assert "investmentFilePicker('invest-component-import-file', '.zip')" in dialog_body
+    assert "updateInvestmentFilePickerLabel" in js
+    assert "investment-file-picker-button" in css
+    assert "investment-file-picker-input" in css
+    assert ".investment-field select" in css
+    assert "appearance: none" in css
+    assert "background-image: url(\"data:image/svg+xml" in css
     assert "请先上传并预览 Skill ZIP" in dialog_body
     assert "disabled" in dialog_body
     assert 'value="technical-analysis"' not in dialog_body

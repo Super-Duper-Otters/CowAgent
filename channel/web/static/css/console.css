@@ -678,6 +678,10 @@
     border-color: #4ABE6E;
     box-shadow: 0 0 0 3px rgba(74, 190, 110, 0.12);
 }
+.cfg-dropdown.disabled .cfg-dropdown-selected {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
 .cfg-dropdown-arrow {
     font-size: 0.625rem;
     color: #94a3b8;
@@ -4292,6 +4296,132 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .investment-component-dialog {
     display: grid;
     gap: 14px;
+}
+
+.investment-field select {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 36px 8px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 12px center;
+    background-repeat: no-repeat;
+    background-size: 16px 16px;
+    color: #334155;
+    font-size: 14px;
+    line-height: 1.4;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    appearance: none;
+}
+
+.investment-field select:hover {
+    border-color: #94a3b8;
+}
+
+.investment-field select:focus {
+    border-color: #35A85B;
+    box-shadow: 0 0 0 3px rgba(53, 168, 91, 0.12);
+}
+
+.investment-field select:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.investment-file-picker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.investment-file-picker-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    opacity: 0;
+}
+
+.investment-file-picker-button {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #334155;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.investment-file-picker-button:hover {
+    border-color: #35A85B;
+    background: #ecfdf5;
+    color: #228547;
+}
+
+.investment-file-picker-input:focus-visible + .investment-file-picker-button {
+    border-color: #35A85B;
+    box-shadow: 0 0 0 3px rgba(53, 168, 91, 0.12);
+}
+
+.investment-file-picker-name {
+    display: flex;
+    min-width: 0;
+    min-height: 40px;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dark .investment-field select {
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.05);
+    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    color: #e2e8f0;
+}
+
+.dark .investment-field select:hover {
+    border-color: rgba(148, 163, 184, 0.55);
+}
+
+.dark .investment-field select option {
+    background: #1a1a1a;
+    color: #e2e8f0;
+}
+
+.dark .investment-file-picker-button,
+.dark .investment-file-picker-name {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #e2e8f0;
+}
+
+.dark .investment-file-picker-button:hover {
+    border-color: rgba(74, 190, 110, 0.55);
+    background: rgba(74, 190, 110, 0.12);
+    color: #74E9A4;
 }
 
 .investment-component-dialog-title {

@@ -897,12 +897,13 @@ function investmentDropdown(id, options = [], selectedValue = '', attrs = '', on
     const selected = normalized.find(item => String(item.value) === String(selectedValue)) || normalized[0] || {value: '', label: '--'};
     const safeId = escapeHtml(id);
     const changeAttr = onChange ? ` data-investment-dropdown-onchange="${escapeHtml(onChange)}"` : '';
+    const disabled = /\bdisabled\b/.test(String(attrs || ''));
     const items = normalized.map(item => {
         const active = String(item.value) === String(selected.value) ? ' active' : '';
         return `<div class="cfg-dropdown-item${active}" data-value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</div>`;
     }).join('');
     return `<input type="hidden" id="${safeId}" ${attrs} value="${escapeHtml(selected.value)}">
-        <div class="cfg-dropdown investment-cow-dropdown" tabindex="0" data-investment-dropdown="${safeId}"${changeAttr}>
+        <div class="cfg-dropdown investment-cow-dropdown${disabled ? ' disabled' : ''}" tabindex="${disabled ? '-1' : '0'}" data-investment-dropdown="${safeId}"${changeAttr}>
             <div class="cfg-dropdown-selected">
                 <span class="cfg-dropdown-text">${escapeHtml(selected.label)}</span>
                 <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
@@ -954,6 +955,8 @@ function handleInvestmentDropdownClick(event) {
         event.stopPropagation();
         event.stopImmediatePropagation();
         const dropdown = selected.closest('.cfg-dropdown[data-investment-dropdown]');
+        const input = document.getElementById(dropdown.dataset.investmentDropdown || '');
+        if (input?.disabled) return;
         document.querySelectorAll('.cfg-dropdown.open').forEach(item => {
             if (item !== dropdown) {
                 item.classList.remove('open');
@@ -973,6 +976,7 @@ function handleInvestmentDropdownClick(event) {
     const dropdown = option.closest('.cfg-dropdown[data-investment-dropdown]');
     const input = document.getElementById(dropdown.dataset.investmentDropdown || '');
     if (!input) return;
+    if (input.disabled) return;
     const value = option.dataset.value || '';
     input.value = value;
     const text = dropdown.querySelector('.cfg-dropdown-text');
@@ -1008,6 +1012,39 @@ function initInvestmentDropdowns(root = document) {
         }
         el.dataset.investmentDropdownReady = '1';
     });
+}
+
+function investmentSetDropdownValue(id, value) {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.value = value || '';
+    const dropdown = Array.from(document.querySelectorAll('.cfg-dropdown[data-investment-dropdown]'))
+        .find(item => item.dataset.investmentDropdown === id);
+    if (!dropdown) return;
+    const items = Array.from(dropdown.querySelectorAll('.cfg-dropdown-item'));
+    const selected = items.find(item => String(item.dataset.value || '') === String(input.value || '')) || items[0];
+    if (!selected) return;
+    items.forEach(item => item.classList.toggle('active', item === selected));
+    const text = dropdown.querySelector('.cfg-dropdown-text');
+    if (text) text.textContent = selected.textContent || '';
+    input.value = selected.dataset.value || '';
+}
+
+function investmentFilePicker(id, accept = '', placeholder = '未选择文件') {
+    const safeId = escapeHtml(id);
+    const safeAccept = accept ? ` accept="${escapeHtml(accept)}"` : '';
+    return `<label class="investment-file-picker" for="${safeId}">
+        <input id="${safeId}" class="investment-file-picker-input" type="file"${safeAccept} onchange="updateInvestmentFilePickerLabel('${safeId}')">
+        <span class="investment-file-picker-button"><i class="fas fa-folder-open"></i><span>选择文件</span></span>
+        <span id="${safeId}-name" class="investment-file-picker-name">${escapeHtml(placeholder)}</span>
+    </label>`;
+}
+
+function updateInvestmentFilePickerLabel(id) {
+    const input = document.getElementById(id);
+    const label = document.getElementById(`${id}-name`);
+    if (!input || !label) return;
+    label.textContent = input.files?.[0]?.name || '未选择文件';
 }
 
 let investmentDropdownObserverStarted = false;
@@ -5218,7 +5255,7 @@ function renderInvestmentCommandComponentConfigFields(component) {
     const archive = component.archive || {};
     const commandText = Array.isArray(execution.command) ? execution.command.join(' ') : '';
     const outputsJson = JSON.stringify(execution.outputs || {}, null, 2);
-    const passiveOptions = investmentPassiveComponentOptions(postprocess.component_key || '');
+    const passiveOptions = [['', '不连接'], ...investmentPassiveComponentDropdownOptions()];
     return `
         <div class="investment-detail-block">
             <span>执行配置 ${investmentImportInfo('仅运行期 command_script 组件可编辑。保存后会更新组件 component.json。')}</span>
@@ -5230,11 +5267,7 @@ function renderInvestmentCommandComponentConfigFields(component) {
             </label>
             <label class="investment-field">
                 <span>匹配方式 ${investmentImportInfo('exact 精确匹配；prefix/suffix 会把剩余文本作为 target_text。')}</span>
-                <select id="invest-component-modal-match-type">
-                    <option value="suffix" ${component.match_type === 'suffix' ? 'selected' : ''}>后缀匹配</option>
-                    <option value="prefix" ${component.match_type === 'prefix' ? 'selected' : ''}>前缀匹配</option>
-                    <option value="exact" ${component.match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
-                </select>
+                ${investmentDropdown('invest-component-modal-match-type', investmentComponentMatchDropdownOptions(), component.match_type || 'suffix')}
             </label>
             <label class="investment-field">
                 <span>命令模板 ${investmentImportInfo('必须和脚本参数一致。文本样例通常是 --input，技术分析样例通常是 --symbol。')}</span>
@@ -5246,10 +5279,7 @@ function renderInvestmentCommandComponentConfigFields(component) {
             </label>
             <label class="investment-field">
                 <span>后处理组件 ${investmentImportInfo('可选，只能连接一个被动组件。')}</span>
-                <select id="invest-component-modal-postprocess-component">
-                    <option value="">不连接</option>
-                    ${passiveOptions}
-                </select>
+                ${investmentDropdown('invest-component-modal-postprocess-component', passiveOptions, postprocess.component_key || '')}
             </label>
             <label class="investment-field">
                 <span>后处理输出名 ${investmentImportInfo('被动组件输出加入结果集合时使用的名称。')}</span>
@@ -5287,18 +5317,11 @@ function renderInvestmentPromptComponentConfigFields(component) {
             </label>
             <label class="investment-field">
                 <span>匹配方式 ${investmentImportInfo('exact 精确匹配；prefix/suffix 会把剩余文本作为 target_text。')}</span>
-                <select id="invest-component-modal-match-type">
-                    <option value="suffix" ${component.match_type === 'suffix' ? 'selected' : ''}>后缀匹配</option>
-                    <option value="prefix" ${component.match_type === 'prefix' ? 'selected' : ''}>前缀匹配</option>
-                    <option value="exact" ${component.match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
-                </select>
+                ${investmentDropdown('invest-component-modal-match-type', investmentComponentMatchDropdownOptions(), component.match_type || 'suffix')}
             </label>
             <label class="investment-field">
                 <span>输出类型 ${investmentImportInfo('第一版只支持 text/markdown 文本返回。')}</span>
-                <select id="invest-component-modal-prompt-output-type">
-                    <option value="markdown" ${prompt.output_type !== 'text' ? 'selected' : ''}>Markdown</option>
-                    <option value="text" ${prompt.output_type === 'text' ? 'selected' : ''}>文本</option>
-                </select>
+                ${investmentDropdown('invest-component-modal-prompt-output-type', investmentTextOutputTypeDropdownOptions(), prompt.output_type === 'text' ? 'text' : 'markdown')}
             </label>
             <label class="investment-field">
                 <span>回复输出 ${investmentImportInfo('提示词组件固定输出 text。')}</span>
@@ -5442,11 +5465,7 @@ function renderInvestmentPromptComponentDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>匹配方式 ${investmentImportInfo('建议使用后缀匹配，例如“新能源 宏观点评”。')}</span>
-                    <select id="invest-component-prompt-match" onchange="refreshInvestmentPromptComponentPreview()">
-                        <option value="suffix" selected>后缀匹配</option>
-                        <option value="prefix">前缀匹配</option>
-                        <option value="exact">精确匹配</option>
-                    </select>
+                    ${investmentDropdown('invest-component-prompt-match', investmentComponentMatchDropdownOptions(), 'suffix', '', 'refreshInvestmentPromptComponentPreview()')}
                 </label>
                 <label class="investment-field">
                     <span>触发词 ${investmentImportInfo('多个触发词用逗号分隔。')}</span>
@@ -5454,10 +5473,7 @@ function renderInvestmentPromptComponentDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>输出类型 ${investmentImportInfo('第一版只支持 text/markdown。')}</span>
-                    <select id="invest-component-prompt-output-type" onchange="refreshInvestmentPromptComponentPreview()">
-                        <option value="markdown" selected>Markdown</option>
-                        <option value="text">文本</option>
-                    </select>
+                    ${investmentDropdown('invest-component-prompt-output-type', investmentTextOutputTypeDropdownOptions(), 'markdown', '', 'refreshInvestmentPromptComponentPreview()')}
                 </label>
             </div>
             <label class="investment-field textarea">
@@ -5548,16 +5564,60 @@ async function uploadInvestmentSkill(skillKey, fileInput = null) {
 }
 
 function investmentComponentImportScriptsOptions(preview) {
-    const scripts = preview?.scripts || [];
-    if (!scripts.length) return '<option value="">请先上传 ZIP 预览</option>';
-    return scripts.map(script => `<option value="${escapeHtml(script)}">${escapeHtml(script)}</option>`).join('');
+    return investmentComponentImportScriptDropdownOptions(preview)
+        .map(item => `<option value="${escapeHtml(item[0])}">${escapeHtml(item[1])}</option>`)
+        .join('');
 }
 
-function investmentPassiveComponentOptions(selectedValue = '') {
+function investmentComponentImportScriptDropdownOptions(preview) {
+    const scripts = preview?.scripts || [];
+    if (!scripts.length) return [['', '请先上传 ZIP 预览']];
+    return scripts.map(script => [script, script]);
+}
+
+function investmentComponentMatchDropdownOptions() {
+    return [
+        ['suffix', '后缀匹配'],
+        ['prefix', '前缀匹配'],
+        ['exact', '精确匹配'],
+    ];
+}
+
+function investmentDefaultOutputTypeDropdownOptions() {
+    return [
+        ['markdown', 'Markdown'],
+        ['text', '文本'],
+        ['image', '图片'],
+        ['file', '文件'],
+    ];
+}
+
+function investmentTextOutputTypeDropdownOptions() {
+    return [
+        ['markdown', 'Markdown'],
+        ['text', '文本'],
+    ];
+}
+
+function investmentComponentTemplateDropdownOptions() {
+    return [
+        ['active_script', '主动脚本组件'],
+        ['passive_script', '被动脚本组件'],
+        ['active_prompt', '主动提示词组件'],
+    ];
+}
+
+function investmentPassiveComponentDropdownOptions() {
     const passive = (currentInvestmentSkills || []).filter(component => component.routable === false || component.component_type === 'passive_script');
     return passive.map(component => {
         const key = component.component_key || component.skill_key || '';
-        return `<option value="${escapeHtml(key)}" ${key === selectedValue ? 'selected' : ''}>${escapeHtml(component.label || key)}</option>`;
+        return [key, component.label || key];
+    });
+}
+
+function investmentPassiveComponentOptions(selectedValue = '') {
+    return investmentPassiveComponentDropdownOptions().map(([key, label]) => {
+        return `<option value="${escapeHtml(key)}" ${key === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`;
     }).join('');
 }
 
@@ -5619,16 +5679,13 @@ function renderInvestmentComponentImportDialogBody() {
     const preview = currentInvestmentComponentImportPreview;
     const defaults = investmentComponentImportDefaults(preview);
     const disabled = preview ? '' : ' disabled';
-    const activeChecked = defaults.componentType === 'active_script' ? 'selected' : '';
-    const passiveChecked = defaults.componentType === 'passive_script' ? 'selected' : '';
-    const promptChecked = defaults.componentType === 'active_prompt' ? 'selected' : '';
-    const passiveOptions = investmentPassiveComponentOptions();
+    const passiveOptions = [['', '不连接'], ...investmentPassiveComponentDropdownOptions()];
     return `
         <div class="investment-component-dialog">
-            <label class="investment-field">
+            <div class="investment-field">
                 <span>Skill ZIP ${investmentImportInfo('上传标准 Skill ZIP 后，平台会先预览 SKILL.md、README.md 和 scripts/*.py。')}</span>
-                <input id="invest-component-import-file" type="file" accept=".zip">
-            </label>
+                ${investmentFilePicker('invest-component-import-file', '.zip')}
+            </div>
             <div class="investment-actions investment-modal-actions">
                 ${investmentButtonIfCan('skills.write', 'fa-magnifying-glass-chart', '预览包内容', 'previewInvestmentComponentImport()', 'primary')}
             </div>
@@ -5644,11 +5701,7 @@ function renderInvestmentComponentImportDialogBody() {
             <div class="investment-grid cols-2">
                 <label class="investment-field">
                     <span>组件模板 ${investmentImportInfo('主动脚本组件可被用户触发；被动脚本组件不参与路由；主动提示词组件用于无脚本 ZIP。')}</span>
-                    <select id="invest-component-import-type" onchange="changeInvestmentComponentImportType()"${disabled}>
-                        <option value="active_script" ${activeChecked}>主动脚本组件</option>
-                        <option value="passive_script" ${passiveChecked}>被动脚本组件</option>
-                        <option value="active_prompt" ${promptChecked}>主动提示词组件</option>
-                    </select>
+                    ${investmentDropdown('invest-component-import-type', investmentComponentTemplateDropdownOptions(), defaults.componentType, disabled, 'changeInvestmentComponentImportType()')}
                 </label>
                 <label class="investment-field">
                     <span>组件 key ${investmentImportInfo('运行期组件唯一标识。使用 technical-analysis 会覆盖运行期技术分析定义，测试包建议使用自己的 key。')}</span>
@@ -5660,11 +5713,7 @@ function renderInvestmentComponentImportDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>匹配方式 ${investmentImportInfo('后缀匹配会把触发词前面的文本作为 target_text 传给脚本。')}</span>
-                    <select id="invest-component-import-match" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
-                        <option value="suffix" ${defaults.matchType === 'suffix' ? 'selected' : ''}>后缀匹配</option>
-                        <option value="prefix" ${defaults.matchType === 'prefix' ? 'selected' : ''}>前缀匹配</option>
-                        <option value="exact" ${defaults.matchType === 'exact' ? 'selected' : ''}>精确匹配</option>
-                    </select>
+                    ${investmentDropdown('invest-component-import-match', investmentComponentMatchDropdownOptions(), defaults.matchType, disabled, 'refreshInvestmentComponentImportConfigPreview()')}
                 </label>
                 <label class="investment-field">
                     <span>触发词 ${investmentImportInfo('主动组件必填。多个触发词可用逗号分隔；被动组件不需要触发词。')}</span>
@@ -5672,9 +5721,7 @@ function renderInvestmentComponentImportDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>入口脚本 ${investmentImportInfo('来自 ZIP 内 scripts/*.py。命令模板中的 {entry} 会替换成该脚本路径。')}</span>
-                    <select id="invest-component-import-entry" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
-                        ${investmentComponentImportScriptsOptions(preview)}
-                    </select>
+                    ${investmentDropdown('invest-component-import-entry', investmentComponentImportScriptDropdownOptions(preview), defaults.entry, disabled, 'refreshInvestmentComponentImportConfigPreview()')}
                 </label>
                 <label class="investment-field">
                     <span>默认输出名 ${investmentImportInfo('主动组件必须有默认输出。它会作为直接回复或后处理输入。')}</span>
@@ -5682,12 +5729,7 @@ function renderInvestmentComponentImportDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>默认输出类型 ${investmentImportInfo('text/markdown 会作为文本回复；image/file 会作为文件回复。')}</span>
-                    <select id="invest-component-import-default-type" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
-                        <option value="markdown" ${defaults.defaultType === 'markdown' ? 'selected' : ''}>Markdown</option>
-                        <option value="text" ${defaults.defaultType === 'text' ? 'selected' : ''}>文本</option>
-                        <option value="image" ${defaults.defaultType === 'image' ? 'selected' : ''}>图片</option>
-                        <option value="file" ${defaults.defaultType === 'file' ? 'selected' : ''}>文件</option>
-                    </select>
+                    ${investmentDropdown('invest-component-import-default-type', investmentDefaultOutputTypeDropdownOptions(), defaults.defaultType, disabled, 'refreshInvestmentComponentImportConfigPreview()')}
                 </label>
                 <label class="investment-field">
                     <span>默认输出匹配 ${investmentImportInfo('脚本执行后在 work_dir 里按 glob 匹配输出文件，例如 result.txt。')}</span>
@@ -5703,17 +5745,11 @@ function renderInvestmentComponentImportDialogBody() {
                 </label>
                 <label class="investment-field">
                     <span>被动组件 ${investmentImportInfo('可选，只支持连接一个被动组件处理默认输出。')}</span>
-                    <select id="invest-component-import-postprocess-component" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
-                        <option value="">不连接</option>
-                        ${passiveOptions}
-                    </select>
+                    ${investmentDropdown('invest-component-import-postprocess-component', passiveOptions, '', disabled, 'refreshInvestmentComponentImportConfigPreview()')}
                 </label>
                 <label class="investment-field">
                     <span>提示词输出类型 ${investmentImportInfo('主动提示词组件第一版只支持 text/markdown。')}</span>
-                    <select id="invest-component-import-prompt-output-type" onchange="refreshInvestmentComponentImportConfigPreview()"${disabled}>
-                        <option value="markdown" ${defaults.promptOutputType !== 'text' ? 'selected' : ''}>Markdown</option>
-                        <option value="text" ${defaults.promptOutputType === 'text' ? 'selected' : ''}>文本</option>
-                    </select>
+                    ${investmentDropdown('invest-component-import-prompt-output-type', investmentTextOutputTypeDropdownOptions(), defaults.promptOutputType === 'text' ? 'text' : 'markdown', disabled, 'refreshInvestmentComponentImportConfigPreview()')}
                 </label>
             </div>
             <label class="investment-field textarea">
@@ -5761,14 +5797,14 @@ function changeInvestmentComponentImportType() {
         if (triggers) triggers.value = '';
         if (command) command.value = 'python {entry} --text {input_text} --output {output_file}';
         if (defaultOutput) defaultOutput.value = 'image';
-        if (defaultType) defaultType.value = 'image';
+        if (defaultType) investmentSetDropdownValue('invest-component-import-default-type', 'image');
         if (defaultPattern) defaultPattern.value = '*.png';
         if (chartPattern) chartPattern.value = '';
     } else {
         if (triggers && !triggers.value) triggers.value = '分析';
         if (command && !command.value) command.value = 'python {entry} --input {target_text} --output {work_dir}';
         if (defaultOutput && !defaultOutput.value) defaultOutput.value = 'result';
-        if (defaultType && !defaultType.value) defaultType.value = 'text';
+        if (defaultType && !defaultType.value) investmentSetDropdownValue('invest-component-import-default-type', 'text');
         if (defaultPattern && !defaultPattern.value) defaultPattern.value = 'result.txt';
     }
     refreshInvestmentComponentImportConfigPreview();
