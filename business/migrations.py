@@ -1,20 +1,8 @@
 # encoding:utf-8
-from pathlib import Path
-
-from alembic import command
-from alembic.config import Config
-
-
-def _alembic_option_value(value: str) -> str:
-    return value.replace("%", "%%")
+import sys
+from business.schema import migrations as _module
+_name = __name__
+globals().update(_module.__dict__)
+sys.modules[_name] = _module
 
 
-def alembic_config_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "migrations" / "business" / "alembic.ini"
-
-
-def upgrade(revision: str = "head", database_url: str | None = None) -> None:
-    config = Config(str(alembic_config_path()))
-    if database_url:
-        config.set_main_option("sqlalchemy.url", _alembic_option_value(database_url))
-    command.upgrade(config, revision)

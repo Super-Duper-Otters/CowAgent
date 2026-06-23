@@ -18,6 +18,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 
+def _beijing_today() -> str:
+    return (datetime.now(UTC) + timedelta(hours=8)).date().isoformat()
+
+
 def test_business_schema_declares_all_tables():
     from business.schema import metadata
 
@@ -761,8 +765,6 @@ def test_business_database_url_defaults_to_docker_postgres(monkeypatch):
     from business import db
 
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
-    monkeypatch.delenv("COWAGENT_BUSINESS_DB_PATH", raising=False)
-
     url = db.get_database_url()
 
     assert url == "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
@@ -4986,7 +4988,7 @@ def test_business_web_api_end_to_end_smoke_without_external_services(business_en
 
     effective = call_json(
         lambda: InvestmentDailyContentEffectiveHandler().POST(content_id),
-        body={"operator": "admin-e2e", "effective_date": "2026-05-28"},
+            body={"operator": "admin-e2e", "effective_date": _beijing_today()},
     )
     assert effective["status"] == "success"
     current = call_json(InvestmentDailyContentHandler().GET, params={"service_type": "rate", "limit": "20"})
@@ -5014,7 +5016,7 @@ def test_business_web_api_end_to_end_smoke_without_external_services(business_en
             "generated_text": "cb generated",
             "output_image": str(cb_image),
             "operator": "admin-e2e",
-            "effective_date": "2026-05-28",
+                "effective_date": _beijing_today(),
         },
     )
     call_json(lambda: InvestmentDailyContentEffectiveHandler().POST(cb_draft["content_id"]), body={"operator": "admin-e2e"})
@@ -10094,7 +10096,7 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
     assert [payload["source"] for payload in payloads] == ["all", "a_share", "hk", "us"]
     assert [payload["count"] for payload in payloads] == [9, 3, 4, 5]
     assert all(payload["success"] is True for payload in payloads)
-    assert all("db_path" in payload for payload in payloads)
+    assert all(payload["database"] == "postgresql" for payload in payloads)
 
 
 def test_refresh_business_stocks_script_exits_one_when_all_sources_fail(business_env, monkeypatch, capsys):
@@ -10150,302 +10152,6 @@ def test_refresh_business_stocks_script_runs_by_file_path():
 
     assert result.returncode == 0
     assert "--source" in result.stdout
-
-
-def test_sqlite_to_pg_migration_rejects_missing_sqlite_file(tmp_path):
-    from scripts import migrate_investment_sqlite_to_pg
-
-    missing = tmp_path / "missing.db"
-
-    with pytest.raises(FileNotFoundError, match="SQLite source does not exist"):
-        migrate_investment_sqlite_to_pg.migrate_sqlite_to_postgres(
-            missing,
-            "postgresql+psycopg://user:secret@localhost:5432/cowagent",
-        )
-
-
-def test_sqlite_to_pg_migration_rejects_non_postgresql_url(tmp_path):
-    from scripts import migrate_investment_sqlite_to_pg
-
-    sqlite_path = tmp_path / "investment.db"
-    sqlite_path.write_bytes(b"")
-
-    with pytest.raises(ValueError, match="target URL must be PostgreSQL"):
-        migrate_investment_sqlite_to_pg.migrate_sqlite_to_postgres(
-            sqlite_path,
-            f"sqlite:///{tmp_path / 'target.db'}",
-        )
-
-
-def test_sqlite_to_pg_migration_reads_all_tables_and_upserts(tmp_path, monkeypatch):
-    from sqlalchemy import create_engine
-
-    from business import schema
-    from scripts import migrate_investment_sqlite_to_pg
-
-    sqlite_path = tmp_path / "investment.db"
-    engine = create_engine(f"sqlite:///{sqlite_path}", future=True)
-    schema.metadata.create_all(engine)
-    now = "2026-05-25T10:00:00"
-    with engine.begin() as conn:
-        conn.execute(
-            schema.customers.insert(),
-            {
-                "id": 1,
-                "openid": "openid-1",
-                "name": "Alice",
-                "enabled": 1,
-                "allowed_services": "[\"rate\"]",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        conn.execute(
-            schema.request_records.insert(),
-            {
-                "request_id": "request-1",
-                "openid": "openid-1",
-                "raw_input": "利率",
-                "service_type": "rate",
-                "status": "success",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        conn.execute(
-            schema.content_records.insert(),
-            {
-                "content_id": "content-1",
-                "service_type": "rate",
-                "status": "draft",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        conn.execute(
-            schema.artifacts.insert(),
-            {
-                "id": 1,
-                "owner_id": "content-1",
-                "file_path": "/tmp/rate.png",
-                "file_type": "image",
-                "service_type": "rate",
-                "created_at": now,
-            },
-        )
-        conn.execute(
-            schema.configs.insert(),
-            {
-                "config_key": "model.api_key",
-                "config_value": "sk-test-secret",
-                "updated_at": now,
-                "updated_by": "admin",
-            },
-        )
-        conn.execute(
-            schema.configs.insert(),
-            {
-                "config_key": "wechatmp.token",
-                "config_value": "wx-test-token",
-                "updated_at": now,
-                "updated_by": "admin",
-            },
-        )
-        conn.execute(
-            schema.configs.insert(),
-            {
-                "config_key": "tushare.token",
-                "config_value": "ts-test-token",
-                "updated_at": now,
-                "updated_by": "admin",
-            },
-        )
-        conn.execute(
-            schema.stock_symbols.insert(),
-            {
-                "code": "300502.SZ",
-                "name": "新易盛",
-                "market": "SZ",
-                "ts_code": "300502.SZ",
-                "source": "seed",
-                "updated_at": now,
-            },
-        )
-
-    tables = migrate_investment_sqlite_to_pg.read_sqlite_tables(sqlite_path)
-    assert list(tables) == [
-        "customers",
-        "request_records",
-        "content_records",
-        "artifacts",
-        "configs",
-        "stock_symbols",
-    ]
-    assert {name: len(rows) for name, rows in tables.items()} == {
-        **{name: 1 for name in tables},
-        "configs": 3,
-    }
-
-    calls = []
-
-    class FakeConnection:
-        dialect = SimpleNamespace(name="postgresql")
-
-        def execute(self, statement):
-            calls.append(("execute", statement))
-
-    class FakeBegin:
-        def __enter__(self):
-            return FakeConnection()
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeEngine:
-        def begin(self):
-            return FakeBegin()
-
-    monkeypatch.setattr(schema.metadata, "create_all", lambda conn: pytest.fail("migration target schema must be built by Alembic"))
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg,
-        "upgrade_investment_schema",
-        lambda pg_url: calls.append(("alembic_upgrade", pg_url)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg.investment_db,
-        "upsert_config",
-        lambda conn, key, value, updated_at, updated_by: calls.append(("config", key, value, updated_at, updated_by)),
-    )
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg.investment_db,
-        "upsert_stock_symbols",
-        lambda conn, rows: calls.append(("stocks", rows)),
-    )
-
-    summary = migrate_investment_sqlite_to_pg.copy_tables_to_postgres(
-        "postgresql+psycopg://user:secret@localhost:5432/cowagent",
-        tables,
-        engine_factory=lambda url, future: calls.append(("engine", url, future)) or FakeEngine(),
-    )
-
-    assert summary == {
-        **{name: 1 for name in tables},
-        "configs": 1,
-    }
-    assert ("engine", "postgresql+psycopg://user:secret@localhost:5432/cowagent", True) in calls
-    assert ("alembic_upgrade", "postgresql+psycopg://user:secret@localhost:5432/cowagent") in calls
-    assert calls.index(("alembic_upgrade", "postgresql+psycopg://user:secret@localhost:5432/cowagent")) < next(
-        index for index, call in enumerate(calls) if call[0] in {"execute", "config", "stocks"}
-    )
-    assert any(call[:3] == ("config", "tushare.token", "ts-test-token") for call in calls)
-    assert not any(call[:2] == ("config", "model.api_key") for call in calls)
-    assert not any(call[:2] == ("config", "wechatmp.token") for call in calls)
-    assert any(call[0] == "stocks" and call[1][0]["code"] == "300502.SZ" for call in calls)
-    assert len([call for call in calls if call[0] == "execute"]) == 6
-
-
-def test_sqlite_to_pg_migration_resets_postgres_sequences_after_copy(monkeypatch):
-    from scripts import migrate_investment_sqlite_to_pg
-
-    calls = []
-
-    class FakeConnection:
-        dialect = SimpleNamespace(name="postgresql")
-
-        def execute(self, statement):
-            calls.append(("execute", statement))
-
-    class FakeBegin:
-        def __enter__(self):
-            return FakeConnection()
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeEngine:
-        def begin(self):
-            return FakeBegin()
-
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg,
-        "upgrade_investment_schema",
-        lambda pg_url: calls.append(("alembic_upgrade", pg_url)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg.schema.metadata,
-        "create_all",
-        lambda conn: pytest.fail("migration target schema must be built by Alembic"),
-    )
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg.investment_db,
-        "upsert_stock_symbols",
-        lambda conn, rows: calls.append(("stocks", rows)),
-    )
-
-    tables = OrderedDict((name, []) for name in migrate_investment_sqlite_to_pg.TABLE_NAMES)
-    tables["customers"] = [
-        {
-            "id": 7,
-            "openid": "openid-7",
-            "name": "Alice",
-            "enabled": 1,
-            "allowed_services": "[\"rate\"]",
-            "created_at": "2026-05-25T10:00:00",
-            "updated_at": "2026-05-25T10:00:00",
-        }
-    ]
-    tables["artifacts"] = [
-        {
-            "id": 11,
-            "owner_id": "content-1",
-            "file_path": "/tmp/rate.png",
-            "file_type": "image",
-            "service_type": "rate",
-            "created_at": "2026-05-25T10:00:00",
-        }
-    ]
-
-    migrate_investment_sqlite_to_pg.copy_tables_to_postgres(
-        "postgresql+psycopg://user:secret@localhost:5432/cowagent",
-        tables,
-        engine_factory=lambda url, future: FakeEngine(),
-    )
-
-    executed_sql = [str(call[1]) for call in calls if call[0] == "execute"]
-    sequence_sql = [sql for sql in executed_sql if "setval" in sql]
-
-    assert len(sequence_sql) == 2
-    assert "pg_get_serial_sequence('customers', 'id')" in sequence_sql[0]
-    assert "pg_get_serial_sequence('artifacts', 'id')" in sequence_sql[1]
-    assert all("(select count(*)" in sql and "> 0" in sql for sql in sequence_sql)
-    assert executed_sql.index(sequence_sql[0]) > 1
-    assert executed_sql.index(sequence_sql[1]) > 1
-
-
-def test_sqlite_to_pg_migration_output_does_not_include_pg_url(tmp_path, monkeypatch, capsys):
-    from scripts import migrate_investment_sqlite_to_pg
-
-    sqlite_path = tmp_path / "investment.db"
-    sqlite_path.write_bytes(b"")
-    pg_url = "postgresql+psycopg://user:super-secret-password@localhost:5432/cowagent"
-
-    monkeypatch.setattr(
-        migrate_investment_sqlite_to_pg,
-        "migrate_sqlite_to_postgres",
-        lambda sqlite_arg, pg_arg: {
-            "status": "success",
-            "tables": {"customers": 1},
-        },
-    )
-
-    assert migrate_investment_sqlite_to_pg.main(["--sqlite", str(sqlite_path), "--pg", pg_url]) == 0
-    output = capsys.readouterr().out
-    payload = json.loads(output)
-    assert payload == {"status": "success", "tables": {"customers": 1}}
-    assert pg_url not in output
-    assert "super-secret-password" not in output
 
 
 def test_tushare_token_config_permission_is_sensitive(business_env):
@@ -12386,8 +12092,8 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business
     cb_image = tmp_path / "wechat-cb.png"
     rate_image.write_bytes(b"rate")
     cb_image.write_bytes(b"cb")
-    rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-28")
-    cb_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="cb", effective_date="2026-05-28")
+    rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date=_beijing_today())
+    cb_id = create_content_draft(ServiceType.CONVERTIBLE_BOND, source_text="cb", effective_date=_beijing_today())
     set_content_effective(rate_id, str(rate_image), operator="tester")
     set_content_effective(cb_id, str(cb_image), operator="tester")
 

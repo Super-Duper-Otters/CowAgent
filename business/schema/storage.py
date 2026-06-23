@@ -1,0 +1,47 @@
+# encoding:utf-8
+import os
+from pathlib import Path
+
+from config import get_appdata_dir
+
+_MIGRATED_DATABASE_URL: str | None = None
+
+
+def _storage_root() -> Path:
+    env_root = os.environ.get("COWAGENT_BUSINESS_STORAGE_ROOT")
+    if env_root:
+        return Path(env_root)
+    return Path(get_appdata_dir()) / "business_storage"
+
+
+def get_storage_dirs() -> dict[str, Path]:
+    root = _storage_root()
+    return {
+        "root": root,
+        "files": root / "files",
+        "tmp": root / "tmp",
+    }
+
+
+def get_connection():
+    initialize_storage()
+    from business.db import get_engine
+
+    return get_engine().raw_connection()
+
+
+def initialize_storage() -> None:
+    global _MIGRATED_DATABASE_URL
+    dirs = get_storage_dirs()
+    for path in dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+    from business import migrations
+    from business.db import get_database_url
+
+    database_url = get_database_url()
+    if _MIGRATED_DATABASE_URL != database_url:
+        migrations.upgrade("head")
+        _MIGRATED_DATABASE_URL = database_url
+        from business.file_migration import migrate_legacy_files_to_unified_storage
+
+        migrate_legacy_files_to_unified_storage()

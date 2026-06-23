@@ -1,8 +1,8 @@
 # encoding:utf-8
-from business.constants import ServiceType
+import sys
+from business.execution import daily_content_executor as _module
+_name = __name__
+globals().update(_module.__dict__)
+sys.modules[_name] = _module
 
 
-def get_daily_content_business(service_type: ServiceType, *, module_key: str = ""):
-    from business.daily_content import get_latest_effective_content
-
-    return get_latest_effective_content(service_type, module_key=module_key)

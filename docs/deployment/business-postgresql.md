@@ -4,7 +4,7 @@ This runbook covers deployment, migration, rollback, and Navicat connection note
 
 ## Deployment Modes
 
-Business data and Agent conversation history use PostgreSQL. The legacy local SQLite database at `business_storage/investment.db` is only a migration source for older deployments.
+Business data and Agent conversation history use PostgreSQL. Local SQLite business databases are no longer supported by the runtime.
 
 To use PostgreSQL, set `COWAGENT_INVESTMENT_DATABASE_URL` in the runtime environment:
 
@@ -26,17 +26,7 @@ alembic -c migrations/business/alembic.ini upgrade head
 
 Run the normal quality gates after configuration changes. For PostgreSQL-specific integration tests, set the optional PostgreSQL test environment variable expected by the test suite before running those tests.
 
-## SQLite To PostgreSQL Migration
-
-Keep the SQLite database file until the migration has been verified. Migrate existing legacy business data with:
-
-```powershell
-py scripts/migrate_investment_sqlite_to_pg.py --sqlite business_storage/investment.db --pg postgresql+psycopg://cowagent_user:example-password@localhost:5432/cowagent_investment
-```
-
-After migration, run the application against PostgreSQL and verify the expected business records are present before changing operational traffic.
-
-Agent conversation history is intentionally not migrated from the old SQLite memory index. New conversations are written to PostgreSQL table `agent_messages` through the existing Agent conversation store API.
+Agent conversation history is written to PostgreSQL table `agent_messages` through the existing Agent conversation store API.
 
 Long-term memory indexing is disabled by default with:
 
@@ -78,8 +68,6 @@ For hosted PostgreSQL, use the provider hostname, port, database name, username,
 ## Rollback
 
 Runtime rollback is PostgreSQL-to-PostgreSQL: restore the previous application version and a compatible PostgreSQL backup or snapshot. The current business runtime expects a PostgreSQL SQLAlchemy URL; unsetting `COWAGENT_INVESTMENT_DATABASE_URL` falls back to the default local PostgreSQL URL, not to SQLite.
-
-Keep `business_storage/investment.db` unchanged as a migration source unless you intentionally migrated writes away from it and have a separate data reconciliation plan. PostgreSQL migration does not automatically copy later PostgreSQL writes back into SQLite.
 
 ## Operational Warnings
 

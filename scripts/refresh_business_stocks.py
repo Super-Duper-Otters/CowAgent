@@ -13,6 +13,10 @@ from business import stock_resolver
 from business import storage  # noqa: E402
 
 
+def _database_payload() -> dict[str, str]:
+    return {"database": "postgresql"}
+
+
 def _count_successes(result: dict[str, Any]) -> tuple[int, list[str]]:
     total = 0
     errors = []
@@ -38,7 +42,7 @@ def _build_auto_payload() -> dict[str, Any]:
         "count": count,
         "error": "; ".join(errors),
         "result": result,
-        "db_path": str(storage.get_db_path()),
+        **_database_payload(),
     }
 
 
@@ -58,7 +62,7 @@ def _build_single_source_payload(source: str) -> dict[str, Any]:
             "count": 0,
             "error": str(exc),
             "result": None,
-            "db_path": str(storage.get_db_path()),
+            **_database_payload(),
         }
     return {
         "source": source,
@@ -66,7 +70,7 @@ def _build_single_source_payload(source: str) -> dict[str, Any]:
         "count": count,
         "error": "",
         "result": {"count": count},
-        "db_path": str(storage.get_db_path()),
+        **_database_payload(),
     }
 
 
@@ -78,7 +82,7 @@ def _print_payload(payload: dict[str, Any], as_json: bool) -> None:
     print(f"success={payload['success']}")
     print(f"count={payload['count']}")
     print(f"error={payload['error']}")
-    print(f"db_path={payload['db_path']}")
+    print(f"database={payload['database']}")
     print(f"result={json.dumps(payload['result'], ensure_ascii=False)}")
 
 
