@@ -10,17 +10,17 @@ from business.config.constants import ServiceType
 @pytest.fixture(autouse=True)
 def _default_business_user_access(monkeypatch):
     monkeypatch.setattr(
-        "business.user_service.verify_user_access",
+        "business.accounts.user_service.verify_user_access",
         lambda _openid: SimpleNamespace(allowed=True, user_prompt=""),
     )
 
 
 @pytest.fixture(autouse=True)
 def _isolate_business_record_writes(monkeypatch):
-    monkeypatch.setattr("business.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
-    monkeypatch.setattr("business.records.fail_request_record", lambda *args, **_kwargs: None)
-    monkeypatch.setattr("business.business_records.create_request_record", lambda *args, **_kwargs: "test-request-id")
-    monkeypatch.setattr("business.business_records.fail_request_record", lambda *args, **_kwargs: None)
+    monkeypatch.setattr("business.records.records.create_request_record", lambda *args, **_kwargs: "test-request-id")
+    monkeypatch.setattr("business.records.records.fail_request_record", lambda *args, **_kwargs: None)
+    monkeypatch.setattr("business.records.business_records.create_request_record", lambda *args, **_kwargs: "test-request-id")
+    monkeypatch.setattr("business.records.business_records.fail_request_record", lambda *args, **_kwargs: None)
 
 
 
@@ -73,7 +73,7 @@ def _fake_passive_post(monkeypatch, passive_reply, channel, current_message, pro
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.user_service.verify_permission",
+        "business.accounts.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -475,7 +475,7 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(
-        "business.technical_analysis.prepare_technical_analysis_cache_context",
+        "business.content.technical_analysis.prepare_technical_analysis_cache_context",
         lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
     )
     monkeypatch.setattr(
@@ -484,7 +484,7 @@ def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdow
         lambda _raw_input, _target_text: TechnicalAnalysisCacheContext(),
     )
     monkeypatch.setattr(
-        "business.job_service.start_job_if_absent_with_metadata",
+        "business.health.job_service.start_job_if_absent_with_metadata",
         lambda *_args, **_kwargs: SimpleNamespace(
             created=True,
             record=SimpleNamespace(request_id="request-tech"),
@@ -789,7 +789,7 @@ def test_wechatmp_passive_send_records_image_upload_failure(monkeypatch, tmp_pat
             raise WeChatClientException(40164, "invalid ip 14.153.6.203 ipv6 ::ffff:14.153.6.203, not in whitelist")
 
     channel.client.media = FakeMedia()
-    monkeypatch.setattr("business.business_records.append_delivery_warning", lambda request_id, detail: warnings.append((request_id, detail)))
+    monkeypatch.setattr("business.records.business_records.append_delivery_warning", lambda request_id, detail: warnings.append((request_id, detail)))
     reply = Reply(ReplyType.IMAGE_URL, [str(image_path)])
     reply.business_request_id = "request-1"
 
@@ -845,7 +845,7 @@ def test_wechatmp_passive_image_reply_does_not_delete_temporary_media(monkeypatc
     monkeypatch.setattr(passive_reply, "WeChatMPMessage", lambda _msg, client=None: fake_wechatmp_msg)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.user_service.verify_permission",
+        "business.accounts.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -982,7 +982,7 @@ def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_confirm
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.cache_service.find_cache_entry_by_key",
+        "business.cache.cache_service.find_cache_entry_by_key",
         lambda _cache_key, require_files=False: None,
     )
 
@@ -1019,7 +1019,7 @@ def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_target_
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.cache_service.find_cache_entry_by_key",
+        "business.cache.cache_service.find_cache_entry_by_key",
         lambda _cache_key, require_files=False: None,
     )
 
@@ -1095,12 +1095,12 @@ def test_wechatmp_passive_invalidated_daily_content_is_not_returned_by_confirm(m
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.daily_content.mark_expired_daily_contents_invalidated",
+        "business.content.daily_content.mark_expired_daily_contents_invalidated",
         lambda: 0,
         raising=False,
     )
     monkeypatch.setattr(
-        "business.business_records.get_content_record",
+        "business.records.business_records.get_content_record",
         lambda _content_id: SimpleNamespace(status="invalidated"),
     )
 
@@ -1354,7 +1354,7 @@ def test_wechatmp_passive_one_without_pending_result_uses_normal_request_path(mo
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "_technical_analysis_cache_hit", lambda _content: False, raising=False)
     monkeypatch.setattr(
-        "business.user_service.verify_permission",
+        "business.accounts.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})
@@ -1406,7 +1406,7 @@ def test_wechatmp_passive_ready_technical_result_queues_files_without_uploading(
 
     channel.send = fail_send
     monkeypatch.setattr(
-        "business.technical_analysis_handler.get_ready_technical_analysis_reply",
+        "business.content.technical_analysis_handler.get_ready_technical_analysis_reply",
         lambda *_args, **_kwargs: BusinessReply(
             handled=True,
             success=True,
@@ -1418,7 +1418,7 @@ def test_wechatmp_passive_ready_technical_result_queues_files_without_uploading(
             source_id="ready-cache",
         ),
     )
-    monkeypatch.setattr("business.router._customer_metadata", lambda _openid: {})
+    monkeypatch.setattr("business.routing.router._customer_metadata", lambda _openid: {})
 
     assert passive_reply._queue_ready_technical_result(channel, msg, route) is True
     cached = channel.cache_dict.peek_result("openid")
@@ -1554,7 +1554,7 @@ def test_wechatmp_passive_rate_and_bond_return_ready_image_without_running_ack(m
     monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
     monkeypatch.setattr(passive_reply, "ImageReply", FakeImageReply)
     monkeypatch.setattr(
-        "business.user_service.verify_permission",
+        "business.accounts.user_service.verify_permission",
         lambda _openid, _service_type: SimpleNamespace(allowed=True, user_prompt=""),
     )
     monkeypatch.setattr(passive_reply.web, "input", lambda: {})

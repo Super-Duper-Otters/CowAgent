@@ -1260,7 +1260,7 @@ def test_config_masks_sensitive_values_and_checks_permissions(business_env, monk
         safe_log_value,
     )
 
-    monkeypatch.setattr("business.config_service.conf", lambda: {"tushare_token": "fallback-token"})
+    monkeypatch.setattr("business.config.config_service.conf", lambda: {"tushare_token": "fallback-token"})
 
     assert get_config("tushare.token") == "fallback-token"
     save_config("tushare.token", "ts-1234567890abcdef", operator_role="admin")
@@ -2601,7 +2601,7 @@ def test_web_user_disable_button_updates_permission_path(business_env, monkeypat
     create_user("disable-button-openid", enabled=True, allowed_services=[ServiceType.ALL])
     _login_default_investment_admin(monkeypatch)
     monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
-    monkeypatch.setattr("business.technical_analysis.run_technical_analysis", lambda *_args, **_kwargs: pytest.fail("disabled user must not enter technical analysis"))
+    monkeypatch.setattr("business.content.technical_analysis.run_technical_analysis", lambda *_args, **_kwargs: pytest.fail("disabled user must not enter technical analysis"))
 
     payload = json.loads(InvestmentUserDisableHandler().POST("disable-button-openid"))
     reply = handle_text_message("disable-button-openid", "300502.SZ 技术分析")
@@ -3458,7 +3458,7 @@ def test_web_daily_content_generate_marks_generating_before_background_task(busi
             detail="",
         )
 
-    monkeypatch.setattr("business.daily_content.generate_content", fake_generate_content)
+    monkeypatch.setattr("business.content.daily_content.generate_content", fake_generate_content)
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -4964,7 +4964,7 @@ def test_business_web_api_end_to_end_smoke_without_external_services(business_en
         return SimpleNamespace(success=True, content_id=task_content_id, generated_text="rate generated", output_image=str(generated_image), output_files=[str(generated_image)])
 
     monkeypatch.setattr(web_channel.threading, "Thread", ImmediateThread)
-    monkeypatch.setattr("business.daily_content.generate_content", fake_generate_content)
+    monkeypatch.setattr("business.content.daily_content.generate_content", fake_generate_content)
     generated = call_json(lambda: InvestmentDailyContentGenerateHandler().POST(content_id))
     assert generated["status"] == "success"
     assert generated["generation_status"] == "started"
@@ -10639,7 +10639,7 @@ def test_daily_content_default_generation_passes_uploaded_source_files(business_
         return SimpleNamespace(success=True, text="standard rate text")
 
     monkeypatch.setattr(
-        "business.ai_generation.generate_standard_text",
+        "business.audit.ai_generation.generate_standard_text",
         fake_generate_standard_text,
     )
 
@@ -10704,7 +10704,7 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(busi
             assert typename == "chat"
             return fake_bot
 
-    monkeypatch.setattr("business.ai_generation.Bridge", lambda: FakeBridge())
+    monkeypatch.setattr("business.audit.ai_generation.Bridge", lambda: FakeBridge())
 
     content_id = create_rate_content_draft(
         source_files=[str(source_image)],
@@ -11548,8 +11548,8 @@ def test_prompt_to_image_module_generates_image_from_customer_input(business_env
             },
         )()
 
-    monkeypatch.setattr("business.prompt_to_image_handler.generate_standard_text_for_module", fake_generate_standard_text)
-    monkeypatch.setattr("business.prompt_to_image_handler.render_card", fake_render_card)
+    monkeypatch.setattr("business.content.prompt_to_image_handler.generate_standard_text_for_module", fake_generate_standard_text)
+    monkeypatch.setattr("business.content.prompt_to_image_handler.render_card", fake_render_card)
 
     reply = handle_text_message("openid-macro", "宏观简报 今天流动性偏宽", skip_permission=True)
 
@@ -11625,7 +11625,7 @@ def test_request_records_api_returns_module_label_for_custom_prompt_module(busin
 def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
     from business.content.prompt_to_image_handler import _configured_prompt
 
-    monkeypatch.setattr("business.prompt_to_image_handler.get_config", lambda key, default=None: default)
+    monkeypatch.setattr("business.content.prompt_to_image_handler.get_config", lambda key, default=None: default)
 
     prompt = _configured_prompt("prompt.macro_brief", template_key="rate")
 
