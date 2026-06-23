@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
-from business.config_service import get_config, save_config
-from business.component_paths import runtime_component_root, runtime_versions_root
-from business.skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
+from business.config.config_service import get_config, save_config
+from business.components.paths import runtime_component_root, runtime_versions_root
+from business.components.skill_registry import InvestmentSkillDefinition, get_skill_definition, list_definitions
 
 
 BUILTIN_VERSION_ID = "builtin-default"
@@ -153,7 +153,7 @@ def _component_manifest_from_definition(definition: InvestmentSkillDefinition) -
 def _read_package_component_manifest(package_dir: Path) -> dict:
     component_json = package_dir / "component.json"
     if component_json.is_file():
-        from business.business_registry import read_component_definition
+        from business.components.registry import read_component_definition
 
         definition = read_component_definition(package_dir)
         if definition is None:
@@ -184,7 +184,7 @@ def _read_package_component_manifest(package_dir: Path) -> dict:
     if not (package_dir / "SKILL.md").is_file():
         raise ValueError("investment component package must contain component.json or SKILL.md at package root")
 
-    from business.skill_registry import _read_uploaded_definition
+    from business.components.skill_registry import _read_uploaded_definition
 
     definition = _read_uploaded_definition(package_dir)
     if definition is None:

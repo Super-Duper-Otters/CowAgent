@@ -62,7 +62,7 @@ def default_reply_text(key: str, default: str = "") -> str:
 
 
 def get_reply_text(key: str, default: str = "") -> str:
-    from business.config_service import get_config
+    from business.config.config_service import get_config
 
     configured = get_config(key, None)
     if configured is None or str(configured) == "":

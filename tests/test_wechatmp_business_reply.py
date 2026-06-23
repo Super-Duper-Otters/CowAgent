@@ -3,7 +3,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from business.constants import ServiceType
+from business.config.constants import ServiceType
 
 
 
@@ -97,7 +97,7 @@ def test_wechatmp_stage8_channel_modules_do_not_import_business_runtime():
 
 def test_passive_reply_cache_confirms_discards_expires_and_tracks_pending_command():
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-    from business.constants import ServiceType
+    from business.config.constants import ServiceType
 
     now = [1000.0]
     cache = PassiveReplyCache(now_func=lambda: now[0])
@@ -133,7 +133,7 @@ def test_passive_reply_cache_default_ttl_is_six_hours():
 
 def test_passive_reply_cache_discards_entries_by_source_without_touching_other_sources():
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-    from business.constants import ServiceType
+    from business.config.constants import ServiceType
 
     cache = PassiveReplyCache()
     cache.append_result(
@@ -170,7 +170,7 @@ def test_passive_reply_cache_discards_entries_by_source_without_touching_other_s
 
 def test_passive_reply_cache_discards_invalid_sources_without_touching_current_receiver():
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-    from business.constants import ServiceType
+    from business.config.constants import ServiceType
 
     cache = PassiveReplyCache()
     cache.append_result(
@@ -426,10 +426,10 @@ def _context(openid="openid", msg_id="msg-1", content="利率"):
 
 def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch, tmp_path):
     from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.router import BusinessReply
-    import business.daily_content_handler as cowagent_content_handler
-    import business.router as business_route
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply
+    import business.content.daily_content_handler as cowagent_content_handler
+    import business.routing.router as business_route
 
     image_path = str(tmp_path / "rate_card.png")
     monkeypatch.setattr(business_route, "verify_user_access", lambda _openid: SimpleNamespace(allowed=True, user_prompt=""))
@@ -454,10 +454,10 @@ def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch
 
 
 def test_wechatmp_technical_analysis_router_returns_only_user_images_not_markdown(business_env, monkeypatch, tmp_path):
-    from business.constants import ServiceType
-    from business.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
-    import business.router as business_route
-    import business.technical_analysis_handler as cowagent_ta_handler
+    from business.config.constants import ServiceType
+    from business.content.technical_analysis import TechnicalAnalysisCacheContext, TechnicalAnalysisResult
+    import business.routing.router as business_route
+    import business.content.technical_analysis_handler as cowagent_ta_handler
 
     signal_card_path = str(tmp_path / "signal-card.png")
     main_chart_path = str(tmp_path / "main-chart.png")
@@ -1029,7 +1029,7 @@ def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_target_
 
 
 def test_wechatmp_passive_market_expired_technical_cache_is_not_returned_by_confirm(monkeypatch):
-    import business.cache_service as cache_service
+    import business.cache.cache_service as cache_service
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -1110,7 +1110,7 @@ def test_wechatmp_passive_invalidated_daily_content_is_not_returned_by_confirm(m
 
 
 def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(monkeypatch):
-    import business.business_records as business_records
+    import business.records.business_records as business_records
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -1144,10 +1144,10 @@ def test_wechatmp_passive_cached_result_marks_request_delivered_when_returned(mo
 
 
 def test_wechatmp_passive_technical_analysis_events_share_original_request_id(monkeypatch):
-    import business.business_records as business_records
+    import business.records.business_records as business_records
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-    from business.constants import ServiceType
+    from business.config.constants import ServiceType
 
     produced_contexts = []
     events = []
@@ -1224,7 +1224,7 @@ def test_wechatmp_passive_zero_no_longer_discards_pending_result(monkeypatch):
 
 
 def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(business_env):
-    from business.config_service import save_config
+    from business.config.config_service import save_config
     from channel.wechatmp import passive_reply
 
     save_config("reply.wechatmp.running_technical_analysis", "{} 还在跑。", operator_role="admin")
@@ -1393,7 +1393,7 @@ def test_wechatmp_passive_ready_technical_result_returns_claim_prompt_without_st
 def test_wechatmp_passive_ready_technical_result_queues_files_without_uploading(monkeypatch, tmp_path):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
-    from business.router import BusinessReply
+    from business.routing.router import BusinessReply
 
     image_path = tmp_path / "ready.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\n")

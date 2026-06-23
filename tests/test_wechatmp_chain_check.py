@@ -195,9 +195,9 @@ def test_default_content_queries_cover_three_business_routes():
 
 def test_business_content_check_accepts_expected_no_content_reply(monkeypatch, tmp_path):
     mod = _load_script_module()
-    from business.constants import ErrorCode, ServiceType, user_message
-    from business.router import BusinessReply
-    import business.router as business_route
+    from business.config.constants import ErrorCode, ServiceType, user_message
+    from business.routing.router import BusinessReply
+    import business.routing.router as business_route
 
     monkeypatch.setattr(
         business_route,

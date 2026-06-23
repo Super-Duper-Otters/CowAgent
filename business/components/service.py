@@ -5,16 +5,16 @@ import json
 import shutil
 from pathlib import Path
 
-from business.business_registry import (
+from business.components.registry import (
     get_business_definition,
     is_business_enabled,
     list_business_definitions,
     resolve_triggers,
 )
 
-from business.config_service import get_config, save_config
-from business.component_paths import runtime_component_root, runtime_components_root
-from business.skill_versions import list_versions
+from business.config.config_service import get_config, save_config
+from business.components.paths import runtime_component_root, runtime_components_root
+from business.components.skill_versions import list_versions
 
 
 def _is_runtime_component(definition) -> bool:
@@ -223,7 +223,7 @@ def create_prompt_component(
     actor=None,
     creation_method: str = "manual_prompt",
 ) -> dict:
-    from business.business_registry import validate_business_key
+    from business.components.registry import validate_business_key
 
     if not isinstance(values, dict):
         raise ValueError("component payload must be an object")

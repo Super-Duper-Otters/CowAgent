@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from business.stock_resolver import get_tushare_token
+from business.content.stock_resolver import get_tushare_token
 
 
 @dataclass(frozen=True)

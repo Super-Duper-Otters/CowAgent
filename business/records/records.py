@@ -8,10 +8,10 @@ from pathlib import Path
 
 from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
 
-from business.config_service import sanitize_sensitive_text
-from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
-from business.db import connect, row_to_dict
-from business.schema import (
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import (
     investment_cache_entries,
     investment_daily_contents,
     investment_output_files,
@@ -204,7 +204,7 @@ def _component_label(module_key: str) -> str:
     if not key:
         return str(ServiceType.UNMATCHED)
     try:
-        from business.component_service import list_components
+        from business.components.service import list_components
 
         for component in list_components():
             if str(component.get("component_key") or component.get("skill_key") or "") == key:
@@ -305,7 +305,7 @@ def _record_request_event_safe(
     error: str = "",
 ) -> None:
     try:
-        from business.event_service import record_request_event
+        from business.audit.event_service import record_request_event
 
         record_request_event(
             request_id=request_id,
@@ -590,7 +590,7 @@ def succeed_request_record(
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
     if service_type is not None:
-        from business.artifact_service import archive_output_files
+        from business.artifacts.artifact_service import archive_output_files
 
         stored_output_files, stored_artifact_roles, stored_artifact_versions, path_map = archive_output_files(
             request_id,
@@ -1817,7 +1817,7 @@ def record_output_file(
     version_tag: str = "",
     owner_type: str = "request",
 ) -> None:
-    from business.artifact_service import record_artifact
+    from business.artifacts.artifact_service import record_artifact
 
     record_artifact(
         owner_id,

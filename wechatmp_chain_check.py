@@ -726,8 +726,8 @@ def check_direct_customer_service_image_send(
 def check_business_content(root: Path, openid: str, query: str) -> CheckResult:
     try:
         sys.path.insert(0, str(root))
-        from business.constants import ErrorCode, user_message
-        from business.router import handle_text_message
+        from business.config.constants import ErrorCode, user_message
+        from business.routing.router import handle_text_message
 
         reply = handle_text_message(openid, query)
     except Exception as exc:

@@ -253,7 +253,7 @@ class ConversationStore:
         """
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 ctx_row = conn.execute(
@@ -331,7 +331,7 @@ class ConversationStore:
         now = int(time.time())
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 conn.execute(
@@ -422,7 +422,7 @@ class ConversationStore:
         """
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 row = conn.execute(
@@ -440,7 +440,7 @@ class ConversationStore:
         """Return the context_start_seq for a session (0 if not set)."""
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 row = conn.execute(
@@ -453,7 +453,7 @@ class ConversationStore:
         """Delete all messages and the session record for a given session_id."""
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 conn.execute(text("DELETE FROM agent_messages WHERE session_id = :session_id"), {"session_id": session_id})
@@ -503,7 +503,7 @@ class ConversationStore:
 
         with self._lock:
             from sqlalchemy import bindparam, text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 rows = conn.execute(
@@ -590,7 +590,7 @@ class ConversationStore:
 
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 stale = conn.execute(
@@ -649,7 +649,7 @@ class ConversationStore:
         page = max(1, page)
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 ctx_row = conn.execute(
@@ -738,7 +738,7 @@ class ConversationStore:
         page = max(1, page)
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 if channel_type:
@@ -796,7 +796,7 @@ class ConversationStore:
         """Update the title of a session. Returns True if the session existed."""
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 cur = conn.execute(
@@ -809,7 +809,7 @@ class ConversationStore:
         """Return basic stats keyed by channel_type, for monitoring."""
         with self._lock:
             from sqlalchemy import text
-            from business.db import connect
+            from business.schema.db import connect
 
             with connect() as conn:
                 total_sessions = conn.execute(text("SELECT COUNT(*) FROM agent_sessions")).fetchone()[0]

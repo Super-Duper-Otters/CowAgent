@@ -186,7 +186,7 @@ class PassiveReplyCache:
 
     def pending_technical_summary(self, receiver):
         try:
-            from business.constants import ServiceType, normalize_service
+            from business.config.constants import ServiceType, normalize_service
         except Exception:
             ServiceType = None
             normalize_service = None
@@ -330,7 +330,7 @@ class PassiveReplyCache:
 
     def _is_technical_result(self, result):
         try:
-            from business.constants import ServiceType, normalize_service
+            from business.config.constants import ServiceType, normalize_service
 
             return normalize_service(result.service_type) == ServiceType.TECHNICAL_ANALYSIS
         except Exception:

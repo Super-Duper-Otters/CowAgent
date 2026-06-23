@@ -205,7 +205,7 @@ class ChatChannel(Channel):
                 context["channel"] = e_context["channel"]
                 if context.type == ContextType.TEXT:
                     try:
-                        from business.business_router import build_business_reply
+                        from business.routing.business_router import build_business_reply
 
                         business_reply = build_business_reply(context)
                     except Exception as exc:

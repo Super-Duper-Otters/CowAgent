@@ -1,6 +1,9 @@
 # encoding:utf-8
+from importlib import import_module
+
 from business.artifacts.artifacts import *  # noqa: F401,F403
-from business.artifacts import artifacts as _artifacts
+
+_artifacts = import_module("business.artifacts.artifacts")
 
 
 def __getattr__(name):

@@ -1,14 +1,14 @@
 # encoding:utf-8
 """CowAgent built-in content business handler for rate and convertible bond."""
 
-from business.business_records import (
+from business.records.business_records import (
     create_business_record as create_request_record,
     mark_business_failed as fail_request_record,
     mark_business_success as succeed_request_record,
 )
-from business.config_service import sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType
-from business.executors.daily_content_executor import get_daily_content_business
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType
+from business.execution.daily_content_executor import get_daily_content_business
 
 
 def _image_reply(paths: list[str]) -> str:
@@ -42,7 +42,7 @@ def handle_daily_content(
     record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
-    from business.router import BusinessReply
+    from business.routing.router import BusinessReply
 
     customer_metadata = customer_metadata or {}
     module_key = getattr(definition, "business_key", "") or getattr(route, "module_key", "")

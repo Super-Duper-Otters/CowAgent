@@ -23,7 +23,7 @@ def _beijing_today() -> str:
 
 
 def test_business_schema_declares_all_tables():
-    from business.schema import metadata
+    from business.schema.tables import metadata
 
     assert {
         "customers",
@@ -109,7 +109,7 @@ def test_business_schema_declares_all_tables():
 
 
 def test_business_schema_uses_simplified_physical_column_names():
-    from business.schema import metadata
+    from business.schema.tables import metadata
 
     physical_names = {
         table_name: {column.name for column in metadata.tables[table_name].columns}
@@ -141,7 +141,7 @@ def test_business_schema_uses_simplified_physical_column_names():
 
 def test_business_migration_removes_generation_records_table(business_env):
     from sqlalchemy import inspect
-    from business.db import get_engine
+    from business.schema.db import get_engine
 
     tables = set(inspect(get_engine()).get_table_names())
 
@@ -152,9 +152,8 @@ def test_business_migration_removes_generation_records_table(business_env):
 
 def test_business_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
     from sqlalchemy import inspect
-    from business import db
-    from business import migrations
-
+    from business.schema import db as db
+    from business.schema import migrations as migrations
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_migration_{uuid4().hex}"
     url = make_url(base_url)
@@ -243,7 +242,7 @@ def test_business_migration_transfers_generation_records_to_new_tables(tmp_path,
 
 
 def test_business_auth_service_hashes_passwords_and_checks_role_permissions(business_env):
-    from business.auth_service import (
+    from business.accounts.auth_service import (
         authenticate_admin,
         create_admin_session,
         create_admin_user,
@@ -288,7 +287,7 @@ def test_business_auth_service_hashes_passwords_and_checks_role_permissions(busi
 
 
 def test_technical_operator_only_has_config_permissions(business_env):
-    from business.auth_service import authenticate_admin, create_admin_user, require_permission
+    from business.accounts.auth_service import authenticate_admin, create_admin_user, require_permission
 
     create_admin_user("tech-ops-a", "tech-pass", role="technical_operator")
 
@@ -306,7 +305,7 @@ def test_technical_operator_only_has_config_permissions(business_env):
 
 
 def test_business_migrations_seed_default_admin_and_posters(business_env):
-    from business.auth_service import authenticate_admin
+    from business.accounts.auth_service import authenticate_admin
 
     admin = authenticate_admin("admin", "password")
     assert admin is not None
@@ -319,7 +318,7 @@ def test_business_migrations_seed_default_admin_and_posters(business_env):
 
 
 def test_admin_user_service_lists_updates_and_resets_password(business_env):
-    from business.auth_service import (
+    from business.accounts.auth_service import (
         authenticate_admin,
         create_admin_user,
         list_admin_users,
@@ -352,8 +351,8 @@ def test_admin_user_service_lists_updates_and_resets_password(business_env):
     with pytest.raises(ValueError, match="not found"):
         reset_admin_password("missing-admin", "new-pass")
 
-    from business.db import connect
-    from business.schema import admins
+    from business.schema.db import connect
+    from business.schema.tables import admins
 
     update_admin_user("ops-a", role="content_operator")
     create_admin_user("solo-admin", "admin-pass", role="admin")
@@ -370,9 +369,9 @@ def test_admin_user_service_lists_updates_and_resets_password(business_env):
 
 
 def test_web_business_api_enforces_admin_roles(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
-    from business.records import get_content_record
+    from business.audit.audit_service import list_operation_audits
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.records.records import get_content_record
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentAdminUserPasswordHandler,
@@ -512,7 +511,7 @@ def test_web_business_api_enforces_admin_roles(business_env, monkeypatch):
 
 
 def test_business_auth_me_allows_content_operator_without_customer_or_audit_permission(business_env, monkeypatch):
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAuthMeHandler
 
@@ -534,9 +533,9 @@ def test_business_auth_me_allows_content_operator_without_customer_or_audit_perm
 
 
 def test_web_business_auth_falls_back_to_web_password_until_admin_exists(business_env, monkeypatch):
-    from business.db import connect
-    from business.schema import admin_sessions, admins
-    from business.auth_service import create_admin_user
+    from business.schema.db import connect
+    from business.schema.tables import admin_sessions, admins
+    from business.accounts.auth_service import create_admin_user
     from channel.web import web_channel
 
     with connect() as conn:
@@ -557,7 +556,7 @@ def test_web_business_auth_falls_back_to_web_password_until_admin_exists(busines
 
 
 def test_admin_login_with_web_password_enabled_also_authenticates_console(business_env, monkeypatch):
-    from business.auth_service import create_admin_user
+    from business.accounts.auth_service import create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import AuthCheckHandler, AuthLoginHandler
 
@@ -656,7 +655,7 @@ def test_login_page_redirects_authenticated_user_to_next_path(monkeypatch):
 
 
 def test_content_operator_session_denies_records_and_cache(business_env, monkeypatch):
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentCacheHandler, InvestmentRequestRecordsHandler
 
@@ -762,8 +761,7 @@ def _xlsx_bytes(headers, rows):
 
 
 def test_business_database_url_defaults_to_docker_postgres(monkeypatch):
-    from business import db
-
+    from business.schema import db as db
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
     url = db.get_database_url()
 
@@ -771,16 +769,14 @@ def test_business_database_url_defaults_to_docker_postgres(monkeypatch):
 
 
 def test_business_database_url_prefers_postgres_env(business_env, monkeypatch):
-    from business import db
-
+    from business.schema import db as db
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/cowagent")
 
     assert db.get_database_url() == "postgresql+psycopg://u:p@localhost:5432/cowagent"
 
 
 def test_business_database_url_rejects_sqlite_env(monkeypatch):
-    from business import db
-
+    from business.schema import db as db
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", "sqlite:///tmp/investment.db")
 
     with pytest.raises(ValueError, match="PostgreSQL"):
@@ -790,8 +786,7 @@ def test_business_database_url_rejects_sqlite_env(monkeypatch):
 def test_business_database_url_rejects_sqlite_config(monkeypatch):
     import config
 
-    from business import db
-
+    from business.schema import db as db
     monkeypatch.delenv("COWAGENT_INVESTMENT_DATABASE_URL", raising=False)
     monkeypatch.setattr(config, "conf", lambda: {"investment_database_url": "sqlite:///tmp/investment.db"})
 
@@ -800,10 +795,9 @@ def test_business_database_url_rejects_sqlite_config(monkeypatch):
 
 
 def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
-    from business import migrations
-    from business import schema
-    from business import storage
-
+    from business.schema import migrations as migrations
+    from business.schema import tables as schema
+    from business.schema import storage as storage
     monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
     calls = []
 
@@ -818,8 +812,8 @@ def test_storage_initializes_schema_with_alembic_upgrade(tmp_path, monkeypatch):
 
 
 def test_business_migration_smoke_creates_schema(business_env):
-    from business import storage
-    from business.db import get_engine
+    from business.schema import storage as storage
+    from business.schema.db import get_engine
     from sqlalchemy import inspect
     from sqlalchemy import text
 
@@ -851,9 +845,9 @@ def test_business_migration_smoke_creates_schema(business_env):
 
 
 def test_request_events_record_customer_request_lifecycle(business_env):
-    from business.constants import ServiceType
-    from business.event_service import list_request_events, record_request_event
-    from business.records import create_request_record
+    from business.config.constants import ServiceType
+    from business.audit.event_service import list_request_events, record_request_event
+    from business.records.records import create_request_record
 
     request_id = create_request_record("openid-events", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
 
@@ -892,9 +886,9 @@ def test_request_events_record_customer_request_lifecycle(business_env):
 
 
 def test_request_records_emit_lifecycle_events(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.event_service import list_request_events
-    from business.records import (
+    from business.config.constants import ErrorCode, ServiceType
+    from business.audit.event_service import list_request_events
+    from business.records.records import (
         create_request_record,
         fail_request_record,
         mark_request_delivered,
@@ -927,8 +921,8 @@ def test_request_records_emit_lifecycle_events(business_env):
 
 
 def test_external_request_record_declares_entry_and_actor(business_env):
-    from business.constants import ActionType, ActorType, EntryType, ServiceType
-    from business.records import create_request_record, get_request_record
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.records.records import create_request_record, get_request_record
 
     request_id = create_request_record("openid-entry", "利率", ServiceType.RATE)
 
@@ -943,8 +937,8 @@ def test_external_request_record_declares_entry_and_actor(business_env):
 
 
 def test_internal_call_entries_are_separate_from_external_requests(business_env):
-    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
-    from business.records import create_business_workflow_record, finish_business_workflow_record, get_request_record, list_request_records
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.records.records import create_business_workflow_record, finish_business_workflow_record, get_request_record, list_request_records
 
     request_id = create_business_workflow_record(
         entry_type=EntryType.INTERNAL_CALL,
@@ -977,12 +971,12 @@ def test_internal_call_entries_are_separate_from_external_requests(business_env)
 
 
 def test_ai_generation_audit_records_common_generation_metadata(business_env):
-    from business.ai_generation_audit import (
+    from business.audit.ai_generation_audit import (
         finish_ai_generation_audit,
         get_ai_generation_audit,
         start_ai_generation_audit,
     )
-    from business.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType
 
     audit_id = start_ai_generation_audit(
         entry_type=EntryType.INTERNAL_CALL,
@@ -1030,7 +1024,7 @@ def test_ai_generation_audit_records_common_generation_metadata(business_env):
 
 
 def test_operation_audit_infers_final_record_categories(business_env):
-    from business.audit_service import list_operation_audits, record_operation_audit
+    from business.audit.audit_service import list_operation_audits, record_operation_audit
 
     cases = [
         ("customer.update", "customer", "customer"),
@@ -1059,11 +1053,11 @@ def test_operation_audit_infers_final_record_categories(business_env):
 def test_daily_content_generation_records_backend_entry_in_business_records(business_env, tmp_path):
     from sqlalchemy import text
 
-    from business.constants import ActionType, ActorType, EntryType, ServiceType
-    from business.daily_content import create_rate_content_draft, generate_content
-    from business.ai_generation_audit import list_ai_generation_audits_for_business
-    from business.db import connect
-    from business.records import get_content_record, list_request_records_page
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType
+    from business.content.daily_content import create_rate_content_draft, generate_content
+    from business.audit.ai_generation_audit import list_ai_generation_audits_for_business
+    from business.schema.db import connect
+    from business.records.records import get_content_record, list_request_records_page
 
     content_id = create_rate_content_draft(source_text="rate input", source_files=["/tmp/source.png"])
     actor = SimpleNamespace(id=8, username="ops-generate", role="content_operator")
@@ -1115,9 +1109,9 @@ def test_daily_content_generation_records_backend_entry_in_business_records(busi
 
 
 def test_request_records_api_includes_request_event_timeline(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.event_service import record_request_event
-    from business.records import create_request_record
+    from business.config.constants import ServiceType
+    from business.audit.event_service import record_request_event
+    from business.records.records import create_request_record
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     request_id = create_request_record("openid-events-api", "利率", ServiceType.RATE)
@@ -1145,8 +1139,8 @@ def test_request_records_api_includes_request_event_timeline(business_env, monke
 
 
 def test_business_records_api_filters_internal_entry_type(business_env, monkeypatch):
-    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
-    from business.records import create_business_workflow_record, finish_business_workflow_record
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.records.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import (
         InvestmentContentRecordsHandler,
         InvestmentRequestRecordsHandler,
@@ -1197,8 +1191,7 @@ def test_business_records_api_filters_internal_entry_type(business_env, monkeypa
 
 
 def test_business_alembic_runner_exposes_upgrade():
-    from business import migrations
-
+    from business.schema import migrations as migrations
     assert callable(migrations.upgrade)
     path = migrations.alembic_config_path()
     assert path.name == "alembic.ini"
@@ -1206,44 +1199,38 @@ def test_business_alembic_runner_exposes_upgrade():
 
 
 def test_config_service_uses_business_db_connection_helpers():
-    from business import config_service
-
+    from business.config import config_service as config_service
     assert not hasattr(config_service, "get_connection")
 
 
 def test_user_service_uses_business_db_connection_helpers():
-    from business import user_service
-
+    from business.accounts import user_service as user_service
     assert not hasattr(user_service, "get_connection")
 
 
 def test_records_service_uses_business_db_connection_helpers():
-    from business import records
-
+    from business.records import records as records
     assert not hasattr(records, "get_connection")
 
 
 def test_daily_content_service_uses_business_db_connection_helpers():
-    from business import daily_content
-
+    from business.content import daily_content as daily_content
     assert not hasattr(daily_content, "get_connection")
 
 
 def test_stock_resolver_uses_business_db_connection_helpers():
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     assert not hasattr(stock_resolver, "get_connection")
 
 
 def test_health_uses_business_db_connection_helpers():
-    from business import health
-
+    from business.health import health as health
     assert not hasattr(health, "get_connection")
 
 
 def test_config_service_direct_call_initializes_storage_schema(business_env):
-    from business import db
-    from business.config_service import get_config, save_config
+    from business.schema import db as db
+    from business.config.config_service import get_config, save_config
     from sqlalchemy import inspect
 
     db.reset_engine_for_tests()
@@ -1255,7 +1242,7 @@ def test_config_service_direct_call_initializes_storage_schema(business_env):
 
 
 def test_business_config_service_uses_existing_config_storage(business_env):
-    from business.config_service import get_config, save_config
+    from business.config.config_service import get_config, save_config
 
     save_config("prompt.rate", "business prompt", operator_role="admin")
     assert get_config("prompt.rate") == "business prompt"
@@ -1265,7 +1252,7 @@ def test_business_config_service_uses_existing_config_storage(business_env):
 
 
 def test_config_masks_sensitive_values_and_checks_permissions(business_env, monkeypatch):
-    from business.config_service import (
+    from business.config.config_service import (
         can_modify_config,
         get_config,
         mask_sensitive_value,
@@ -1288,15 +1275,15 @@ def test_config_masks_sensitive_values_and_checks_permissions(business_env, monk
 
 
 def test_business_user_message_uses_reply_config_defaults(business_env):
-    from business.constants import ErrorCode, user_message
+    from business.config.constants import ErrorCode, user_message
 
     assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
 
 
 def test_business_user_message_can_be_overridden_from_database(business_env):
-    from business.config_service import save_config
-    from business.constants import ErrorCode, user_message
+    from business.config.config_service import save_config
+    from business.config.constants import ErrorCode, user_message
 
     save_config("reply.investment.unauthorized", "请联系客户经理开通权限。", operator_role="admin", operator="pytest")
 
@@ -1305,8 +1292,8 @@ def test_business_user_message_can_be_overridden_from_database(business_env):
 
 
 def test_business_user_message_uses_config_service_before_reply_defaults(business_env):
-    from business.config_service import save_config
-    from business.constants import ErrorCode, user_message
+    from business.config.config_service import save_config
+    from business.config.constants import ErrorCode, user_message
 
     save_config("reply.investment.no_content", "业务内容稍后更新。", operator_role="admin", operator="pytest")
 
@@ -1314,7 +1301,7 @@ def test_business_user_message_uses_config_service_before_reply_defaults(busines
 
 
 def test_web_open_chat_config_is_admin_only(business_env):
-    from business.config_service import can_modify_config, get_config, save_config
+    from business.config.config_service import can_modify_config, get_config, save_config
 
     assert get_config("router.enable_web_open_chat", False) is False
     assert can_modify_config("router.enable_web_open_chat", "technical_operator") is False
@@ -1330,9 +1317,9 @@ def test_web_open_chat_config_is_admin_only(business_env):
 def test_business_config_rejects_model_and_wechatmp_keys_without_persisting(business_env):
     from sqlalchemy import select
 
-    from business import db
-    from business.config_service import get_config, save_config, save_configs
-    from business.schema import configs
+    from business.schema import db as db
+    from business.config.config_service import get_config, save_config, save_configs
+    from business.schema.tables import configs
 
     forbidden = {
         "model.name": "investment-model",
@@ -1355,7 +1342,7 @@ def test_business_config_rejects_model_and_wechatmp_keys_without_persisting(busi
 
 
 def test_web_console_config_save_preserves_masked_business_sensitive_values(business_env):
-    from business.config_service import get_config, get_configs, save_configs
+    from business.config.config_service import get_config, get_configs, save_configs
 
     token = "ts-console-secret-1234567890"
     save_configs({"tushare.token": token, "router.enable_agent_fallback": False}, operator_role="admin")
@@ -1374,7 +1361,7 @@ def test_web_console_config_save_preserves_masked_business_sensitive_values(busi
 
 
 def test_business_skill_loader_reads_builtin_packages_and_excludes_cowagent_skills(business_env):
-    from business.skill_registry import list_investment_skills
+    from business.components.skill_registry import list_investment_skills
 
     keys = {item["skill_key"] for item in list_investment_skills()}
 
@@ -1384,7 +1371,7 @@ def test_business_skill_loader_reads_builtin_packages_and_excludes_cowagent_skil
 
 
 def test_business_builtin_components_have_explicit_component_types(business_env):
-    from business.business_registry import get_business_definition
+    from business.components.registry import get_business_definition
 
     assert get_business_definition("technical-analysis").component_type == "active_script"
     assert get_business_definition("rate").component_type == "active_prompt"
@@ -1393,7 +1380,7 @@ def test_business_builtin_components_have_explicit_component_types(business_env)
 
 
 def test_content_strategy_components_are_manifest_backed():
-    from business.business_registry import get_business_definition
+    from business.components.registry import get_business_definition
 
     rate = get_business_definition("rate")
     bond = get_business_definition("convertible-bond")
@@ -1414,13 +1401,13 @@ def test_content_strategy_components_are_manifest_backed():
 
 
 def test_component_paths_define_builtin_and_runtime_roots(business_env):
-    from business.component_paths import (
+    from business.components.paths import (
         builtin_components_root,
         runtime_component_root,
         runtime_components_root,
         runtime_versions_root,
     )
-    from business.storage import get_storage_dirs
+    from business.schema.storage import get_storage_dirs
 
     assert builtin_components_root() == Path.cwd() / "builtin" / "components"
     assert runtime_components_root() == get_storage_dirs()["root"] / "components"
@@ -1446,16 +1433,16 @@ def test_builtin_component_manifests_are_clean_and_complete():
 
 
 def test_default_component_runtime_paths_use_builtin_components(business_env):
-    from business.business_registry import get_business_definition
-    from business.constants import ServiceType
-    from business.render_service import (
+    from business.components.registry import get_business_definition
+    from business.config.constants import ServiceType
+    from business.content.render_service import (
         DEFAULT_RENDERER_PATH,
         DEFAULT_TEMPLATE_BOND_PATH,
         DEFAULT_TEMPLATE_CB_PATH,
         DEFAULT_TEMPLATE_TA_PATH,
         template_for_service,
     )
-    from business.technical_analysis import _configured_skill_path
+    from business.content.technical_analysis import _configured_skill_path
 
     technical = get_business_definition("technical-analysis")
     renderer = get_business_definition("signal-card-renderer")
@@ -1472,7 +1459,7 @@ def test_default_component_runtime_paths_use_builtin_components(business_env):
 
 
 def test_business_component_trigger_ownership(business_env):
-    from business.business_registry import get_business_definition
+    from business.components.registry import get_business_definition
 
     assert get_business_definition("technical-analysis").uses_triggers is True
     assert get_business_definition("rate").uses_triggers is True
@@ -1481,7 +1468,7 @@ def test_business_component_trigger_ownership(business_env):
 
 
 def test_component_service_lists_components_by_type(business_env):
-    from business.component_service import list_components
+    from business.components.service import list_components
 
     items = {item["component_key"]: item for item in list_components()}
 
@@ -1495,7 +1482,7 @@ def test_component_service_lists_components_by_type(business_env):
 
 
 def test_component_service_marks_content_modules():
-    from business.component_service import list_components
+    from business.components.service import list_components
 
     by_key = {item["component_key"]: item for item in list_components()}
 
@@ -1506,8 +1493,8 @@ def test_component_service_marks_content_modules():
 
 
 def test_component_service_includes_prompt_and_version_data(business_env):
-    from business.component_service import list_components
-    from business.config_service import save_config
+    from business.components.service import list_components
+    from business.config.config_service import save_config
 
     save_config("prompt.rate", "rate prompt v1", operator_role="admin")
     items = {item["component_key"]: item for item in list_components()}
@@ -1521,9 +1508,9 @@ def test_component_service_includes_prompt_and_version_data(business_env):
 
 
 def test_manual_prompt_component_create_generates_runtime_manifest(business_env):
-    from business.business_registry import get_business_definition, match_business
-    from business.component_paths import runtime_component_root
-    from business.component_service import create_prompt_component, list_components
+    from business.components.registry import get_business_definition, match_business
+    from business.components.paths import runtime_component_root
+    from business.components.service import create_prompt_component, list_components
 
     created = create_prompt_component(
         {
@@ -1564,8 +1551,8 @@ def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(bus
 
     import pytest
 
-    from business.component_paths import runtime_component_root
-    from business.component_service import delete_runtime_component, list_components
+    from business.components.paths import runtime_component_root
+    from business.components.service import delete_runtime_component, list_components
 
     component_dir = runtime_component_root("macro-delete")
     component_dir.mkdir(parents=True, exist_ok=True)
@@ -1601,8 +1588,8 @@ def test_runtime_component_can_be_deleted_but_builtin_component_is_protected(bus
 
 
 def test_runtime_component_definition_overrides_builtin_definition(business_env):
-    from business.business_registry import get_business_definition
-    from business.component_paths import runtime_component_root
+    from business.components.registry import get_business_definition
+    from business.components.paths import runtime_component_root
 
     component_dir = runtime_component_root("technical-analysis")
     component_dir.mkdir(parents=True, exist_ok=True)
@@ -1639,9 +1626,9 @@ def test_runtime_component_definition_overrides_builtin_definition(business_env)
 
 
 def test_skill_versions_list_only_new_runtime_versions(business_env):
-    from business.component_paths import runtime_versions_root
-    from business.storage import get_storage_dirs
-    from business.skill_versions import list_versions
+    from business.components.paths import runtime_versions_root
+    from business.schema.storage import get_storage_dirs
+    from business.components.skill_versions import list_versions
 
     new_version = runtime_versions_root("technical-analysis") / "skill-new"
     old_version = get_storage_dirs()["root"] / "skills" / "technical-analysis" / "skill-old"
@@ -1676,9 +1663,9 @@ def test_skill_versions_list_only_new_runtime_versions(business_env):
 
 
 def test_business_skill_loader_applies_web_trigger_override(business_env):
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.skill_registry import match_investment_skill
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.components.skill_registry import match_investment_skill
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
 
@@ -1690,9 +1677,9 @@ def test_business_skill_loader_applies_web_trigger_override(business_env):
 
 
 def test_business_skill_loader_extracts_suffix_target(business_env):
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.skill_registry import match_investment_skill
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.components.skill_registry import match_investment_skill
 
     save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
 
@@ -1704,11 +1691,11 @@ def test_business_skill_loader_extracts_suffix_target(business_env):
 
 
 def test_uploaded_business_skill_package_appears_in_registry(business_env, tmp_path):
-    from business.component_paths import runtime_component_root, runtime_versions_root
-    from business.config_service import get_config
-    from business.constants import ServiceType
-    from business.skill_registry import list_investment_skills, match_investment_skill
-    from business.skill_versions import save_package_upload
+    from business.components.paths import runtime_component_root, runtime_versions_root
+    from business.config.config_service import get_config
+    from business.config.constants import ServiceType
+    from business.components.skill_registry import list_investment_skills, match_investment_skill
+    from business.components.skill_versions import save_package_upload
 
     package = tmp_path / "macro.zip"
     skill_md = """---
@@ -1750,7 +1737,7 @@ investment:
 
 
 def test_component_import_preview_reads_standard_skill_zip(business_env, tmp_path):
-    from business.component_import_service import preview_skill_zip
+    from business.components.import_service import preview_skill_zip
 
     package = tmp_path / "ta.zip"
     skill_md = """---
@@ -1781,7 +1768,7 @@ description: 技术分析导入样板
 def test_component_import_preview_rejects_path_escape_zip(business_env, tmp_path):
     import pytest
 
-    from business.component_import_service import preview_skill_zip
+    from business.components.import_service import preview_skill_zip
 
     package = tmp_path / "unsafe.zip"
     with ZipFile(package, "w") as archive:
@@ -1792,10 +1779,10 @@ def test_component_import_preview_rejects_path_escape_zip(business_env, tmp_path
 
 
 def test_component_import_create_generates_runtime_component(business_env, tmp_path):
-    from business.component_import_service import create_component_from_import, preview_skill_zip
-    from business.component_paths import runtime_component_root
-    from business.component_service import list_components
-    from business.config_service import get_config
+    from business.components.import_service import create_component_from_import, preview_skill_zip
+    from business.components.paths import runtime_component_root
+    from business.components.service import list_components
+    from business.config.config_service import get_config
 
     package = tmp_path / "ta.zip"
     with ZipFile(package, "w") as archive:
@@ -1846,9 +1833,9 @@ def test_component_import_create_generates_runtime_component(business_env, tmp_p
 
 
 def test_component_import_create_prompt_component_from_no_script_zip(business_env, tmp_path):
-    from business.component_import_service import create_component_from_import, preview_skill_zip
-    from business.component_paths import runtime_component_root
-    from business.component_service import list_components
+    from business.components.import_service import create_component_from_import, preview_skill_zip
+    from business.components.paths import runtime_component_root
+    from business.components.service import list_components
 
     package = tmp_path / "prompt.zip"
     with ZipFile(package, "w") as archive:
@@ -1893,7 +1880,7 @@ def test_component_import_create_prompt_component_from_no_script_zip(business_en
 def test_component_import_create_rejects_missing_preview(business_env):
     import pytest
 
-    from business.component_import_service import create_component_from_import
+    from business.components.import_service import create_component_from_import
 
     with pytest.raises(ValueError, match="component import not found"):
         create_component_from_import(
@@ -1909,7 +1896,7 @@ def test_component_import_create_rejects_missing_preview(business_env):
 
 
 def test_command_script_executor_collects_default_markdown_output(tmp_path):
-    from business.executors.command_script_executor import run_command_script_component
+    from business.execution.command_script_executor import run_command_script_component
 
     script = tmp_path / "scripts" / "analyze_universal.py"
     script.parent.mkdir()
@@ -1958,7 +1945,7 @@ def test_command_script_executor_collects_default_markdown_output(tmp_path):
 
 
 def test_command_script_executor_requires_default_output(tmp_path):
-    from business.executors.command_script_executor import run_command_script_component
+    from business.execution.command_script_executor import run_command_script_component
 
     script = tmp_path / "run.py"
     script.write_text("print('no outputs')\n", encoding="utf-8")
@@ -1987,7 +1974,7 @@ def test_command_script_executor_requires_default_output(tmp_path):
 
 
 def test_prompt_component_executor_renders_template_and_returns_markdown(monkeypatch):
-    from business.executors.prompt_component_executor import run_prompt_component
+    from business.execution.prompt_component_executor import run_prompt_component
 
     calls = []
 
@@ -2018,12 +2005,12 @@ def test_prompt_component_executor_renders_template_and_returns_markdown(monkeyp
 
 
 def test_prompt_component_executes_from_business_route_and_records_module_key(business_env, monkeypatch):
-    from business.business_records import get_request_record
-    from business.component_service import create_prompt_component
-    from business.constants import ServiceType
-    from business.router import handle_text_message
-    from business.user_service import create_user
-    import business.executors.prompt_component_executor as prompt_executor
+    from business.records.business_records import get_request_record
+    from business.components.service import create_prompt_component
+    from business.config.constants import ServiceType
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
+    import business.execution.prompt_component_executor as prompt_executor
 
     class FakeAdapter:
         def generate(self, request):
@@ -2055,11 +2042,11 @@ def test_prompt_component_executes_from_business_route_and_records_module_key(bu
 
 
 def test_command_script_component_executes_from_business_route(business_env, tmp_path):
-    from business.business_records import get_request_record
-    from business.component_import_service import create_component_from_import, preview_skill_zip
-    from business.constants import ServiceType
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.records.business_records import get_request_record
+    from business.components.import_service import create_component_from_import, preview_skill_zip
+    from business.config.constants import ServiceType
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
     script = (
@@ -2114,12 +2101,12 @@ def test_command_script_component_executes_from_business_route(business_env, tmp
 
 
 def test_command_script_component_can_postprocess_default_output_once(business_env, tmp_path):
-    from business.business_records import get_request_record, list_artifact_folder_nodes, list_artifact_packages_page
-    from business.component_import_service import create_component_from_import, preview_skill_zip
-    from business.constants import ActorType, EntryType, ServiceType
-    from business.router import handle_text_message
-    from business.storage import get_storage_dirs
-    from business.user_service import create_user
+    from business.records.business_records import get_request_record, list_artifact_folder_nodes, list_artifact_packages_page
+    from business.components.import_service import create_component_from_import, preview_skill_zip
+    from business.config.constants import ActorType, EntryType, ServiceType
+    from business.routing.router import handle_text_message
+    from business.schema.storage import get_storage_dirs
+    from business.accounts.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
 
@@ -2246,7 +2233,7 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
 def test_uploaded_business_skill_package_rejects_unsafe_skill_key(business_env, tmp_path):
     import pytest
 
-    from business.skill_versions import save_package_upload
+    from business.components.skill_versions import save_package_upload
 
     package = tmp_path / "unsafe.zip"
     skill_md = """---
@@ -2269,11 +2256,11 @@ investment:
 
 
 def test_uploaded_script_business_skill_executes_from_route(business_env, tmp_path):
-    from business.constants import ServiceType
-    from business.router import handle_text_message
-    from business.skill_versions import save_package_upload
-    from business.user_service import create_user
-    import business.skill_registry as investment_skill_registry
+    from business.config.constants import ServiceType
+    from business.routing.router import handle_text_message
+    from business.components.skill_versions import save_package_upload
+    from business.accounts.user_service import create_user
+    import business.components.skill_registry as investment_skill_registry
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     package = tmp_path / "macro.zip"
@@ -2320,7 +2307,7 @@ investment:
 
 def test_web_technical_analysis_script_component_returns_uploaded_text(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.skill_versions import save_package_upload
+    from business.components.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
 
     package = tmp_path / "ta-text.zip"
@@ -2360,8 +2347,8 @@ def test_web_technical_analysis_script_component_returns_uploaded_text(business_
 
 def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_missing(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.component_paths import runtime_component_root
-    from business.skill_versions import save_package_upload
+    from business.components.paths import runtime_component_root
+    from business.components.skill_versions import save_package_upload
     from channel.web.web_channel import _build_investment_web_reply
 
     package = tmp_path / "ta-text.zip"
@@ -2403,10 +2390,10 @@ def test_web_technical_analysis_uses_active_version_manifest_when_root_manifest_
 def test_business_reply_technical_analysis_script_component_returns_uploaded_text(business_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.business_router import build_business_reply
-    from business.constants import ServiceType
-    from business.skill_versions import save_package_upload
-    from business.user_service import create_user
+    from business.routing.business_router import build_business_reply
+    from business.config.constants import ServiceType
+    from business.components.skill_versions import save_package_upload
+    from business.accounts.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
     package = tmp_path / "ta-text.zip"
@@ -2449,8 +2436,8 @@ def test_business_reply_technical_analysis_script_component_returns_uploaded_tex
 def test_business_skill_upload_python_file_creates_version_and_activates_it(business_env):
     from pathlib import Path
 
-    from business.config_service import get_config
-    from business.skill_versions import list_versions, save_upload
+    from business.config.config_service import get_config
+    from business.components.skill_versions import list_versions, save_upload
 
     result = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
 
@@ -2476,7 +2463,7 @@ def test_business_skill_upload_zip_rejects_path_escape_and_requires_script(busin
 
     import pytest
 
-    from business.skill_versions import save_upload
+    from business.components.skill_versions import save_upload
 
     unsafe = BytesIO()
     with ZipFile(unsafe, "w") as archive:
@@ -2493,8 +2480,8 @@ def test_business_skill_upload_zip_rejects_path_escape_and_requires_script(busin
 
 
 def test_business_skill_version_activation_switches_between_upload_and_builtin(business_env):
-    from business.config_service import get_config
-    from business.skill_versions import activate_version, list_versions, save_upload
+    from business.config.config_service import get_config
+    from business.components.skill_versions import activate_version, list_versions, save_upload
 
     uploaded = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v2')", operator="tester")
 
@@ -2512,8 +2499,8 @@ def test_business_skill_version_activation_switches_between_upload_and_builtin(b
 def test_business_skill_uploaded_version_can_be_deleted_and_active_delete_falls_back_to_builtin(business_env):
     import pytest
 
-    from business.config_service import get_config
-    from business.skill_versions import delete_version, list_versions, save_upload
+    from business.config.config_service import get_config
+    from business.components.skill_versions import delete_version, list_versions, save_upload
 
     uploaded = save_upload("technical-analysis", "analyze_universal.py", b"print('ta delete')", operator="tester")
     assert get_config("technical_analysis.skill_path") == uploaded["script_path"]
@@ -2531,9 +2518,9 @@ def test_business_skill_uploaded_version_can_be_deleted_and_active_delete_falls_
 def test_business_skill_versions_include_loaded_skills(business_env):
     from pathlib import Path
 
-    from business.config_service import get_config
-    from business.skill_versions import activate_version, list_all_skills, save_upload
-    from business.business_registry import get_business_definition
+    from business.config.config_service import get_config
+    from business.components.skill_versions import activate_version, list_all_skills, save_upload
+    from business.components.registry import get_business_definition
 
     technical = save_upload("technical-analysis", "analyze_universal.py", b"print('ta v1')", operator="tester")
     renderer = save_upload("signal-card-renderer", "render_card.py", b"print('renderer v1')", operator="tester")
@@ -2557,7 +2544,7 @@ def test_business_skill_versions_include_loaded_skills(business_env):
 
 
 def test_web_business_skill_handlers_list_upload_and_activate_versions(business_env, monkeypatch):
-    from business.config_service import get_config
+    from business.config.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentSkillActivateHandler,
@@ -2605,9 +2592,9 @@ def test_web_business_skill_handlers_list_upload_and_activate_versions(business_
 
 
 def test_web_user_disable_button_updates_permission_path(business_env, monkeypatch):
-    from business.constants import ErrorCode, ServiceType
-    from business.router import handle_text_message
-    from business.user_service import create_user, get_user_by_openid
+    from business.config.constants import ErrorCode, ServiceType
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserDisableHandler
 
@@ -2627,9 +2614,9 @@ def test_web_user_disable_button_updates_permission_path(business_env, monkeypat
 
 
 def test_web_customer_search_enable_and_audits_use_customer_permissions(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.constants import ServiceType
-    from business.user_service import create_user, get_user_by_openid
+    from business.audit.audit_service import list_operation_audits
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUserStatusHandler, InvestmentUsersHandler
 
@@ -2659,9 +2646,9 @@ def test_web_customer_search_enable_and_audits_use_customer_permissions(business
 
 
 def test_web_customer_create_audit_binds_session_admin_not_body_operator(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.auth_service import authenticate_admin
-    from business.db import connect
+    from business.audit.audit_service import list_operation_audits
+    from business.accounts.auth_service import authenticate_admin
+    from business.schema.db import connect
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2713,9 +2700,9 @@ def test_web_customer_create_audit_binds_session_admin_not_body_operator(busines
 
 
 def test_web_user_management_apis_support_keyword_and_pagination(business_env, monkeypatch):
-    from business.auth_service import create_admin_user
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.accounts.auth_service import create_admin_user
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentAdminUsersHandler, InvestmentUsersHandler
 
@@ -2761,8 +2748,8 @@ def test_web_user_management_apis_support_keyword_and_pagination(business_env, m
 
 
 def test_web_customer_keyword_search_keeps_rows_and_total_consistent(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2787,8 +2774,8 @@ def test_web_customer_keyword_search_keeps_rows_and_total_consistent(business_en
 
 
 def test_web_customer_keyword_search_supports_field_categories(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2837,10 +2824,10 @@ def test_web_customer_keyword_search_supports_field_categories(business_env, mon
 def test_router_authenticates_before_parsing_unmatched_input(business_env, monkeypatch):
     import pytest
 
-    from business.constants import ErrorCode, ServiceType
-    import business.router as router
-    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
-    from business.user_service import create_user
+    from business.config.constants import ErrorCode, ServiceType
+    import business.routing.router as router
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.accounts.user_service import create_user
 
     monkeypatch.setattr(router, "parse_route", lambda _raw_input: pytest.fail("unauthorized input must not be parsed"))
 
@@ -2865,8 +2852,8 @@ def test_router_authenticates_before_parsing_unmatched_input(business_env, monke
 
 
 def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypatch):
-    from business.constants import ErrorCode, ServiceType
-    from business.user_service import create_user, verify_permission
+    from business.config.constants import ErrorCode, ServiceType
+    from business.accounts.user_service import create_user, verify_permission
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersHandler
 
@@ -2902,7 +2889,7 @@ def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypat
 
 
 def test_business_skill_settings_post_updates_triggers_and_enabled(business_env, monkeypatch):
-    from business.config_service import get_config
+    from business.config.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
 
@@ -2929,8 +2916,8 @@ def test_business_skill_settings_post_updates_triggers_and_enabled(business_env,
 
 
 def test_component_settings_save_updates_active_prompt_component(business_env, monkeypatch):
-    from business.business_registry import get_business_definition, resolve_triggers
-    from business.config_service import get_config
+    from business.components.registry import get_business_definition, resolve_triggers
+    from business.config.config_service import get_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentComponentSettingsHandler
 
@@ -2977,7 +2964,7 @@ def test_component_settings_rejects_triggers_for_passive_component(business_env,
 
 
 def test_component_settings_updates_runtime_command_script_manifest(business_env, monkeypatch):
-    from business.component_paths import runtime_component_root
+    from business.components.paths import runtime_component_root
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentComponentSettingsHandler
 
@@ -3046,8 +3033,8 @@ def test_component_settings_updates_runtime_command_script_manifest(business_env
 
 
 def test_component_settings_updates_runtime_prompt_component_manifest(business_env, monkeypatch):
-    from business.component_service import create_prompt_component
-    from business.component_paths import runtime_component_root
+    from business.components.service import create_prompt_component
+    from business.components.paths import runtime_component_root
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentComponentSettingsHandler
 
@@ -3094,7 +3081,7 @@ def test_component_settings_updates_runtime_prompt_component_manifest(business_e
 
 
 def test_prompt_component_create_web_api(business_env, monkeypatch):
-    from business.component_paths import runtime_component_root
+    from business.components.paths import runtime_component_root
     from channel.web import investment_handlers, web_channel
     from channel.web.web_channel import InvestmentPromptComponentHandler
 
@@ -3145,8 +3132,8 @@ def test_component_settings_rejects_manifest_update_for_builtin_component(busine
 
 
 def test_business_skill_settings_audit_records_before_and_after_values(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.config_service import save_config
+    from business.audit.audit_service import list_operation_audits
+    from business.config.config_service import save_config
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentSkillSettingsHandler
 
@@ -3176,7 +3163,7 @@ def test_business_skill_settings_audit_records_before_and_after_values(business_
 
 
 def _login_default_investment_admin(monkeypatch, *, username="admin", password="password"):
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
     from channel.web import web_channel
 
     admin = authenticate_admin(username, password)
@@ -3216,7 +3203,7 @@ def _call_investment_bytes_handler(monkeypatch, handler, *, params=None):
 
 
 def test_web_business_config_returns_masked_tushare_token(business_env, monkeypatch):
-    from business.config_service import save_config
+    from business.config.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     save_config("tushare.token", "ts-web-secret-1234567890", operator_role="admin")
@@ -3254,7 +3241,7 @@ def test_web_business_config_returns_reply_text_metadata(business_env, monkeypat
 
 
 def test_web_business_config_saves_reply_text_values(business_env, monkeypatch):
-    from business.config_service import get_config
+    from business.config.config_service import get_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     body = {"configs": {"reply.wechatmp.pending_result_invalidated": "结果已失效，请重新发起。"}}
@@ -3265,8 +3252,8 @@ def test_web_business_config_saves_reply_text_values(business_env, monkeypatch):
 
 
 def test_web_business_config_audit_records_before_and_after_values(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.config_service import save_config
+    from business.audit.audit_service import list_operation_audits
+    from business.config.config_service import save_config
     from channel.web.web_channel import InvestmentConfigHandler
 
     save_config("reply.wechatmp.pending_result_invalidated", "旧提示", operator_role="admin", operator="seed")
@@ -3287,8 +3274,8 @@ def test_web_business_config_audit_records_before_and_after_values(business_env,
 def test_web_business_config_excludes_and_rejects_global_model_and_wechatmp_keys(business_env, monkeypatch):
     from sqlalchemy import select
 
-    from business import db
-    from business.schema import configs
+    from business.schema import db as db
+    from business.schema.tables import configs
     from channel.web.web_channel import InvestmentConfigHandler
 
     body = {
@@ -3321,8 +3308,8 @@ def test_web_business_config_excludes_and_rejects_global_model_and_wechatmp_keys
 
 
 def test_web_stock_query_returns_matches_and_stats_without_refresh(business_env, monkeypatch):
-    from business import stock_resolver
-    import business.stock_resolver as web_stock_resolver
+    from business.content import stock_resolver as stock_resolver
+    import business.content.stock_resolver as web_stock_resolver
     from channel.web.web_channel import InvestmentStocksHandler
 
     stock_resolver.refresh_stock_symbols(
@@ -3350,7 +3337,7 @@ def test_web_stock_query_returns_matches_and_stats_without_refresh(business_env,
 
 
 def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env, monkeypatch):
-    import business.stock_resolver as stock_resolver
+    import business.content.stock_resolver as stock_resolver
     from channel.web.web_channel import InvestmentStocksRefreshHandler
 
     monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 3)
@@ -3379,9 +3366,9 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env,
 
 
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(business_env):
-    from business.db import connect
-    from business.record_cleanup import cleanup_useless_business_records
-    from business.schema import (
+    from business.schema.db import connect
+    from business.records.cleanup import cleanup_useless_business_records
+    from business.schema.tables import (
         admin_sessions,
         configs,
         request_records,
@@ -3450,9 +3437,9 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
 
 
 def test_web_daily_content_generate_marks_generating_before_background_task(business_env, monkeypatch):
-    from business.constants import ServiceType, Status
-    from business.daily_content import create_rate_content_draft
-    from business.records import get_content_record
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_rate_content_draft
+    from business.records.records import get_content_record
     from channel.web.web_channel import InvestmentDailyContentGenerateHandler
 
     content_id = create_rate_content_draft(source_text="rate source")
@@ -3486,9 +3473,9 @@ def test_web_daily_content_generate_marks_generating_before_background_task(busi
 
 
 def test_web_daily_content_create_binds_session_admin_not_body_operator(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
-    from business.db import connect
+    from business.audit.audit_service import list_operation_audits
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.schema.db import connect
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentDailyContentHandler
 
@@ -3542,9 +3529,9 @@ def test_web_daily_content_create_binds_session_admin_not_body_operator(business
 def test_web_daily_content_get_returns_current_effective_content(business_env, tmp_path, monkeypatch):
     from pathlib import Path
 
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.storage import get_storage_dirs
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.schema.storage import get_storage_dirs
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-current.png"
@@ -3575,8 +3562,8 @@ def test_web_daily_content_get_returns_current_effective_content(business_env, t
 
 
 def test_web_daily_content_get_returns_history_artifacts(business_env, tmp_path, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-history.png"
@@ -3606,10 +3593,10 @@ def test_web_daily_content_get_returns_history_artifacts(business_env, tmp_path,
 def test_set_content_effective_archives_external_output_image(business_env, tmp_path):
     from pathlib import Path
 
-    from business.constants import ServiceType, Status
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.records import get_content_record, list_output_files
-    from business.storage import get_storage_dirs
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.records.records import get_content_record, list_output_files
+    from business.schema.storage import get_storage_dirs
 
     image = tmp_path / "rate_card.png"
     image.write_bytes(b"legacy-rate-card")
@@ -3644,9 +3631,9 @@ def test_set_content_effective_archives_external_output_image(business_env, tmp_
 
 
 def test_list_content_records_filters_by_effective_date(business_env):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft
-    from business.records import list_content_records
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
+    from business.records.records import list_content_records
 
     create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
     expected_id = create_content_draft(ServiceType.RATE, source_text="today rate", effective_date="2026-05-29")
@@ -3662,8 +3649,8 @@ def test_list_content_records_filters_by_effective_date(business_env):
 
 
 def test_web_content_handlers_accept_effective_date_filter(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
     old_id = create_content_draft(ServiceType.RATE, source_text="old rate", effective_date="2026-05-28")
@@ -3686,8 +3673,8 @@ def test_web_content_handlers_accept_effective_date_filter(business_env, monkeyp
 
 
 def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentDailyContentHandler
 
     rate_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-05-29")
@@ -3732,9 +3719,9 @@ def test_web_content_handlers_sanitize_limit_and_reject_unmatched_service_type(b
 
 
 def test_web_records_handlers_sanitize_invalid_limit(business_env, monkeypatch):
-    from business.audit_service import record_operation_audit
-    from business.constants import ServiceType
-    from business.records import create_request_record
+    from business.audit.audit_service import record_operation_audit
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record
     from channel.web.web_channel import InvestmentOperationAuditsHandler, InvestmentRequestRecordsHandler
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
@@ -3758,9 +3745,9 @@ def test_web_records_handlers_sanitize_invalid_limit(business_env, monkeypatch):
 
 
 def test_request_records_page_returns_total_offset_and_api_pagination(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.records import create_request_record, list_request_records_page
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.records import create_request_record, list_request_records_page
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     request_ids = [
@@ -3799,9 +3786,9 @@ def test_request_records_page_returns_total_offset_and_api_pagination(business_e
 
 
 def test_request_records_page_filters_by_openid_or_mobile(business_env):
-    from business.constants import ServiceType
-    from business.records import create_request_record, list_request_records_page, succeed_request_record
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, list_request_records_page, succeed_request_record
+    from business.accounts.user_service import create_user
 
     create_user("openid-a", name="Alice", institution="Inst A", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", name="Bob", institution="Inst B", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
@@ -3826,8 +3813,8 @@ def test_request_records_page_filters_by_openid_or_mobile(business_env):
 
 
 def test_request_records_page_unknown_service_returns_empty(business_env):
-    from business.constants import ServiceType
-    from business.records import create_request_record, list_request_records_page, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, list_request_records_page, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
     succeed_request_record(request_id, output_files=["/tmp/rate.png"], elapsed_ms=1)
@@ -3839,10 +3826,10 @@ def test_request_records_page_unknown_service_returns_empty(business_env):
 
 
 def test_content_records_page_returns_total_and_filter_pagination(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft
-    from business.db import connect
-    from business.records import list_content_records_page
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
+    from business.schema.db import connect
+    from business.records.records import list_content_records_page
     from channel.web.web_channel import InvestmentContentRecordsHandler
 
     content_ids = [
@@ -3880,8 +3867,8 @@ def test_content_records_page_returns_total_and_filter_pagination(business_env, 
 
 
 def test_operation_audits_page_returns_total_and_filter_pagination(business_env, monkeypatch):
-    from business.audit_service import list_operation_audits_page, record_operation_audit
-    from business.db import connect
+    from business.audit.audit_service import list_operation_audits_page, record_operation_audit
+    from business.schema.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
 
     audit_ids = [
@@ -3916,7 +3903,7 @@ def test_operation_audits_page_returns_total_and_filter_pagination(business_env,
 
 
 def test_operation_audit_records_admin_actor_fields(business_env):
-    from business.audit_service import AdminActor, list_operation_audits, record_operation_audit
+    from business.audit.audit_service import AdminActor, list_operation_audits, record_operation_audit
 
     audit_id = record_operation_audit(
         "customer.update",
@@ -3948,9 +3935,9 @@ def test_operation_audit_records_admin_actor_fields(business_env):
 
 
 def test_cache_entries_page_returns_total_and_filter_pagination(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
-    from business.constants import ServiceType
-    from business.db import connect
+    from business.cache.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
     from channel.web.web_channel import InvestmentCacheHandler
 
     cache_keys = []
@@ -4000,8 +3987,8 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
 
 
 def test_cache_handler_without_market_date_returns_history_across_dates(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -4033,9 +4020,9 @@ def test_cache_handler_without_market_date_returns_history_across_dates(business
 
 
 def test_cache_handler_keyword_search_filters_backend_results_and_total(business_env, monkeypatch, tmp_path):
-    from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
+    from business.cache.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -4082,11 +4069,11 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
 
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
-    from business.schema import investment_cache_entries
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
+    from business.schema.tables import investment_cache_entries
     from channel.web.web_channel import InvestmentArtifactPackagesHandler
 
     signal = tmp_path / "signal-card.png"
@@ -4195,11 +4182,11 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(busi
 
 
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.schema import investment_cache_entries
-    from business.records import list_artifact_folder_nodes
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries
+    from business.records.records import list_artifact_folder_nodes
     from channel.web.web_channel import InvestmentArtifactFoldersHandler
 
     for market_date, target, generated_at in [
@@ -4269,11 +4256,11 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
 
 
 def test_artifact_folder_api_includes_daily_content_records(business_env, monkeypatch, tmp_path):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
-    from business.db import connect
-    from business.schema import investment_daily_contents, investment_output_files
-    from business.records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents, investment_output_files
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
     from channel.web.web_channel import InvestmentArtifactFoldersHandler, InvestmentArtifactPackagesHandler
 
     rate_image = tmp_path / "rate-history.png"
@@ -4371,8 +4358,8 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
 
 
 def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
+    from business.config.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     for market_date, target in [
@@ -4416,9 +4403,9 @@ def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatc
 
 
 def test_generated_content_history_api_combines_cache_and_daily_content_records(business_env, monkeypatch, tmp_path):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -4472,9 +4459,9 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
 
 
 def test_generated_content_history_treats_expired_daily_content_as_invalidated(business_env, tmp_path):
-    from business.cache_service import list_generated_history_market_dates, list_generated_history_page
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
+    from business.cache.cache_service import list_generated_history_market_dates, list_generated_history_page
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
 
     expired_image = tmp_path / "expired-rate.png"
     expired_image.write_bytes(b"expired-rate")
@@ -4528,10 +4515,10 @@ def test_generated_content_history_treats_expired_daily_content_as_invalidated(b
 def test_generated_content_history_paginates_sources_without_bulk_fetch(business_env, tmp_path):
     import inspect
 
-    from business import cache_service
-    from business.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, update_generation_success
+    from business.cache import cache_service as cache_service
+    from business.cache.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
 
     for index in range(3):
         write_cache_entry(
@@ -4564,10 +4551,10 @@ def test_generated_content_history_paginates_sources_without_bulk_fetch(business
 
 
 def test_request_records_api_filters_and_prefers_mobile_customer_display(business_env, monkeypatch):
-    from business.constants import ErrorCode, ServiceType
-    from business.db import connect
-    from business.records import create_request_record, fail_request_record, succeed_request_record
-    from business.user_service import create_user
+    from business.config.constants import ErrorCode, ServiceType
+    from business.schema.db import connect
+    from business.records.records import create_request_record, fail_request_record, succeed_request_record
+    from business.accounts.user_service import create_user
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     create_user(
@@ -4631,12 +4618,12 @@ def test_request_records_api_filters_and_prefers_mobile_customer_display(busines
 
 
 def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(business_env, monkeypatch):
-    from business.audit_service import record_operation_audit
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft
-    from business.db import connect
-    from business.records import create_request_record
+    from business.audit.audit_service import record_operation_audit
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
+    from business.schema.db import connect
+    from business.records.records import create_request_record
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentCacheHandler,
@@ -4757,9 +4744,9 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(busine
 
 
 def test_internal_request_records_api_filters_by_keyword_and_date_range(business_env, monkeypatch):
-    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
-    from business.db import connect
-    from business.records import create_business_workflow_record, finish_business_workflow_record
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.schema.db import connect
+    from business.records.records import create_business_workflow_record, finish_business_workflow_record
     from channel.web.web_channel import InvestmentContentRecordsHandler, InvestmentRequestRecordsHandler
 
     included = create_business_workflow_record(
@@ -4839,8 +4826,8 @@ def test_internal_request_records_api_filters_by_keyword_and_date_range(business
 
 
 def test_operation_audits_api_filters_by_operator_action_keyword_and_date(business_env, monkeypatch):
-    from business.audit_service import record_operation_audit
-    from business.db import connect
+    from business.audit.audit_service import record_operation_audit
+    from business.schema.db import connect
     from channel.web.web_channel import InvestmentOperationAuditsHandler
 
     included = record_operation_audit(
@@ -4896,10 +4883,10 @@ def test_operation_audits_api_filters_by_operator_action_keyword_and_date(busine
 
 
 def test_business_web_api_end_to_end_smoke_without_external_services(business_env, tmp_path, monkeypatch):
-    from business.auth_service import authenticate_admin, create_admin_session, create_admin_user
-    from business.daily_content import update_generation_success
-    from business.records import get_content_record
-    from business.router import handle_text_message
+    from business.accounts.auth_service import authenticate_admin, create_admin_session, create_admin_user
+    from business.content.daily_content import update_generation_success
+    from business.records.records import get_content_record
+    from business.routing.router import handle_text_message
     from channel.web import web_channel
     from channel.web.web_channel import (
         InvestmentDailyContentEffectiveHandler,
@@ -5039,7 +5026,7 @@ def test_business_web_api_end_to_end_smoke_without_external_services(business_en
 
     health_calls = []
     monkeypatch.setattr(
-        "business.health.run_health_checks",
+        "business.health.health.run_health_checks",
         lambda run_smoke=False: health_calls.append(run_smoke)
         or [SimpleNamespace(name="database", ok=True, detail="ok", level="ok")],
     )
@@ -5060,8 +5047,8 @@ def test_business_web_api_end_to_end_smoke_without_external_services(business_en
 
 
 def test_user_service_permission_edges_and_upsert(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.user_service import (
+    from business.config.constants import ErrorCode, ServiceType
+    from business.accounts.user_service import (
         ImportUserRow,
         create_user,
         import_users,
@@ -5108,8 +5095,8 @@ def test_user_service_permission_edges_and_upsert(business_env):
 
 
 def test_user_service_crud_list_and_all_service_contract(business_env):
-    from business.constants import ServiceType
-    from business.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user, disable_user, get_user_by_openid, list_users, update_user, verify_permission
 
     user_id = create_user(
         "crud-openid",
@@ -5146,8 +5133,8 @@ def test_user_service_crud_list_and_all_service_contract(business_env):
 
 
 def test_user_services_normalize_all_when_all_or_every_business_service_selected(business_env):
-    from business.constants import ServiceType
-    from business.user_service import create_user, get_user_by_openid, update_user
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user, get_user_by_openid, update_user
 
     create_user(
         "all-plus-specific",
@@ -5172,8 +5159,8 @@ def test_user_services_normalize_all_when_all_or_every_business_service_selected
 
 
 def test_user_service_excel_import_maps_fields_and_permissions_take_effect(business_env):
-    from business.constants import ServiceType
-    from business.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
 
     create_user("existing-openid", name="old", allowed_services=["利率"])
     payload = _xlsx_bytes(
@@ -5241,7 +5228,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(busin
 
 def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(business_env):
     from datetime import datetime
-    from business.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
+    from business.accounts.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
 
     payload = _xlsx_bytes(
         ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
@@ -5268,7 +5255,7 @@ def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(bus
 
     from openpyxl import Workbook
 
-    from business.user_service import parse_users_excel
+    from business.accounts.user_service import parse_users_excel
 
     workbook = Workbook()
     sheet = workbook.active
@@ -5284,7 +5271,7 @@ def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(bus
 
 
 def test_user_service_excel_import_reports_invalid_date_with_row_and_field(business_env):
-    from business.user_service import parse_users_excel
+    from business.accounts.user_service import parse_users_excel
 
     payload = _xlsx_bytes(
         ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
@@ -5319,7 +5306,7 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(busin
 
 
 def test_user_service_excel_import_requires_authorization_start_end_and_services(business_env):
-    from business.user_service import parse_users_excel
+    from business.accounts.user_service import parse_users_excel
 
     missing_start = _xlsx_bytes(
         ["手机号", "服务权限", "授权结束日期"],
@@ -5348,8 +5335,8 @@ def test_user_service_excel_import_requires_authorization_start_end_and_services
 
 
 def test_user_import_template_headers_are_parseable(business_env):
-    from business.export_service import export_users_import_template_xlsx
-    from business.user_service import parse_users_excel
+    from business.records.export_service import export_users_import_template_xlsx
+    from business.accounts.user_service import parse_users_excel
 
     rows = parse_users_excel(export_users_import_template_xlsx())
 
@@ -5359,8 +5346,8 @@ def test_user_import_template_headers_are_parseable(business_env):
 
 
 def test_web_user_import_parses_before_confirm_and_then_commits(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.user_service import create_user, get_user_by_openid
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user, get_user_by_openid
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentUsersImportHandler
 
@@ -5422,8 +5409,8 @@ def test_web_user_import_parses_before_confirm_and_then_commits(business_env, mo
 
 
 def test_records_save_failure_success_and_order(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.records import (
+    from business.config.constants import ErrorCode, ServiceType
+    from business.records.records import (
         append_request_warning,
         create_request_record,
         fail_request_record,
@@ -5450,8 +5437,8 @@ def test_records_save_failure_success_and_order(business_env):
 
 
 def test_request_record_delivery_status_is_business_facing(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.records import (
+    from business.config.constants import ErrorCode, ServiceType
+    from business.records.records import (
         append_request_warning,
         create_request_record,
         fail_request_record,
@@ -5484,9 +5471,9 @@ def test_request_record_delivery_status_is_business_facing(business_env):
 
 
 def test_export_request_records_hides_internal_delivery_marker(business_env):
-    from business.constants import ServiceType
-    from business.export_service import export_request_records_xlsx
-    from business.records import create_request_record, mark_request_delivered, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.records.export_service import export_request_records_xlsx
+    from business.records.records import create_request_record, mark_request_delivered, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
     succeed_request_record(request_id, output_files=[], elapsed_ms=12)
@@ -5500,9 +5487,9 @@ def test_export_request_records_hides_internal_delivery_marker(business_env):
 
 
 def test_old_generating_request_records_are_flagged_without_mutating_status(business_env):
-    from business.constants import ServiceType, Status
-    from business.db import connect
-    from business.records import create_request_record, get_request_record, list_request_records
+    from business.config.constants import ServiceType, Status
+    from business.schema.db import connect
+    from business.records.records import create_request_record, get_request_record, list_request_records
 
     request_id = create_request_record("openid", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     old_created_at = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
@@ -5526,9 +5513,9 @@ def test_old_generating_request_records_are_flagged_without_mutating_status(busi
 
 
 def test_job_service_reuses_running_technical_analysis_record(business_env):
-    from business.constants import ServiceType
-    from business.job_service import find_running_job, start_job_if_absent
-    from business.records import succeed_request_record
+    from business.config.constants import ServiceType
+    from business.health.job_service import find_running_job, start_job_if_absent
+    from business.records.records import succeed_request_record
 
     first = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     duplicate = start_job_if_absent("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
@@ -5546,9 +5533,9 @@ def test_job_service_reuses_running_technical_analysis_record(business_env):
 
 
 def test_job_service_reuses_running_cache_job_across_users(business_env):
-    from business.constants import ServiceType
-    from business.job_service import find_running_cache_job, start_cache_job_if_absent
-    from business.records import succeed_request_record
+    from business.config.constants import ServiceType
+    from business.health.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.records.records import succeed_request_record
 
     cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
 
@@ -5592,10 +5579,10 @@ def test_job_service_reuses_running_cache_job_across_users(business_env):
 
 
 def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(business_env):
-    from business.constants import ServiceType, Status
-    from business.db import connect
-    from business.job_service import find_running_cache_job, start_cache_job_if_absent
-    from business.records import get_request_record
+    from business.config.constants import ServiceType, Status
+    from business.schema.db import connect
+    from business.health.job_service import find_running_cache_job, start_cache_job_if_absent
+    from business.records.records import get_request_record
 
     cache_key = "technical_analysis:300502.SZ:2026-05-25:v1"
     first = start_cache_job_if_absent(
@@ -5633,8 +5620,8 @@ def test_job_service_marks_stale_running_cache_job_failed_and_allows_new_job(bus
 
 
 def test_job_service_allows_different_cache_keys_to_run_together(business_env):
-    from business.constants import ServiceType
-    from business.job_service import start_cache_job_if_absent
+    from business.config.constants import ServiceType
+    from business.health.job_service import start_cache_job_if_absent
 
     first = start_cache_job_if_absent(
         "openid-a",
@@ -5659,12 +5646,12 @@ def test_job_service_allows_different_cache_keys_to_run_together(business_env):
 
 
 def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_job(business_env, monkeypatch):
-    from business import config_service
-    from business.constants import ErrorCode, ServiceType, Status
-    from business.job_service import find_running_job
-    from business.records import get_content_record, list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.config import config_service as config_service
+    from business.config.constants import ErrorCode, ServiceType, Status
+    from business.health.job_service import find_running_job
+    from business.records.records import get_content_record, list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": "sk-secret-123"})
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -5686,11 +5673,11 @@ def test_technical_analysis_exception_marks_record_failed_and_unblocks_running_j
 
 
 def test_router_delegates_technical_analysis_to_cowagent_business_handler(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.router import BusinessReply, handle_text_message
-    from business.user_service import create_user
-    import business.executors.technical_analysis_executor as investment_ta_executor
-    import business.technical_analysis_handler as cowagent_ta_handler
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply, handle_text_message
+    from business.accounts.user_service import create_user
+    import business.execution.technical_analysis_executor as investment_ta_executor
+    import business.content.technical_analysis_handler as cowagent_ta_handler
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     monkeypatch.setattr(
@@ -5725,10 +5712,10 @@ def test_job_service_ignores_stale_running_technical_analysis_record(business_en
 
     from sqlalchemy import text
 
-    from business.constants import ServiceType, Status
-    from business.db import connect
-    from business.job_service import find_running_job, start_job_if_absent
-    from business.records import create_request_record, get_request_record
+    from business.config.constants import ServiceType, Status
+    from business.schema.db import connect
+    from business.health.job_service import find_running_job, start_job_if_absent
+    from business.records.records import create_request_record, get_request_record
 
     old_id = create_request_record("openid", "300502.SZ 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     stale_time = (datetime.now(UTC) - timedelta(minutes=31)).isoformat(timespec="microseconds")
@@ -5750,9 +5737,9 @@ def test_job_service_ignores_stale_running_technical_analysis_record(business_en
 def test_job_service_concurrent_start_creates_single_running_job(business_env):
     from concurrent.futures import ThreadPoolExecutor
 
-    from business.constants import ServiceType
-    from business.job_service import start_job_if_absent
-    from business.records import get_content_record, list_request_records
+    from business.config.constants import ServiceType
+    from business.health.job_service import start_job_if_absent
+    from business.records.records import get_content_record, list_request_records
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
@@ -5776,11 +5763,11 @@ def test_router_concurrent_technical_analysis_reuses_running_job_without_duplica
     from concurrent.futures import ThreadPoolExecutor
     import time
 
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = tmp_path / "signal.png"
@@ -5831,12 +5818,12 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
     from concurrent.futures import ThreadPoolExecutor
     import time
 
-    from business import technical_analysis
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     create_user("openid-a", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", enabled=True, allowed_services=[ServiceType.ALL])
@@ -5898,9 +5885,9 @@ def test_router_concurrent_technical_analysis_reuses_running_cache_job_across_us
 
 
 def test_request_records_api_includes_generating_timeout_warning(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.records import create_request_record
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.records import create_request_record
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
     request_id = create_request_record("openid", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
@@ -5928,11 +5915,11 @@ def test_request_records_api_includes_generating_timeout_warning(business_env, m
 
 
 def test_batch_01_service_results_share_contract_fields(business_env):
-    from business.ai_generation import AIGenerationResult
-    from business.daily_content import DailyContentResult
-    from business.render_service import RenderResult
-    from business.router import BusinessReply
-    from business.technical_analysis import TechnicalAnalysisResult
+    from business.audit.ai_generation import AIGenerationResult
+    from business.content.daily_content import DailyContentResult
+    from business.content.render_service import RenderResult
+    from business.routing.router import BusinessReply
+    from business.content.technical_analysis import TechnicalAnalysisResult
 
     required = {"success", "error_code", "user_prompt", "detail", "output_files"}
     results = [
@@ -5948,9 +5935,9 @@ def test_batch_01_service_results_share_contract_fields(business_env):
 
 
 def test_success_request_records_output_files_table(business_env):
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.records import record_success_request
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.records import record_success_request
 
     request_id = record_success_request("openid", "利率", ServiceType.RATE, ["/tmp/rate.png"], elapsed_ms=3)
 
@@ -5974,9 +5961,9 @@ def test_success_request_records_output_files_table(business_env):
 
 
 def test_success_request_archives_generated_images_and_documents(business_env, tmp_path):
-    from business.constants import ServiceType
-    from business.records import create_request_record, get_request_record, list_output_files, succeed_request_record
-    from business.storage import get_storage_dirs
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, get_request_record, list_output_files, succeed_request_record
+    from business.schema.storage import get_storage_dirs
 
     image = tmp_path / "rate_card.png"
     report = tmp_path / "rate_report.md"
@@ -6017,13 +6004,13 @@ def test_success_request_archives_generated_images_and_documents(business_env, t
 
 
 def test_legacy_output_paths_migrate_to_unified_files_dir(business_env):
-    from business.cache_service import find_cache_entry_by_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.file_migration import migrate_legacy_files_to_unified_storage
-    from business.daily_content import create_content_draft
-    from business.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
-    from business.storage import get_storage_dirs
+    from business.cache.cache_service import find_cache_entry_by_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.schema.file_migration import migrate_legacy_files_to_unified_storage
+    from business.content.daily_content import create_content_draft
+    from business.records.records import create_request_record, get_content_record, get_request_record, list_output_files, record_output_file
+    from business.schema.storage import get_storage_dirs
 
     legacy_dir = get_storage_dirs()["root"] / "generated" / "archive" / "legacy"
     legacy_dir.mkdir(parents=True, exist_ok=True)
@@ -6100,8 +6087,8 @@ def test_legacy_output_paths_migrate_to_unified_files_dir(business_env):
 
 
 def test_request_records_save_audit_metadata(business_env):
-    from business.constants import ServiceType
-    from business.records import create_request_record, get_request_record, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, get_request_record, succeed_request_record
 
     request_id = create_request_record(
         "openid",
@@ -6139,7 +6126,7 @@ def test_request_records_save_audit_metadata(business_env):
 
 
 def test_unauthorized_request_service_type_is_normalized_and_labeled():
-    from business.constants import SERVICE_LABELS, ServiceType, normalize_service
+    from business.config.constants import SERVICE_LABELS, ServiceType, normalize_service
 
     assert ServiceType.UNAUTHORIZED_REQUEST == "unauthorized_request"
     assert SERVICE_LABELS[ServiceType.UNAUTHORIZED_REQUEST] == "无权限请求"
@@ -6156,7 +6143,7 @@ def _xlsx_sheet_rows(content: bytes) -> list[list[object]]:
 
 
 def test_export_date_range_helpers_return_inclusive_bounds():
-    from business.export_service import month_range, quarter_range
+    from business.records.export_service import month_range, quarter_range
 
     assert month_range(2026, 2) == ("2026-02-01T00:00:00", "2026-02-28T23:59:59")
     assert month_range(2024, 2) == ("2024-02-01T00:00:00", "2024-02-29T23:59:59")
@@ -6175,8 +6162,8 @@ def test_business_date_bound_treats_plain_dates_as_beijing_days():
 
 
 def test_request_records_export_api_forces_external_request_entry_type(business_env, monkeypatch):
-    from business.constants import ActionType, ActorType, EntryType, ServiceType, Status
-    from business.records import (
+    from business.config.constants import ActionType, ActorType, EntryType, ServiceType, Status
+    from business.records.records import (
         create_business_workflow_record,
         create_request_record,
         finish_business_workflow_record,
@@ -6215,10 +6202,10 @@ def test_request_records_export_api_forces_external_request_entry_type(business_
 
 
 def test_export_request_records_xlsx_filters_and_includes_audit_fields(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.db import connect
-    from business.export_service import export_request_records_xlsx
-    from business.records import create_request_record, fail_request_record, succeed_request_record
+    from business.config.constants import ErrorCode, ServiceType
+    from business.schema.db import connect
+    from business.records.export_service import export_request_records_xlsx
+    from business.records.records import create_request_record, fail_request_record, succeed_request_record
 
     older = create_request_record("old-openid", "利率", ServiceType.RATE)
     succeed_request_record(older, output_files=["/tmp/old.png"], elapsed_ms=1)
@@ -6315,11 +6302,11 @@ def test_export_request_records_xlsx_filters_and_includes_audit_fields(business_
 
 
 def test_export_request_records_xlsx_filters_by_service_customer_and_range(business_env):
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.export_service import export_request_records_xlsx
-    from business.records import create_request_record, succeed_request_record
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.export_service import export_request_records_xlsx
+    from business.records.records import create_request_record, succeed_request_record
+    from business.accounts.user_service import create_user
 
     create_user("openid-a", name="Alice", mobile="13800000000", enabled=True, allowed_services=[ServiceType.ALL])
     create_user("openid-b", name="Bob", mobile="13900000000", enabled=True, allowed_services=[ServiceType.ALL])
@@ -6355,9 +6342,9 @@ def test_export_request_records_xlsx_filters_by_service_customer_and_range(busin
 
 
 def test_request_records_keyword_search_matches_event_details(business_env):
-    from business.constants import ServiceType
-    from business.event_service import record_request_event
-    from business.records import create_request_record, list_request_records_page, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.audit.event_service import record_request_event
+    from business.records.records import create_request_record, list_request_records_page, succeed_request_record
 
     included = create_request_record("openid-event", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
     excluded = create_request_record("openid-other", "贵州茅台 技术分析", ServiceType.TECHNICAL_ANALYSIS)
@@ -6381,10 +6368,10 @@ def test_request_records_keyword_search_matches_event_details(business_env):
 
 
 def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(business_env):
-    from business.constants import ServiceType
-    from business.event_service import record_request_event
-    from business.export_service import export_request_records_xlsx
-    from business.records import create_request_record, list_request_records_page, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.audit.event_service import record_request_event
+    from business.records.export_service import export_request_records_xlsx
+    from business.records.records import create_request_record, list_request_records_page, succeed_request_record
 
     included = create_request_record("openid-export-event", "利率", ServiceType.RATE)
     excluded = create_request_record("openid-export-other", "利率", ServiceType.RATE)
@@ -6409,9 +6396,9 @@ def test_export_request_records_xlsx_uses_same_keyword_search_as_request_page(bu
 
 
 def test_export_request_records_xlsx_unknown_service_returns_only_header(business_env):
-    from business.constants import ServiceType
-    from business.export_service import export_request_records_xlsx
-    from business.records import create_request_record, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.records.export_service import export_request_records_xlsx
+    from business.records.records import create_request_record, succeed_request_record
 
     request_id = create_request_record("openid", "利率", ServiceType.RATE)
     succeed_request_record(request_id, output_files=["/tmp/rate.png"], elapsed_ms=1)
@@ -6441,7 +6428,7 @@ def test_export_request_records_xlsx_unknown_service_returns_only_header(busines
 
 
 def test_export_request_records_xlsx_empty_records_contains_only_header(business_env):
-    from business.export_service import export_request_records_xlsx
+    from business.records.export_service import export_request_records_xlsx
 
     rows = _xlsx_sheet_rows(export_request_records_xlsx("2026-05-01T00:00:00", "2026-05-31T23:59:59"))
 
@@ -6450,9 +6437,9 @@ def test_export_request_records_xlsx_empty_records_contains_only_header(business
 
 
 def test_export_users_xlsx_filters_enabled_users(business_env):
-    from business.constants import ServiceType
-    from business.export_service import export_users_xlsx
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.records.export_service import export_users_xlsx
+    from business.accounts.user_service import create_user
 
     create_user(
         "enabled-openid",
@@ -6523,9 +6510,9 @@ def test_web_export_handlers_return_xlsx_downloads(business_env, monkeypatch):
 
 
 def test_artifact_service_records_role_size_hash_and_version(business_env, tmp_path):
-    from business.artifact_service import record_artifact
-    from business.constants import ServiceType
-    from business.db import connect
+    from business.artifacts.artifact_service import record_artifact
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
     from business.versioning import file_fingerprint
 
     artifact = tmp_path / "card.png"
@@ -6559,9 +6546,9 @@ def test_artifact_service_records_role_size_hash_and_version(business_env, tmp_p
 
 
 def test_artifact_service_records_same_artifact_idempotently(business_env, tmp_path):
-    from business.artifact_service import record_artifact
-    from business.constants import ServiceType
-    from business.db import connect
+    from business.artifacts.artifact_service import record_artifact
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
 
     artifact = tmp_path / "card.png"
     artifact.write_bytes(b"card-bytes")
@@ -6597,11 +6584,11 @@ def test_artifact_service_records_same_artifact_idempotently(business_env, tmp_p
 
 
 def test_ai_and_renderer_failures_record_sanitized_backend_detail(business_env, monkeypatch):
-    from business import config_service
-    from business.config_service import safe_log_value
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, regenerate_content
-    from business.records import get_content_record
+    from business.config import config_service as config_service
+    from business.config.config_service import safe_log_value
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, regenerate_content
+    from business.records.records import get_content_record
 
     api_key = "sk-live-secret-1234567890"
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
@@ -6631,16 +6618,16 @@ def test_ai_and_renderer_failures_record_sanitized_backend_detail(business_env, 
 
 
 def test_ai_generation_uses_global_model_params_and_ignores_legacy_business_rows(business_env, monkeypatch):
-    from business.ai_generation import (
+    from business.audit.ai_generation import (
         AIGenerationRequest,
         generate_convertible_bond_text,
         generate_rate_text,
         generate_technical_analysis_text,
     )
-    from business import config_service
-    from business import db
-    from business.config_service import save_configs
-    from business.constants import ServiceType, Status
+    from business.config import config_service as config_service
+    from business.schema import db as db
+    from business.config.config_service import save_configs
+    from business.config.constants import ServiceType, Status
 
     api_key = "sk-global-contract-1234567890"
     monkeypatch.setattr(
@@ -6716,9 +6703,9 @@ def test_ai_generation_uses_global_model_params_and_ignores_legacy_business_rows
 
 
 def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract(business_env, monkeypatch):
-    from business import config_service
-    from business.ai_generation import build_generation_request
-    from business.constants import ServiceType
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import build_generation_request
+    from business.config.constants import ServiceType
 
     monkeypatch.setattr(
         config_service,
@@ -6838,8 +6825,8 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
     ],
 )
 def test_global_model_config_resolves_configured_and_inferred_providers(monkeypatch, global_config, expected):
-    from business import config_service
-    from business.ai_generation import _global_model_config
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import _global_model_config
 
     monkeypatch.setattr(config_service, "conf", lambda: global_config)
 
@@ -6847,8 +6834,8 @@ def test_global_model_config_resolves_configured_and_inferred_providers(monkeypa
 
 
 def test_ai_generation_sends_image_source_files_as_multimodal_content(business_env, tmp_path, monkeypatch):
-    from business import config_service
-    from business.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_bytes = b"\x89PNG\r\n\x1a\nimage"
     image_path = tmp_path / "rate-source.png"
@@ -6891,8 +6878,8 @@ def test_ai_generation_sends_image_source_files_as_multimodal_content(business_e
 
 
 def test_ai_generation_retries_transient_model_connection_errors(business_env, monkeypatch):
-    from business import config_service
-    from business.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import ExistingModelAdapter, generate_rate_text
 
     monkeypatch.setattr(
         config_service,
@@ -6925,8 +6912,8 @@ def test_ai_generation_retries_transient_model_connection_errors(business_env, m
 
 
 def test_ai_generation_extracts_image_text_before_final_card_prompt(business_env, tmp_path, monkeypatch):
-    from business import config_service
-    from business.ai_generation import ExistingModelAdapter, generate_rate_text
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import ExistingModelAdapter, generate_rate_text
 
     image_path = tmp_path / "rate-source.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\nimage")
@@ -6966,8 +6953,8 @@ def test_ai_generation_extracts_image_text_before_final_card_prompt(business_env
 
 
 def test_ai_generation_blank_configured_prompt_falls_back_to_default(business_env):
-    from business.ai_generation import AIGenerationRequest, generate_rate_text
-    from business.config_service import save_config
+    from business.audit.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.config.config_service import save_config
 
     save_config("prompt.rate", "", operator_role="admin")
     seen: list[AIGenerationRequest] = []
@@ -6986,7 +6973,7 @@ def test_ai_generation_blank_configured_prompt_falls_back_to_default(business_en
 
 
 def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(business_env):
-    from business.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.audit.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
@@ -7008,7 +6995,7 @@ def test_ai_generation_normalizes_semicolon_rate_text_for_renderer(business_env)
 
 
 def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(business_env):
-    from business.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.audit.ai_generation import AIGenerationRequest, generate_rate_text
 
     class FakeAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
@@ -7035,10 +7022,10 @@ def test_ai_generation_normalizes_multiline_inline_rate_text_for_renderer(busine
 
 
 def test_ai_generation_failures_and_health_check_sanitize_model_config(business_env, monkeypatch):
-    from business import config_service
-    from business.ai_generation import AIGenerationRequest, generate_rate_text
-    from business.constants import ErrorCode, Status
-    from business.health import run_health_checks
+    from business.config import config_service as config_service
+    from business.audit.ai_generation import AIGenerationRequest, generate_rate_text
+    from business.config.constants import ErrorCode, Status
+    from business.health.health import run_health_checks
 
     api_key = "sk-ai-failure-1234567890"
     monkeypatch.setattr(config_service, "conf", lambda: {"bot_type": "custom", "custom_api_key": api_key})
@@ -7065,8 +7052,8 @@ def test_ai_generation_failures_and_health_check_sanitize_model_config(business_
 
 
 def test_model_health_check_accepts_global_config_fallback(business_env, monkeypatch):
-    from business import config_service
-    from business.health import run_health_checks
+    from business.config import config_service as config_service
+    from business.health.health import run_health_checks
 
     api_key = "sk-global-fallback-1234567890"
     monkeypatch.setattr(
@@ -7087,10 +7074,10 @@ def test_model_health_check_accepts_global_config_fallback(business_env, monkeyp
 
 
 def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(business_env, monkeypatch):
-    from business import config_service
-    from business import ai_generation
-    from business.ai_generation import generate_rate_text
-    from business.config_service import save_configs
+    from business.config import config_service as config_service
+    from business.audit import ai_generation as ai_generation
+    from business.audit.ai_generation import generate_rate_text
+    from business.config.config_service import save_configs
 
     monkeypatch.setattr(
         config_service,
@@ -7146,12 +7133,12 @@ def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(business_
 
 
 def test_technical_analysis_failure_records_sanitized_backend_detail(business_env, monkeypatch):
-    from business import config_service
-    from business.constants import ErrorCode, ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.config import config_service as config_service
+    from business.config.constants import ErrorCode, ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     api_key = "sk-ta-secret-1234567890"
     monkeypatch.setattr(config_service, "conf", lambda: {"custom_api_key": api_key})
@@ -7177,8 +7164,8 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(business_en
 
 
 def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business_env, tmp_path, monkeypatch):
-    from business import technical_analysis
-    from business.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
 
     request = TechnicalAnalysisRequest(openid="ok", raw_input="300502.SZ 技术分析", target_text="300502.SZ")
     assert request.openid == "ok"
@@ -7273,8 +7260,8 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
 def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
     business_env, tmp_path, monkeypatch, raw_input, normalized_target, skill_symbol
 ):
-    from business import technical_analysis
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
 
     calls = []
     report = tmp_path / "asset_技术分析报告_2026-05-25.md"
@@ -7324,9 +7311,9 @@ def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
 def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
     business_env, tmp_path, monkeypatch, raw_input, dictionary_code, expected_normalized, expected_skill_symbol
 ):
-    from business import technical_analysis
-    from business.stock_resolver import refresh_stock_symbols
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
 
     name = raw_input.replace(" 技术分析", "")
     market = dictionary_code.rsplit(".", 1)[1]
@@ -7379,9 +7366,9 @@ def test_technical_analysis_resolves_tushare_dictionary_names_before_skill(
 def test_technical_analysis_code_input_uses_dictionary_chinese_name_in_signal_card(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.stock_resolver import refresh_stock_symbols
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
 
     refresh_stock_symbols(
         [{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "tushare_a"}],
@@ -7428,10 +7415,10 @@ def test_technical_analysis_code_input_uses_dictionary_chinese_name_in_signal_ca
 def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
     business_env, tmp_path, monkeypatch, raw_input, expected_detail
 ):
-    from business import technical_analysis
-    from business.constants import ErrorCode
-    from business.stock_resolver import refresh_stock_symbols
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ErrorCode
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
 
     refresh_stock_symbols(
         [
@@ -7451,10 +7438,10 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
 
 
 def test_technical_analysis_ambiguous_name_lists_candidate_codes(business_env, monkeypatch):
-    from business import technical_analysis
-    from business.constants import ErrorCode
-    from business.stock_resolver import refresh_stock_symbols
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ErrorCode
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
 
     refresh_stock_symbols(
         [
@@ -7478,14 +7465,14 @@ def test_technical_analysis_ambiguous_name_lists_candidate_codes(business_env, m
 
 
 def test_technical_analysis_success_records_customer_target_versions_and_artifact_roles(business_env, tmp_path):
-    from business.cache_service import find_cache_entry_by_key
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.records import get_content_record, list_request_records
-    from business.router import handle_text_message
-    from business.storage import get_storage_dirs
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.cache.cache_service import find_cache_entry_by_key
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.records.records import get_content_record, list_request_records
+    from business.routing.router import handle_text_message
+    from business.schema.storage import get_storage_dirs
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     card = tmp_path / "signal.png"
     chart = tmp_path / "chart.png"
@@ -7572,8 +7559,7 @@ def test_technical_analysis_success_records_customer_target_versions_and_artifac
 
 
 def _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-25"):
-    from business import technical_analysis
-
+    from business.content import technical_analysis as technical_analysis
     calls = []
 
     monkeypatch.setattr(
@@ -7616,9 +7602,9 @@ def _write_legacy_technical_analysis_cache(
     renderer_version="sha256:renderer-v1",
     template_version="sha256:template-v1",
 ):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import create_request_record, succeed_request_record
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, succeed_request_record
 
     cached_card = tmp_path / f"cached-card-{market_date}.png"
     cached_chart = tmp_path / f"cached-chart-{market_date}.png"
@@ -7662,12 +7648,12 @@ def _write_legacy_technical_analysis_cache(
 def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_resolver_confirms_market_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7703,12 +7689,12 @@ def test_technical_analysis_reuses_today_cache_before_close_cutoff(
 ):
     from zoneinfo import ZoneInfo
 
-    from business import cache_policy
-    from business import technical_analysis
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.cache import cache_policy as cache_policy
+    from business.content import technical_analysis as technical_analysis
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -7743,16 +7729,16 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
 ):
     from zoneinfo import ZoneInfo
 
-    from business import cache_policy
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.config_service import save_config
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.schema import cache_entries
-    from business.user_service import create_user
+    from business.cache import cache_policy as cache_policy
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.config.config_service import save_config
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.schema.tables import cache_entries
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
@@ -7800,12 +7786,12 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
 ):
     from zoneinfo import ZoneInfo
 
-    from business import cache_policy
-    from business import technical_analysis
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.cache import cache_policy as cache_policy
+    from business.content import technical_analysis as technical_analysis
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -7839,12 +7825,12 @@ def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
 def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7876,14 +7862,14 @@ def test_technical_analysis_missing_cache_file_invalidates_and_reruns(
 
 
 def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(business_env, tmp_path, monkeypatch):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType, Status
-    from business.db import connect
-    from business.records import get_request_record, list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType, Status
+    from business.schema.db import connect
+    from business.records.records import get_request_record, list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7922,12 +7908,12 @@ def test_technical_analysis_cache_write_failure_does_not_leave_active_cache(busi
 def test_router_default_technical_analysis_resolver_once_reuses_preview_resolution(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -7953,12 +7939,12 @@ def test_router_default_technical_analysis_resolver_once_reuses_preview_resoluti
 def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
@@ -7983,12 +7969,12 @@ def test_technical_analysis_lock_cache_key_uses_resolver_date_over_generated_dat
 
 
 def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(business_env, tmp_path, monkeypatch):
-    from business import technical_analysis
-    from business.market_date_resolver import MarketDateResolver
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.constants import ServiceType
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.content.market_date_resolver import MarketDateResolver
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -8018,12 +8004,12 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(busi
 def test_technical_analysis_explicit_market_date_overrides_generated_output_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
@@ -8059,14 +8045,14 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
 def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.stock_resolver import refresh_stock_symbols
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, list_cache_entries, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8119,11 +8105,11 @@ def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
 def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_program_wrapper_changes(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     old_cache_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
@@ -8169,12 +8155,12 @@ def test_technical_analysis_unknown_cache_context_reuses_latest_cache_when_only_
 def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_version_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import create_request_record, succeed_request_record
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, succeed_request_record
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -8246,10 +8232,10 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
 def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_latest_cache_without_context(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -8292,11 +8278,11 @@ def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_lat
 def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -8362,14 +8348,14 @@ def test_technical_analysis_unknown_market_date_does_not_search_legacy_latest_ca
 def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_lookup_would_find_incompatible_row(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import create_request_record, list_request_records, succeed_request_record
-    from business.router import handle_text_message
-    from business.stock_resolver import refresh_stock_symbols
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, list_request_records, succeed_request_record
+    from business.routing.router import handle_text_message
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8457,17 +8443,18 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 ):
     from zoneinfo import ZoneInfo
 
-    from business import cache_policy, cache_service
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries, version_fingerprint
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.config_service import save_config
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.schema import cache_entries
-    from business.stock_resolver import refresh_stock_symbols
-    from business.user_service import create_user
+    from business.cache import cache_policy as cache_policy
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries, version_fingerprint
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.config.config_service import save_config
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.schema.tables import cache_entries
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     save_config("investment.technical_analysis.cache_close_invalidate_time", "15:30", operator_role="admin")
@@ -8526,13 +8513,13 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
 def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompatible(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries, version_fingerprint
-    from business.constants import ServiceType
-    from business.db import connect
-    from business.schema import request_records
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries, version_fingerprint
+    from business.config.constants import ServiceType
+    from business.schema.db import connect
+    from business.schema.tables import request_records
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
@@ -8584,10 +8571,10 @@ def test_technical_analysis_context_cache_key_misses_when_owner_becomes_incompat
 def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in_window(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.stock_resolver import refresh_stock_symbols
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
     legacy_cache_version = version_fingerprint(
@@ -8639,14 +8626,14 @@ def test_technical_analysis_legacy_latest_misses_when_no_compatible_owner_row_in
 def test_technical_analysis_known_market_date_reuses_legacy_program_version_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.stock_resolver import refresh_stock_symbols
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8696,13 +8683,13 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
 def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8751,13 +8738,13 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_legacy_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8801,9 +8788,9 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_other_lega
 def test_technical_analysis_cache_key_version_changes_when_output_versions_change(
     business_env, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import version_fingerprint
-    from business.stock_resolver import refresh_stock_symbols
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import version_fingerprint
+    from business.content.stock_resolver import refresh_stock_symbols
 
     refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
 
@@ -8834,13 +8821,13 @@ def test_technical_analysis_cache_key_version_changes_when_output_versions_chang
 def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fallback_window(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
@@ -8881,13 +8868,13 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_cache_outside_fal
 def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business import technical_analysis
-    from business.cache_service import build_cache_key, version_fingerprint, write_cache_entry
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.cache import cache_service as cache_service
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-28")
@@ -8926,12 +8913,12 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
 
 
 def test_technical_analysis_stock_name_reuses_same_standard_code_cache(business_env, tmp_path, monkeypatch):
-    from business import technical_analysis
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.stock_resolver import refresh_stock_symbols
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     refresh_stock_symbols([{"code": "300502.SZ", "name": "新易盛", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
@@ -8960,11 +8947,11 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(business_
 
 
 def test_technical_analysis_different_market_date_misses_cache(business_env, tmp_path, monkeypatch):
-    from business import technical_analysis
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = []
@@ -9025,12 +9012,12 @@ def test_technical_analysis_different_market_date_misses_cache(business_env, tmp
 def test_technical_analysis_unknown_generated_market_date_does_not_cache_current_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     report = tmp_path / "report_without_date.md"
@@ -9088,12 +9075,12 @@ def test_technical_analysis_unknown_generated_market_date_does_not_cache_current
 def test_technical_analysis_invalid_generated_market_date_does_not_cache(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     invalid_market_date = "2026-02-31"
@@ -9140,12 +9127,12 @@ def test_technical_analysis_invalid_generated_market_date_does_not_cache(
 def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_have_no_date(
     business_env, tmp_path, monkeypatch
 ):
-    from business import technical_analysis
-    from business.cache_service import list_cache_entries
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import list_cache_entries
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     report = tmp_path / "report_without_date.md"
@@ -9204,7 +9191,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
 
 
 def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
-    from business.market_date_resolver import MarketDateResolver
+    from business.content.market_date_resolver import MarketDateResolver
 
     calls = []
 
@@ -9226,8 +9213,8 @@ def test_market_date_resolver_rejects_invalid_explicit_dates(monkeypatch):
 
 
 def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(business_env):
-    from business.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, increment_cache_hit, list_cache_entries, write_cache_entry
+    from business.config.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
     write_cache_entry(
@@ -9264,7 +9251,7 @@ def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(business
 
 
 def test_beijing_now_returns_beijing_timezone_datetime():
-    from business.cache_policy import beijing_now
+    from business.cache.cache_policy import beijing_now
 
     now = beijing_now()
 
@@ -9274,7 +9261,7 @@ def test_beijing_now_returns_beijing_timezone_datetime():
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9287,7 +9274,7 @@ def test_technical_analysis_cache_policy_keeps_cache_before_close_cutoff():
 
 
 def test_technical_analysis_cache_policy_expires_today_cache_written_before_close_cutoff():
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9300,7 +9287,7 @@ def test_technical_analysis_cache_policy_expires_today_cache_written_before_clos
 
 
 def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close_cutoff():
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9313,7 +9300,7 @@ def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff_even_without_probe_update(monkeypatch):
-    import business.cache_policy as cache_policy
+    import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
 
@@ -9335,7 +9322,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff
 
 
 def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_close_cutoff():
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9348,7 +9335,7 @@ def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_c
 
 
 def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing_time():
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9369,7 +9356,7 @@ def test_technical_analysis_cache_policy_compares_utc_and_local_times_as_beijing
 
 
 def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing(business_env):
-    from business.cache_policy import technical_analysis_cache_expired_after_close
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
 
     assert (
         technical_analysis_cache_expired_after_close(
@@ -9382,8 +9369,8 @@ def test_technical_analysis_cache_policy_uses_default_cutoff_when_config_missing
 
 
 def test_technical_analysis_cache_policy_uses_configured_cutoff_time(business_env):
-    from business.cache_policy import technical_analysis_cache_expired_after_close
-    from business.config_service import save_config
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
+    from business.config.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45", operator_role="admin")
 
@@ -9398,8 +9385,8 @@ def test_technical_analysis_cache_policy_uses_configured_cutoff_time(business_en
 
 
 def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutoff(business_env):
-    from business.cache_policy import technical_analysis_cache_expired_after_close
-    from business.config_service import save_config
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
+    from business.config.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "14:45:00", operator_role="admin")
 
@@ -9414,8 +9401,8 @@ def test_technical_analysis_cache_policy_falls_back_to_default_for_invalid_cutof
 
 
 def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(business_env):
-    from business.cache_policy import technical_analysis_cache_expired_after_close
-    from business.config_service import save_config
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
+    from business.config.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", "1:02", operator_role="admin")
 
@@ -9430,8 +9417,8 @@ def test_technical_analysis_cache_policy_requires_strict_hh_mm_cutoff(business_e
 
 
 def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(business_env):
-    from business.cache_policy import technical_analysis_cache_expired_after_close
-    from business.config_service import save_config
+    from business.cache.cache_policy import technical_analysis_cache_expired_after_close
+    from business.config.config_service import save_config
 
     save_config("investment.technical_analysis.cache_close_invalidate_time", " 14:45", operator_role="admin")
 
@@ -9446,7 +9433,7 @@ def test_technical_analysis_cache_policy_rejects_padded_hh_mm_cutoff(business_en
 
 
 def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
-    from business.cache_policy import market_from_symbol
+    from business.cache.cache_policy import market_from_symbol
 
     assert market_from_symbol("600519.SH") == "a_share"
     assert market_from_symbol("000001.SZ") == "a_share"
@@ -9456,7 +9443,7 @@ def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
-    import business.cache_policy as cache_policy
+    import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -9481,7 +9468,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
-    import business.cache_policy as cache_policy
+    import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
 
@@ -9503,7 +9490,7 @@ def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeyp
 
 
 def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monkeypatch):
-    import business.cache_policy as cache_policy
+    import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -9529,7 +9516,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
 
 
 def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
-    import business.cache_policy as cache_policy
+    import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -9548,8 +9535,8 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
 
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(business_env, tmp_path):
-    from business.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
+    from business.config.constants import ServiceType
 
     card = tmp_path / "card.png"
     chart = tmp_path / "chart.png"
@@ -9588,9 +9575,9 @@ def test_find_cache_entry_missing_cache_file_invalidates_active_entry(business_e
 def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_active_entry(
     business_env, tmp_path, monkeypatch
 ):
-    from business import cache_service
-    from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache import cache_service as cache_service
+    from business.cache.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business.config.constants import ServiceType
 
     old_card = tmp_path / "old-card.png"
     new_card = tmp_path / "new-card.png"
@@ -9641,8 +9628,8 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
 def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(business_env):
     from concurrent.futures import ThreadPoolExecutor
 
-    from business.cache_service import build_cache_key, list_cache_entries, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, list_cache_entries, write_cache_entry
+    from business.config.constants import ServiceType
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
 
@@ -9672,8 +9659,8 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(business
 
 
 def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -9735,8 +9722,8 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
 
 
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
-    from business.cache_service import build_cache_key, write_cache_entry
-    from business.constants import ServiceType
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
     from channel.web.web_channel import InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -9783,7 +9770,7 @@ def test_file_serve_handler_rejects_paths_outside_allowed_storage(business_env, 
 
 
 def test_file_serve_handler_allows_business_storage_file(business_env, monkeypatch):
-    from business.storage import get_storage_dirs
+    from business.schema.storage import get_storage_dirs
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
 
@@ -9797,8 +9784,8 @@ def test_file_serve_handler_allows_business_storage_file(business_env, monkeypat
 
 
 def test_file_serve_handler_allows_file_id_lookup(business_env, tmp_path, monkeypatch):
-    from business.constants import ServiceType
-    from business.records import create_request_record, list_output_files, succeed_request_record
+    from business.config.constants import ServiceType
+    from business.records.records import create_request_record, list_output_files, succeed_request_record
     from channel.web import web_channel
     from channel.web.web_channel import FileServeHandler
 
@@ -9822,9 +9809,9 @@ def test_file_serve_handler_allows_file_id_lookup(business_env, tmp_path, monkey
 
 
 def test_stock_resolver_resolves_codes_names_and_business_prompts(business_env, monkeypatch):
-    from business import stock_resolver
-    from business.constants import ErrorCode, user_message
-    from business.stock_resolver import (
+    from business.content import stock_resolver as stock_resolver
+    from business.config.constants import ErrorCode, user_message
+    from business.content.stock_resolver import (
         list_stock_symbols,
         refresh_stock_symbols,
         resolve_stock as core_resolve_stock,
@@ -9864,8 +9851,8 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(business_env, 
 
 
 def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(business_env):
-    from business import stock_resolver
-    from business.constants import ErrorCode
+    from business.content import stock_resolver as stock_resolver
+    from business.config.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
         [{"code": "AAPL.US", "name": "苹果", "market": "US", "source": "akshare"}],
@@ -9876,8 +9863,7 @@ def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(business_en
 
 
 def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(business_env, monkeypatch):
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     monkeypatch.setattr(stock_resolver, "get_tushare_token", lambda: "token")
     fake_tushare = SimpleNamespace(
         pro_api=lambda _token: SimpleNamespace(
@@ -9927,8 +9913,8 @@ def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functio
 
 
 def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(business_env, monkeypatch):
-    from business import stock_resolver
-    from business.constants import ErrorCode
+    from business.content import stock_resolver as stock_resolver
+    from business.config.constants import ErrorCode
 
     monkeypatch.setattr(
         stock_resolver,
@@ -9945,8 +9931,8 @@ def test_stock_resolver_name_miss_does_not_auto_refresh_or_guess(business_env, m
 
 
 def test_stock_resolver_reports_ambiguous_tushare_dictionary_names(business_env):
-    from business import stock_resolver
-    from business.constants import ErrorCode
+    from business.content import stock_resolver as stock_resolver
+    from business.config.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
         [
@@ -9969,8 +9955,7 @@ class _FakeDataFrame:
 
 
 def test_stock_resolver_refreshes_large_symbol_batch(business_env):
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     rows = [
         {"code": f"{index:06d}.SZ", "name": f"Test Stock {index}", "market": "SZ"}
         for index in range(6000)
@@ -9981,8 +9966,8 @@ def test_stock_resolver_refreshes_large_symbol_batch(business_env):
 
 
 def test_stock_resolver_tushare_token_priority_and_masking(business_env, tmp_path, monkeypatch):
-    from business import stock_resolver
-    from business.config_service import get_config, save_config
+    from business.content import stock_resolver as stock_resolver
+    from business.config.config_service import get_config, save_config
 
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
     (tmp_path / ".tushare_token").write_text("file-token-1234567890", encoding="utf-8")
@@ -9998,8 +9983,7 @@ def test_stock_resolver_tushare_token_priority_and_masking(business_env, tmp_pat
 
 
 def test_stock_resolver_tushare_token_falls_back_to_file(business_env, tmp_path, monkeypatch):
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
     (tmp_path / ".tushare_token").write_text("file-token-1234567890\n", encoding="utf-8")
@@ -10008,8 +9992,7 @@ def test_stock_resolver_tushare_token_falls_back_to_file(business_env, tmp_path,
 
 
 def test_stock_resolver_refresh_from_tushare_requires_token(business_env, tmp_path, monkeypatch):
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setattr(stock_resolver.Path, "home", lambda: tmp_path)
 
@@ -10018,8 +10001,8 @@ def test_stock_resolver_refresh_from_tushare_requires_token(business_env, tmp_pa
 
 
 def test_stock_resolver_refreshes_from_tushare_fake_dataframe(business_env, monkeypatch):
-    from business import stock_resolver
-    from business.config_service import save_config
+    from business.content import stock_resolver as stock_resolver
+    from business.config.config_service import save_config
 
     calls = []
 
@@ -10053,8 +10036,7 @@ def test_stock_resolver_refreshes_from_tushare_fake_dataframe(business_env, monk
 
 
 def test_stock_resolver_all_tushare_reports_market_counts_and_errors(business_env, monkeypatch):
-    from business import stock_resolver
-
+    from business.content import stock_resolver as stock_resolver
     monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 2)
     monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: 3)
     monkeypatch.setattr(stock_resolver, "refresh_us_symbols_from_tushare", lambda: 4)
@@ -10155,7 +10137,7 @@ def test_refresh_business_stocks_script_runs_by_file_path():
 
 
 def test_tushare_token_config_permission_is_sensitive(business_env):
-    from business.config_service import can_modify_config, save_config
+    from business.config.config_service import can_modify_config, save_config
 
     assert can_modify_config("tushare.token", "uploader") is False
     assert can_modify_config("tushare.token", "operator") is False
@@ -10167,8 +10149,7 @@ def test_tushare_token_config_permission_is_sensitive(business_env):
 
 
 def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path, monkeypatch):
-    from business import technical_analysis
-
+    from business.content import technical_analysis as technical_analysis
     output_dir = tmp_path / "ta-output"
     output_dir.mkdir()
     report = output_dir / "300502_技术分析报告_2026-05-25.md"
@@ -10194,9 +10175,9 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path,
 
 
 def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_prompts(business_env, tmp_path, monkeypatch):
-    from business import technical_analysis
-    from business.constants import ErrorCode, user_message
-    from business.technical_analysis import run_technical_analysis
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ErrorCode, user_message
+    from business.content.technical_analysis import run_technical_analysis
 
     report = tmp_path / "600519_技术分析报告_2026-05-25.md"
     chart = tmp_path / "600519_TA_2026-05-25.png"
@@ -10253,11 +10234,11 @@ def test_technical_analysis_sh_suffix_enters_skill_and_failures_return_business_
 
 
 def test_router_records_technical_analysis_report_chart_and_card_paths(business_env, tmp_path):
-    from business.constants import ServiceType
-    from business.records import list_request_records
-    from business.router import handle_text_message
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = str(tmp_path / "card.png")
@@ -10283,10 +10264,10 @@ def test_router_records_technical_analysis_report_chart_and_card_paths(business_
 
 
 def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue(business_env, tmp_path):
-    from business.constants import ServiceType
-    from business.router import handle_text_message
-    from business.technical_analysis import TechnicalAnalysisResult
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.routing.router import handle_text_message
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     card = str(tmp_path / "card.png")
@@ -10312,10 +10293,10 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
 
 
 def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(business_env, tmp_path):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.router import handle_text_message
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     image = tmp_path / "rate.png"
@@ -10331,8 +10312,8 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(bu
 
 
 def test_daily_content_activation_and_query(business_env, tmp_path):
-    from business.constants import ErrorCode, ServiceType
-    from business.daily_content import (
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         set_content_effective,
@@ -10358,9 +10339,9 @@ def test_daily_content_activation_and_query(business_env, tmp_path):
 
 
 def test_daily_content_expired_effective_content_is_not_returned(business_env, tmp_path):
-    from business.constants import ErrorCode, ServiceType
-    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
-    from business.records import get_content_record
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.records.records import get_content_record
 
     expired_img = tmp_path / "expired.png"
     persistent_img = tmp_path / "persistent.png"
@@ -10390,9 +10371,9 @@ def test_daily_content_expired_effective_content_is_not_returned(business_env, t
 
 
 def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_path):
-    from business.constants import ServiceType, Status
-    from business.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
-    from business.records import get_content_record
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
+    from business.records.records import get_content_record
 
     expired_image = tmp_path / "expired.png"
     fresh_image = tmp_path / "fresh.png"
@@ -10421,9 +10402,9 @@ def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_
 
 
 def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(business_env, tmp_path):
-    from business.constants import ServiceType, Status
-    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
-    from business.records import get_content_record
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.records.records import get_content_record
 
     current_image = tmp_path / "current.png"
     historical_image = tmp_path / "historical.png"
@@ -10451,16 +10432,16 @@ def test_daily_content_republishing_historical_expired_record_clears_stale_expir
 
 
 def test_daily_content_manual_invalidate_and_expiry_update(business_env, tmp_path):
-    from business.audit_service import list_operation_audits
-    from business.constants import ErrorCode, ServiceType, Status
-    from business.daily_content import (
+    from business.audit.audit_service import list_operation_audits
+    from business.config.constants import ErrorCode, ServiceType, Status
+    from business.content.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         invalidate_content,
         set_content_effective,
         update_content_expires_at,
     )
-    from business.records import get_content_record
+    from business.records.records import get_content_record
 
     image = tmp_path / "current.png"
     image.write_bytes(b"current")
@@ -10489,9 +10470,9 @@ def test_daily_content_manual_invalidate_and_expiry_update(business_env, tmp_pat
 
 
 def test_daily_content_auto_effective_after_generate_publishes_on_backend(business_env, tmp_path):
-    from business.constants import ServiceType, Status
-    from business.daily_content import create_content_draft, generate_content
-    from business.records import get_content_record
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, generate_content
+    from business.records.records import get_content_record
 
     output = tmp_path / "auto-effective.png"
 
@@ -10523,13 +10504,13 @@ def test_daily_content_auto_effective_after_generate_publishes_on_backend(busine
 def test_daily_content_versions_are_effective_per_service_and_date(business_env, tmp_path):
     from datetime import date, timedelta
 
-    from business.constants import ServiceType, Status
-    from business.daily_content import (
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import (
         create_content_draft,
         get_latest_effective_content,
         set_content_effective,
     )
-    from business.records import get_content_record
+    from business.records.records import get_content_record
 
     today = date.today()
     yesterday = (today - timedelta(days=1)).isoformat()
@@ -10558,9 +10539,9 @@ def test_daily_content_versions_are_effective_per_service_and_date(business_env,
 
 
 def test_daily_content_operation_audits_track_create_generate_effective_and_archive(business_env, tmp_path):
-    from business.audit_service import list_operation_audits
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, generate_content, set_content_effective
+    from business.audit.audit_service import list_operation_audits
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, generate_content, set_content_effective
 
     first = create_content_draft(ServiceType.RATE, source_text="first", operator="operator-a")
     second = create_content_draft(ServiceType.RATE, source_text="second", operator="operator-b")
@@ -10587,14 +10568,14 @@ def test_daily_content_operation_audits_track_create_generate_effective_and_arch
 
 
 def test_daily_content_create_upload_generate_and_failure_records(business_env):
-    from business.constants import ErrorCode, ServiceType, Status
-    from business.daily_content import (
+    from business.config.constants import ErrorCode, ServiceType, Status
+    from business.content.daily_content import (
         create_convertible_bond_content_draft,
         create_rate_content_draft,
         generate_content,
         update_content_source,
     )
-    from business.records import get_content_record
+    from business.records.records import get_content_record
 
     content_id = create_rate_content_draft(source_files=["/upload/original.xlsx"], source_text="old", operator="operator-a")
     update_content_source(content_id, source_files=["/upload/latest.xlsx"], source_text="updated rate data")
@@ -10643,8 +10624,8 @@ def test_daily_content_create_upload_generate_and_failure_records(business_env):
 
 
 def test_daily_content_default_generation_passes_uploaded_source_files(business_env, tmp_path, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_rate_content_draft, generate_content
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_rate_content_draft, generate_content
 
     uploaded = tmp_path / "uploaded-rate.png"
     uploaded.write_bytes(b"png")
@@ -10676,12 +10657,12 @@ def test_daily_content_default_generation_passes_uploaded_source_files(business_
 
 
 def test_daily_content_default_image_generation_renders_png_with_fake_model(business_env, tmp_path, monkeypatch):
-    from business import config_service
-    from business.config_service import save_configs
-    from business.constants import ServiceType
-    from business.daily_content import create_rate_content_draft, generate_content
-    from business.records import get_content_record
-    from business.storage import get_storage_dirs
+    from business.config import config_service as config_service
+    from business.config.config_service import save_configs
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_rate_content_draft, generate_content
+    from business.records.records import get_content_record
+    from business.schema.storage import get_storage_dirs
 
     source_image = tmp_path / "uploaded-rate.png"
     source_image.write_bytes(b"\x89PNG\r\n\x1a\nimage")
@@ -10753,9 +10734,9 @@ def test_daily_content_default_image_generation_renders_png_with_fake_model(busi
 
 
 def test_daily_content_records_filter_by_service_type_for_console_pages(business_env):
-    from business.constants import ServiceType
-    from business.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
-    from business.records import list_content_records
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_convertible_bond_content_draft, create_rate_content_draft
+    from business.records.records import list_content_records
 
     rate_id = create_rate_content_draft(source_text="rate")
     cb_id = create_convertible_bond_content_draft(source_text="cb")
@@ -10768,8 +10749,8 @@ def test_daily_content_records_filter_by_service_type_for_console_pages(business
 
 
 def test_daily_content_upload_saves_files_under_business_files_dir(business_env):
-    from business.constants import ServiceType
-    from business.daily_content import save_source_file
+    from business.config.constants import ServiceType
+    from business.content.daily_content import save_source_file
 
     saved = save_source_file(ServiceType.RATE, "rates.xlsx", b"rate-data", owner_id="content-123", effective_date="2026-06-07")
 
@@ -10791,9 +10772,9 @@ def test_daily_content_upload_saves_files_under_business_files_dir(business_env)
 
 
 def test_daily_content_api_accepts_module_key_for_content_modules(business_env, tmp_path, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.records import get_content_record
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.records.records import get_content_record
     from channel.web.web_channel import InvestmentDailyContentHandler
 
     image = tmp_path / "rate-current.png"
@@ -10817,10 +10798,10 @@ def test_daily_content_api_accepts_module_key_for_content_modules(business_env, 
 
 
 def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_content(business_env, tmp_path):
-    from business.component_paths import runtime_component_root
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
-    from business.records import get_content_record
+    from business.components.paths import runtime_component_root
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.records.records import get_content_record
 
     for module_key, label in (("module-a", "Module A"), ("module-b", "Module B")):
         component_dir = runtime_component_root(module_key)
@@ -10878,8 +10859,8 @@ def test_custom_daily_content_module_uses_module_key_to_isolate_unmatched_conten
 def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(business_env, monkeypatch):
     import io
 
-    from business.records import get_content_record, list_output_files
-    from business.storage import get_storage_dirs
+    from business.records.records import get_content_record, list_output_files
+    from business.schema.storage import get_storage_dirs
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentDailyContentHandler
 
@@ -10922,15 +10903,15 @@ def test_web_daily_content_multipart_upload_uses_content_scoped_files_dir(busine
 
 
 def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(business_env, tmp_path):
-    from business.constants import ServiceType, Status
-    from business.daily_content import (
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import (
         create_rate_content_draft,
         generate_content,
         get_latest_effective_content,
         regenerate_content,
         set_content_effective,
     )
-    from business.records import get_content_record
+    from business.records.records import get_content_record
 
     first_id = create_rate_content_draft(source_text="first")
     second_id = create_rate_content_draft(source_text="second")
@@ -10978,8 +10959,8 @@ def test_daily_content_regenerate_updates_output_and_only_latest_is_effective(bu
 
 
 def test_daily_content_convertible_bond_no_effective_content_prompt(business_env):
-    from business.constants import ErrorCode, ServiceType
-    from business.daily_content import get_latest_effective_content
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.daily_content import get_latest_effective_content
 
     empty = get_latest_effective_content(ServiceType.CONVERTIBLE_BOND)
     assert empty.success is False
@@ -10989,8 +10970,8 @@ def test_daily_content_convertible_bond_no_effective_content_prompt(business_env
 
 @pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
 def test_daily_content_effective_content_image_missing_returns_no_content(business_env, tmp_path, service_type):
-    from business.constants import ErrorCode, ServiceType
-    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
 
     service = ServiceType(service_type)
     missing_image = tmp_path / f"missing-{service_type}.png"
@@ -11007,8 +10988,8 @@ def test_daily_content_effective_content_image_missing_returns_no_content(busine
 
 
 def test_render_service_validates_output_files(business_env, tmp_path):
-    from business.constants import ErrorCode, ServiceType
-    from business.render_service import RenderRequest, render_card
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.render_service import RenderRequest, render_card
 
     output = tmp_path / "card.png"
 
@@ -11034,9 +11015,9 @@ def test_render_service_validates_output_files(business_env, tmp_path):
 
 
 def test_render_service_contract_uses_skill_templates_and_configured_output_dir(business_env, tmp_path):
-    from business.config_service import save_configs
-    from business.constants import ServiceType, Status
-    from business.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
+    from business.config.config_service import save_configs
+    from business.config.constants import ServiceType, Status
+    from business.content.render_service import DEFAULT_TEMPLATE_CB_PATH, RenderRequest, render_card
 
     template_ta = tmp_path / "template_ta.html"
     template_bond = tmp_path / "template_bond.html"
@@ -11085,8 +11066,8 @@ def test_render_service_contract_uses_skill_templates_and_configured_output_dir(
 
 
 def test_render_health_check_reports_renderer_template_and_chromium_details(business_env, tmp_path, monkeypatch):
-    from business import health
-    from business.config_service import save_configs
+    from business.health import health as health
+    from business.config.config_service import save_configs
 
     missing_renderer = tmp_path / "missing-render-card.py"
     save_configs(
@@ -11117,9 +11098,8 @@ def test_render_health_check_reports_renderer_template_and_chromium_details(busi
 
 
 def test_health_check_levels_dependencies_and_wechatmp_config(business_env, monkeypatch):
-    from business import config_service
-    from business import health
-
+    from business.config import config_service as config_service
+    from business.health import health as health
     monkeypatch.setattr(
         config_service,
         "conf",
@@ -11163,8 +11143,7 @@ def test_health_check_levels_dependencies_and_wechatmp_config(business_env, monk
 
 
 def test_health_dependency_import_failure_reports_error_detail(business_env, monkeypatch):
-    from business import health
-
+    from business.health import health as health
     def fake_import(module_name):
         if module_name == "talib":
             raise OSError("DLL load failed while importing _ta_lib")
@@ -11181,8 +11160,7 @@ def test_health_dependency_import_failure_reports_error_detail(business_env, mon
 
 
 def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(business_env, monkeypatch):
-    from business import health
-
+    from business.health import health as health
     calls = []
     monkeypatch.setattr(
         health,
@@ -11217,9 +11195,9 @@ def test_run_health_checks_skips_smoke_by_default_and_runs_when_requested(busine
 
 
 def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking_secret(business_env):
-    from business.config_service import save_config
-    from business.health import run_health_checks
-    from business.stock_resolver import refresh_stock_symbols
+    from business.config.config_service import save_config
+    from business.health.health import run_health_checks
+    from business.content.stock_resolver import refresh_stock_symbols
 
     save_config("tushare.token", "ts-health-secret-1234567890", operator_role="admin")
     refresh_stock_symbols(
@@ -11247,8 +11225,8 @@ def test_health_check_reports_stock_dictionary_and_tushare_token_without_leaking
 
 
 def test_health_check_reports_missing_and_unwritable_directories(business_env, tmp_path, monkeypatch):
-    from business import health
-    from business.config_service import save_configs
+    from business.health import health as health
+    from business.config.config_service import save_configs
 
     missing_files = tmp_path / "missing-files"
     tmp_dir = tmp_path / "tmp"
@@ -11279,10 +11257,10 @@ def test_health_check_reports_missing_and_unwritable_directories(business_env, t
 
 
 def test_health_check_reports_all_dependencies_available(business_env, tmp_path, monkeypatch):
-    from business import health
-    from business import config_service
-    from business.config_service import save_configs
-    from business.stock_resolver import refresh_stock_symbols
+    from business.health import health as health
+    from business.config import config_service as config_service
+    from business.config.config_service import save_configs
+    from business.content.stock_resolver import refresh_stock_symbols
 
     files = {
         "technical_analysis.skill_path": tmp_path / "analyze_universal.py",
@@ -11330,13 +11308,13 @@ def test_health_check_reports_all_dependencies_available(business_env, tmp_path,
 
 
 def test_router_handles_rate_success_unauthorized_and_miss(business_env, tmp_path):
-    from business.constants import ErrorCode
-    from business.constants import ServiceType
-    from business.config_service import save_config
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.records import get_content_record, list_request_records
-    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
-    from business.user_service import create_user
+    from business.config.constants import ErrorCode
+    from business.config.constants import ServiceType
+    from business.config.config_service import save_config
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.records.records import get_content_record, list_request_records
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
+    from business.accounts.user_service import create_user
 
     secret = "sk-secret"
     save_config("tushare.token", secret, operator_role="admin")
@@ -11396,9 +11374,9 @@ def test_router_handles_rate_success_unauthorized_and_miss(business_env, tmp_pat
 
 
 def test_parse_route_uses_configured_business_skill_triggers(business_env):
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.router import parse_route
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.routing.router import parse_route
 
     save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
     save_config("skill.technical-analysis.triggers", ["走势分析"], operator_role="admin", operator="pytest")
@@ -11413,7 +11391,7 @@ def test_parse_route_uses_configured_business_skill_triggers(business_env):
 
 
 def test_parse_route_rejects_markdown_link_targets(business_env):
-    from business.router import parse_route
+    from business.routing.router import parse_route
 
     route = parse_route("[300502.SZ](http://300502.sz/) 技术分析")
 
@@ -11421,8 +11399,8 @@ def test_parse_route_rejects_markdown_link_targets(business_env):
 
 
 def test_parse_route_ignores_disabled_business_skill(business_env):
-    from business.config_service import save_config
-    from business.router import parse_route
+    from business.config.config_service import save_config
+    from business.routing.router import parse_route
 
     save_config("skill.rate.enabled", False, operator_role="admin", operator="pytest")
 
@@ -11430,9 +11408,9 @@ def test_parse_route_ignores_disabled_business_skill(business_env):
 
 
 def test_parse_route_uses_cowagent_business_registry_not_business_skill_matcher(business_env, monkeypatch):
-    from business.constants import ServiceType
-    from business.router import parse_route
-    import business.skill_registry as investment_skill_registry
+    from business.config.constants import ServiceType
+    from business.routing.router import parse_route
+    import business.components.skill_registry as investment_skill_registry
 
     monkeypatch.setattr(
         investment_skill_registry,
@@ -11447,10 +11425,10 @@ def test_parse_route_uses_cowagent_business_registry_not_business_skill_matcher(
 
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(business_env):
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
-    from business.user_service import create_user
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.accounts.user_service import create_user
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11463,9 +11441,9 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(busi
 
 
 def test_router_dispatches_daily_content_by_handler_type(business_env, tmp_path, monkeypatch):
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.router import handle_text_message
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.routing.router import handle_text_message
 
     image = tmp_path / "rate.png"
     image.write_bytes(b"png")
@@ -11484,9 +11462,9 @@ def test_router_dispatches_daily_content_by_handler_type(business_env, tmp_path,
 
 
 def test_business_router_sets_module_key_on_reply(monkeypatch):
-    from business.constants import ServiceType
-    from business.router import BusinessReply
-    from business.business_router import _reply_from_business
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply
+    from business.routing.business_router import _reply_from_business
 
     business_reply = BusinessReply(
         handled=True,
@@ -11506,9 +11484,9 @@ def test_business_router_sets_module_key_on_reply(monkeypatch):
 def test_prompt_to_image_module_generates_image_from_customer_input(business_env, tmp_path, monkeypatch):
     import json
 
-    from business.component_paths import runtime_component_root
-    from business.records import list_request_records
-    from business.router import handle_text_message
+    from business.components.paths import runtime_component_root
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
 
     component_dir = runtime_component_root("macro-brief")
     component_dir.mkdir(parents=True, exist_ok=True)
@@ -11585,9 +11563,9 @@ def test_prompt_to_image_module_generates_image_from_customer_input(business_env
 def test_request_records_api_returns_module_label_for_custom_prompt_module(business_env, monkeypatch):
     import json
 
-    from business.constants import ServiceType
-    from business.component_paths import runtime_component_root
-    from business.records import create_request_record, fail_request_record
+    from business.config.constants import ServiceType
+    from business.components.paths import runtime_component_root
+    from business.records.records import create_request_record, fail_request_record
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentRequestRecordsHandler
 
@@ -11645,7 +11623,7 @@ def test_request_records_api_returns_module_label_for_custom_prompt_module(busin
 
 
 def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
-    from business.prompt_to_image_handler import _configured_prompt
+    from business.content.prompt_to_image_handler import _configured_prompt
 
     monkeypatch.setattr("business.prompt_to_image_handler.get_config", lambda key, default=None: default)
 
@@ -11660,11 +11638,11 @@ def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
 def test_business_router_builds_reply_and_allows_unmatched_fallback(business_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.user_service import create_user
-    from business.business_router import build_business_reply
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.accounts.user_service import create_user
+    from business.routing.business_router import build_business_reply
 
     create_user("business-openid", enabled=True, allowed_services=[ServiceType.ALL])
     image = tmp_path / "rate.png"
@@ -11694,10 +11672,10 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(business_env
 def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(business_env):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.router import DEFAULT_UNMATCHED_PROMPT
-    from business.user_service import create_user
-    from business.constants import ServiceType
-    from business.business_router import build_business_reply
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
+    from business.accounts.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.routing.business_router import build_business_reply
 
     create_user("wechatmp-openid", enabled=True, allowed_services=[ServiceType.ALL])
     context = Context(ContextType.TEXT, "普通聊天")
@@ -11723,8 +11701,8 @@ def test_context_kwargs_are_not_shared_between_instances():
 
 def test_business_router_ignores_unmatched_text_without_auth_or_handler(business_env, monkeypatch):
     from bridge.context import Context, ContextType
-    import business.router as business_route
-    import business.business_router as business_router
+    import business.routing.router as business_route
+    import business.routing.business_router as business_router
 
     monkeypatch.setattr(
         business_route,
@@ -11741,12 +11719,12 @@ def test_business_router_ignores_unmatched_text_without_auth_or_handler(business
 def test_business_router_routes_technical_analysis_without_business_router_handler(business_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.router import BusinessReply
-    from business.user_service import create_user
-    import business.router as business_route
-    import business.business_router as business_router
-    import business.technical_analysis_handler as cowagent_ta_handler
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply
+    from business.accounts.user_service import create_user
+    import business.routing.router as business_route
+    import business.routing.business_router as business_router
+    import business.content.technical_analysis_handler as cowagent_ta_handler
 
     create_user("openid-ta", enabled=True, allowed_services=[ServiceType.ALL])
     calls = []
@@ -11779,11 +11757,11 @@ def test_business_router_routes_technical_analysis_without_business_router_handl
 def test_business_router_routes_daily_content_through_module_dispatcher(business_env, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.router import BusinessReply
-    from business.user_service import create_user
-    import business.business_router as business_router
-    import business.daily_content_handler as cowagent_content_handler
+    from business.config.constants import ServiceType
+    from business.routing.router import BusinessReply
+    from business.accounts.user_service import create_user
+    import business.routing.business_router as business_router
+    import business.content.daily_content_handler as cowagent_content_handler
 
     create_user("openid-rate", enabled=True, allowed_services=[ServiceType.ALL])
     calls = []
@@ -11821,10 +11799,10 @@ def test_business_router_routes_daily_content_through_module_dispatcher(business
 
 def test_web_channel_routes_business_commands_from_admin_chat(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.router import DEFAULT_UNMATCHED_PROMPT
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.accounts.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply
 
     create_user("web-session-user", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11850,10 +11828,10 @@ def test_web_channel_routes_business_commands_from_admin_chat(business_env, tmp_
 
 def test_web_channel_uses_configured_business_skill_triggers(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.config_service import save_config
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.user_service import create_user
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.accounts.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
     create_user("web-session", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11874,10 +11852,10 @@ def test_web_channel_uses_configured_business_skill_triggers(business_env, tmp_p
 
 def test_web_channel_uses_admin_session_instead_of_customer_permission(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.constants import ActorType, EntryType, ServiceType, Status
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.records import list_request_records, list_request_records_page
-    from business.user_service import create_user
+    from business.config.constants import ActorType, EntryType, ServiceType, Status
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.records.records import list_request_records, list_request_records_page
+    from business.accounts.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
 
     create_user("disabled-web", enabled=False, allowed_services=[ServiceType.ALL])
@@ -11911,13 +11889,13 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(business_
 
 def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.constants import ServiceType, Status
-    from business.records import list_request_records
-    from business.schema import investment_cache_entries
-    from business.db import connect
-    from business.user_service import create_user
+    from business.config.constants import ServiceType, Status
+    from business.records.records import list_request_records
+    from business.schema.tables import investment_cache_entries
+    from business.schema.db import connect
+    from business.accounts.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
-    import business.technical_analysis_handler as ta_handler
+    import business.content.technical_analysis_handler as ta_handler
 
     create_user("web-admin-session", enabled=False, allowed_services=[])
     signal = tmp_path / "signal.png"
@@ -11976,12 +11954,12 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
 
 def test_web_technical_analysis_without_cache_key_appears_in_request_history(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
-    from business.constants import ServiceType, Status
-    from business.records import list_request_records
-    from business.schema import investment_cache_entries
-    from business.db import connect
+    from business.config.constants import ServiceType, Status
+    from business.records.records import list_request_records
+    from business.schema.tables import investment_cache_entries
+    from business.schema.db import connect
     from channel.web.web_channel import _build_investment_web_reply
-    import business.technical_analysis_handler as ta_handler
+    import business.content.technical_analysis_handler as ta_handler
 
     signal = tmp_path / "signal-no-cache.png"
     chart = tmp_path / "chart-no-cache.png"
@@ -12033,7 +12011,7 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(bus
 
 def test_web_open_chat_uses_plain_model_without_agent_bridge(business_env, monkeypatch):
     from bridge.reply import Reply, ReplyType
-    from business.config_service import save_config
+    from business.config.config_service import save_config
     from bridge.context import Context, ContextType
     from channel.chat_channel import ChatChannel
     from channel.web.web_channel import WebChannel, WebMessage
@@ -12067,9 +12045,9 @@ def test_web_open_chat_uses_plain_model_without_agent_bridge(business_env, monke
 def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business_env, tmp_path, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.constants import ServiceType
-    from business.daily_content import create_content_draft, set_content_effective
-    from business.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.accounts.user_service import create_user
     import channel.wechatmp.wechatmp_channel as wechatmp_channel
 
     instances = wechatmp_channel.WechatMPChannel.__closure__[1].cell_contents

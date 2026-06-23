@@ -1,6 +1,9 @@
 # encoding:utf-8
+from importlib import import_module
+
 from business.schema.tables import *  # noqa: F401,F403
-from business.schema import tables as _tables
+
+_tables = import_module("business.schema.tables")
 
 
 def __getattr__(name):

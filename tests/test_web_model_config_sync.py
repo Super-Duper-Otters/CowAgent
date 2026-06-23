@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 
 def _investment_config_keys():
-    from business import db
-    from business.schema import investment_configs
+    from business.schema import db as db
+    from business.schema.tables import investment_configs
 
     with db.connect() as conn:
         rows = conn.execute(select(investment_configs.c.config_key)).fetchall()
@@ -29,8 +29,7 @@ def test_business_config_save_rejects_global_model_keys_and_does_not_touch_proje
     cfg_path.write_text(json.dumps(original, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setenv("COWAGENT_CONFIG_PATH", str(cfg_path))
 
-    from business import config_service
-
+    from business.config import config_service as config_service
     runtime_cfg = dict(original)
     monkeypatch.setattr(config_service, "conf", lambda: runtime_cfg)
 

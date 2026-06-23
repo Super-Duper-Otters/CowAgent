@@ -80,7 +80,7 @@ def _check_auth():
 
 def _investment_admin_login_enabled():
     try:
-        from business.auth_service import count_admin_users
+        from business.accounts.auth_service import count_admin_users
 
         return count_admin_users() > 0
     except Exception:
@@ -138,7 +138,7 @@ def _investment_session_token():
 
 
 def _current_investment_admin():
-    from business.auth_service import AdminUser, count_admin_users, get_admin_session
+    from business.accounts.auth_service import AdminUser, count_admin_users, get_admin_session
 
     if count_admin_users() == 0:
         _require_auth()
@@ -147,7 +147,7 @@ def _current_investment_admin():
 
 
 def _investment_permission_error(permission: str):
-    from business.permission_service import verify_admin_permission
+    from business.accounts.permission_service import verify_admin_permission
 
     result = verify_admin_permission(_current_investment_admin(), permission)
     if result.allowed:
@@ -156,7 +156,7 @@ def _investment_permission_error(permission: str):
 
 
 def _require_investment_permission(permission: str):
-    from business.permission_service import verify_admin_permission
+    from business.accounts.permission_service import verify_admin_permission
 
     admin = _current_investment_admin()
     result = verify_admin_permission(admin, permission)
@@ -173,7 +173,7 @@ def _require_investment_permission(permission: str):
 def _investment_admin_payload(admin):
     if admin is None:
         return None
-    from business.auth_service import permissions_for_role
+    from business.accounts.auth_service import permissions_for_role
 
     permissions = sorted(permissions_for_role(admin.role))
     return {
@@ -215,7 +215,7 @@ def _record_investment_operation(
     after_state=None,
 ):
     try:
-        from business.audit_service import actor_from_admin, record_operation_audit
+        from business.audit.audit_service import actor_from_admin, record_operation_audit
 
         operator = getattr(admin, "username", "") if admin is not None else ""
         env = getattr(web.ctx, "env", {}) or {}
@@ -361,7 +361,7 @@ class WebMessage(ChatMessage):
 
 
 def _is_investment_web_command(prompt: str) -> bool:
-    from business.router import parse_route
+    from business.routing.router import parse_route
 
     return parse_route(prompt).matched
 
@@ -372,7 +372,7 @@ def _format_investment_web_reply(reply: Reply) -> str:
     links = []
     content = reply.content if isinstance(reply.content, list) else [reply.content]
     for path in [item for item in content if item]:
-        from business.business_records import get_file_record_by_path
+        from business.records.business_records import get_file_record_by_path
 
         file_record = get_file_record_by_path(path)
         file_name = os.path.basename(path) or "investment-output.png"
@@ -382,13 +382,13 @@ def _format_investment_web_reply(reply: Reply) -> str:
 
 
 def _build_investment_web_reply(session_id: str, prompt: str):
-    from business.router import parse_route
+    from business.routing.router import parse_route
 
     route = parse_route(prompt)
     if route.matched:
         from bridge.context import Context, ContextType
-        from business.business_router import build_business_reply
-        from business.constants import ActorType, EntryType
+        from business.routing.business_router import build_business_reply
+        from business.config.constants import ActorType, EntryType
 
         context = Context(ContextType.TEXT, prompt)
         context["session_id"] = session_id
@@ -411,8 +411,8 @@ def _build_investment_web_reply(session_id: str, prompt: str):
             return None
         return Reply(ReplyType.TEXT, _format_investment_web_reply(reply))
 
-    from business.config_service import get_config
-    from business.router import DEFAULT_UNMATCHED_PROMPT
+    from business.config.config_service import get_config
+    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
 
     if get_config("router.enable_web_open_chat", False):
         return None
@@ -456,7 +456,7 @@ class WebChannel(ChatChannel):
                     return investment_reply
             except Exception as exc:
                 logger.exception(f"[WebChannel] investment router failed: {exc}")
-                from business.constants import ErrorCode, user_message
+                from business.config.constants import ErrorCode, user_message
 
                 return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
         from bridge.bridge import Bridge
@@ -1098,7 +1098,7 @@ class AuthLoginHandler:
         username = str(data.get("username", "") or "").strip()
         password = data.get("password", "")
         try:
-            from business.auth_service import authenticate_admin, count_admin_users, create_admin_session
+            from business.accounts.auth_service import authenticate_admin, count_admin_users, create_admin_session
 
             if count_admin_users() > 0:
                 admin = authenticate_admin(username, password)
@@ -1179,11 +1179,11 @@ def _is_path_under(path: str, root: str) -> bool:
 def _allowed_file_roots():
     roots = [_get_upload_dir()]
     try:
-        from business.storage import get_storage_dirs
+        from business.schema.storage import get_storage_dirs
 
         roots.append(str(get_storage_dirs()["root"]))
         try:
-            from business.config_service import get_config
+            from business.config.config_service import get_config
 
             files_dir = str(get_config("storage.files_dir") or "")
             if files_dir:
@@ -1206,7 +1206,7 @@ class FileServeHandler:
             params = web.input(path="", id="")
             file_id = str(getattr(params, "id", "") or "").strip()
             if file_id:
-                from business.business_records import get_file_record
+                from business.records.business_records import get_file_record
 
                 record = get_file_record(file_id)
                 if not record:
@@ -2749,7 +2749,7 @@ def _investment_quarter_bounds(year: int, quarter: int) -> tuple[str, str]:
 
 
 def _investment_stock_stats():
-    from business.stock_resolver import stock_dictionary_stats_with_latest_source
+    from business.content.stock_resolver import stock_dictionary_stats_with_latest_source
 
     return stock_dictionary_stats_with_latest_source()
 
@@ -2779,7 +2779,7 @@ class InvestmentAdminUsersHandler:
     def GET(self):
         _require_investment_permission("admin_users.read")
         try:
-            from business.auth_service import count_admin_users, list_admin_users
+            from business.accounts.auth_service import count_admin_users, list_admin_users
 
             params = web.input(keyword='', page='1', page_size='20')
             page, page_size = _investment_safe_pagination(params, 20)
@@ -2801,7 +2801,7 @@ class InvestmentAdminUsersHandler:
     def POST(self):
         admin = _require_investment_permission("admin_users.write")
         try:
-            from business.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
+            from business.accounts.auth_service import create_admin_user, get_admin_user, reset_admin_password, update_admin_user
 
             body = _investment_json_body()
             username = str(body.get("username", "")).strip()
@@ -2846,7 +2846,7 @@ class InvestmentAdminUserStatusHandler:
     def POST(self, username, action):
         admin = _require_investment_permission("admin_users.write")
         try:
-            from business.auth_service import update_admin_user
+            from business.accounts.auth_service import update_admin_user
 
             update_admin_user(username, enabled=(action == "enable"))
             _record_investment_operation(
@@ -2866,7 +2866,7 @@ class InvestmentAdminUserPasswordHandler:
     def POST(self, username):
         admin = _require_investment_permission("admin_users.reset_password")
         try:
-            from business.auth_service import reset_admin_password
+            from business.accounts.auth_service import reset_admin_password
 
             body = _investment_json_body()
             password = str(body.get("password", "") or "")
@@ -2884,7 +2884,7 @@ class InvestmentRequestRecordsExportHandler:
     def GET(self):
         admin = _require_investment_permission("records.export")
         try:
-            from business.export_service import export_request_records_xlsx
+            from business.records.export_service import export_request_records_xlsx
 
             params = web.input(
                 start_date='',
@@ -2937,7 +2937,7 @@ class InvestmentUsersExportHandler:
     def GET(self):
         admin = _require_investment_permission("customers.export")
         try:
-            from business.export_service import export_users_xlsx
+            from business.records.export_service import export_users_xlsx
 
             params = web.input(enabled='')
             enabled = None
@@ -2954,7 +2954,7 @@ class InvestmentUsersHandler:
     def GET(self):
         _require_investment_permission("customers.read")
         try:
-            from business.user_service import count_users, list_users
+            from business.accounts.user_service import count_users, list_users
 
             params = web.input(openid='', enabled='', keyword='', keyword_field='all', page='1', page_size='20')
             page, page_size = _investment_safe_pagination(params, 20)
@@ -3000,7 +3000,7 @@ class InvestmentUsersHandler:
     def POST(self):
         admin = _require_investment_permission("customers.write")
         try:
-            from business.user_service import create_user, update_user, get_user_by_openid
+            from business.accounts.user_service import create_user, update_user, get_user_by_openid
 
             body = _investment_json_body()
             openid = body.get("openid", "").strip()
@@ -3050,7 +3050,7 @@ class InvestmentUserStatusHandler:
     def POST(self, openid, action):
         admin = _require_investment_permission("customers.enable")
         try:
-            from business.user_service import disable_user, enable_user, get_user_by_openid
+            from business.accounts.user_service import disable_user, enable_user, get_user_by_openid
 
             before_user = get_user_by_openid(openid)
             if before_user is None:
@@ -3084,7 +3084,7 @@ class InvestmentUsersImportHandler:
     def POST(self):
         admin = _require_investment_permission("customers.import")
         try:
-            from business.user_service import get_user_by_openid, import_users, parse_users_excel
+            from business.accounts.user_service import get_user_by_openid, import_users, parse_users_excel
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3121,7 +3121,7 @@ class InvestmentUsersImportTemplateHandler:
     def GET(self):
         _require_investment_permission("customers.import")
         try:
-            from business.export_service import export_users_import_template_xlsx
+            from business.records.export_service import export_users_import_template_xlsx
 
             return _investment_xlsx_response(export_users_import_template_xlsx(), "investment-users-import-template.xlsx")
         except Exception as e:
@@ -3151,7 +3151,7 @@ def _investment_content_definition_for_service(service_type):
     if not service_type:
         return None
     try:
-        from business.business_registry import list_business_definitions
+        from business.components.registry import list_business_definitions
 
         for definition in list_business_definitions():
             if definition.service_type == service_type and (
@@ -3165,8 +3165,8 @@ def _investment_content_definition_for_service(service_type):
 
 
 def _investment_resolve_content_module(module_key="", service_value=""):
-    from business.business_registry import get_business_definition
-    from business.constants import ServiceType, normalize_service
+    from business.components.registry import get_business_definition
+    from business.config.constants import ServiceType, normalize_service
 
     module_key = str(module_key or "").strip()
     if module_key:
@@ -3198,7 +3198,7 @@ def _business_module_label(module_key: str) -> str:
     if not module_key:
         return ""
     try:
-        from business.business_registry import get_business_definition
+        from business.components.registry import get_business_definition
 
         return str(get_business_definition(module_key).label or "")
     except Exception:
@@ -3210,8 +3210,8 @@ def _business_module_key_for_request_record(record) -> str:
     if module_key:
         return module_key
     try:
-        from business.constants import ServiceType
-        from business.router import parse_route
+        from business.config.constants import ServiceType
+        from business.routing.router import parse_route
 
         if getattr(record, "service_type", None) == ServiceType.UNMATCHED:
             route = parse_route(str(getattr(record, "raw_input", "") or ""))
@@ -3223,7 +3223,7 @@ def _business_module_key_for_request_record(record) -> str:
 
 
 def _investment_resolve_request_record_filter(service_value: str):
-    from business.constants import ServiceType, normalize_service
+    from business.config.constants import ServiceType, normalize_service
 
     value = str(service_value or "").strip()
     if not value:
@@ -3231,7 +3231,7 @@ def _investment_resolve_request_record_filter(service_value: str):
     service_type = normalize_service(value)
     if service_type == ServiceType.UNMATCHED and value not in {"unmatched", str(ServiceType.UNMATCHED)}:
         try:
-            from business.business_registry import get_business_definition
+            from business.components.registry import get_business_definition
 
             return None, get_business_definition(value).business_key
         except Exception:
@@ -3243,10 +3243,10 @@ class InvestmentDailyContentHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.business_records import list_content_records, list_output_files
-            from business.constants import ServiceType
-            from business.daily_content import get_latest_effective_content
-            from business.business_records import get_content_record
+            from business.records.business_records import list_content_records, list_output_files
+            from business.config.constants import ServiceType
+            from business.content.daily_content import get_latest_effective_content
+            from business.records.business_records import get_content_record
 
             params = web.input(limit='50', service_type='', module_key='', effective_date='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3292,7 +3292,7 @@ class InvestmentDailyContentHandler:
     def POST(self):
         admin = _require_investment_permission("content.upload")
         try:
-            from business.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
+            from business.content.daily_content import create_content_draft, save_source_file, update_content_source, update_generation_success
 
             source_files = []
             file_items = []
@@ -3338,7 +3338,7 @@ class InvestmentDailyContentHandler:
                 module_key=module_key,
             )
             if file_items:
-                from business.business_records import record_output_file
+                from business.records.business_records import record_output_file
 
                 source_files = []
                 for file_obj in file_items:
@@ -3373,7 +3373,7 @@ class InvestmentDailyContentGenerateHandler:
     def POST(self, content_id):
         admin = _require_investment_permission("content.generate")
         try:
-            from business.daily_content import generate_content, mark_generation_started, update_generation_failure
+            from business.content.daily_content import generate_content, mark_generation_started, update_generation_failure
 
             result = mark_generation_started(content_id, actor=admin)
             if result.success:
@@ -3413,7 +3413,7 @@ class InvestmentDailyContentEffectiveHandler:
     def POST(self, content_id):
         admin = _require_investment_permission("content.publish")
         try:
-            from business.daily_content import set_content_effective
+            from business.content.daily_content import set_content_effective
 
             body = _investment_json_body()
             set_content_effective(
@@ -3434,7 +3434,7 @@ class InvestmentDailyContentInvalidateHandler:
     def POST(self, content_id):
         admin = _require_investment_permission("content.publish")
         try:
-            from business.daily_content import invalidate_content
+            from business.content.daily_content import invalidate_content
 
             invalidated = invalidate_content(content_id, operator=admin.username, actor=admin)
             return _investment_json_response({"status": "success", "invalidated": invalidated})
@@ -3447,7 +3447,7 @@ class InvestmentDailyContentExpiryHandler:
     def PATCH(self, content_id):
         admin = _require_investment_permission("content.publish")
         try:
-            from business.daily_content import update_content_expires_at
+            from business.content.daily_content import update_content_expires_at
 
             body = _investment_json_body()
             expires_at = update_content_expires_at(
@@ -3466,7 +3466,7 @@ class InvestmentOperationAuditsHandler:
     def GET(self):
         _require_investment_permission("audits.read")
         try:
-            from business.audit_service import list_operation_audits_page
+            from business.audit.audit_service import list_operation_audits_page
 
             params = web.input(
                 limit='50',
@@ -3506,8 +3506,8 @@ class InvestmentRequestRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.business_records import list_output_files, list_request_records_page
-            from business.event_service import list_request_events
+            from business.records.business_records import list_output_files, list_request_records_page
+            from business.audit.event_service import list_request_events
 
             params = web.input(
                 limit='50',
@@ -3574,8 +3574,8 @@ class InvestmentContentRecordsHandler:
     def GET(self):
         _require_investment_permission("records.read")
         try:
-            from business.constants import ServiceType, normalize_service
-            from business.business_records import list_content_records_page, list_output_files
+            from business.config.constants import ServiceType, normalize_service
+            from business.records.business_records import list_content_records_page, list_output_files
 
             params = web.input(
                 limit='50',
@@ -3636,8 +3636,8 @@ class InvestmentArtifactPackagesHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.business_records import build_artifact_package_tree, list_artifact_packages_page
-            from business.constants import ServiceType, normalize_service
+            from business.records.business_records import build_artifact_package_tree, list_artifact_packages_page
+            from business.config.constants import ServiceType, normalize_service
 
             params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='', package_id='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3675,8 +3675,8 @@ class InvestmentArtifactFoldersHandler:
     def GET(self):
         _require_investment_permission("content.read")
         try:
-            from business.business_records import list_artifact_folder_nodes
-            from business.constants import ServiceType, normalize_service
+            from business.records.business_records import list_artifact_folder_nodes
+            from business.config.constants import ServiceType, normalize_service
 
             params = web.input(
                 page='1',
@@ -3726,8 +3726,8 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.cache_service import list_generated_history_market_dates, list_generated_history_page
-            from business.constants import ServiceType, normalize_service
+            from business.cache.cache_service import list_generated_history_market_dates, list_generated_history_page
+            from business.config.constants import ServiceType, normalize_service
 
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3752,7 +3752,7 @@ class InvestmentCacheHandler:
                 keyword=getattr(params, "keyword", "") or "",
                 include_invalidated=include_invalidated,
             )
-            from business.business_records import list_output_files
+            from business.records.business_records import list_output_files
 
             for entry in entries:
                 owner_id = entry.get("content_id") if entry.get("source_type") == "content" else entry.get("artifact_owner_id")
@@ -3775,7 +3775,7 @@ class InvestmentCacheEntryInvalidateHandler:
     def POST(self, cache_key):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.cache_service import invalidate_business_cache
+            from business.cache.cache_service import invalidate_business_cache
 
             invalidated = invalidate_business_cache(cache_key)
             queued_removed = 0
@@ -3803,8 +3803,8 @@ class InvestmentCacheClearHandler:
     def POST(self):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.cache_service import clear_business_cache
-            from business.constants import ServiceType, normalize_service
+            from business.cache.cache_service import clear_business_cache
+            from business.config.constants import ServiceType, normalize_service
 
             body = _investment_json_body()
             service_type = normalize_service(body.get("service_type", "")) if body.get("service_type") else None
@@ -3828,8 +3828,8 @@ class InvestmentConfigHandler:
     def GET(self):
         _require_investment_permission("config.read")
         try:
-            from business.config_service import CONFIG_FALLBACK_KEYS, get_configs
-            from business.reply_config import reply_text_config_metadata
+            from business.config.config_service import CONFIG_FALLBACK_KEYS, get_configs
+            from business.config.reply_config import reply_text_config_metadata
 
             return _investment_json_response({
                 "status": "success",
@@ -3843,7 +3843,7 @@ class InvestmentConfigHandler:
     def POST(self):
         admin = _require_investment_permission("config.write")
         try:
-            from business.config_service import get_configs, save_configs
+            from business.config.config_service import get_configs, save_configs
 
             body = _investment_json_body()
             configs = body.get("configs", {}) or {}
@@ -3874,7 +3874,7 @@ class InvestmentSkillVersionsHandler:
     def GET(self):
         _require_investment_permission("skills.read")
         try:
-            from business.skill_versions import list_all_skills
+            from business.components.skill_versions import list_all_skills
 
             return _investment_json_response({
                 "status": "success",
@@ -3889,7 +3889,7 @@ class InvestmentComponentsHandler:
     def GET(self):
         _require_investment_permission("skills.read")
         try:
-            from business.component_service import list_components
+            from business.components.service import list_components
 
             return _investment_json_response({
                 "status": "success",
@@ -3904,7 +3904,7 @@ class InvestmentPromptComponentHandler:
     def POST(self):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.component_service import create_prompt_component, list_components
+            from business.components.service import create_prompt_component, list_components
 
             body = _investment_json_body()
             component = create_prompt_component(
@@ -3934,7 +3934,7 @@ class InvestmentComponentImportPreviewHandler:
     def POST(self):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.component_import_service import preview_skill_zip
+            from business.components.import_service import preview_skill_zip
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3963,8 +3963,8 @@ class InvestmentComponentImportCreateHandler:
     def POST(self, import_id):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.component_import_service import create_component_from_import
-            from business.component_service import list_components
+            from business.components.import_service import create_component_from_import
+            from business.components.service import list_components
 
             body = _investment_json_body()
             created = create_component_from_import(import_id, body, operator=admin.username)
@@ -3989,9 +3989,9 @@ class InvestmentComponentSettingsHandler:
     def POST(self, component_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.config_service import get_configs
-            from business.business_registry import get_business_definition
-            from business.component_service import list_components, save_component_settings
+            from business.config.config_service import get_configs
+            from business.components.registry import get_business_definition
+            from business.components.service import list_components, save_component_settings
 
             definition = get_business_definition(component_key)
             body = _investment_json_body()
@@ -4036,7 +4036,7 @@ class InvestmentComponentDeleteHandler:
     def POST(self, component_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.component_service import delete_runtime_component, list_components
+            from business.components.service import delete_runtime_component, list_components
 
             deleted = delete_runtime_component(
                 component_key,
@@ -4065,9 +4065,9 @@ class InvestmentSkillSettingsHandler:
     def POST(self, skill_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.config_service import get_configs, save_config
-            from business.skill_registry import get_skill_definition
-            from business.skill_versions import list_all_skills
+            from business.config.config_service import get_configs, save_config
+            from business.components.skill_registry import get_skill_definition
+            from business.components.skill_versions import list_all_skills
 
             definition = get_skill_definition(skill_key)
             body = _investment_json_body()
@@ -4122,7 +4122,7 @@ class InvestmentSkillPackageUploadHandler:
     def POST(self):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.skill_versions import list_all_skills, save_package_upload
+            from business.components.skill_versions import list_all_skills, save_package_upload
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -4149,7 +4149,7 @@ class InvestmentSkillUploadHandler:
     def POST(self, skill_key):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.skill_versions import list_all_skills, save_upload
+            from business.components.skill_versions import list_all_skills, save_upload
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -4177,7 +4177,7 @@ class InvestmentSkillActivateHandler:
     def POST(self, skill_key, version_id):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.skill_versions import activate_version, list_all_skills
+            from business.components.skill_versions import activate_version, list_all_skills
 
             version = activate_version(skill_key, version_id, operator=admin.username)
             _record_investment_operation("skill.activate", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
@@ -4195,7 +4195,7 @@ class InvestmentSkillDeleteHandler:
     def POST(self, skill_key, version_id):
         admin = _require_investment_permission("skills.write")
         try:
-            from business.skill_versions import delete_version, list_all_skills
+            from business.components.skill_versions import delete_version, list_all_skills
 
             deleted = delete_version(skill_key, version_id, operator=admin.username)
             _record_investment_operation("skill.delete", "investment_skill", skill_key, admin=admin, detail={"version_id": version_id})
@@ -4213,7 +4213,7 @@ class InvestmentStocksHandler:
     def GET(self):
         _require_investment_permission("stocks.read")
         try:
-            from business.stock_resolver import list_stock_symbols
+            from business.content.stock_resolver import list_stock_symbols
 
             params = web.input(name='', limit='20')
             stocks = list_stock_symbols(params.name, limit=int(params.limit or 20))
@@ -4231,8 +4231,7 @@ class InvestmentStocksRefreshHandler:
     def POST(self):
         admin = _require_investment_permission("stocks.write")
         try:
-            from business import stock_resolver
-
+            from business.content import stock_resolver as stock_resolver
             body = _investment_json_body()
             source = str(body.get("source") or "all").strip().lower()
             if source == "all":
@@ -4276,7 +4275,7 @@ class InvestmentHealthHandler:
 
     def _run(self, run_smoke: bool):
         try:
-            from business.health import run_health_checks
+            from business.health.health import run_health_checks
 
             checks = run_health_checks(run_smoke=run_smoke)
             level = "error" if any(item.level == "error" for item in checks) else "warning" if any(item.level == "warning" for item in checks) else "ok"

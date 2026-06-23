@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import insert, select, update
 
-from business.config_service import sanitize_sensitive_text
-from business.constants import ActionType, ActorType, EntryType, ServiceType
-from business.db import connect, row_to_dict
-from business.schema import ai_generation_audits
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ActionType, ActorType, EntryType, ServiceType
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import ai_generation_audits
 
 
 @dataclass

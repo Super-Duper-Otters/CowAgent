@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import bindparam, insert, select, text, update
 
-from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
-from business.db import connect
-from business.records import (
+from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
+from business.schema.db import connect
+from business.records.records import (
     GENERATING_TIMEOUT_MINUTES,
     RequestRecord,
     _audit_values,
@@ -17,7 +17,7 @@ from business.records import (
     business_record_identity_values,
     external_request_identity_values,
 )
-from business.schema import investment_request_records
+from business.schema.tables import investment_request_records
 
 
 @dataclass

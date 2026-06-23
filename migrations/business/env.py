@@ -4,8 +4,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from business.db import get_database_url
-from business.schema import metadata
+from business.schema.db import get_database_url
+from business.schema.tables import metadata
 
 
 def _alembic_option_value(value: str) -> str:

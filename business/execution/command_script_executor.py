@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from business.constants import ErrorCode
-from business.storage import get_storage_dirs
+from business.config.constants import ErrorCode
+from business.schema.storage import get_storage_dirs
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ def _configured_entry(definition: Any) -> Path:
     config_key = str(getattr(definition, "config_key", "") or "")
     configured = ""
     if config_key:
-        from business.config_service import get_config
+        from business.config.config_service import get_config
 
         configured = str(get_config(config_key, "") or "")
     raw_entry = configured or str(getattr(definition, "default_script_path", "") or getattr(definition, "entry", "") or "")
@@ -132,7 +132,7 @@ def _run_postprocess(
     if not input_text and source.path:
         input_text = Path(source.path).read_text(encoding="utf-8", errors="replace")
 
-    from business.business_registry import get_business_definition
+    from business.components.registry import get_business_definition
 
     passive = get_business_definition(component_key)
     if getattr(passive, "routable", True):

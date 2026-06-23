@@ -11,9 +11,9 @@ from zipfile import ZipFile
 
 from sqlalchemy import func, or_, insert, select, update
 
-from business.constants import CUSTOMER_SERVICE_TYPES, ErrorCode, SERVICE_LABELS, ServiceType, normalize_service, user_message
-from business.db import connect, row_to_dict
-from business.schema import investment_users
+from business.config.constants import CUSTOMER_SERVICE_TYPES, ErrorCode, SERVICE_LABELS, ServiceType, normalize_service, user_message
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import investment_users
 
 
 @dataclass

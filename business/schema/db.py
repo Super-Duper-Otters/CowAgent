@@ -7,8 +7,7 @@ from typing import Iterator
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection, Engine
 
-from business import storage
-
+from business.schema import storage as storage
 DEFAULT_DATABASE_URL = "postgresql+psycopg://cowagent:cowagent@127.0.0.1:55400/cowagent_investment"
 _ENGINE: Engine | None = None
 _ENGINE_URL: str | None = None
@@ -93,7 +92,7 @@ def upsert_config(
     updated_by_username: str = "",
     updated_by_role: str = "",
 ) -> None:
-    from business.schema import investment_configs
+    from business.schema.tables import investment_configs
 
     table = investment_configs
     if conn.dialect.name == "postgresql":
@@ -125,7 +124,7 @@ def upsert_config(
 
 
 def upsert_stock_symbols(conn, rows: list[dict]) -> None:
-    from business.schema import investment_stock_symbols
+    from business.schema.tables import investment_stock_symbols
 
     if not rows:
         return

@@ -1,6 +1,9 @@
 # encoding:utf-8
+from importlib import import_module
+
 from business.records.records import *  # noqa: F401,F403
-from business.records import records as _records
+
+_records = import_module("business.records.records")
 
 
 def __getattr__(name):

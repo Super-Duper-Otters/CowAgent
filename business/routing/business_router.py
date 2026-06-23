@@ -5,9 +5,9 @@ from bridge.context import Context
 from bridge.reply import Reply, ReplyType
 from common.log import logger
 
-from business import router as business_route
-from business.constants import ErrorCode, user_message
-from business.constants import ActorType, EntryType
+from business.routing import router as business_route
+from business.config.constants import ErrorCode, user_message
+from business.config.constants import ActorType, EntryType
 
 
 def _openid_from_context(context: Context) -> str:

@@ -3,8 +3,8 @@ import re
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from business.config_service import get_config
-from business.market_date_resolver import MarketDateResolver
+from business.config.config_service import get_config
+from business.content.market_date_resolver import MarketDateResolver
 
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")

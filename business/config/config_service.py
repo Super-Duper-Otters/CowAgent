@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from config import conf
 
-from business.db import connect, row_to_dict, upsert_config
-from business.schema import investment_configs
+from business.schema.db import connect, row_to_dict, upsert_config
+from business.schema.tables import investment_configs
 
 
 SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")
@@ -34,7 +34,7 @@ CONFIG_FALLBACK_KEYS = {
 }
 
 try:
-    from business.reply_config import reply_config_fallback_keys
+    from business.config.reply_config import reply_config_fallback_keys
 
     CONFIG_FALLBACK_KEYS.update(reply_config_fallback_keys())
 except Exception:
@@ -134,7 +134,7 @@ def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
         value = conf().get(fallback_key, default)
         if value is None and key.startswith("reply."):
             try:
-                from business.reply_config import default_reply_text
+                from business.config.reply_config import default_reply_text
 
                 value = default_reply_text(key, default)
             except Exception:

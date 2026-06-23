@@ -7,8 +7,8 @@ from typing import Any
 
 from sqlalchemy import func, or_, insert, select
 
-from business.db import connect, row_to_dict
-from business.schema import investment_operation_audits
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import investment_operation_audits
 
 
 @dataclass

@@ -1,6 +1,9 @@
 # encoding:utf-8
+from importlib import import_module
+
 from business.health.health import *  # noqa: F401,F403
-from business.health import health as _health
+
+_health = import_module("business.health.health")
 
 _PATCHABLE_NAMES = (
     "_dependency_available",

@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from business.config_service import get_config, sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType, Status, user_message
-from business.storage import get_storage_dirs
+from business.config.config_service import get_config, sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType, Status, user_message
+from business.schema.storage import get_storage_dirs
 
 
 DEFAULT_RENDERER_PATH = "builtin/components/signal-card-renderer/scripts/render_card.py"

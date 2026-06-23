@@ -6,10 +6,10 @@ from pathlib import Path
 
 from sqlalchemy import insert, select, update
 
-from business.constants import ServiceType
-from business.db import connect, row_to_dict
-from business.schema import investment_daily_contents, investment_output_files, investment_request_records
-from business.storage import get_storage_dirs
+from business.config.constants import ServiceType
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import investment_daily_contents, investment_output_files, investment_request_records
+from business.schema.storage import get_storage_dirs
 from business.versioning import file_fingerprint
 
 
@@ -110,7 +110,7 @@ def archive_artifact_file(
     if not path.is_file():
         return file_path
 
-    from business.config_service import get_config
+    from business.config.config_service import get_config
 
     files_root = Path(str(get_config("storage.files_dir") or get_storage_dirs()["files"]))
     if not files_root.is_absolute():

@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from business.constants import ErrorCode, user_message
-from business.daily_content import get_latest_effective_content
-from business.technical_analysis import run_technical_analysis
+from business.config.constants import ErrorCode, user_message
+from business.content.daily_content import get_latest_effective_content
+from business.content.technical_analysis import run_technical_analysis
 
 
 @dataclass
@@ -47,7 +47,7 @@ def _run_script(
     script_path = ""
     config_key = str(getattr(definition, "config_key", "") or "")
     if config_key:
-        from business.config_service import get_config
+        from business.config.config_service import get_config
 
         script_path = str(get_config(config_key, "") or "")
     script = Path(script_path or definition.default_script_path or definition.entry)

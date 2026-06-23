@@ -1,8 +1,8 @@
 # encoding:utf-8
 """Generic investment module dispatch."""
 
-from business.config_service import sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType, user_message
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType, user_message
 
 
 def _with_module_key(reply, module_key: str):
@@ -33,7 +33,7 @@ def dispatch_module(
     module_key = str(getattr(definition, "business_key", "") or getattr(route, "module_key", "") or "")
 
     if handler_type == "daily_content":
-        from business.daily_content_handler import handle_daily_content
+        from business.content.daily_content_handler import handle_daily_content
 
         return _with_module_key(
             handle_daily_content(
@@ -49,7 +49,7 @@ def dispatch_module(
         )
 
     if handler_type in {"technical_analysis", "builtin_technical_analysis"}:
-        from business.technical_analysis_handler import handle_technical_analysis
+        from business.content.technical_analysis_handler import handle_technical_analysis
 
         return _with_module_key(
             handle_technical_analysis(
@@ -65,7 +65,7 @@ def dispatch_module(
         )
 
     if handler_type == "prompt_to_image":
-        from business.prompt_to_image_handler import handle_prompt_to_image
+        from business.content.prompt_to_image_handler import handle_prompt_to_image
 
         return handle_prompt_to_image(
             openid,
@@ -78,9 +78,9 @@ def dispatch_module(
         )
 
     if handler_type == "prompt_component":
-        from business.business_records import create_business_record, mark_business_failed, mark_business_success
-        from business.executors.prompt_component_executor import run_prompt_component
-        from business.router import BusinessReply
+        from business.records.business_records import create_business_record, mark_business_failed, mark_business_success
+        from business.execution.prompt_component_executor import run_prompt_component
+        from business.routing.router import BusinessReply
 
         customer_metadata = customer_metadata or {}
         request_id = create_business_record(
@@ -139,10 +139,10 @@ def dispatch_module(
             )
 
     if handler_type == "command_script" or getattr(definition, "execution", {}):
-        from business.business_records import create_business_record, mark_business_failed, mark_business_success
-        from business.constants import ErrorCode, user_message
-        from business.executors.command_script_executor import run_command_script_component
-        from business.router import BusinessReply
+        from business.records.business_records import create_business_record, mark_business_failed, mark_business_success
+        from business.config.constants import ErrorCode, user_message
+        from business.execution.command_script_executor import run_command_script_component
+        from business.routing.router import BusinessReply
 
         customer_metadata = customer_metadata or {}
         request_id = create_business_record(
@@ -209,9 +209,9 @@ def dispatch_module(
             )
 
     if handler_type == "script":
-        from business.business_records import create_business_record, mark_business_failed, mark_business_success
-        from business.router import BusinessReply
-        from business.skill_runner import run_investment_skill
+        from business.records.business_records import create_business_record, mark_business_failed, mark_business_success
+        from business.routing.router import BusinessReply
+        from business.components.skill_runner import run_investment_skill
 
         customer_metadata = customer_metadata or {}
         request_id = create_business_record(
@@ -268,7 +268,7 @@ def dispatch_module(
                 module_key=module_key,
             )
 
-    from business.router import BusinessReply
+    from business.routing.router import BusinessReply
 
     return BusinessReply(
         True,

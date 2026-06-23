@@ -25,7 +25,7 @@ def get_storage_dirs() -> dict[str, Path]:
 
 def get_connection():
     initialize_storage()
-    from business.db import get_engine
+    from business.schema.db import get_engine
 
     return get_engine().raw_connection()
 
@@ -35,13 +35,13 @@ def initialize_storage() -> None:
     dirs = get_storage_dirs()
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
-    from business import migrations
-    from business.db import get_database_url
+    from business.schema import migrations as migrations
+    from business.schema.db import get_database_url
 
     database_url = get_database_url()
     if _MIGRATED_DATABASE_URL != database_url:
         migrations.upgrade("head")
         _MIGRATED_DATABASE_URL = database_url
-        from business.file_migration import migrate_legacy_files_to_unified_storage
+        from business.schema.file_migration import migrate_legacy_files_to_unified_storage
 
         migrate_legacy_files_to_unified_storage()

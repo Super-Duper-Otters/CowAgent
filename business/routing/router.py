@@ -4,13 +4,13 @@
 import time
 from dataclasses import dataclass
 
-from business.business_records import (
+from business.records.business_records import (
     create_business_record as create_request_record,
     mark_business_failed as fail_request_record,
 )
-from business.config_service import get_config, sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType
-from business.permission_service import (
+from business.config.config_service import get_config, sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType
+from business.accounts.permission_service import (
     verify_customer_access as verify_user_access,
     verify_customer_business_access as verify_permission,
 )
@@ -51,7 +51,7 @@ class BusinessReply:
 
 
 def parse_route(raw_input: str) -> RouteResult:
-    from business.business_registry import match_business
+    from business.components.registry import match_business
 
     matched = match_business(raw_input)
     if matched is not None:
@@ -75,7 +75,7 @@ def _agent_fallback_enabled() -> bool:
 
 def _customer_metadata(openid: str) -> dict[str, str]:
     try:
-        from business.user_service import get_user_by_openid
+        from business.accounts.user_service import get_user_by_openid
 
         user = get_user_by_openid(openid)
     except Exception:
@@ -200,8 +200,8 @@ def handle_text_message(
                 request_id,
             )
 
-    from business.business_registry import get_business_definition
-    from business.module_dispatcher import dispatch_module
+    from business.components.registry import get_business_definition
+    from business.routing.module_dispatcher import dispatch_module
 
     definition = get_business_definition(route.module_key or route.skill_key)
     return dispatch_module(

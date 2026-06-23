@@ -123,7 +123,7 @@ def user_message(error_code: ErrorCode) -> str:
     default = USER_MESSAGES.get(error_code, USER_MESSAGES[ErrorCode.SYSTEM_ERROR])
     key = USER_MESSAGE_CONFIG_KEYS.get(error_code, USER_MESSAGE_CONFIG_KEYS[ErrorCode.SYSTEM_ERROR])
     try:
-        from business.reply_config import get_reply_text
+        from business.config.reply_config import get_reply_text
 
         return get_reply_text(key, default)
     except Exception:

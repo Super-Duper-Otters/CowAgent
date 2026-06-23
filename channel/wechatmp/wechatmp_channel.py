@@ -168,14 +168,13 @@ class WechatMPChannel(ChatChannel):
         if not request_id:
             return
         try:
-            from business.business_records import append_delivery_warning
+            from business.records.business_records import append_delivery_warning
 
             append_delivery_warning(request_id, detail)
         except Exception as exc:
             logger.warning("[wechatmp] record investment delivery warning failed: {}".format(exc))
         try:
-            from business import business_records
-
+            from business.records import business_records as business_records
             business_records.record_request_event(
                 request_id=request_id,
                 openid="",
@@ -497,7 +496,7 @@ class WechatMPChannel(ChatChannel):
                 self.running_started_at.pop(session_id, None)
                 self.technical_analysis_titles.pop(session_id, None)
         else:
-            from business.constants import ErrorCode, user_message
+            from business.config.constants import ErrorCode, user_message
 
             self.queue_active_fallback(session_id, "text", user_message(ErrorCode.SYSTEM_ERROR))
             self.mark_active_done(session_id)

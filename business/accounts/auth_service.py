@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, insert, select, update
 
-from business.db import connect, row_to_dict
-from business.schema import investment_admin_sessions, investment_admin_users
+from business.schema.db import connect, row_to_dict
+from business.schema.tables import investment_admin_sessions, investment_admin_users
 
 HASH_ALGORITHM = "pbkdf2_sha256"
 HASH_ITERATIONS = 260_000

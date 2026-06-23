@@ -36,7 +36,7 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 def _reply_text(key: str, default: str = "") -> str:
     try:
-        from business.reply_config import get_reply_text
+        from business.config.reply_config import get_reply_text
 
         return get_reply_text(key, default)
     except Exception:
@@ -45,7 +45,7 @@ def _reply_text(key: str, default: str = "") -> str:
 
 def _reply_format(key: str, *args, default: str = "") -> str:
     try:
-        from business.reply_config import format_reply_text
+        from business.config.reply_config import format_reply_text
 
         return format_reply_text(key, *args, default=default)
     except Exception:
@@ -230,7 +230,7 @@ def _immediate_ack_text(cache, receiver) -> str:
 
 def _parse_business_route(content):
     try:
-        from business.router import parse_route
+        from business.routing.router import parse_route
 
         return parse_route(content)
     except Exception as exc:
@@ -250,7 +250,7 @@ def _technical_analysis_precheck_error(route) -> str:
     if not _route_is_technical_analysis(route):
         return ""
     try:
-        from business.technical_analysis_handler import validate_technical_analysis_request
+        from business.content.technical_analysis_handler import validate_technical_analysis_request
 
         return validate_technical_analysis_request(getattr(route, "raw_input", ""), route)
     except Exception as exc:
@@ -262,8 +262,8 @@ def _queue_ready_technical_result(channel, wechatmp_msg, route) -> bool:
     if not _route_is_technical_analysis(route):
         return False
     try:
-        from business import router as business_route
-        from business.technical_analysis_handler import get_ready_technical_analysis_reply
+        from business.routing import router as business_route
+        from business.content.technical_analysis_handler import get_ready_technical_analysis_reply
 
         openid = str(getattr(wechatmp_msg, "from_user_id", "") or "")
         business_reply = get_ready_technical_analysis_reply(
@@ -311,7 +311,7 @@ def _pop_cached_reply_by_title(cache, receiver, title):
 
 def _is_technical_analysis_service_type(service_type) -> bool:
     try:
-        from business.constants import ServiceType, normalize_service
+        from business.config.constants import ServiceType, normalize_service
 
         return normalize_service(service_type) == ServiceType.TECHNICAL_ANALYSIS
     except Exception:
@@ -438,7 +438,7 @@ def _cached_result_source_is_valid(cached_result):
     if not source_type or not source_id:
         return True
     if source_type == "cache":
-        from business.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
+        from business.cache.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
 
         entry = find_cache_entry_by_key(source_id, require_files=True)
         if entry is None:
@@ -452,9 +452,9 @@ def _cached_result_source_is_valid(cached_result):
             return False
         return True
     if source_type == "content":
-        from business.constants import Status
-        from business.daily_content import mark_expired_daily_contents_invalidated
-        from business.business_records import get_content_record
+        from business.config.constants import Status
+        from business.content.daily_content import mark_expired_daily_contents_invalidated
+        from business.records.business_records import get_content_record
 
         mark_expired_daily_contents_invalidated()
         try:
@@ -472,8 +472,7 @@ def _mark_cached_result_delivered(cached_result, rendered_reply):
     if not request_id:
         return
     try:
-        from business import business_records
-
+        from business.records import business_records as business_records
         mark_request_delivered = getattr(business_records, "mark_request_delivered", None)
         if mark_request_delivered:
             mark_request_delivered(request_id)
@@ -495,8 +494,7 @@ def _record_request_event_safe(
     if not request_id or not event_type:
         return
     try:
-        from business import business_records
-
+        from business.records import business_records as business_records
         business_records.record_request_event(
             request_id=request_id,
             openid=openid,

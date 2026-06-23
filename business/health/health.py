@@ -7,19 +7,19 @@ from pathlib import Path
 
 from sqlalchemy import inspect, select
 
-from business import config_service
-from business.config_service import get_config
-from business.constants import SERVICE_LABELS, ServiceType
-from business.db import connect, get_engine, row_to_dict
-from business.render_service import (
+from business.config import config_service as config_service
+from business.config.config_service import get_config
+from business.config.constants import SERVICE_LABELS, ServiceType
+from business.schema.db import connect, get_engine, row_to_dict
+from business.content.render_service import (
     DEFAULT_RENDERER_PATH,
     DEFAULT_TEMPLATE_BOND_PATH,
     DEFAULT_TEMPLATE_CB_PATH,
     DEFAULT_TEMPLATE_TA_PATH,
 )
-from business.schema import stock_symbols
-from business.storage import get_storage_dirs
-from business.stock_resolver import get_tushare_token, stock_dictionary_stats
+from business.schema.tables import stock_symbols
+from business.schema.storage import get_storage_dirs
+from business.content.stock_resolver import get_tushare_token, stock_dictionary_stats
 
 
 @dataclass
@@ -61,7 +61,7 @@ def _check_file(name: str, value: str | None) -> HealthItem:
 
 
 def _check_model_config() -> HealthItem:
-    from business.ai_generation import _global_model_config
+    from business.audit.ai_generation import _global_model_config
 
     model_config = _global_model_config()
     missing = [
@@ -266,7 +266,7 @@ def _check_tushare_token() -> HealthItem:
 
 def _run_technical_analysis_smoke() -> HealthItem:
     try:
-        from business.technical_analysis import run_technical_analysis
+        from business.content.technical_analysis import run_technical_analysis
 
         result = run_technical_analysis("health-smoke", "300502.SZ 技术分析", "300502.SZ")
         if result.success:
@@ -278,7 +278,7 @@ def _run_technical_analysis_smoke() -> HealthItem:
 
 
 def _run_renderer_smoke_checks() -> list[HealthItem]:
-    from business.render_service import RenderRequest, render_card
+    from business.content.render_service import RenderRequest, render_card
 
     samples = (
         (ServiceType.TECHNICAL_ANALYSIS, "smoke_renderer_ta", "技术分析\n信号：中性\n风险：样例"),
@@ -313,7 +313,7 @@ def run_health_checks(run_smoke: bool = False) -> list[HealthItem]:
     dirs = get_storage_dirs()
     items.append(_check_writable_dir("files_dir", Path(str(get_config("storage.files_dir") or dirs["files"]))))
     items.append(_check_writable_dir("tmp_dir", Path(str(get_config("storage.tmp_dir") or dirs["tmp"]))))
-    from business.technical_analysis import DEFAULT_TECHNICAL_ANALYSIS_PATH
+    from business.content.technical_analysis import DEFAULT_TECHNICAL_ANALYSIS_PATH
 
     items.append(_check_file("technical_analysis_skill", get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     items.append(_check_file("signal_card_renderer", get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))

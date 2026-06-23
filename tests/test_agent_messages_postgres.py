@@ -12,8 +12,8 @@ def agent_messages_pg_env(tmp_path, monkeypatch):
     if not os.environ.get("COWAGENT_TEST_POSTGRES_URL"):
         pytest.skip("COWAGENT_TEST_POSTGRES_URL not configured")
 
-    from business import db
-    from business import storage
+    from business.schema import db as db
+    from business.schema import storage as storage
     import agent.memory.conversation_store as conversation_store
 
     base_url = os.environ["COWAGENT_TEST_POSTGRES_URL"]
@@ -49,7 +49,7 @@ def agent_messages_pg_env(tmp_path, monkeypatch):
 
 
 def test_agent_messages_schema_is_declared():
-    from business.schema import metadata
+    from business.schema.tables import metadata
 
     assert "agent_sessions" in metadata.tables
     assert "agent_messages" in metadata.tables
@@ -65,8 +65,8 @@ def test_agent_messages_schema_is_declared():
 
 def test_conversation_store_persists_agent_messages_to_postgres(agent_messages_pg_env):
     from agent.memory.conversation_store import get_conversation_store
-    from business.db import connect
-    from business.schema import agent_messages
+    from business.schema.db import connect
+    from business.schema.tables import agent_messages
 
     store = get_conversation_store()
     store.append_messages(
@@ -142,7 +142,7 @@ def test_conversation_store_context_and_history_methods_use_postgres(agent_messa
 
 def test_conversation_store_prunes_scheduled_and_old_sessions(agent_messages_pg_env):
     from agent.memory.conversation_store import get_conversation_store
-    from business.db import connect
+    from business.schema.db import connect
 
     store = get_conversation_store()
     for idx in range(3):

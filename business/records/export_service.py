@@ -6,11 +6,11 @@ from typing import Iterable
 from openpyxl import Workbook
 from sqlalchemy import select
 
-from business.constants import EntryType, ServiceType, Status
-from business.db import connect, row_to_dict
-from business.records import _visible_delivery_message, build_request_record_conditions
-from business.schema import investment_request_records, investment_users
-from business.user_service import _decode_services
+from business.config.constants import EntryType, ServiceType, Status
+from business.schema.db import connect, row_to_dict
+from business.records.records import _visible_delivery_message, build_request_record_conditions
+from business.schema.tables import investment_request_records, investment_users
+from business.accounts.user_service import _decode_services
 
 
 REQUEST_HEADERS = [

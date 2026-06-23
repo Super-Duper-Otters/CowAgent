@@ -9,9 +9,8 @@ from sqlalchemy.engine import make_url
 
 @pytest.fixture()
 def business_env(tmp_path, monkeypatch):
-    from business import db
-    from business import storage
-
+    from business.schema import db as db
+    from business.schema import storage as storage
     base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
     schema_name = f"cowagent_test_{uuid4().hex}"
     url = make_url(base_url)

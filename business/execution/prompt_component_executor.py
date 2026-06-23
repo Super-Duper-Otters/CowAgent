@@ -4,9 +4,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from business.ai_generation import AIGenerationRequest, ExistingModelAdapter, ModelAdapter, _global_model_config
-from business.config_service import sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType, user_message
+from business.audit.ai_generation import AIGenerationRequest, ExistingModelAdapter, ModelAdapter, _global_model_config
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType, user_message
 
 
 @dataclass

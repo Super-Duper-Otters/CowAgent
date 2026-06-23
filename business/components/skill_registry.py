@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.config_service import get_config
-from business.constants import ServiceType
-from business.render_service import DEFAULT_RENDERER_PATH
+from business.config.config_service import get_config
+from business.config.constants import ServiceType
+from business.content.render_service import DEFAULT_RENDERER_PATH
 
 
 SAFE_SKILL_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -179,13 +179,13 @@ def _normalize_triggers(value: Any) -> tuple[str, ...]:
 
 
 def validate_skill_key(skill_key: str) -> str:
-    from business.business_registry import validate_business_key
+    from business.components.registry import validate_business_key
 
     return validate_business_key(skill_key)
 
 
 def _read_uploaded_definition(skill_dir: Path) -> InvestmentSkillDefinition | None:
-    from business.business_registry import read_uploaded_business_definition
+    from business.components.registry import read_uploaded_business_definition
 
     definition = read_uploaded_business_definition(skill_dir)
     if definition is None:
@@ -219,7 +219,7 @@ def _from_business_definition(definition) -> InvestmentSkillDefinition:
 
 
 def list_definitions() -> list[InvestmentSkillDefinition]:
-    from business.business_registry import list_business_definitions
+    from business.components.registry import list_business_definitions
 
     return [_from_business_definition(definition) for definition in list_business_definitions()]
 
@@ -245,7 +245,7 @@ def resolve_triggers(definition: InvestmentSkillDefinition) -> tuple[str, ...]:
 
 
 def match_investment_skill(raw_input: str) -> InvestmentSkillMatch | None:
-    from business.business_registry import match_business
+    from business.components.registry import match_business
 
     matched = match_business(raw_input)
     if matched is None:

@@ -10,10 +10,10 @@ from zipfile import ZipFile
 
 from agent.skills.frontmatter import parse_frontmatter
 
-from business.component_paths import runtime_component_root, runtime_versions_root
-from business.config_service import save_config
-from business.business_registry import validate_business_key
-from business.storage import get_storage_dirs
+from business.components.paths import runtime_component_root, runtime_versions_root
+from business.config.config_service import save_config
+from business.components.registry import validate_business_key
+from business.schema.storage import get_storage_dirs
 
 
 MANIFEST_NAME = "manifest.json"
@@ -190,7 +190,7 @@ def _component_manifest(form: dict, preview: dict) -> dict:
 
 
 def _create_prompt_component_from_import(import_id: str, form: dict, preview: dict, *, operator: str) -> dict:
-    from business.component_service import create_prompt_component
+    from business.components.service import create_prompt_component
 
     component = create_prompt_component(
         {

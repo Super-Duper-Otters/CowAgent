@@ -8,14 +8,14 @@ from typing import Any, Callable
 
 from sqlalchemy import and_, insert, or_, select, update
 
-from business.audit_service import AdminActor, actor_from_admin, record_operation_audit
-from business.config_service import sanitize_sensitive_text
-from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
-from business.db import connect, row_to_dict
-from business.records import create_business_workflow_record, finish_business_workflow_record, record_output_file
-from business.render_service import DEFAULT_RENDERER_PATH, template_for_service
-from business.schema import investment_daily_contents
-from business.storage import get_storage_dirs
+from business.audit.audit_service import AdminActor, actor_from_admin, record_operation_audit
+from business.config.config_service import sanitize_sensitive_text
+from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, user_message
+from business.schema.db import connect, row_to_dict
+from business.records.records import create_business_workflow_record, finish_business_workflow_record, record_output_file
+from business.content.render_service import DEFAULT_RENDERER_PATH, template_for_service
+from business.schema.tables import investment_daily_contents
+from business.schema.storage import get_storage_dirs
 from business.versioning import file_fingerprint
 
 
@@ -114,7 +114,7 @@ def default_expires_at_for_effective_date(effective_date: str | None = None) -> 
 
 
 def _output_image_version(service_type: ServiceType) -> str:
-    from business.config_service import get_config
+    from business.config.config_service import get_config
 
     renderer_path = Path(str(get_config("render.renderer_path") or DEFAULT_RENDERER_PATH))
     if not renderer_path.is_absolute():
@@ -133,7 +133,7 @@ def _safe_output_segment(value: str, fallback: str = "item") -> str:
 
 
 def _daily_content_render_output_path(item: dict[str, Any], service_type: ServiceType) -> str:
-    from business.config_service import get_config
+    from business.config.config_service import get_config
 
     output_dir = Path(str(get_config("render.output_dir") or get_config("storage.tmp_dir") or (get_storage_dirs()["tmp"] / "render")))
     if not output_dir.is_absolute():
@@ -182,7 +182,7 @@ def save_source_file(
     effective_date: str | None = None,
     module_key: str = "",
 ) -> str:
-    from business.config_service import get_config
+    from business.config.config_service import get_config
 
     service_type = _ensure_content_service_type(service_type)
     safe_name = (filename or "").strip()
@@ -376,7 +376,7 @@ def update_generation_success(content_id: str, generated_text: str, output_image
         operator = item.get("operator") or ""
         audit_actor = _actor_from_content_item(item)
     if output_image and service_type is not None:
-        from business.artifact_service import archive_artifact_file
+        from business.artifacts.artifact_service import archive_artifact_file
 
         stored_output_image = archive_artifact_file(
             content_id,
@@ -463,7 +463,7 @@ def _module_definition(module_key: str):
     if not module_key:
         return None
     try:
-        from business.business_registry import get_business_definition
+        from business.components.registry import get_business_definition
 
         return get_business_definition(module_key)
     except Exception:
@@ -479,7 +479,7 @@ def _default_ai_generator(
     prompt_key: str = "",
 ):
     if module_key or prompt_key:
-        from business.prompt_to_image_handler import generate_standard_text_for_module
+        from business.content.prompt_to_image_handler import generate_standard_text_for_module
 
         return generate_standard_text_for_module(
             service_type,
@@ -488,7 +488,7 @@ def _default_ai_generator(
             prompt_key=prompt_key,
             module_key=module_key,
         )
-    from business.ai_generation import generate_standard_text
+    from business.audit.ai_generation import generate_standard_text
 
     return generate_standard_text(service_type, source_text, source_files=source_files)
 
@@ -500,7 +500,7 @@ def _default_renderer(
     *,
     template_key: str = "",
 ):
-    from business.render_service import RenderRequest, render_card
+    from business.content.render_service import RenderRequest, render_card
 
     return render_card(
         RenderRequest(
@@ -554,7 +554,7 @@ def generate_content(
         business_request_id = ""
     _mark_generation_started(content_id, actor=actor)
     try:
-        from business.ai_generation_audit import start_ai_generation_audit
+        from business.audit.ai_generation_audit import start_ai_generation_audit
 
         ai_audit_id = start_ai_generation_audit(
             entry_type=EntryType.INTERNAL_CALL,
@@ -599,7 +599,7 @@ def generate_content(
                 elapsed_ms=int((datetime.now(UTC) - started_at).total_seconds() * 1000),
             )
         if ai_audit_id:
-            from business.ai_generation_audit import finish_ai_generation_audit
+            from business.audit.ai_generation_audit import finish_ai_generation_audit
 
             finish_ai_generation_audit(
                 ai_audit_id,
@@ -613,7 +613,7 @@ def generate_content(
     generated_text = str(getattr(ai_result, "text", ""))
     input_prompt = str(getattr(ai_result, "prompt", "") or "")
     if ai_audit_id:
-        from business.ai_generation_audit import finish_ai_generation_audit
+        from business.audit.ai_generation_audit import finish_ai_generation_audit
 
         finish_ai_generation_audit(
             ai_audit_id,
@@ -711,7 +711,7 @@ def set_content_effective(
             normalized_expires_at = item.get("expires_at") or ""
         final_service_type = ServiceType(service_type)
         if final_image:
-            from business.artifact_service import archive_artifact_file
+            from business.artifacts.artifact_service import archive_artifact_file
 
             final_image = archive_artifact_file(
                 content_id,

@@ -3,10 +3,10 @@
 
 from typing import Any
 
-from business.business_records import create_business_record, mark_business_failed, mark_business_success
-from business.config_service import get_config, sanitize_sensitive_text
-from business.constants import ErrorCode, ServiceType, user_message
-from business.render_service import RenderRequest, render_card
+from business.records.business_records import create_business_record, mark_business_failed, mark_business_success
+from business.config.config_service import get_config, sanitize_sensitive_text
+from business.config.constants import ErrorCode, ServiceType, user_message
+from business.content.render_service import RenderRequest, render_card
 
 
 DEFAULT_PROMPT_TO_IMAGE_PROMPT = (
@@ -62,9 +62,9 @@ def _configured_prompt(prompt_key: str, *, template_key: str = "") -> str:
 
 
 def _module_generation_result(service_type: ServiceType, source_text: str, source_files: list[str], prompt_key: str, template_key: str = ""):
-    from business.ai_generation import AIGenerationRequest, ExistingModelAdapter, AIGenerationResult
-    from business.ai_generation import _global_model_config, normalize_generated_text
-    from business.constants import Status
+    from business.audit.ai_generation import AIGenerationRequest, ExistingModelAdapter, AIGenerationResult
+    from business.audit.ai_generation import _global_model_config, normalize_generated_text
+    from business.config.constants import Status
 
     model_config = _global_model_config()
     request = AIGenerationRequest(
@@ -114,7 +114,7 @@ def generate_standard_text_for_module(
     module_key: str = "",
     template_key: str = "",
 ):
-    from business.ai_generation import generate_standard_text
+    from business.audit.ai_generation import generate_standard_text
 
     try:
         return generate_standard_text(
@@ -153,7 +153,7 @@ def handle_prompt_to_image(
     record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
-    from business.router import BusinessReply
+    from business.routing.router import BusinessReply
 
     customer_metadata = customer_metadata or {}
     module_key = str(getattr(definition, "business_key", "") or getattr(route, "module_key", "") or "")

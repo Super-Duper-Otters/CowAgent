@@ -39,9 +39,8 @@ def business_postgres_env(tmp_path, monkeypatch):
     monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
     monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
 
-    from business import db
-    from business import storage
-
+    from business.schema import db as db
+    from business.schema import storage as storage
     db.reset_engine_for_tests()
     storage._MIGRATED_DATABASE_URL = None
     storage.initialize_storage()
@@ -58,20 +57,20 @@ def business_postgres_env(tmp_path, monkeypatch):
 def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
     from sqlalchemy import inspect
 
-    from business import storage
-    from business.config_service import get_config, save_config
-    from business.constants import ErrorCode, ServiceType, Status
-    from business.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
-    from business.db import get_engine
-    from business.records import (
+    from business.schema import storage as storage
+    from business.config.config_service import get_config, save_config
+    from business.config.constants import ErrorCode, ServiceType, Status
+    from business.content.daily_content import create_content_draft, get_latest_effective_content, set_content_effective
+    from business.schema.db import get_engine
+    from business.records.records import (
         create_request_record,
         fail_request_record,
         get_request_record,
         list_request_records,
         succeed_request_record,
     )
-    from business.stock_resolver import list_stock_symbols, refresh_stock_symbols, resolve_stock
-    from business.user_service import create_user, get_user_by_openid, verify_permission
+    from business.content.stock_resolver import list_stock_symbols, refresh_stock_symbols, resolve_stock
+    from business.accounts.user_service import create_user, get_user_by_openid, verify_permission
 
     suffix = uuid4().hex
 
