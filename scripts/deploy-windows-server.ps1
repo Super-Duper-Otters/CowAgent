@@ -8,8 +8,6 @@ param(
     [ValidateSet("None", "User", "Machine")]
     [string]$PersistEnvironmentScope = "User",
     [switch]$InstallOptional,
-    [switch]$MigrateSqlite,
-    [string]$SqlitePath = "",
     [switch]$SkipMigration,
     [switch]$SkipStart,
     [switch]$WriteDatabaseUrlToConfig,
@@ -185,19 +183,6 @@ if (-not $SkipMigration) {
     Write-Step "Running Alembic migration: migrations/business/alembic.ini upgrade head."
     & $venvPython -m alembic -c migrations/business/alembic.ini upgrade head
     if ($LASTEXITCODE -ne 0) { throw "Alembic migration failed." }
-}
-
-if ($MigrateSqlite) {
-    $sourceSqlite = $SqlitePath
-    if (-not $sourceSqlite) {
-        $sourceSqlite = Join-Path $script:ProjectRootResolved "business_storage\investment.db"
-    }
-    if (-not (Test-Path -LiteralPath $sourceSqlite)) {
-        throw "SQLite source database not found: $sourceSqlite"
-    }
-    Write-Step "Migrating investment SQLite data to PostgreSQL."
-    & $venvPython scripts/migrate_investment_sqlite_to_pg.py --sqlite $sourceSqlite --pg $resolvedDatabaseUrl
-    if ($LASTEXITCODE -ne 0) { throw "SQLite to PostgreSQL migration failed." }
 }
 
 if (-not $SkipStart) {

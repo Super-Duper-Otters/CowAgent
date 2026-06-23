@@ -95,10 +95,7 @@ def upsert_config(
     from business.schema.tables import investment_configs
 
     table = investment_configs
-    if conn.dialect.name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        from sqlalchemy.dialects.sqlite import insert
+    from sqlalchemy.dialects.postgresql import insert
 
     stmt = insert(table).values(
         config_key=key,
@@ -130,10 +127,7 @@ def upsert_stock_symbols(conn, rows: list[dict]) -> None:
         return
 
     table = investment_stock_symbols
-    if conn.dialect.name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        from sqlalchemy.dialects.sqlite import insert
+    from sqlalchemy.dialects.postgresql import insert
 
     for start in range(0, len(rows), _STOCK_SYMBOL_UPSERT_BATCH_SIZE):
         batch = rows[start : start + _STOCK_SYMBOL_UPSERT_BATCH_SIZE]

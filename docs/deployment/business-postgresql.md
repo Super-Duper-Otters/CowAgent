@@ -1,6 +1,6 @@
 # Business PostgreSQL Deployment Runbook
 
-This runbook covers deployment, migration, rollback, and Navicat connection notes for the shared PostgreSQL database used by business data and Agent conversation history.
+This runbook covers deployment, schema upgrades, rollback, and Navicat connection notes for the shared PostgreSQL database used by business data and Agent conversation history.
 
 ## Deployment Modes
 

@@ -438,10 +438,7 @@ def write_cache_entry(
     }
     with connect() as conn:
         table = investment_cache_entries
-        if conn.dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import insert
-        else:
-            from sqlalchemy.dialects.sqlite import insert
+        from sqlalchemy.dialects.postgresql import insert
 
         stmt = insert(table).values(**values, created_at=now, hit_count=0)
         stmt = stmt.on_conflict_do_update(
