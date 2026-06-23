@@ -2112,10 +2112,11 @@ def test_command_script_component_executes_from_business_route(business_env, tmp
 
 
 def test_command_script_component_can_postprocess_default_output_once(business_env, tmp_path):
-    from business.business_records import get_request_record
+    from business.business_records import get_request_record, list_artifact_folder_nodes, list_artifact_packages_page
     from business.component_import_service import create_component_from_import, preview_skill_zip
-    from business.constants import ServiceType
+    from business.constants import ActorType, EntryType, ServiceType
     from business.router import handle_text_message
+    from business.storage import get_storage_dirs
     from business.user_service import create_user
 
     create_user("customer-openid", enabled=True, allowed_services=[ServiceType.ALL])
@@ -2197,7 +2198,18 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
         operator="pytest",
     )
 
-    reply = handle_text_message("customer-openid", "300502.SZ 技术分析")
+    reply = handle_text_message(
+        "web-session",
+        "300502.SZ 技术分析",
+        skip_permission=True,
+        record_context={
+            "entry_type": EntryType.INTERNAL_CALL,
+            "actor_type": ActorType.ADMIN,
+            "actor_id": "admin",
+            "actor_name": "admin",
+            "actor_role": "admin",
+        },
+    )
 
     assert reply.success is True
     assert reply.reply_text == ""
@@ -2208,6 +2220,25 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     record = get_request_record(reply.request_id)
     assert len(record.output_files) == 3
     assert set(reply.output_files).issubset(set(record.output_files))
+    component_root = get_storage_dirs()["files"] / "components" / "technical-analysis"
+    assert all(Path(path).resolve().is_relative_to(component_root.resolve()) for path in record.output_files)
+
+    service_nodes, _total = list_artifact_folder_nodes(level="service")
+    component_node = next(node for node in service_nodes if node["key"] == "component:technical-analysis")
+    assert component_node["label"] == "技术分析路由组件"
+
+    packages, total = list_artifact_packages_page(service_type="component:technical-analysis")
+    assert total == 1
+    assert packages[0]["service_type"] == "component:technical-analysis"
+    assert packages[0]["service_label"] == "技术分析路由组件"
+    assert packages[0]["module_key"] == "technical-analysis"
+    assert packages[0]["package_id"] == reply.request_id
+    assert packages[0]["files"]
+
+    package_detail, detail_total = list_artifact_packages_page(package_id=reply.request_id)
+    assert detail_total == 1
+    assert package_detail[0]["package_id"] == reply.request_id
+    assert len(package_detail[0]["files"]) >= 2
 
 
 def test_uploaded_business_skill_package_rejects_unsafe_skill_key(business_env, tmp_path):

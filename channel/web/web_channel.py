@@ -3641,7 +3641,7 @@ class InvestmentArtifactPackagesHandler:
 
             params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='', package_id='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
+            service_type = service_value if service_value.startswith("component:") else (normalize_service(service_value) if service_value else None)
             if service_type == ServiceType.UNMATCHED:
                 page, page_size = _investment_safe_pagination(params, 120)
                 return _investment_json_response({
@@ -3691,7 +3691,7 @@ class InvestmentArtifactFoldersHandler:
                 keyword='',
             )
             service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
+            service_type = service_value if service_value.startswith("component:") else (normalize_service(service_value) if service_value else None)
             if service_type == ServiceType.UNMATCHED:
                 page, page_size = _investment_safe_pagination(params, 100)
                 return _investment_json_response({

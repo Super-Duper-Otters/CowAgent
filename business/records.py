@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, exists, func, insert, or_, select, update
+from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
 
 from business.config_service import sanitize_sensitive_text
 from business.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
@@ -184,6 +184,41 @@ def _service_condition(table, service_type: ServiceType | str | None):
     if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
         return None, True
     return table.c.service_type == str(normalized_service), False
+
+
+def _component_filter_key(service_type: ServiceType | str | None) -> str:
+    value = str(service_type or "").strip()
+    prefix = "component:"
+    if not value.startswith(prefix):
+        return ""
+    return value[len(prefix):].strip()
+
+
+def _component_service_key(module_key: str) -> str:
+    key = str(module_key or "").strip()
+    return f"component:{key}" if key else str(ServiceType.UNMATCHED)
+
+
+def _component_label(module_key: str) -> str:
+    key = str(module_key or "").strip()
+    if not key:
+        return str(ServiceType.UNMATCHED)
+    try:
+        from business.component_service import list_components
+
+        for component in list_components():
+            if str(component.get("component_key") or component.get("skill_key") or "") == key:
+                return str(component.get("label") or key)
+    except Exception:
+        pass
+    return key
+
+
+def _service_or_component_label(value: str) -> str:
+    component_key = _component_filter_key(value)
+    if component_key:
+        return _component_label(component_key)
+    return _artifact_service_label(value)
 
 
 def _audit_values(**metadata) -> dict[str, object]:
@@ -510,6 +545,7 @@ def succeed_request_record(
     renderer_version: str = "",
     template_version: str = "",
     warning: str = "",
+    storage_namespace: str = "",
 ) -> dict[str, str]:
     service_type: ServiceType | None = None
     path_map: dict[str, str] = {}
@@ -564,6 +600,7 @@ def succeed_request_record(
             artifact_versions=stored_artifact_versions,
             owner_type="request",
             storage_date=market_date,
+            storage_namespace=storage_namespace,
         )
         with connect() as conn:
             conn.execute(
@@ -1174,13 +1211,16 @@ def _row_to_content_artifact_package(content_item: dict) -> dict:
 
 
 def _row_to_internal_call_artifact_package(call_item: dict) -> dict:
-    call_id = str(call_item.get("call_id") or "")
+    call_id = str(call_item.get("call_id") or call_item.get("request_id") or "")
     service_type = str(call_item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS)
+    module_key = str(call_item.get("module_key") or "")
+    service_key = _component_service_key(module_key) if service_type == str(ServiceType.UNMATCHED) and module_key else service_type
+    service_label = _service_or_component_label(service_key)
     generated_at = str(call_item.get("created_at") or call_item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
-    output_files = _load_list(call_item.get("outputs"))
-    raw_input = str(call_item.get("input_text") or "")
-    output_text = str(call_item.get("output_text") or "")
+    output_files = _load_list(call_item.get("outputs") or call_item.get("output_files"))
+    raw_input = str(call_item.get("input_text") or call_item.get("raw_input") or "")
+    output_text = str(call_item.get("output_text") or call_item.get("user_prompt") or "")
     files = [_virtual_input_file(raw_input)] if raw_input else []
     files.extend(_artifact_files_for_owner(call_id, output_files))
     if output_text:
@@ -1189,15 +1229,16 @@ def _row_to_internal_call_artifact_package(call_item: dict) -> dict:
     return {
         "package_id": call_id,
         "source_type": "internal_call",
-        "service_type": service_type,
-        "service_label": _artifact_service_label(service_type),
+        "service_type": service_key,
+        "service_label": service_label,
+        "module_key": module_key,
         "market_date": generated_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
         "normalized_target": display_name,
         "stock_name": "",
         "display_name": display_name,
-        "display_path": [_artifact_service_label(service_type), generated_date, display_name],
+        "display_path": [service_label, generated_date, display_name],
         "version_fingerprint": "",
         "created_from_request_id": call_id,
         "related_request_ids": [],
@@ -1280,6 +1321,8 @@ def _artifact_package_conditions(table, service_type: ServiceType | str | None, 
 
 def _content_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
     conditions = []
+    if _component_filter_key(service_type):
+        return None
     if service_type is not None and str(service_type or "").strip():
         normalized_service = normalize_service(service_type)
         valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
@@ -1325,15 +1368,31 @@ def _content_artifact_conditions(service_type: ServiceType | str | None, start_d
 
 def _internal_call_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
     conditions = []
-    if service_type is not None and str(service_type or "").strip():
+    component_key = _component_filter_key(service_type)
+    if component_key:
+        conditions.append(investment_request_records.c.entry_type == str(EntryType.INTERNAL_CALL))
+        conditions.append(investment_request_records.c.service_type == str(ServiceType.UNMATCHED))
+        conditions.append(investment_request_records.c.module_key == component_key)
+    elif service_type is not None and str(service_type or "").strip():
         normalized_service = normalize_service(service_type)
         valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
         if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
             return None
         if normalized_service != ServiceType.TECHNICAL_ANALYSIS:
             return None
-    conditions.append(investment_request_records.c.entry_type == str(EntryType.INTERNAL_CALL))
-    conditions.append(investment_request_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS))
+        conditions.append(investment_request_records.c.entry_type == str(EntryType.INTERNAL_CALL))
+        conditions.append(investment_request_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS))
+    else:
+        conditions.append(investment_request_records.c.entry_type == str(EntryType.INTERNAL_CALL))
+        conditions.append(
+            or_(
+                investment_request_records.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS),
+                (
+                    (investment_request_records.c.service_type == str(ServiceType.UNMATCHED))
+                    & (investment_request_records.c.module_key != "")
+                ),
+            )
+        )
     conditions.append(investment_request_records.c.status == str(Status.SUCCESS))
     conditions.append(
         ~exists(
@@ -1514,6 +1573,9 @@ def _content_artifact_package_summary(item: dict) -> dict:
 
 def _internal_call_artifact_package_summary(item: dict) -> dict:
     request_id = str(item.get("request_id") or "")
+    raw_service_type = str(item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS)
+    module_key = str(item.get("module_key") or "")
+    service_key = _component_service_key(module_key) if raw_service_type == str(ServiceType.UNMATCHED) and module_key else raw_service_type
     generated_at = str(item.get("created_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
     output_files = _load_list(item.get("output_files"))
@@ -1523,7 +1585,8 @@ def _internal_call_artifact_package_summary(item: dict) -> dict:
         "package_id": request_id,
         "source_type": "internal_call",
         "label": str(item.get("raw_input") or "技术分析内容"),
-        "service_type": str(item.get("service_type") or ServiceType.TECHNICAL_ANALYSIS),
+        "service_type": service_key,
+        "module_key": module_key,
         "market_date": generated_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
@@ -1642,7 +1705,14 @@ def list_artifact_folder_nodes(
     internal_conditions = _internal_call_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
     if internal_conditions is not None:
         if normalized_level == "service":
-            internal_key_expr = investment_request_records.c.service_type
+            internal_key_expr = case(
+                (
+                    (investment_request_records.c.service_type == str(ServiceType.UNMATCHED))
+                    & (investment_request_records.c.module_key != ""),
+                    literal("component:") + investment_request_records.c.module_key,
+                ),
+                else_=investment_request_records.c.service_type,
+            )
         else:
             slices = {"year": 4, "month": 7, "date": 10, "day": 10}
             length = slices.get(normalized_level)
@@ -1677,7 +1747,7 @@ def list_artifact_folder_nodes(
         {
             "level": node_level,
             "key": str(row.get("key") or ""),
-            "label": str(row.get("key") or ""),
+            "label": _service_or_component_label(str(row.get("key") or "")) if node_level == "service" else str(row.get("key") or ""),
             "count": int(row.get("count") or 0),
             "updated_at": str(row.get("updated_at") or ""),
         }

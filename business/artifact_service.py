@@ -102,6 +102,7 @@ def archive_artifact_file(
     owner_type: str = "request",
     storage_date: str = "",
     force_rehome: bool = False,
+    storage_namespace: str = "",
 ) -> str:
     path = Path(file_path)
     if not path.is_absolute():
@@ -125,9 +126,15 @@ def archive_artifact_file(
         _date_from_text(storage_date) or _owner_date(owner_id, owner_type) or datetime.now(UTC).date().isoformat(),
         "unknown-date",
     )
+    namespace_parts = [
+        _safe_segment(part, "")
+        for part in str(storage_namespace or "").replace("\\", "/").split("/")
+        if _safe_segment(part, "")
+    ]
+    category_parts = namespace_parts or [_safe_segment(str(service_type), "service")]
     target_dir = (
         files_root
-        / _safe_segment(str(service_type), "service")
+        .joinpath(*category_parts)
         / storage_date
         / _safe_segment(owner_type, "owner")
         / _safe_segment(owner_id, "id")
@@ -160,6 +167,7 @@ def archive_output_files(
     artifact_versions: dict[str, str] | None = None,
     owner_type: str = "request",
     storage_date: str = "",
+    storage_namespace: str = "",
 ) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str]]:
     archived_files: list[str] = []
     archived_roles: dict[str, str] = {}
@@ -175,6 +183,7 @@ def archive_output_files(
             service_type,
             owner_type=owner_type,
             storage_date=storage_date,
+            storage_namespace=storage_namespace,
         )
         archived_files.append(archived)
         archived_roles[archived] = role

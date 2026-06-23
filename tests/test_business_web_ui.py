@@ -1956,7 +1956,12 @@ def test_business_content_page_uses_date_grouped_category_view():
     category_cards_body = _js_function_body(js, "renderInvestmentGeneratedCategoryCards")
     assert "investment-generated-content-home" in cache_home_body
     assert "investment-generated-content-entry" in category_cards_body
-    assert "['technical_analysis', 'rate', 'convertible_bond']" in cache_body
+    assert "investmentGeneratedCategories(visibleEntries)" in cache_body
+    assert "function investmentGeneratedCategories(" in js
+    assert "['technical_analysis', 'rate', 'convertible_bond'].forEach(serviceType => addCategory(serviceType));" in js
+    assert "entry.service_label" in _js_function_body(js, "investmentGeneratedCategories")
+    assert "fa-puzzle-piece" in _js_function_body(js, "investmentGeneratedServiceIcon")
+    assert "investmentGeneratedCategoryLabel(category)" in category_cards_body
     assert "investment-records-cache-layout" not in js
     assert "investment-records-date-list" not in js
 
@@ -2121,6 +2126,7 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "investmentGeneratedEntryActions(entry)" in rows_body
     assert "investmentTextButtonIfCan('cache.write', '失效'" in actions_body
     assert "query.delete('market_date')" in load_body
+    assert "service_label: node.label" in load_body
     assert "query.set('start_date', range.startDate)" in load_body
     assert "query.set('end_date', range.endDate)" in load_body
     assert "periodMode === 'month'" in normalize_body

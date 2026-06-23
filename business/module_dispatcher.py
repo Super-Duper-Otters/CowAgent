@@ -2,7 +2,7 @@
 """Generic investment module dispatch."""
 
 from business.config_service import sanitize_sensitive_text
-from business.constants import ErrorCode, user_message
+from business.constants import ErrorCode, ServiceType, user_message
 
 
 def _with_module_key(reply, module_key: str):
@@ -173,11 +173,13 @@ def dispatch_module(
                     request_id,
                     module_key=module_key,
                 )
+            storage_namespace = f"components/{module_key}" if route.service_type == ServiceType.UNMATCHED and module_key else ""
             archived_path_map = mark_business_success(
                 request_id,
                 output_files=result.archive_files,
                 artifact_roles=result.artifact_roles,
                 elapsed_ms=elapsed(),
+                storage_namespace=storage_namespace,
             )
             reply_files = [archived_path_map.get(path, path) for path in result.reply_files]
             return BusinessReply(

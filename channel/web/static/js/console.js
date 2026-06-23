@@ -826,6 +826,13 @@ function investmentError(element, error) {
 }
 
 function investmentServiceLabel(value) {
+    const text = String(value || '');
+    if (text.startsWith('component:')) {
+        const componentKey = text.slice('component:'.length);
+        const component = (currentInvestmentSkills || []).find(item => investmentContentModuleKey(item) === componentKey);
+        if (component?.label) return component.label;
+        return componentKey || '-';
+    }
     return INVEST_SERVICE_LABELS[value] || value || '-';
 }
 
@@ -3685,6 +3692,7 @@ async function loadInvestmentGeneratedContent() {
         const packages = (data.nodes || []).map(node => ({
             source_type: 'artifact_folder',
             service_type: node.key,
+            service_label: node.label,
             request_count: node.count || 0,
             updated_at: node.updated_at || '',
         }));
@@ -4188,8 +4196,8 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const visibleEntries = values;
-    const categories = ['technical_analysis', 'rate', 'convertible_bond'];
-    const selectedCategory = categories.includes(investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
+    const categories = investmentGeneratedCategories(visibleEntries);
+    const selectedCategory = categories.some(item => item.service_type === investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
     const body = selectedCategory
         ? renderInvestmentGeneratedContentCategoryDetail(selectedCategory, visibleEntries.filter(entry => entry.service_type === selectedCategory))
         : renderInvestmentGeneratedContentHome(categories, visibleEntries);
@@ -4225,6 +4233,36 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
         </div>`;
 }
 
+function investmentGeneratedCategories(entries = []) {
+    const categories = [];
+    const seen = new Set();
+    const addCategory = (serviceType, label = '') => {
+        const key = String(serviceType || '').trim();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        categories.push({
+            service_type: key,
+            label: label || investmentServiceLabel(key),
+        });
+    };
+    ['technical_analysis', 'rate', 'convertible_bond'].forEach(serviceType => addCategory(serviceType));
+    (entries || []).forEach(entry => addCategory(entry.service_type, entry.service_label));
+    return categories;
+}
+
+function investmentGeneratedCategoryLabel(category) {
+    if (category && typeof category === 'object') return category.label || investmentServiceLabel(category.service_type);
+    return investmentServiceLabel(category);
+}
+
+function investmentGeneratedServiceIcon(serviceType) {
+    if (serviceType === 'technical_analysis') return 'fa-chart-line';
+    if (serviceType === 'rate') return 'fa-percent';
+    if (serviceType === 'convertible_bond') return 'fa-file-invoice-dollar';
+    if (String(serviceType || '').startsWith('component:')) return 'fa-puzzle-piece';
+    return 'fa-box-archive';
+}
+
 function renderInvestmentGeneratedContentHome(categories, entries) {
     return `
         <div class="investment-generated-library">
@@ -4239,16 +4277,17 @@ function renderInvestmentGeneratedContentHome(categories, entries) {
 }
 
 function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
-    return categories.map(serviceType => {
+    return categories.map(category => {
+        const serviceType = category.service_type || category;
         const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
         const contentCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.count || 0), 0);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
-            <button class="investment-generated-content-entry" onclick="selectInvestmentCacheCategory('${serviceType}')">
-                <div class="investment-generated-entry-icon"><i class="fas ${serviceType === 'technical_analysis' ? 'fa-chart-line' : serviceType === 'rate' ? 'fa-percent' : 'fa-file-invoice-dollar'}"></i></div>
+            <button class="investment-generated-content-entry" onclick='selectInvestmentCacheCategory(${investmentJsString(serviceType)})'>
+                <div class="investment-generated-entry-icon"><i class="fas ${investmentGeneratedServiceIcon(serviceType)}"></i></div>
                 <div class="investment-generated-entry-main">
-                    <strong>${investmentServiceLabel(serviceType)}</strong>
+                    <strong>${escapeHtml(investmentGeneratedCategoryLabel(category))}</strong>
                     <span>${contentCount ? `${contentCount} 条内容` : '暂无内容'}</span>
                 </div>
                 <div class="investment-generated-entry-meta">
@@ -4291,7 +4330,7 @@ function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
             <div class="investment-generated-content-detail-header">
                 ${investmentButton('fa-arrow-left', '返回分类', 'backInvestmentCacheCategoryMenu()')}
                 <div class="investment-generated-content-detail-title">
-                    <h3>${investmentServiceLabel(serviceType)}</h3>
+                    <h3>${escapeHtml(investmentServiceLabel(serviceType))}</h3>
                     <span class="investment-generated-content-detail-count">${entries.length} 条</span>
                 </div>
             </div>
