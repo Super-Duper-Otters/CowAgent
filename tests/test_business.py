@@ -3370,7 +3370,9 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
     from business.records.cleanup import cleanup_useless_business_records
     from business.schema.tables import (
         admin_sessions,
+        cache_entries,
         configs,
+        content_records,
         request_records,
         stock_symbols,
     )
@@ -3417,12 +3419,47 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
                 "updated_at": "2026-01-01T00:00:00+00:00",
             },
         )
+        conn.execute(
+            content_records.insert(),
+            {
+                "content_id": "old-failed-content-cleanup",
+                "service_type": "rate",
+                "source_files": "[]",
+                "source_text": "old failed content",
+                "generated_text": "",
+                "output_image": "",
+                "status": "generate_failed",
+                "error_message": "failed",
+                "operator": "pytest",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "content_version": 1,
+            },
+        )
+        conn.execute(
+            cache_entries.insert(),
+            {
+                "cache_key": "old-invalid-cache-cleanup",
+                "service_type": "technical_analysis",
+                "normalized_target": "300502.SZ",
+                "market_date": "2026-01-01",
+                "version_fingerprint": "v1",
+                "output_files": "[]",
+                "artifact_owner_id": "old-unmatched-cleanup",
+                "status": "invalidated",
+                "hit_count": 0,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
 
     dry_run = cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=True)
     assert dry_run["runtime_test_configs"] == 1
     assert dry_run["runtime_test_stocks"] == 1
     assert dry_run["expired_admin_sessions"] == 1
-    assert dry_run["old_exception_requests"] == 1
+    assert "old_exception_requests" not in dry_run
+    assert "old_failed_contents" not in dry_run
+    assert "stale_invalid_cache_entries" not in dry_run
 
     with connect() as conn:
         assert conn.execute(text("select count(*) from configs where config_key = 'runtime.pg.test.cleanup'")).scalar_one() == 1
@@ -3433,7 +3470,9 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
         assert conn.execute(text("select count(*) from configs where config_key = 'runtime.pg.test.cleanup'")).scalar_one() == 0
         assert conn.execute(text("select count(*) from stock_symbols where source = 'runtime-test'")).scalar_one() == 0
         assert conn.execute(text("select count(*) from admin_sessions where session_id = 'expired-session'")).scalar_one() == 0
-        assert conn.execute(text("select count(*) from request_records where request_id = 'old-unmatched-cleanup'")).scalar_one() == 0
+        assert conn.execute(text("select count(*) from request_records where request_id = 'old-unmatched-cleanup'")).scalar_one() == 1
+        assert conn.execute(text("select count(*) from content_records where content_id = 'old-failed-content-cleanup'")).scalar_one() == 1
+        assert conn.execute(text("select count(*) from cache_entries where cache_key = 'old-invalid-cache-cleanup'")).scalar_one() == 1
 
 
 def test_web_daily_content_generate_marks_generating_before_background_task(business_env, monkeypatch):
