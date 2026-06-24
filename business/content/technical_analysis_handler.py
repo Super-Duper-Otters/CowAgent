@@ -14,7 +14,7 @@ from business.execution.technical_analysis_executor import (
     run_technical_analysis_business,
 )
 from business.health.job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
-from business.products.product_service import create_product, invalidate_active_products_except
+from business.products.product_service import replace_active_product
 
 
 RUNNING_JOB_PROMPT = "正在运行，请稍候。"
@@ -226,7 +226,7 @@ def handle_technical_analysis(
             and result.version_fingerprint
             and record_output_files
         ):
-            product = create_product(
+            product = replace_active_product(
                 business_type=str(ServiceType.TECHNICAL_ANALYSIS),
                 target_key=result.normalized_target,
                 target_label=_target_label(result.stock_code, result.stock_name),
@@ -244,13 +244,6 @@ def handle_technical_analysis(
                 },
             )
             product_id = str(product.get("product_id") or "")
-            invalidate_active_products_except(
-                business_type=str(ServiceType.TECHNICAL_ANALYSIS),
-                target_key=result.normalized_target,
-                business_date=result.market_date,
-                version_fingerprint=result.version_fingerprint,
-                exclude_product_id=product_id,
-            )
         return BusinessReply(
             True,
             True,

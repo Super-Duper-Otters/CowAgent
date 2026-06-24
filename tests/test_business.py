@@ -9694,6 +9694,50 @@ def test_product_service_appends_and_invalidates_active_product(business_env, tm
     assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
 
 
+def test_product_service_replace_active_product_rolls_back_when_invalidation_fails(
+    business_env, tmp_path, monkeypatch
+):
+    from business.products import product_service
+
+    old_card = tmp_path / "old-card.png"
+    new_card = tmp_path / "new-card.png"
+    old_card.write_bytes(b"old")
+    new_card.write_bytes(b"new")
+    old = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_request_id="request-1",
+        source_type="request",
+        output_files=[str(old_card)],
+    )
+
+    def fail_invalidation(*_args, **_kwargs):
+        raise RuntimeError("forced invalidation failure")
+
+    monkeypatch.setattr(product_service, "_invalidate_prior_active_products_on_connection", fail_invalidation, raising=False)
+
+    with pytest.raises(RuntimeError, match="forced invalidation failure"):
+        product_service.replace_active_product(
+            business_type="technical_analysis",
+            target_key="300502.SZ",
+            target_label="新易盛",
+            business_date="2026-06-24",
+            version_fingerprint="v1",
+            source_request_id="request-2",
+            source_type="request",
+            output_files=[str(new_card)],
+        )
+
+    rows, total = product_service.list_products_page(include_invalidated=True, business_type="technical_analysis")
+
+    assert total == 1
+    assert rows[0]["product_id"] == old["product_id"]
+    assert rows[0]["status"] == product_service.PRODUCT_STATUS_ACTIVE
+
+
 def test_technical_analysis_product_reuse_invalidates_old_product_without_overwriting(
     business_env, tmp_path
 ):

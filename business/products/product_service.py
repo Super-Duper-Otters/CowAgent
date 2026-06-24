@@ -159,7 +159,7 @@ def _active_product_conditions(
     return conditions
 
 
-def create_product(
+def _product_values(
     *,
     business_type: str,
     target_key: str,
@@ -178,7 +178,7 @@ def create_product(
     expires_at: str = "",
     effective_at: str = "",
     archived_at: str = "",
-) -> dict:
+) -> tuple[str, dict]:
     now = _now()
     logical_key = product_logical_key(
         business_type=business_type,
@@ -212,10 +212,57 @@ def create_product(
         "created_at": now,
         "updated_at": now,
     }
-    with connect() as conn:
-        conn.execute(investment_products.insert().values(**values))
-        row = conn.execute(select(investment_products).where(investment_products.c.product_id == product_id)).fetchone()
+    return product_id, values
+
+
+def _create_product_on_connection(conn, **kwargs) -> dict:
+    product_id, values = _product_values(**kwargs)
+    conn.execute(investment_products.insert().values(**values))
+    row = conn.execute(select(investment_products).where(investment_products.c.product_id == product_id)).fetchone()
     return _row_to_product(row)
+
+
+def create_product(
+    *,
+    business_type: str,
+    target_key: str,
+    target_label: str = "",
+    business_date: str = "",
+    version_fingerprint: str = "",
+    status: str = PRODUCT_STATUS_ACTIVE,
+    source_request_id: str = "",
+    source_content_id: str = "",
+    source_cache_key: str = "",
+    source_type: str = "",
+    source_files: list[str] | None = None,
+    output_files: list[str] | None = None,
+    text_content: str = "",
+    metadata: dict | str | None = None,
+    expires_at: str = "",
+    effective_at: str = "",
+    archived_at: str = "",
+) -> dict:
+    with connect() as conn:
+        return _create_product_on_connection(
+            conn,
+            business_type=business_type,
+            target_key=target_key,
+            target_label=target_label,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+            status=status,
+            source_request_id=source_request_id,
+            source_content_id=source_content_id,
+            source_cache_key=source_cache_key,
+            source_type=source_type,
+            source_files=source_files,
+            output_files=output_files,
+            text_content=text_content,
+            metadata=metadata,
+            expires_at=expires_at,
+            effective_at=effective_at,
+            archived_at=archived_at,
+        )
 
 
 def find_active_product(
@@ -283,7 +330,8 @@ def invalidate_active_products(
         )
 
 
-def invalidate_active_products_except(
+def _invalidate_prior_active_products_on_connection(
+    conn,
     *,
     business_type: str,
     target_key: str,
@@ -299,19 +347,89 @@ def invalidate_active_products_except(
         version_fingerprint=version_fingerprint,
     )
     conditions.append(investment_products.c.product_id != _text(exclude_product_id))
+    return int(
+        conn.execute(
+            update(investment_products)
+            .where(and_(*conditions))
+            .values(
+                status=PRODUCT_STATUS_INVALIDATED,
+                invalidated_at=now,
+                updated_at=now,
+            )
+        ).rowcount
+        or 0
+    )
+
+
+def invalidate_active_products_except(
+    *,
+    business_type: str,
+    target_key: str,
+    exclude_product_id: str,
+    business_date: str = "",
+    version_fingerprint: str = "",
+) -> int:
     with connect() as conn:
-        return int(
-            conn.execute(
-                update(investment_products)
-                .where(and_(*conditions))
-                .values(
-                    status=PRODUCT_STATUS_INVALIDATED,
-                    invalidated_at=now,
-                    updated_at=now,
-                )
-            ).rowcount
-            or 0
+        return _invalidate_prior_active_products_on_connection(
+            conn,
+            business_type=business_type,
+            target_key=target_key,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+            exclude_product_id=exclude_product_id,
         )
+
+
+def replace_active_product(
+    *,
+    business_type: str,
+    target_key: str,
+    target_label: str = "",
+    business_date: str = "",
+    version_fingerprint: str = "",
+    status: str = PRODUCT_STATUS_ACTIVE,
+    source_request_id: str = "",
+    source_content_id: str = "",
+    source_cache_key: str = "",
+    source_type: str = "",
+    source_files: list[str] | None = None,
+    output_files: list[str] | None = None,
+    text_content: str = "",
+    metadata: dict | str | None = None,
+    expires_at: str = "",
+    effective_at: str = "",
+    archived_at: str = "",
+) -> dict:
+    with connect() as conn:
+        product = _create_product_on_connection(
+            conn,
+            business_type=business_type,
+            target_key=target_key,
+            target_label=target_label,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+            status=status,
+            source_request_id=source_request_id,
+            source_content_id=source_content_id,
+            source_cache_key=source_cache_key,
+            source_type=source_type,
+            source_files=source_files,
+            output_files=output_files,
+            text_content=text_content,
+            metadata=metadata,
+            expires_at=expires_at,
+            effective_at=effective_at,
+            archived_at=archived_at,
+        )
+        _invalidate_prior_active_products_on_connection(
+            conn,
+            business_type=business_type,
+            target_key=target_key,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+            exclude_product_id=product["product_id"],
+        )
+        return product
 
 
 def increment_product_hit(product_id: str) -> None:
