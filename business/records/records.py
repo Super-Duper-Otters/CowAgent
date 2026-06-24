@@ -1520,24 +1520,31 @@ def _product_source_dedupe_keys(
     end_date: str = "",
     package_id: str = "",
 ) -> tuple[set[str], set[str], set[str]]:
-    from business.products.product_service import list_products_page
-
-    product_rows, _product_total = list_products_page(
-        page=1,
-        page_size=10000,
-        business_type=str(service_type or ""),
-        start_date=start_date,
-        end_date=end_date,
-        keyword="",
-        include_invalidated=True,
-    )
+    conditions = _product_artifact_conditions(service_type, start_date, end_date, keyword="")
     if package_id:
         normalized_package_id = str(package_id)
-        product_rows = [item for item in product_rows if _product_matches_package_id(item, normalized_package_id)]
+        conditions.append(
+            or_(
+                investment_products.c.product_id == normalized_package_id,
+                investment_products.c.source_cache_key == normalized_package_id,
+                investment_products.c.source_content_id == normalized_package_id,
+                investment_products.c.source_request_id == normalized_package_id,
+            )
+        )
+    stmt = select(
+        investment_products.c.source_cache_key,
+        investment_products.c.source_content_id,
+        investment_products.c.source_request_id,
+    )
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.distinct()
+    with connect() as conn:
+        rows = [row_to_dict(row) for row in conn.execute(stmt).fetchall()]
     return (
-        {str(item.get("source_cache_key") or "") for item in product_rows if item.get("source_cache_key")},
-        {str(item.get("source_content_id") or "") for item in product_rows if item.get("source_content_id")},
-        {str(item.get("source_request_id") or "") for item in product_rows if item.get("source_request_id")},
+        {str(item.get("source_cache_key") or "") for item in rows if item.get("source_cache_key")},
+        {str(item.get("source_content_id") or "") for item in rows if item.get("source_content_id")},
+        {str(item.get("source_request_id") or "") for item in rows if item.get("source_request_id")},
     )
 
 
@@ -1894,11 +1901,11 @@ def list_artifact_folder_nodes(
             for row in conn.execute(cache_grouped).fetchall():
                 item = row_to_dict(row)
                 key = str(item.get("key") or "")
-                grouped[key] = {
-                    "key": key,
-                    "count": int(item.get("count") or 0),
-                    "updated_at": str(item.get("updated_at") or ""),
-                }
+                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
+                current["count"] += int(item.get("count") or 0)
+                updated_at = str(item.get("updated_at") or "")
+                if updated_at > str(current.get("updated_at") or ""):
+                    current["updated_at"] = updated_at
 
     if normalized_level == "service":
         content_key_expr = investment_daily_contents.c.service_type

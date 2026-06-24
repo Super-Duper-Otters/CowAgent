@@ -4671,6 +4671,57 @@ def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, 
     assert date_payload["nodes"][0]["key"] == "2026-06-24"
 
 
+def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_at(business_env, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_folder_nodes
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries, investment_products
+
+    product_file = tmp_path / "product-card.png"
+    cache_file = tmp_path / "cache-card.png"
+    product_file.write_text("product", encoding="utf-8")
+    cache_file.write_text("cache", encoding="utf-8")
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+        source_type="request",
+        source_request_id="req-product-bucket",
+    )
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "600000.SH", "2026-06-24", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="600000.SH",
+        market_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(cache_file)],
+    )
+    with connect() as conn:
+        conn.execute(
+            investment_products.update()
+            .where(investment_products.c.product_id == product["product_id"])
+            .values(updated_at="2026-06-24T09:00:00+00:00")
+        )
+        conn.execute(
+            investment_cache_entries.update()
+            .where(investment_cache_entries.c.cache_key == cache_key)
+            .values(created_at="2026-06-24T08:00:00+00:00", updated_at="2026-06-24T10:00:00+00:00")
+        )
+
+    dates, total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
+
+    assert total == 1
+    assert dates[0]["key"] == "2026-06-24"
+    assert dates[0]["count"] == 2
+    assert dates[0]["updated_at"] == "2026-06-24T10:00:00+00:00"
+
+
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
