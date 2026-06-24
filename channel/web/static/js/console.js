@@ -489,6 +489,7 @@ let investmentRecordsState = {
         requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
         backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
+        products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''},
         cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
     },
@@ -496,6 +497,7 @@ let investmentRecordsState = {
         requests: {page: 1, page_size: 80, total: 0, total_pages: 1},
         backendRequests: {page: 1, page_size: 80, total: 0, total_pages: 1},
         contents: {page: 1, page_size: 80, total: 0, total_pages: 1},
+        products: {page: 1, page_size: 120, total: 0, total_pages: 1},
         cache: {page: 1, page_size: 120, total: 0, total_pages: 1},
         audits: {page: 1, page_size: 80, total: 0, total_pages: 1},
     },
@@ -503,6 +505,7 @@ let investmentRecordsState = {
         requests: [],
         backendRequests: [],
         contents: [],
+        products: {entries: [], business_dates: []},
         cache: {entries: [], market_dates: []},
         audits: [],
     },
@@ -3391,6 +3394,19 @@ async function invalidateInvestmentCache(encodedKey) {
     }
 }
 
+async function invalidateInvestmentProduct(encodedProductId) {
+    try {
+        await investmentFetchJson(`/api/investment/products/${encodedProductId}/invalidate`, {method: 'POST'});
+        if (currentView === 'invest-content') {
+            await loadInvestmentGeneratedContent();
+            return;
+        }
+        await renderInvestmentRecords();
+    } catch (error) {
+        showInvestmentToast(`产物失效失败：${String(error.message || error)}`, 'error');
+    }
+}
+
 async function clearInvestmentTechnicalAnalysisCacheByDate() {
     const today = investmentTodayDate();
     const marketDate = prompt('清理技术分析缓存日期', today);
@@ -3479,7 +3495,7 @@ function investmentRecordsQueryParams(tab) {
 }
 
 function investmentRecordsDefaultPageSize(tab) {
-    return tab === 'cache' ? '120' : '80';
+    return tab === 'cache' || tab === 'products' ? '120' : '80';
 }
 
 function investmentRecordsDefaultFilters(tab) {
@@ -3496,6 +3512,9 @@ function investmentRecordsDefaultFilters(tab) {
     }
     if (tab === 'cache') {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: investmentTodayDate()};
+    }
+    if (tab === 'products') {
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: investmentTodayDate(), keyword: ''};
     }
     if (tab === 'backendRequests') {
         return {
@@ -3603,25 +3622,26 @@ function changeInvestmentRequestDateMode(mode) {
 }
 
 function investmentCacheMarketDate() {
-    return investmentRecordsState.filters.cache?.market_date || document.getElementById('investment-records-filter-market_date')?.value || '';
+    return investmentRecordsState.filters.products?.business_date || investmentRecordsState.filters.cache?.market_date || document.getElementById('investment-records-filter-market_date')?.value || '';
 }
 
 function investmentCacheKeyword() {
-    return investmentRecordsState.filters.cache?.keyword || document.getElementById('investment-content-filter-keyword')?.value || '';
+    return investmentRecordsState.filters.products?.keyword || investmentRecordsState.filters.cache?.keyword || document.getElementById('investment-content-filter-keyword')?.value || '';
 }
 
 function investmentCachePeriodMode() {
-    return document.getElementById('investment-content-period-mode')?.value || investmentRecordsState.filters.cache?.period_mode || 'all';
+    return document.getElementById('investment-content-period-mode')?.value || investmentRecordsState.filters.products?.period_mode || investmentRecordsState.filters.cache?.period_mode || 'all';
 }
 
 function investmentCachePeriodValue() {
-    return document.getElementById('investment-content-period-value')?.value || investmentRecordsState.filters.cache?.period_value || '';
+    return document.getElementById('investment-content-period-value')?.value || investmentRecordsState.filters.products?.period_value || investmentRecordsState.filters.cache?.period_value || '';
 }
 
 function investmentGeneratedDateValues(marketDates = [], entries = []) {
     const values = new Set(Array.isArray(marketDates) ? marketDates : []);
     (Array.isArray(entries) ? entries : []).forEach(entry => {
         if (entry?.market_date) values.add(entry.market_date);
+        if (entry?.business_date) values.add(entry.business_date);
         if (entry?.effective_date) values.add(entry.effective_date);
     });
     return Array.from(values).filter(value => /^\d{4}-\d{2}-\d{2}$/.test(String(value))).sort().reverse();
@@ -3653,7 +3673,7 @@ function renderInvestmentGeneratedPeriodValueControl(mode, marketDates = [], ent
 function investmentNormalizeCacheDateFilters() {
     const periodMode = investmentCachePeriodMode();
     if (periodMode === 'day') {
-        const marketDate = document.getElementById('investment-records-filter-market_date')?.value || investmentRecordsState.filters.cache?.market_date || investmentTodayDate();
+        const marketDate = document.getElementById('investment-records-filter-market_date')?.value || investmentRecordsState.filters.products?.business_date || investmentRecordsState.filters.cache?.market_date || investmentTodayDate();
         return {mode: periodMode, marketDate, startDate: '', endDate: '', label: marketDate};
     }
     const periodValue = investmentCachePeriodValue().trim();
@@ -3688,8 +3708,10 @@ function scheduleInvestmentCacheFilterRefresh(delay = 260) {
 }
 
 function investmentChangeCachePeriodMode(mode) {
-    investmentRecordsState.filters.cache.period_mode = ['all', 'day', 'month', 'year'].includes(mode) ? mode : 'all';
-    syncInvestmentCachePeriodMode(investmentRecordsState.filters.cache.period_mode);
+    const normalized = ['all', 'day', 'month', 'year'].includes(mode) ? mode : 'all';
+    investmentRecordsState.filters.products.period_mode = normalized;
+    investmentRecordsState.filters.cache.period_mode = normalized;
+    syncInvestmentCachePeriodMode(normalized);
     scheduleInvestmentCacheFilterRefresh();
 }
 
@@ -3709,8 +3731,8 @@ function syncInvestmentCachePeriodMode(mode) {
     if (valueField && ['month', 'year'].includes(normalized)) {
         valueField.innerHTML = renderInvestmentGeneratedPeriodValueControl(
             normalized,
-            investmentRecordsState.data.cache?.market_dates || [],
-            investmentRecordsState.data.cache?.entries || [],
+            investmentRecordsState.data.products?.business_dates || investmentRecordsState.data.cache?.market_dates || [],
+            investmentRecordsState.data.products?.entries || investmentRecordsState.data.cache?.entries || [],
         );
         initInvestmentDropdowns(valueField);
     }
@@ -3734,39 +3756,34 @@ async function renderInvestmentGeneratedContent() {
 }
 
 async function loadInvestmentGeneratedContent() {
+    await loadInvestmentProducts();
+}
+
+async function loadInvestmentProducts() {
     const list = document.getElementById('investment-content-list');
     if (list) investmentLoading(list);
     try {
-        const query = investmentRecordsQueryParams('cache');
+        const query = investmentRecordsQueryParams('products');
         const range = investmentNormalizeCacheDateFilters();
-        query.delete('market_date');
+        query.delete('period_mode');
+        query.delete('period_value');
+        query.delete('business_date');
         query.delete('start_date');
         query.delete('end_date');
         if (range.marketDate) {
-            query.set('start_date', range.marketDate);
-            query.set('end_date', range.marketDate);
+            query.set('business_date', range.marketDate);
         }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
-        query.set('level', 'service');
-        const data = await investmentFetchJson(query.toString() ? `/api/investment/artifact-folders?${query.toString()}` : '/api/investment/artifact-folders?level=service');
-        const packages = (data.nodes || []).map(node => ({
-            source_type: 'artifact_folder',
-            service_type: node.key,
-            service_label: node.label,
-            request_count: node.count || 0,
-            updated_at: node.updated_at || '',
-        }));
-        investmentRecordsState.data.cache = {
-            entries: packages,
-            packages,
-            tree: data.nodes || [],
-            market_dates: investmentGeneratedDateValues([], packages),
+        const data = await investmentFetchJson(`/api/investment/products?${query.toString()}`);
+        const entries = data.entries || [];
+        investmentRecordsState.data.products = {
+            entries,
+            business_dates: data.business_dates || investmentGeneratedDateValues([], entries),
         };
-        investmentRecordsApplyPagination('cache', data.pagination);
-        if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
+        investmentRecordsApplyPagination('products', data.pagination);
+        if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
-        if (investmentRecordsState.cacheCategory) await loadInvestmentArtifactRootNodes(investmentRecordsState.cacheCategory);
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
@@ -4102,7 +4119,7 @@ async function changeInvestmentRecordsPage(tab, page) {
         ...(investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab)),
         page: String(nextPage),
     };
-    if (tab === 'cache' && currentView === 'invest-content') {
+    if ((tab === 'cache' || tab === 'products') && currentView === 'invest-content') {
         await loadInvestmentGeneratedContent();
         return;
     }
@@ -4115,7 +4132,7 @@ async function changeInvestmentRecordsPageSize(tab, pageSize) {
         page: '1',
         page_size: String(pageSize || investmentRecordsDefaultPageSize(tab)),
     };
-    if (tab === 'cache' && currentView === 'invest-content') {
+    if ((tab === 'cache' || tab === 'products') && currentView === 'invest-content') {
         await loadInvestmentGeneratedContent();
         return;
     }
@@ -4242,8 +4259,53 @@ function renderInvestmentContentRecordsTable(records) {
     </table>`);
 }
 
+function investmentProductStatusLabel(status) {
+    if (status === 'active') return '有效';
+    if (status === 'invalidated') return '已失效';
+    if (status === 'expired') return '已过期';
+    return investmentStatusLabel(status) || status || '-';
+}
+
+function investmentProductStatusClass(status) {
+    if (status === 'active') return 'ok';
+    if (status === 'invalidated' || status === 'expired') return 'fail';
+    return investmentStatusClass(status);
+}
+
+function investmentProductTarget(product = {}) {
+    return product.normalized_target || product.target_name || product.target_key || product.stock_name || product.stock_code || product.product_key || '全市场/当日内容';
+}
+
+function investmentProductBusinessType(product = {}) {
+    return product.business_type || product.service_type || '';
+}
+
+function renderInvestmentProductsTable(entries) {
+    if (!entries.length) return '<div class="investment-empty">暂无生成产物</div>';
+    const rows = entries.map(product => {
+        const productId = product.product_id || '';
+        const isActive = product.status === 'active';
+        return `<tr>
+            <td>${investmentServiceLabel(investmentProductBusinessType(product))}</td>
+            <td>${investmentRecordClamp(investmentProductTarget(product), 2, 42)}</td>
+            <td>${escapeHtml(product.business_date || product.market_date || product.effective_date || '-')}</td>
+            <td><span class="investment-badge ${investmentProductStatusClass(product.status)}">${escapeHtml(investmentProductStatusLabel(product.status))}</span></td>
+            <td>${investmentRecordFileSummary(product.output_files || [], '无产物')}</td>
+            <td>${escapeHtml(investmentFormatBeijingTime(product.created_at || product.updated_at || product.effective_at) || '-')}</td>
+            <td class="investment-row-actions">
+                ${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('product', '${investmentEncodedRecord(product)}')`)}
+                ${isActive && productId ? investmentTextButtonIfCan('cache.write', '失效', `invalidateInvestmentProduct('${encodeURIComponent(productId)}')`, 'danger') : ''}
+            </td>
+        </tr>`;
+    }).join('');
+    return investmentRecordTableShell(`<table class="investment-table investment-records-table investment-products-table">
+        <thead><tr><th>业务</th><th>对象</th><th>业务日期</th><th>有效性</th><th>产物</th><th>生成时间</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`);
+}
+
 function renderInvestmentCacheTable(entries) {
-    return renderInvestmentDailyGeneratedContent({entries, market_dates: []});
+    return renderInvestmentCacheTableLegacy(entries);
 }
 
 function renderInvestmentRecordsCacheTab(cacheData = {}) {
@@ -4252,17 +4314,11 @@ function renderInvestmentRecordsCacheTab(cacheData = {}) {
 
 function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
-    const marketDates = cacheData.market_dates || [];
+    const marketDates = cacheData.business_dates || cacheData.market_dates || [];
     const dateRange = investmentNormalizeCacheDateFilters();
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const visibleEntries = values;
-    const categories = investmentGeneratedCategories(visibleEntries);
-    const selectedCategory = categories.some(item => item.service_type === investmentRecordsState.cacheCategory) ? investmentRecordsState.cacheCategory : '';
-    const body = selectedCategory
-        ? renderInvestmentGeneratedContentCategoryDetail(selectedCategory, visibleEntries.filter(entry => entry.service_type === selectedCategory))
-        : renderInvestmentGeneratedContentHome(categories, visibleEntries);
-    const pagination = selectedCategory ? renderInvestmentRecordsPagination('cache') : '';
     return `
         <div class="investment-generated-content">
             <div class="investment-generated-content-toolbar">
@@ -4289,8 +4345,8 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
                 </div>
             </div>
-            ${body}
-            ${pagination}
+            ${renderInvestmentProductsTable(visibleEntries)}
+            ${renderInvestmentRecordsPagination('products')}
         </div>`;
 }
 
@@ -4674,6 +4730,13 @@ async function selectInvestmentCacheDate(date) {
 
 async function applyInvestmentCacheDate() {
     const range = investmentNormalizeCacheDateFilters();
+    investmentRecordsState.filters.products.business_date = range.marketDate || '';
+    investmentRecordsState.filters.products.period_mode = investmentCachePeriodMode();
+    investmentRecordsState.filters.products.period_value = investmentCachePeriodValue();
+    investmentRecordsState.filters.products.start_date = range.startDate;
+    investmentRecordsState.filters.products.end_date = range.endDate;
+    investmentRecordsState.filters.products.keyword = document.getElementById('investment-content-filter-keyword')?.value || '';
+    investmentRecordsState.filters.products.page = '1';
     investmentRecordsState.filters.cache.market_date = range.marketDate || '';
     investmentRecordsState.filters.cache.period_mode = investmentCachePeriodMode();
     investmentRecordsState.filters.cache.period_value = investmentCachePeriodValue();
@@ -4770,7 +4833,7 @@ function closeInvestmentRecordDrawer() {
 }
 
 function renderInvestmentRecordDrawerBody(type, record) {
-    const titleMap = {request: '公众号请求详情', backendRequest: '后台请求详情', content: '后台内容生成详情', cache: '生成内容详情', audit: '操作流水详情'};
+    const titleMap = {request: '公众号请求详情', backendRequest: '后台请求详情', content: '后台内容生成详情', product: '产物详情', cache: '生成内容详情', audit: '操作流水详情'};
     return `
         <div class="investment-records-drawer-header">
             <div>
@@ -4783,6 +4846,7 @@ function renderInvestmentRecordDrawerBody(type, record) {
             ${type === 'request' ? renderInvestmentRequestDrawer(record) : ''}
             ${type === 'backendRequest' ? renderInvestmentBackendRequestDrawer(record) : ''}
             ${type === 'content' ? renderInvestmentContentDrawer(record) : ''}
+            ${type === 'product' ? renderInvestmentProductDrawer(record) : ''}
             ${type === 'cache' ? renderInvestmentCacheDrawer(record) : ''}
             ${type === 'audit' ? renderInvestmentAuditDrawer(record) : ''}
         </div>`;
@@ -4890,6 +4954,34 @@ function renderInvestmentCacheDrawer(record) {
             ['市场日期', escapeHtml(record.market_date || '-')],
             ['更新时间', escapeHtml(investmentFormatBeijingTime(record.updated_at) || '-')],
         ]))}
+    `;
+}
+
+function renderInvestmentProductDrawer(record) {
+    const sourceRequest = record.source_request_id || record.request_id || '';
+    const sourceContent = record.source_content_id || record.content_id || '';
+    const sourceCache = record.source_cache_key || record.cache_key || '';
+    const sourceLines = [
+        sourceRequest ? `请求：${sourceRequest}` : '',
+        sourceContent ? `内容：${sourceContent}` : '',
+        sourceCache ? `缓存：${sourceCache}` : '',
+    ].filter(Boolean).join('\n');
+    const version = record.version || record.version_tag || record.product_version || record.content_version || record.program_version || '-';
+    return `
+        ${investmentDrawerSection('基础信息', investmentDrawerFacts([
+            ['产物 ID', escapeHtml(record.product_id || '-')],
+            ['业务类型', investmentServiceLabel(investmentProductBusinessType(record))],
+            ['对象', escapeHtml(investmentProductTarget(record))],
+            ['业务日期', escapeHtml(record.business_date || record.market_date || record.effective_date || '-')],
+            ['有效性', `<span class="investment-badge ${investmentProductStatusClass(record.status)}">${escapeHtml(investmentProductStatusLabel(record.status))}</span>`],
+            ['版本', escapeHtml(String(version))],
+            ['命中次数', escapeHtml(record.hit_count ?? 0)],
+            ['生成时间', escapeHtml(investmentFormatBeijingTime(record.created_at || record.updated_at || record.effective_at) || '-')],
+        ]))}
+        ${investmentDrawerPre('来源请求', sourceLines || '-')}
+        ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.output_files || [])}</div>`)}
+        ${investmentDrawerSection('产物审计', investmentArtifactTable(record.output_artifacts || []))}
+        ${record.generated_text ? investmentDrawerPre('生成文本', record.generated_text) : ''}
     `;
 }
 
@@ -6493,6 +6585,7 @@ window.backInvestmentCacheCategoryMenu = backInvestmentCacheCategoryMenu;
 window.showInvestmentContentDetail = showInvestmentContentDetail;
 window.showInvestmentRequestDetail = showInvestmentRequestDetail;
 window.invalidateInvestmentCache = invalidateInvestmentCache;
+window.invalidateInvestmentProduct = invalidateInvestmentProduct;
 window.clearInvestmentTechnicalAnalysisCacheByDate = clearInvestmentTechnicalAnalysisCacheByDate;
 window.clearInvestmentGeneratedContentCacheByDate = clearInvestmentGeneratedContentCacheByDate;
 window.hideInvestmentDetail = hideInvestmentDetail;
