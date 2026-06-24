@@ -486,12 +486,12 @@ let investmentRecordsState = {
     cacheCategory: '',
     exportMode: 'range',
     filters: {
-        requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
-        backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
-        contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
-        products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''},
-        cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()},
-        audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)},
+        requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
+        backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
+        contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
+        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''},
+        cache: {page: '1', page_size: '120', period_mode: 'all', market_date: ''},
+        audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
     },
     pagination: {
         requests: {page: 1, page_size: 80, total: 0, total_pages: 1},
@@ -3505,16 +3505,16 @@ function investmentRecordsDefaultFilters(tab) {
             page_size: investmentRecordsDefaultPageSize(tab),
             entry_type: 'external_request',
             date_mode: 'day',
-            start_date: investmentTodayDate(),
-            end_date: investmentTodayDate(),
+            start_date: '',
+            end_date: '',
             record_month: investmentTodayDate().slice(0, 7),
         };
     }
     if (tab === 'cache') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: investmentTodayDate()};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', market_date: ''};
     }
     if (tab === 'products') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: investmentTodayDate(), keyword: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};
     }
     if (tab === 'backendRequests') {
         return {
@@ -3523,8 +3523,8 @@ function investmentRecordsDefaultFilters(tab) {
             entry_type: 'internal_call',
             keyword: '',
             date_mode: 'day',
-            start_date: investmentTodayDate(),
-            end_date: investmentTodayDate(),
+            start_date: '',
+            end_date: '',
             record_month: investmentTodayDate().slice(0, 7),
         };
     }
@@ -3533,8 +3533,8 @@ function investmentRecordsDefaultFilters(tab) {
             page: '1',
             page_size: investmentRecordsDefaultPageSize(tab),
             date_mode: 'day',
-            start_date: investmentTodayDate(),
-            end_date: investmentTodayDate(),
+            start_date: '',
+            end_date: '',
             record_month: investmentTodayDate().slice(0, 7),
         };
     }
@@ -3544,8 +3544,8 @@ function investmentRecordsDefaultFilters(tab) {
             page_size: investmentRecordsDefaultPageSize(tab),
             keyword: '',
             date_mode: 'day',
-            start_date: investmentTodayDate(),
-            end_date: investmentTodayDate(),
+            start_date: '',
+            end_date: '',
             record_month: investmentTodayDate().slice(0, 7),
         };
     }
@@ -3565,10 +3565,6 @@ function investmentRecordsSetFilterValues(tab, options = {}) {
     if (tab === 'requests' || tab === 'backendRequests' || tab === 'contents' || tab === 'audits') {
         filters.date_mode = filters.date_mode === 'month' ? 'month' : 'day';
         if (!filters.record_month) filters.record_month = investmentTodayDate().slice(0, 7);
-        if (filters.date_mode === 'day') {
-            if (!filters.start_date) filters.start_date = investmentTodayDate();
-            if (!filters.end_date) filters.end_date = filters.start_date;
-        }
     }
     if (!filters.page_size) filters.page_size = investmentRecordsDefaultPageSize(tab);
     if (options.resetPage) {
@@ -3806,7 +3802,6 @@ function renderInvestmentRecordsShell() {
                     ${renderInvestmentRecordsTabButton('requests', '公众号入口', 'fa-message')}
                     ${renderInvestmentRecordsTabButton('backendRequests', '后台入口', 'fa-terminal')}
                     ${renderInvestmentRecordsTabButton('contents', '后台内容生成', 'fa-gears')}
-                    ${renderInvestmentRecordsTabButton('products', '产物', 'fa-box-archive')}
                     ${renderInvestmentRecordsTabButton('audits', '操作流水', 'fa-clock-rotate-left')}
                 </div>
                 <div class="investment-records-filters" id="investment-records-filters">${renderInvestmentRecordsFilters(investmentRecordsState.tab)}</div>
@@ -4057,7 +4052,7 @@ function renderInvestmentRecordsFilters(tab) {
 }
 
 async function switchInvestmentRecordsTab(tab) {
-    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)) tab = 'requests';
+    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     investmentRecordsState.filters[tab] = investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab);
     investmentRecordsState.selected = null;
@@ -4155,7 +4150,7 @@ async function changeInvestmentRecordsPageSize(tab, pageSize) {
 }
 
 async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
-    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)) tab = 'requests';
+    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     const currentPagination = investmentRecordsState.pagination[tab] || {};
     const list = document.getElementById('investment-records-list');
@@ -4183,9 +4178,6 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
             investmentRecordsState.data.contents = data.records || [];
             investmentRecordsApplyPagination('contents', data.pagination);
             html = renderInvestmentContentRecordsTable(investmentRecordsState.data.contents);
-        } else if (tab === 'products') {
-            await loadInvestmentProducts();
-            return;
         } else {
             const data = await investmentFetchJson(`/api/investment/audits?${investmentRecordsQueryParams('audits').toString()}`);
             investmentRecordsState.data.audits = data.audits || [];
@@ -4205,7 +4197,7 @@ async function renderInvestmentRecords(options = {}) {
     if (!element) return;
     await ensureInvestmentComponentsLoaded();
     if (options.tab) investmentRecordsState.tab = options.tab;
-    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(investmentRecordsState.tab)) {
+    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(investmentRecordsState.tab)) {
         investmentRecordsState.tab = 'requests';
     }
     element.innerHTML = renderInvestmentRecordsShell();

@@ -1812,7 +1812,7 @@ def test_business_request_export_exposes_unauthorized_and_customer_filter():
     assert "customer: investmentExportCustomer()" in quarter_body
 
 
-def test_business_records_default_to_beijing_today_filters():
+def test_business_records_default_to_unbounded_history_filters():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     state_start = js.index("let investmentRecordsState =")
@@ -1821,12 +1821,12 @@ def test_business_records_default_to_beijing_today_filters():
     default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
 
-    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
-    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "start_date: investmentTodayDate()" in default_body
-    assert "end_date: investmentTodayDate()" in default_body
-    assert "market_date: investmentTodayDate()" in default_body
+    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: ''}" in state_body
+    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "start_date: ''" in default_body
+    assert "end_date: ''" in default_body
+    assert "market_date: ''" in default_body
     assert "data.market_dates[0]" not in load_body
     assert "timeZone: 'Asia/Shanghai'" in _js_function_body(js, "investmentTodayDate")
 
@@ -2012,8 +2012,8 @@ def test_business_content_page_defaults_to_history_overview():
     load_body = _js_function_body(js, "loadInvestmentProducts")
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
 
-    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in js
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''}" in js
+    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: ''}" in js
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in js
     assert "const dateRange = investmentNormalizeCacheDateFilters();" in cache_body
     assert "const selectedDate = dateRange.marketDate;" in cache_body
     assert "const visibleEntries = values;" in cache_body
@@ -2202,12 +2202,12 @@ def test_investment_records_use_unified_products_api():
     assert "renderInvestmentCacheTableLegacy" in js
     assert "renderInvestmentContentRecordsTable" in js
     assert "renderInvestmentProductDrawer" in js
-    assert "renderInvestmentRecordsTabButton('products', '产物'" in records_shell_body
-    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)" in switch_body
-    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)" in load_tab_body
-    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(investmentRecordsState.tab)" in records_body
-    assert "tab === 'products'" in load_tab_body
-    assert "await loadInvestmentProducts()" in load_tab_body
+    assert "renderInvestmentRecordsTabButton('products', '产物'" not in records_shell_body
+    assert "['requests', 'backendRequests', 'contents', 'audits'].includes(tab)" in switch_body
+    assert "['requests', 'backendRequests', 'contents', 'audits'].includes(tab)" in load_tab_body
+    assert "['requests', 'backendRequests', 'contents', 'audits'].includes(investmentRecordsState.tab)" in records_body
+    assert "tab === 'products'" not in load_tab_body
+    assert "await loadInvestmentProducts()" not in load_tab_body
     assert "/api/investment/products/${encodedProductId}/invalidate" in invalidate_body
     assert "method: 'POST'" in invalidate_body
     assert "type === 'product' ? renderInvestmentProductDrawer(record)" in drawer_body
@@ -2215,7 +2215,7 @@ def test_investment_records_use_unified_products_api():
     assert "record.text_content" in product_drawer_body
     assert "record.generated_text" in product_drawer_body
     assert "filters: {" in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
     assert "pagination: {" in state_body
     assert "products: {page: 1, page_size: 120, total: 0, total_pages: 1}" in state_body
     assert "data: {" in state_body
@@ -2550,11 +2550,11 @@ def test_business_records_tabs_keep_independent_pagination_state():
     state_start = js.index("let investmentRecordsState =")
     state_end = js.index("const INVEST_VIEW_PERMISSIONS")
     state_body = js[state_start:state_end]
-    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: investmentTodayDate()}" in state_body
-    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: investmentTodayDate(), end_date: investmentTodayDate(), record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
+    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: ''}" in state_body
+    assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
 
     switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
     assert "investmentRecordsState.filters[tab]" in switch_body
