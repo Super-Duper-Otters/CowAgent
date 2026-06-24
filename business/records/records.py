@@ -1556,6 +1556,14 @@ def _product_source_dedupe_keys(
     )
 
 
+def _product_source_dedupe_keys_from_rows(rows: list[dict]) -> tuple[set[str], set[str], set[str]]:
+    return (
+        {str(item.get("source_cache_key") or "") for item in rows if item.get("source_cache_key")},
+        {str(item.get("source_content_id") or "") for item in rows if item.get("source_content_id")},
+        {str(item.get("source_request_id") or "") for item in rows if item.get("source_request_id")},
+    )
+
+
 def _artifact_package_sources(
     *,
     service_type: ServiceType | str | None,
@@ -1585,13 +1593,9 @@ def _artifact_package_sources(
     product_stmt = product_stmt.order_by(investment_products.c.created_at.desc(), investment_products.c.product_id.desc())
     with connect() as conn:
         total += int(conn.execute(product_count).scalar_one() or 0)
-        rows.extend({"kind": "product", "item": row_to_dict(row)} for row in conn.execute(product_stmt).fetchall())
-    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys(
-        service_type=service_type,
-        start_date=start_date,
-        end_date=end_date,
-        package_id=package_id,
-    )
+        product_rows = [row_to_dict(row) for row in conn.execute(product_stmt).fetchall()]
+        rows.extend({"kind": "product", "item": row} for row in product_rows)
+    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys_from_rows(product_rows)
 
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
     if cache_conditions is not None:
@@ -1841,11 +1845,6 @@ def list_artifact_folder_nodes(
         return nodes[offset : offset + page_size], total
 
     grouped: dict[str, dict] = {}
-    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys(
-        service_type=service_type,
-        start_date=bounded_start,
-        end_date=bounded_end,
-    )
     if normalized_level == "service":
         product_key_expr = investment_products.c.business_type
     else:
@@ -1866,7 +1865,13 @@ def list_artifact_folder_nodes(
         .where(*product_conditions)
         .group_by(product_key_expr)
     )
+    product_source_refs = select(
+        investment_products.c.source_cache_key,
+        investment_products.c.source_content_id,
+        investment_products.c.source_request_id,
+    ).where(*product_conditions).distinct()
     with connect() as conn:
+        product_source_rows = [row_to_dict(row) for row in conn.execute(product_source_refs).fetchall()]
         for row in conn.execute(product_grouped).fetchall():
             item = row_to_dict(row)
             key = str(item.get("key") or "")
@@ -1877,6 +1882,7 @@ def list_artifact_folder_nodes(
                 "count": int(item.get("count") or 0),
                 "updated_at": str(item.get("updated_at") or ""),
             }
+    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys_from_rows(product_source_rows)
 
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, bounded_start, bounded_end, keyword)
     if cache_conditions is not None:

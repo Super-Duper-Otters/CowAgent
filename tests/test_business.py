@@ -4348,12 +4348,12 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     )
 
     assert invalidated_payload["status"] == "success"
-    assert invalidated_payload["pagination"]["total"] == 1
-    assert all(entry["cache_key"] != product_cache_key for entry in invalidated_payload["entries"])
-    assert invalidated_payload["entries"][0]["cache_key"] == legacy_cache_key
+    assert invalidated_payload["pagination"]["total"] == 2
+    assert any(entry["cache_key"] == product_cache_key and entry["source_type"] == "cache" for entry in invalidated_payload["entries"])
+    assert any(entry["cache_key"] == legacy_cache_key and entry["source_type"] == "cache" for entry in invalidated_payload["entries"])
 
 
-def test_cache_handler_keyword_search_suppresses_legacy_when_product_source_exists(business_env, monkeypatch):
+def test_cache_handler_keyword_search_keeps_legacy_when_product_is_not_visible(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products import product_service
@@ -4393,8 +4393,9 @@ def test_cache_handler_keyword_search_suppresses_legacy_when_product_source_exis
     )
 
     assert payload["status"] == "success"
-    assert payload["entries"] == []
-    assert payload["pagination"]["total"] == 0
+    assert payload["pagination"]["total"] == 1
+    assert payload["entries"][0]["source_type"] == "cache"
+    assert payload["entries"][0]["cache_key"] == cache_key
 
 
 def test_cache_handler_merged_products_keep_pagination_totals(business_env, monkeypatch):
@@ -4780,11 +4781,11 @@ def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tm
     assert underscore_dates[0]["count"] == 1
 
 
-def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_product(business_env, tmp_path):
+def test_artifact_packages_keyword_filter_keeps_legacy_cache_when_product_is_not_visible(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products.product_service import create_product
-    from business.records.records import list_artifact_packages_page
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
     from business.schema.db import connect
     from business.schema.tables import investment_cache_entries
 
@@ -4824,9 +4825,19 @@ def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_pr
         end_date="2026-06-24",
         keyword="legacy-keyword",
     )
+    dates, date_total = list_artifact_folder_nodes(
+        level="date",
+        service_type="technical_analysis",
+        month="2026-06",
+        keyword="legacy-keyword",
+    )
 
-    assert total == 0
-    assert packages == []
+    assert total == 1
+    assert packages[0]["source_type"] == "cache"
+    assert packages[0]["package_id"] == cache_key
+    assert date_total == 1
+    assert dates[0]["key"] == "2026-06-24"
+    assert dates[0]["count"] == 1
 
 
 def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, monkeypatch, tmp_path):

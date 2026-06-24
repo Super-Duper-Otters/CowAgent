@@ -3904,6 +3904,52 @@ def _investment_product_exists_for_source_condition(products, *, business_type: 
     return conditions
 
 
+def _investment_visible_product_conditions(
+    products,
+    *,
+    business_type: str,
+    market_date: str,
+    start_date: str,
+    end_date: str,
+    keyword: str,
+    include_invalidated: bool,
+) -> list:
+    conditions = _investment_product_exists_for_source_condition(
+        products,
+        business_type=business_type,
+        market_date=market_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not include_invalidated:
+        from business.products.product_service import PRODUCT_STATUS_ACTIVE, _expires_at_condition, _now
+
+        conditions.append(products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
+    normalized_keyword = str(keyword or "").strip().lower()
+    if normalized_keyword:
+        from business.products.product_service import _keyword_like_pattern
+        from sqlalchemy import func, or_
+
+        pattern = _keyword_like_pattern(normalized_keyword)
+        conditions.append(
+            or_(
+                func.lower(products.c.product_id).like(pattern, escape="\\"),
+                func.lower(products.c.business_type).like(pattern, escape="\\"),
+                func.lower(products.c.target_key).like(pattern, escape="\\"),
+                func.lower(products.c.target_label).like(pattern, escape="\\"),
+                func.lower(products.c.business_date).like(pattern, escape="\\"),
+                func.lower(products.c.version_fingerprint).like(pattern, escape="\\"),
+                func.lower(products.c.source_request_id).like(pattern, escape="\\"),
+                func.lower(products.c.source_content_id).like(pattern, escape="\\"),
+                func.lower(products.c.source_cache_key).like(pattern, escape="\\"),
+                func.lower(products.c.source_type).like(pattern, escape="\\"),
+                func.lower(products.c.text_content).like(pattern, escape="\\"),
+            )
+        )
+    return conditions
+
+
 def _investment_list_legacy_history_without_product_sources(
     *,
     limit: int,
@@ -3915,7 +3961,7 @@ def _investment_list_legacy_history_without_product_sources(
     keyword: str = "",
     include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
-    from sqlalchemy import and_, desc, exists, func, select
+    from sqlalchemy import and_, desc, exists, func, or_, select
 
     from business.cache.cache_service import (
         _cache_entry_to_history,
@@ -3934,12 +3980,14 @@ def _investment_list_legacy_history_without_product_sources(
     legacy_start_date = _investment_date_bound(start_date)
     legacy_end_date = _investment_date_bound(end_date, end=True)
 
-    product_scope_conditions = _investment_product_exists_for_source_condition(
+    product_scope_conditions = _investment_visible_product_conditions(
         investment_products,
         business_type=business_type,
         market_date=market_date,
         start_date=start_date,
         end_date=end_date,
+        keyword=keyword,
+        include_invalidated=include_invalidated,
     )
 
     cache_conditions = []
