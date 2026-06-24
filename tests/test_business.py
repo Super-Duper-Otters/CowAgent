@@ -4544,6 +4544,37 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(busi
     assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["input", "output", "intermediate"]
 
 
+def test_artifact_packages_include_unified_products_without_legacy_cache_or_content(business_env, tmp_path):
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_packages_page
+
+    image = tmp_path / "card.png"
+    report = tmp_path / "report.md"
+    image.write_text("image", encoding="utf-8")
+    report.write_text("report", encoding="utf-8")
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(image), str(report)],
+        source_type="request",
+        source_request_id="req-product",
+    )
+
+    packages, total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        start_date="2026-06-24",
+        end_date="2026-06-24",
+    )
+
+    assert total == 1
+    assert packages[0]["package_id"] == product["product_id"]
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["file_count"] == 2
+
+
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

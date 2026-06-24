@@ -116,6 +116,8 @@ def _json_list(values: list[str] | None) -> str:
 
 
 def _load_list(value: str | None) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
     if not value:
         return []
     try:
@@ -1251,6 +1253,57 @@ def _row_to_internal_call_artifact_package(call_item: dict) -> dict:
     }
 
 
+def _row_to_product_artifact_package(item: dict) -> dict:
+    product_id = str(item.get("product_id") or "")
+    service_type = str(item.get("business_type") or "")
+    output_files = _load_list(item.get("output_files"))
+    generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
+    generated_date = _date_part(generated_at)
+    business_date = str(item.get("business_date") or "")
+    target = str(item.get("target_key") or "")
+    display_name = str(item.get("target_label") or target or "产物")
+    source_request_id = str(item.get("source_request_id") or "")
+    source_request = _request_row(source_request_id) if source_request_id else {}
+    raw_input = str(source_request.get("raw_input") or "")
+    files = [_virtual_input_file(raw_input)] if raw_input else []
+    files.extend(_artifact_files_for_owner(product_id, output_files))
+    text_content = str(item.get("text_content") or "")
+    if text_content:
+        files.append(_virtual_generated_text_file(text_content))
+    service_label = _artifact_service_label(service_type)
+    return {
+        "level": "package",
+        "key": product_id,
+        "package_id": product_id,
+        "source_type": "product",
+        "label": display_name,
+        "service_type": service_type,
+        "service_label": service_label,
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "business_date": business_date,
+        "normalized_target": target,
+        "stock_name": "",
+        "display_name": display_name,
+        "display_path": [service_label, generated_date or business_date, display_name],
+        "version_fingerprint": str(item.get("version_fingerprint") or ""),
+        "product_id": product_id,
+        "source_request_id": source_request_id,
+        "source_content_id": str(item.get("source_content_id") or ""),
+        "source_cache_key": str(item.get("source_cache_key") or ""),
+        "created_from_request_id": source_request_id,
+        "related_request_ids": [source_request_id] if source_request_id else [],
+        "request_count": 1 if source_request_id else 0,
+        "file_count": len(output_files),
+        "hit_count": int(item.get("hit_count") or 0),
+        "created_at": str(item.get("created_at") or ""),
+        "updated_at": str(item.get("updated_at") or ""),
+        "status": str(item.get("status") or ""),
+        "files": _dedupe_files(files),
+    }
+
+
 def _row_to_artifact_package(cache_item: dict) -> dict:
     cache_key = str(cache_item.get("cache_key") or "")
     owner_id = str(cache_item.get("artifact_owner_id") or "")
@@ -1430,10 +1483,42 @@ def _artifact_package_sources(
 ) -> tuple[list[dict], int]:
     rows: list[dict] = []
     total = 0
+    from business.products.product_service import list_products_page
+
+    product_rows, _product_total = list_products_page(
+        page=1,
+        page_size=10000,
+        business_type=str(service_type or ""),
+        start_date=start_date,
+        end_date=end_date,
+        keyword=keyword,
+        include_invalidated=True,
+    )
+    if package_id:
+        normalized_package_id = str(package_id)
+        product_rows = [
+            item
+            for item in product_rows
+            if normalized_package_id
+            in {
+                str(item.get("product_id") or ""),
+                str(item.get("source_cache_key") or ""),
+                str(item.get("source_content_id") or ""),
+                str(item.get("source_request_id") or ""),
+            }
+        ]
+    rows.extend({"kind": "product", "item": item} for item in product_rows)
+    total += len(product_rows)
+    product_cache_keys = {str(item.get("source_cache_key") or "") for item in product_rows if item.get("source_cache_key")}
+    product_content_ids = {str(item.get("source_content_id") or "") for item in product_rows if item.get("source_content_id")}
+    product_request_ids = {str(item.get("source_request_id") or "") for item in product_rows if item.get("source_request_id")}
+
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
     if cache_conditions is not None:
         if package_id:
             cache_conditions.append(investment_cache_entries.c.cache_key == str(package_id))
+        if product_cache_keys:
+            cache_conditions.append(~investment_cache_entries.c.cache_key.in_(list(product_cache_keys)))
         cache_stmt = select(investment_cache_entries)
         cache_count = select(func.count()).select_from(investment_cache_entries)
         if cache_conditions:
@@ -1447,6 +1532,8 @@ def _artifact_package_sources(
     if content_conditions is not None:
         if package_id:
             content_conditions.append(investment_daily_contents.c.content_id == str(package_id))
+        if product_content_ids:
+            content_conditions.append(~investment_daily_contents.c.content_id.in_(list(product_content_ids)))
         generated_at = _content_generated_at_expr().label("generated_at")
         content_stmt = select(investment_daily_contents, generated_at)
         content_count = select(func.count()).select_from(investment_daily_contents)
@@ -1461,6 +1548,8 @@ def _artifact_package_sources(
     if internal_conditions is not None:
         if package_id:
             internal_conditions.append(investment_request_records.c.request_id == str(package_id))
+        if product_request_ids:
+            internal_conditions.append(~investment_request_records.c.request_id.in_(list(product_request_ids)))
         internal_stmt = select(investment_request_records)
         internal_count = select(func.count()).select_from(investment_request_records)
         if internal_conditions:
@@ -1492,7 +1581,9 @@ def list_artifact_packages_page(
         package_id=package_id,
     )
     packages = [
-        _row_to_artifact_package(item["item"])
+        _row_to_product_artifact_package(item["item"])
+        if item["kind"] == "product"
+        else _row_to_artifact_package(item["item"])
         if item["kind"] == "cache"
         else _row_to_content_artifact_package(item["item"])
         if item["kind"] == "content"
@@ -1538,6 +1629,31 @@ def _artifact_package_summary(item: dict) -> dict:
         "normalized_target": str(item.get("normalized_target") or ""),
         "version_fingerprint": str(item.get("version_fingerprint") or ""),
         "artifact_owner_id": str(item.get("artifact_owner_id") or ""),
+        "file_count": len(output_files),
+        "hit_count": int(item.get("hit_count") or 0),
+        "updated_at": str(item.get("updated_at") or ""),
+    }
+
+
+def _product_artifact_package_summary(item: dict) -> dict:
+    product_id = str(item.get("product_id") or "")
+    output_files = _load_list(item.get("output_files"))
+    generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
+    generated_date = _date_part(generated_at)
+    return {
+        "level": "package",
+        "key": product_id,
+        "package_id": product_id,
+        "source_type": "product",
+        "label": str(item.get("target_label") or item.get("target_key") or "产物"),
+        "service_type": str(item.get("business_type") or ""),
+        "market_date": generated_date,
+        "generated_at": generated_at,
+        "generated_date": generated_date,
+        "business_date": str(item.get("business_date") or ""),
+        "normalized_target": str(item.get("target_key") or ""),
+        "version_fingerprint": str(item.get("version_fingerprint") or ""),
+        "product_id": product_id,
         "file_count": len(output_files),
         "hit_count": int(item.get("hit_count") or 0),
         "updated_at": str(item.get("updated_at") or ""),
@@ -1624,7 +1740,9 @@ def list_artifact_folder_nodes(
             keyword=keyword,
         )
         nodes = [
-            _artifact_package_summary(item["item"])
+            _product_artifact_package_summary(item["item"])
+            if item["kind"] == "product"
+            else _artifact_package_summary(item["item"])
             if item["kind"] == "cache"
             else _content_artifact_package_summary(item["item"])
             if item["kind"] == "content"
