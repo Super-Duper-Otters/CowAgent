@@ -4286,6 +4286,7 @@ def test_cache_handler_keyword_search_suppresses_legacy_when_product_source_exis
 
 def test_cache_handler_merged_products_keep_pagination_totals(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.cache import cache_service
     from business.config.constants import ServiceType
     from business.products import product_service
     from channel.web.web_channel import InvestmentCacheHandler
@@ -4321,6 +4322,30 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
             version_fingerprint="v1",
             output_files=[f"/tmp/legacy-only-card-{index}.png"],
         )
+    for index in range(4):
+        product_service.create_product(
+            business_type="technical_analysis",
+            target_key=f"68800{index}.SH",
+            target_label=f"仅产品{index}",
+            business_date="2026-06-24",
+            version_fingerprint="v1",
+            output_files=[f"/tmp/product-only-card-{index}.png"],
+        )
+
+    original_list_products_page = product_service.list_products_page
+    product_page_sizes = []
+
+    def guarded_list_products_page(*args, **kwargs):
+        product_page_sizes.append(int(kwargs.get("page_size") or 0))
+        assert int(kwargs.get("page_size") or 0) <= 6
+        return original_list_products_page(*args, **kwargs)
+
+    monkeypatch.setattr(product_service, "list_products_page", guarded_list_products_page)
+    monkeypatch.setattr(
+        cache_service,
+        "list_generated_history_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy full-fetch path should not be used")),
+    )
 
     page_one = _call_investment_json_handler(
         monkeypatch,
@@ -4339,14 +4364,15 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
     )
 
     assert page_one["status"] == "success"
-    assert page_one["pagination"] == {"page": 1, "page_size": 2, "total": 5, "total_pages": 3}
+    assert page_one["pagination"] == {"page": 1, "page_size": 2, "total": 9, "total_pages": 5}
     assert len(page_one["entries"]) == 2
     assert page_two["status"] == "success"
-    assert page_two["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+    assert page_two["pagination"] == {"page": 2, "page_size": 2, "total": 9, "total_pages": 5}
     assert len(page_two["entries"]) == 2
     assert page_three["status"] == "success"
-    assert page_three["pagination"] == {"page": 3, "page_size": 2, "total": 5, "total_pages": 3}
-    assert len(page_three["entries"]) == 1
+    assert page_three["pagination"] == {"page": 3, "page_size": 2, "total": 9, "total_pages": 5}
+    assert len(page_three["entries"]) == 2
+    assert max(product_page_sizes) <= 6
     returned_duplicate_keys = {
         entry["cache_key"]
         for payload in (page_one, page_two, page_three)

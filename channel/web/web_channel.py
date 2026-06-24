@@ -3771,9 +3771,9 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.cache.cache_service import list_generated_history_market_dates, list_generated_history_page
+            from business.cache.cache_service import list_generated_history_market_dates
             from business.config.constants import ServiceType, normalize_service
-            from business.products.product_service import list_product_business_dates, list_product_source_refs, list_products_page
+            from business.products.product_service import list_product_business_dates
 
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3794,72 +3794,17 @@ class InvestmentCacheHandler:
             end_date = getattr(params, "end_date", "") or ""
             keyword = getattr(params, "keyword", "") or ""
 
-            product_preview, product_total = list_products_page(
-                page=1,
-                page_size=1,
-                business_type=business_type,
-                business_date=market_date,
-                start_date=start_date,
-                end_date=end_date,
-                keyword=keyword,
-                include_invalidated=include_invalidated,
-            )
-            product_rows = product_preview
-            if product_total > len(product_preview):
-                product_rows, product_total = list_products_page(
-                    page=1,
-                    page_size=product_total,
-                    business_type=business_type,
-                    business_date=market_date,
-                    start_date=start_date,
-                    end_date=end_date,
-                    keyword=keyword,
-                    include_invalidated=include_invalidated,
-                )
-            product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
-            suppression_refs = list_product_source_refs(
-                business_type=business_type,
-                business_date=market_date,
-                start_date=start_date,
-                end_date=end_date,
-                include_invalidated=True,
-            )
-            product_cache_keys = {ref.get("source_cache_key") for ref in suppression_refs if ref.get("source_cache_key")}
-            product_content_ids = {ref.get("source_content_id") for ref in suppression_refs if ref.get("source_content_id")}
-
-            legacy_preview, legacy_total = list_generated_history_page(
-                page=1,
-                page_size=1,
+            entries, total = _investment_list_merged_cache_history(
+                page=page,
+                page_size=page_size,
                 service_type=service_type,
+                business_type=business_type,
                 market_date=market_date,
-                start_date=_investment_date_bound(start_date),
-                end_date=_investment_date_bound(end_date, end=True),
+                start_date=start_date,
+                end_date=end_date,
                 keyword=keyword,
                 include_invalidated=include_invalidated,
             )
-            legacy_entries = legacy_preview
-            if legacy_total > len(legacy_preview):
-                legacy_entries, legacy_total = list_generated_history_page(
-                    page=1,
-                    page_size=legacy_total,
-                    service_type=service_type,
-                    market_date=market_date,
-                    start_date=_investment_date_bound(start_date),
-                    end_date=_investment_date_bound(end_date, end=True),
-                    keyword=keyword,
-                    include_invalidated=include_invalidated,
-                )
-            entries = list(product_entries)
-            for entry in legacy_entries:
-                if entry.get("cache_key") and entry.get("cache_key") in product_cache_keys:
-                    continue
-                if entry.get("content_id") and entry.get("content_id") in product_content_ids:
-                    continue
-                entries.append(entry)
-            entries.sort(key=_investment_cache_history_sort_key, reverse=True)
-            total = len(entries)
-            offset = (page - 1) * page_size
-            entries = entries[offset : offset + page_size]
 
             market_dates = sorted(
                 {
@@ -3889,6 +3834,188 @@ class InvestmentCacheHandler:
         except Exception as e:
             logger.error(f"[Investment] cache entries error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
+
+
+def _investment_list_merged_cache_history(
+    *,
+    page: int,
+    page_size: int,
+    service_type,
+    business_type: str,
+    market_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    include_invalidated: bool = False,
+) -> tuple[list[dict], int]:
+    from business.products.product_service import list_products_page
+
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 50))
+    offset = (page - 1) * page_size
+    source_limit = offset + page_size
+
+    product_rows, product_total = list_products_page(
+        page=1,
+        page_size=source_limit,
+        business_type=business_type,
+        business_date=market_date,
+        start_date=start_date,
+        end_date=end_date,
+        keyword=keyword,
+        include_invalidated=include_invalidated,
+    )
+    product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
+    legacy_entries, legacy_total = _investment_list_legacy_history_without_product_sources(
+        limit=source_limit,
+        service_type=service_type,
+        business_type=business_type,
+        market_date=market_date,
+        start_date=start_date,
+        end_date=end_date,
+        keyword=keyword,
+        include_invalidated=include_invalidated,
+    )
+    entries = [*product_entries, *legacy_entries]
+    entries.sort(key=_investment_cache_history_sort_key, reverse=True)
+    return entries[offset : offset + page_size], product_total + legacy_total
+
+
+def _investment_product_exists_for_source_condition(products, *, business_type: str, market_date: str, start_date: str, end_date: str) -> list:
+    conditions = []
+    if business_type:
+        conditions.append(products.c.business_type == business_type)
+    if market_date:
+        conditions.append(products.c.business_date == market_date)
+    else:
+        if start_date:
+            conditions.append(products.c.business_date >= start_date)
+        if end_date:
+            conditions.append(products.c.business_date <= end_date)
+    return conditions
+
+
+def _investment_list_legacy_history_without_product_sources(
+    *,
+    limit: int,
+    service_type,
+    business_type: str,
+    market_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    include_invalidated: bool = False,
+) -> tuple[list[dict], int]:
+    from sqlalchemy import and_, desc, exists, func, select
+
+    from business.cache.cache_service import (
+        _cache_entry_to_history,
+        _content_history_conditions,
+        _content_row_to_history,
+        _keyword_match_condition,
+        _row_to_entry,
+    )
+    from business.config.constants import ServiceType
+    from business.content.daily_content import mark_expired_daily_contents_invalidated
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries, investment_daily_contents, investment_products
+
+    mark_expired_daily_contents_invalidated()
+    limit = max(1, int(limit or 1))
+    legacy_start_date = _investment_date_bound(start_date)
+    legacy_end_date = _investment_date_bound(end_date, end=True)
+
+    product_scope_conditions = _investment_product_exists_for_source_condition(
+        investment_products,
+        business_type=business_type,
+        market_date=market_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    cache_conditions = []
+    if service_type is not None:
+        cache_conditions.append(investment_cache_entries.c.service_type == str(service_type))
+    if market_date:
+        cache_conditions.append(investment_cache_entries.c.market_date == market_date)
+    else:
+        if legacy_start_date:
+            cache_conditions.append(investment_cache_entries.c.market_date >= legacy_start_date)
+        if legacy_end_date:
+            cache_conditions.append(investment_cache_entries.c.market_date <= legacy_end_date)
+    if not include_invalidated:
+        cache_conditions.append(investment_cache_entries.c.status == "active")
+    cache_keyword = _keyword_match_condition(
+        keyword,
+        [
+            investment_cache_entries.c.cache_key,
+            investment_cache_entries.c.service_type,
+            investment_cache_entries.c.normalized_target,
+            investment_cache_entries.c.market_date,
+            investment_cache_entries.c.version_fingerprint,
+            investment_cache_entries.c.output_files,
+            investment_cache_entries.c.artifact_owner_id,
+            investment_cache_entries.c.status,
+        ],
+        investment_cache_entries.c.service_type,
+    )
+    if cache_keyword is not None:
+        cache_conditions.append(cache_keyword)
+    cache_product_exists = exists(
+        select(1).where(
+            and_(
+                investment_products.c.source_cache_key == investment_cache_entries.c.cache_key,
+                *product_scope_conditions,
+            )
+        )
+    )
+    cache_conditions.append(~cache_product_exists)
+
+    content_conditions = _content_history_conditions(
+        service_type=service_type,
+        market_date=market_date,
+        start_date=legacy_start_date,
+        end_date=legacy_end_date,
+        keyword=keyword,
+        include_invalidated=include_invalidated,
+    )
+    content_product_exists = exists(
+        select(1).where(
+            and_(
+                investment_products.c.source_content_id == investment_daily_contents.c.content_id,
+                *product_scope_conditions,
+            )
+        )
+    )
+    content_conditions.append(~content_product_exists)
+
+    cache_stmt = (
+        select(investment_cache_entries)
+        .where(and_(*cache_conditions))
+        .order_by(desc(investment_cache_entries.c.updated_at))
+        .limit(limit)
+    )
+    cache_count_stmt = select(func.count()).select_from(investment_cache_entries).where(and_(*cache_conditions))
+    content_stmt = (
+        select(investment_daily_contents)
+        .where(and_(*content_conditions))
+        .order_by(desc(investment_daily_contents.c.updated_at))
+        .limit(limit)
+    )
+    content_count_stmt = select(func.count()).select_from(investment_daily_contents).where(and_(*content_conditions))
+
+    if service_type == ServiceType.UNMATCHED:
+        return [], 0
+
+    with connect() as conn:
+        cache_total = int(conn.execute(cache_count_stmt).scalar_one() or 0)
+        content_total = int(conn.execute(content_count_stmt).scalar_one() or 0)
+        cache_rows = conn.execute(cache_stmt).fetchall()
+        content_rows = conn.execute(content_stmt).fetchall()
+
+    entries = [_cache_entry_to_history(_row_to_entry(row)) for row in cache_rows]
+    entries.extend(_content_row_to_history(row) for row in content_rows)
+    return entries, cache_total + content_total
 
 
 def _investment_product_to_cache_entry(product: dict) -> dict:
