@@ -1071,10 +1071,13 @@ def _artifact_virtual_name(role: str, file_path: str) -> str:
 
 
 def _file_payload(item: dict) -> dict:
+    from urllib.parse import quote
+
     file_id = str(item.get("id") or item.get("file_id") or "")
+    file_path = str(item.get("file_path") or "")
     payload = dict(item)
     payload["file_id"] = file_id
-    payload["file_url"] = item.get("file_url") or (f"/api/file?id={file_id}" if file_id else "")
+    payload["file_url"] = item.get("file_url") or (f"/api/file?id={file_id}" if file_id else f"/api/file?path={quote(file_path)}" if file_path else "")
     return payload
 
 
@@ -1558,37 +1561,32 @@ def _artifact_package_sources(
 ) -> tuple[list[dict], int]:
     rows: list[dict] = []
     total = 0
-    from business.products.product_service import list_products_page
-
-    product_query = {
-        "page": 1,
-        "page_size": 10000,
-        "business_type": str(service_type or ""),
-        "start_date": start_date,
-        "end_date": end_date,
-        "include_invalidated": True,
-    }
-    product_rows, _product_total = list_products_page(
-        **product_query,
-        keyword=keyword,
-    )
-    product_source_rows = product_rows
-    if keyword:
-        product_source_rows, _source_product_total = list_products_page(
-            **product_query,
-            keyword="",
-        )
+    product_conditions = _product_artifact_conditions(service_type, start_date, end_date, keyword)
     if package_id:
         normalized_package_id = str(package_id)
-        product_rows = [item for item in product_rows if _product_matches_package_id(item, normalized_package_id)]
-        product_source_rows = [
-            item for item in product_source_rows if _product_matches_package_id(item, normalized_package_id)
-        ]
-    rows.extend({"kind": "product", "item": item} for item in product_rows)
-    total += len(product_rows)
-    product_cache_keys = {str(item.get("source_cache_key") or "") for item in product_source_rows if item.get("source_cache_key")}
-    product_content_ids = {str(item.get("source_content_id") or "") for item in product_source_rows if item.get("source_content_id")}
-    product_request_ids = {str(item.get("source_request_id") or "") for item in product_source_rows if item.get("source_request_id")}
+        product_conditions.append(
+            or_(
+                investment_products.c.product_id == normalized_package_id,
+                investment_products.c.source_cache_key == normalized_package_id,
+                investment_products.c.source_content_id == normalized_package_id,
+                investment_products.c.source_request_id == normalized_package_id,
+            )
+        )
+    product_stmt = select(investment_products)
+    product_count = select(func.count()).select_from(investment_products)
+    if product_conditions:
+        product_stmt = product_stmt.where(*product_conditions)
+        product_count = product_count.where(*product_conditions)
+    product_stmt = product_stmt.order_by(investment_products.c.created_at.desc(), investment_products.c.product_id.desc())
+    with connect() as conn:
+        total += int(conn.execute(product_count).scalar_one() or 0)
+        rows.extend({"kind": "product", "item": row_to_dict(row)} for row in conn.execute(product_stmt).fetchall())
+    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys(
+        service_type=service_type,
+        start_date=start_date,
+        end_date=end_date,
+        package_id=package_id,
+    )
 
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
     if cache_conditions is not None:

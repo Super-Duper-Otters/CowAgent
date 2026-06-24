@@ -4575,6 +4575,36 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
     assert packages[0]["file_count"] == 2
 
 
+def test_artifact_product_package_output_files_have_path_file_urls_without_artifact_rows(business_env, tmp_path):
+    from urllib.parse import quote
+
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_packages_page
+
+    image = tmp_path / "card.png"
+    report = tmp_path / "report.md"
+    image.write_text("image", encoding="utf-8")
+    report.write_text("report", encoding="utf-8")
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(image), str(report)],
+        source_type="request",
+        source_request_id="req-product-files",
+    )
+
+    packages, total = list_artifact_packages_page(package_id=product["product_id"])
+
+    output_files = [file for file in packages[0]["files"] if file.get("file_path")]
+    assert total == 1
+    assert len(output_files) == 2
+    assert output_files[0]["file_url"] == f"/api/file?path={quote(str(image))}"
+    assert output_files[1]["file_url"] == f"/api/file?path={quote(str(report))}"
+
+
 def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_product(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
