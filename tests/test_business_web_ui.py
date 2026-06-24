@@ -2188,12 +2188,24 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
 
 def test_investment_records_use_unified_products_api():
     js = CONSOLE_JS.read_text(encoding="utf-8")
+    state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
+    invalidate_body = _js_function_body(js, "invalidateInvestmentProduct")
+    drawer_body = _js_function_body(js, "renderInvestmentRecordDrawerBody")
 
     assert "/api/investment/products" in js
     assert "renderInvestmentProductsTable" in js
     assert "renderInvestmentCacheTableLegacy" in js
     assert "renderInvestmentContentRecordsTable" in js
     assert "renderInvestmentProductDrawer" in js
+    assert "/api/investment/products/${encodedProductId}/invalidate" in invalidate_body
+    assert "method: 'POST'" in invalidate_body
+    assert "type === 'product' ? renderInvestmentProductDrawer(record)" in drawer_body
+    assert "filters: {" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''}" in state_body
+    assert "pagination: {" in state_body
+    assert "products: {page: 1, page_size: 120, total: 0, total_pages: 1}" in state_body
+    assert "data: {" in state_body
+    assert "products: {entries: [], business_dates: []}" in state_body
     assert "产物" in js
 
 
