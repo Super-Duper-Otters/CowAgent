@@ -788,6 +788,7 @@ def set_content_effective(
             metadata={"module_key": module_key},
         )
     if final_image:
+        # Compatibility path for legacy content/artifact consumers; products are the canonical publish output.
         record_output_file(
             content_id,
             final_image,

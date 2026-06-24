@@ -3532,6 +3532,88 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
         assert conn.execute(text("select count(*) from cache_entries where cache_key = 'old-invalid-cache-cleanup'")).scalar_one() == 1
 
 
+def test_cleanup_does_not_delete_products_or_legacy_product_sources(business_env, tmp_path):
+    from business.products.product_service import create_product, list_products_page
+    from business.records.cleanup import cleanup_useless_business_records
+    from business.schema.db import connect
+    from business.schema.tables import cache_entries, content_records, request_records
+
+    product_file = tmp_path / "cleanup-product.png"
+    product_file.write_bytes(b"product")
+
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="cleanup-v1",
+        source_request_id="cleanup-source-request",
+        source_content_id="cleanup-source-content",
+        source_cache_key="cleanup-source-cache",
+        source_type="request",
+        output_files=[str(product_file)],
+        text_content="cleanup product",
+    )
+
+    with connect() as conn:
+        conn.execute(
+            request_records.insert(),
+            {
+                "request_id": "cleanup-source-request",
+                "openid": "cleanup-openid",
+                "raw_input": "300502.SZ 技术分析",
+                "service_type": "technical_analysis",
+                "status": "success",
+                "output_files": "[]",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+        conn.execute(
+            content_records.insert(),
+            {
+                "content_id": "cleanup-source-content",
+                "service_type": "rate",
+                "source_files": "[]",
+                "source_text": "cleanup source",
+                "generated_text": "cleanup generated",
+                "output_image": str(product_file),
+                "status": "effective",
+                "operator": "pytest",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "content_version": 1,
+            },
+        )
+        conn.execute(
+            cache_entries.insert(),
+            {
+                "cache_key": "cleanup-source-cache",
+                "service_type": "technical_analysis",
+                "normalized_target": "300502.SZ",
+                "market_date": "2026-06-24",
+                "version_fingerprint": "cleanup-v1",
+                "output_files": "[]",
+                "artifact_owner_id": "cleanup-source-request",
+                "status": "active",
+                "hit_count": 0,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+        )
+
+    cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=False)
+
+    products, total = list_products_page(include_invalidated=True, business_type="technical_analysis")
+    assert total == 1
+    assert products[0]["product_id"] == product["product_id"]
+    assert products[0]["output_files"] == [str(product_file)]
+    with connect() as conn:
+        assert conn.execute(text("select count(*) from request_records where request_id = 'cleanup-source-request'")).scalar_one() == 1
+        assert conn.execute(text("select count(*) from content_records where content_id = 'cleanup-source-content'")).scalar_one() == 1
+        assert conn.execute(text("select count(*) from cache_entries where cache_key = 'cleanup-source-cache'")).scalar_one() == 1
+
+
 def test_web_daily_content_generate_marks_generating_before_background_task(business_env, monkeypatch):
     from business.config.constants import ServiceType, Status
     from business.content.daily_content import create_rate_content_draft

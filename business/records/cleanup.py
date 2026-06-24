@@ -50,6 +50,7 @@ def cleanup_useless_business_records(
     expired_session_condition = investment_admin_sessions.c.expires_at < current_iso
 
     with connect() as conn:
+        # Keep cleanup scoped to operational noise; product and legacy source tables are retention boundaries.
         result: dict[str, int] = {
             "runtime_test_configs": _count(conn, investment_configs, runtime_config_condition),
             "runtime_test_stocks": _count(conn, investment_stock_symbols, runtime_stock_condition),
