@@ -489,8 +489,8 @@ let investmentRecordsState = {
         requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
-        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''},
-        cache: {page: '1', page_size: '120', period_mode: 'all', market_date: ''},
+        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'},
+        cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
     },
     pagination: {
@@ -3511,10 +3511,10 @@ function investmentRecordsDefaultFilters(tab) {
         };
     }
     if (tab === 'cache') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', market_date: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', market_date: '', include_invalidated: '1'};
     }
     if (tab === 'products') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'};
     }
     if (tab === 'backendRequests') {
         return {
@@ -3756,37 +3756,34 @@ async function loadInvestmentGeneratedContent() {
 }
 
 async function loadInvestmentProducts() {
-    const isRecordsProductsTab = currentView === 'invest-records' && investmentRecordsState.tab === 'products';
-    const list = document.getElementById(isRecordsProductsTab ? 'investment-records-list' : 'investment-content-list');
+    const list = document.getElementById('investment-content-list');
     const pagination = document.getElementById('investment-records-pagination');
     if (list) investmentLoading(list);
     try {
-        const query = investmentRecordsQueryParams('products');
+        const query = investmentRecordsQueryParams('cache');
         const range = investmentNormalizeCacheDateFilters();
         query.delete('period_mode');
         query.delete('period_value');
-        query.delete('business_date');
+        query.delete('market_date');
         query.delete('start_date');
         query.delete('end_date');
         if (range.marketDate) {
-            query.set('business_date', range.marketDate);
+            query.set('market_date', range.marketDate);
         }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
-        const data = await investmentFetchJson(`/api/investment/products?${query.toString()}`);
+        const data = await investmentFetchJson(`/api/investment/cache?${query.toString()}`);
         const entries = data.entries || [];
-        investmentRecordsState.data.products = {
+        investmentRecordsState.data.cache = {
             entries,
-            business_dates: data.business_dates || investmentGeneratedDateValues([], entries),
+            market_dates: data.market_dates || investmentGeneratedDateValues([], entries),
         };
-        investmentRecordsApplyPagination('products', data.pagination);
+        investmentRecordsApplyPagination('cache', data.pagination);
         if (list) {
-            list.innerHTML = isRecordsProductsTab
-                ? renderInvestmentProductsTable(investmentRecordsState.data.products.entries)
-                : renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
+            list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
         }
-        if (pagination && isRecordsProductsTab) pagination.innerHTML = renderInvestmentRecordsPagination('products');
-        if (!isRecordsProductsTab) syncInvestmentCachePeriodMode(investmentCachePeriodMode());
+        if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination('cache');
+        syncInvestmentCachePeriodMode(investmentCachePeriodMode());
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
@@ -4294,7 +4291,12 @@ function renderInvestmentProductsTable(entries) {
     if (!entries.length) return '<div class="investment-empty">暂无生成产物</div>';
     const rows = entries.map(product => {
         const productId = product.product_id || '';
+        const sourceType = product.source_type || '';
+        const drawerType = sourceType === 'product' ? 'product' : investmentGeneratedRecordDrawerType(product);
         const isActive = product.status === 'active';
+        const action = sourceType === 'product' && isActive && productId
+            ? investmentTextButtonIfCan('cache.write', '失效', `invalidateInvestmentProduct('${encodeURIComponent(productId)}')`, 'danger')
+            : investmentGeneratedEntryActions(product);
         return `<tr>
             <td>${investmentServiceLabel(investmentProductBusinessType(product))}</td>
             <td>${investmentRecordClamp(investmentProductTarget(product), 2, 42)}</td>
@@ -4303,8 +4305,8 @@ function renderInvestmentProductsTable(entries) {
             <td>${investmentRecordFileSummary(product.output_files || [], '无产物')}</td>
             <td>${escapeHtml(investmentFormatBeijingTime(product.created_at || product.updated_at || product.effective_at) || '-')}</td>
             <td class="investment-row-actions">
-                ${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('product', '${investmentEncodedRecord(product)}')`)}
-                ${isActive && productId ? investmentTextButtonIfCan('cache.write', '失效', `invalidateInvestmentProduct('${encodeURIComponent(productId)}')`, 'danger') : ''}
+                ${investmentIconButton('fa-circle-info', '详情', `openInvestmentRecordDrawer('${drawerType}', '${investmentEncodedRecord(product)}')`)}
+                ${action}
             </td>
         </tr>`;
     }).join('');
@@ -4356,7 +4358,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                 </div>
             </div>
             ${renderInvestmentProductsTable(visibleEntries)}
-            ${renderInvestmentRecordsPagination('products')}
+            ${renderInvestmentRecordsPagination('cache')}
         </div>`;
 }
 
