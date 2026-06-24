@@ -4575,6 +4575,55 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
     assert packages[0]["file_count"] == 2
 
 
+def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_product(business_env, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_packages_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries
+
+    product_file = tmp_path / "product-card.png"
+    legacy_file = tmp_path / "legacy-keyword-card.png"
+    product_file.write_text("product", encoding="utf-8")
+    legacy_file.write_text("legacy", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-24", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(legacy_file)],
+    )
+    with connect() as conn:
+        conn.execute(
+            investment_cache_entries.update()
+            .where(investment_cache_entries.c.cache_key == cache_key)
+            .values(created_at="2026-06-24T08:00:00+00:00", updated_at="2026-06-24T08:00:00+00:00")
+        )
+    create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+        source_type="request",
+        source_cache_key=cache_key,
+    )
+
+    packages, total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        start_date="2026-06-24",
+        end_date="2026-06-24",
+        keyword="legacy-keyword",
+    )
+
+    assert total == 0
+    assert packages == []
+
+
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

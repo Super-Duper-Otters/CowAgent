@@ -1485,33 +1485,49 @@ def _artifact_package_sources(
     total = 0
     from business.products.product_service import list_products_page
 
+    def _product_matches_package_id(item: dict, normalized_package_id: str) -> bool:
+        return normalized_package_id in {
+            str(item.get("product_id") or ""),
+            str(item.get("source_cache_key") or ""),
+            str(item.get("source_content_id") or ""),
+            str(item.get("source_request_id") or ""),
+        }
+
+    product_query = {
+        "page": 1,
+        "page_size": 10000,
+        "business_type": str(service_type or ""),
+        "start_date": start_date,
+        "end_date": end_date,
+        "include_invalidated": True,
+    }
     product_rows, _product_total = list_products_page(
-        page=1,
-        page_size=10000,
-        business_type=str(service_type or ""),
-        start_date=start_date,
-        end_date=end_date,
+        **product_query,
         keyword=keyword,
-        include_invalidated=True,
     )
+    product_source_rows = product_rows
+    if keyword:
+        product_source_rows, _source_product_total = list_products_page(
+            **product_query,
+            keyword="",
+        )
     if package_id:
         normalized_package_id = str(package_id)
-        product_rows = [
-            item
-            for item in product_rows
-            if normalized_package_id
-            in {
-                str(item.get("product_id") or ""),
-                str(item.get("source_cache_key") or ""),
-                str(item.get("source_content_id") or ""),
-                str(item.get("source_request_id") or ""),
-            }
+        product_rows = [item for item in product_rows if _product_matches_package_id(item, normalized_package_id)]
+        product_source_rows = [
+            item for item in product_source_rows if _product_matches_package_id(item, normalized_package_id)
         ]
     rows.extend({"kind": "product", "item": item} for item in product_rows)
     total += len(product_rows)
-    product_cache_keys = {str(item.get("source_cache_key") or "") for item in product_rows if item.get("source_cache_key")}
-    product_content_ids = {str(item.get("source_content_id") or "") for item in product_rows if item.get("source_content_id")}
-    product_request_ids = {str(item.get("source_request_id") or "") for item in product_rows if item.get("source_request_id")}
+    product_cache_keys = {
+        str(item.get("source_cache_key") or "") for item in product_source_rows if item.get("source_cache_key")
+    }
+    product_content_ids = {
+        str(item.get("source_content_id") or "") for item in product_source_rows if item.get("source_content_id")
+    }
+    product_request_ids = {
+        str(item.get("source_request_id") or "") for item in product_source_rows if item.get("source_request_id")
+    }
 
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
     if cache_conditions is not None:
