@@ -2737,6 +2737,13 @@ def _investment_safe_pagination(params, default_page_size: int) -> tuple[int, in
     return page, page_size
 
 
+_INVESTMENT_CACHE_HISTORY_MAX_PAGE = 500
+
+
+def _investment_cache_history_page(page: int) -> int:
+    return min(_INVESTMENT_CACHE_HISTORY_MAX_PAGE, max(1, int(page or 1)))
+
+
 def _investment_pagination_payload(page: int, page_size: int, total: int) -> dict:
     total = max(0, int(total or 0))
     page_size = max(1, int(page_size or 1))
@@ -3780,6 +3787,7 @@ class InvestmentCacheHandler:
             service_type = normalize_service(service_value) if service_value else None
             if service_type == ServiceType.UNMATCHED:
                 page, page_size = _investment_safe_pagination(params, 120)
+                page = _investment_cache_history_page(page)
                 return _investment_json_response({
                     "status": "success",
                     "entries": [],
@@ -3788,6 +3796,7 @@ class InvestmentCacheHandler:
                 })
             include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
             page, page_size = _investment_safe_pagination(params, 120)
+            page = _investment_cache_history_page(page)
             business_type = str(service_type) if service_type is not None else ""
             market_date = getattr(params, "market_date", "") or ""
             start_date = getattr(params, "start_date", "") or ""
@@ -3850,7 +3859,7 @@ def _investment_list_merged_cache_history(
 ) -> tuple[list[dict], int]:
     from business.products.product_service import list_products_cache_history_page
 
-    page = max(1, int(page or 1))
+    page = _investment_cache_history_page(page)
     page_size = max(1, int(page_size or 50))
     offset = (page - 1) * page_size
     source_limit = offset + page_size

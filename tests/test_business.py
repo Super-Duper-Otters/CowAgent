@@ -132,6 +132,10 @@ def test_business_schema_declares_all_tables():
         "created_at",
         "updated_at",
     }.issubset({column.name for column in metadata.tables["products"].columns})
+    assert {
+        "idx_products_source_cache_key",
+        "idx_products_source_content_id",
+    }.issubset({index.name for index in metadata.tables["products"].indexes})
 
 
 def test_business_schema_uses_simplified_physical_column_names():
@@ -4412,6 +4416,19 @@ def test_cache_handler_product_page_uses_updated_order_for_bounded_fetch(busines
     assert payload["pagination"]["total"] == 3
     assert payload["entries"][0]["source_type"] == "product"
     assert payload["entries"][0]["product_id"] == products[0]["product_id"]
+
+
+def test_cache_handler_clamps_excessive_page_for_merged_history(business_env, monkeypatch):
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "999999", "page_size": "1", "service_type": "technical_analysis"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["page"] == 500
 
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):

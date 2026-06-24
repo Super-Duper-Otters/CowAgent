@@ -197,6 +197,8 @@ investment_products = Table(
     Index("idx_products_lookup", "business_type", "target_key", "business_date", "version_fingerprint", "status"),
     Index("idx_products_logical_status", "logical_key", "status"),
     Index("idx_products_business_date", "business_type", "business_date", "status"),
+    Index("idx_products_source_cache_key", "source_cache_key"),
+    Index("idx_products_source_content_id", "source_content_id"),
 )
 
 investment_configs = Table(
