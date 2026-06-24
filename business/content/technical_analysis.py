@@ -22,7 +22,7 @@ from business.cache.cache_service import (
 )
 from business.config.config_service import get_config, sanitize_sensitive_text
 from business.config.constants import ErrorCode, ServiceType, user_message
-from business.products.product_service import find_active_product, increment_product_hit
+from business.products.product_service import find_active_product, increment_product_hit, invalidate_product_if_unchanged
 from business.schema.db import connect
 from business.content.market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from business.content.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
@@ -392,6 +392,21 @@ def _technical_analysis_cache_entry_allowed(entry: cache_service.CacheEntry) -> 
     return True
 
 
+def _technical_analysis_product_allowed(product: dict, *, normalized_target: str) -> bool:
+    output_files = list(product.get("output_files") or [])
+    if len(output_files) < 2 or not all(Path(path).is_file() for path in output_files[:2]):
+        invalidate_product_if_unchanged(product)
+        return False
+    if technical_analysis_cache_expired_after_close(
+        str(product.get("business_date") or ""),
+        str(product.get("updated_at") or ""),
+        normalized_target=normalized_target,
+    ):
+        invalidate_product_if_unchanged(product)
+        return False
+    return True
+
+
 def _find_compatible_cache_entry_for_market_date(
     *,
     symbol: str,
@@ -616,7 +631,7 @@ def run_technical_analysis(
             business_date=resolved_market_date.market_date,
             version_fingerprint=cache_lookup_version,
         )
-        if product is not None:
+        if product is not None and _technical_analysis_product_allowed(product, normalized_target=symbol):
             increment_product_hit(product["product_id"])
             output_files = list(product.get("output_files") or [])
             signal_card_path = output_files[0] if output_files else ""

@@ -7804,11 +7804,12 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     from business.content import technical_analysis as technical_analysis
     from business.cache.cache_service import list_cache_entries
     from business.config.constants import ServiceType
+    from business.products.product_service import list_products_page
     from business.schema.db import connect
     from business.config.config_service import save_config
     from business.records.records import list_request_records
     from business.routing.router import handle_text_message
-    from business.schema.tables import cache_entries
+    from business.schema.tables import cache_entries, investment_products
     from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -7831,10 +7832,18 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     first = handle_text_message("ok", "300502.SZ 技术分析")
     assert first.success is True
     first_record = list_request_records(limit=1)[0]
+    products, product_total = list_products_page(business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert product_total == 1
+    first_product_id = products[0]["product_id"]
     with connect() as conn:
         conn.execute(
             cache_entries.update()
             .where(cache_entries.c.cache_key == first_record.cache_key)
+            .values(updated_at="2026-05-29T07:00:00+00:00")
+        )
+        conn.execute(
+            investment_products.update()
+            .where(investment_products.c.product_id == first_product_id)
             .values(updated_at="2026-05-29T07:00:00+00:00")
         )
 
@@ -7850,6 +7859,13 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
     assert cache_entry.hit_count == 0
     assert cache_entry.status == "active"
+    products, product_total = list_products_page(
+        include_invalidated=True,
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+    )
+    assert product_total == 2
+    assert [product["status"] for product in products] == ["active", "invalidated"]
+    assert products[1]["product_id"] == first_product_id
 
 
 def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
@@ -9763,6 +9779,131 @@ def test_technical_analysis_product_reuse_invalidates_old_product_without_overwr
     assert rows[1]["product_id"] == first_product_id
     assert rows[0]["output_files"] != first_product_files
     assert rows[1]["output_files"] == first_product_files
+
+
+def test_technical_analysis_malformed_empty_product_outputs_are_invalidated_and_rerun(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ServiceType
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+        list_products_page,
+    )
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ 新易盛",
+        business_date="2026-05-25",
+        version_fingerprint="sha256:combined-v1",
+        output_files=[],
+        source_type="request",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_cache_version_fingerprint",
+        lambda _ta_version, _renderer_version, _template_version: "sha256:combined-v1",
+    )
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path)
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "300502.SZ"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-05-25", known=True, source="fake")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+
+    reply = handle_text_message("ok", "300502.SZ 技术分析")
+
+    assert reply.success is True
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+    assert list_request_records(limit=1)[0].cache_hit is False
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert total == 2
+    assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
+    assert rows[1]["output_files"] == []
+
+
+def test_technical_analysis_failed_cache_write_keeps_old_product_active(
+    business_env, tmp_path, monkeypatch
+):
+    from business.config.constants import ServiceType
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    import business.content.technical_analysis_handler as ta_handler
+    from business.products.product_service import PRODUCT_STATUS_ACTIVE, create_product, list_products_page
+    from business.routing.router import RouteResult
+
+    old_card = tmp_path / "old-signal.png"
+    old_chart = tmp_path / "old-chart.png"
+    old_report = tmp_path / "old-report.md"
+    old_card.write_bytes(b"old-card")
+    old_chart.write_bytes(b"old-chart")
+    old_report.write_text("old report", encoding="utf-8")
+    old_product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(old_card), str(old_chart), str(old_report)],
+        source_type="request",
+    )
+    new_card = tmp_path / "new-signal.png"
+    new_chart = tmp_path / "new-chart.png"
+    new_report = tmp_path / "new-report.md"
+    new_card.write_bytes(b"new-card")
+    new_chart.write_bytes(b"new-chart")
+    new_report.write_text("new report", encoding="utf-8")
+
+    def fail_cache_write(**_kwargs):
+        raise RuntimeError("cache write failed")
+
+    monkeypatch.setattr(ta_handler, "write_business_cache", fail_cache_write)
+    route = RouteResult(True, ServiceType.TECHNICAL_ANALYSIS, "300502.SZ 技术分析", "300502.SZ")
+
+    reply = ta_handler.handle_technical_analysis(
+        "ok",
+        "300502.SZ 技术分析",
+        route,
+        technical_analysis_handler=lambda _openid, _raw_input, _target: TechnicalAnalysisResult(
+            True,
+            signal_card_path=str(new_card),
+            main_chart_path=str(new_chart),
+            report_path=str(new_report),
+            output_files=[str(new_card), str(new_chart), str(new_report)],
+            normalized_target="300502.SZ",
+            stock_code="300502.SZ",
+            stock_name="新易盛",
+            market_date="2026-06-24",
+            program_version="program-v1",
+            ta_version="ta-v1",
+            renderer_version="renderer-v1",
+            template_version="template-v1",
+            version_fingerprint="v1",
+            cache_key="technical_analysis:300502.SZ:2026-06-24:v1",
+            cache_hit=False,
+        ),
+        cache_context=SimpleNamespace(cache_key="", normalized_target="300502.SZ", market_date="2026-06-24"),
+    )
+
+    assert reply.success is False
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert total == 1
+    assert rows[0]["product_id"] == old_product["product_id"]
+    assert rows[0]["status"] == PRODUCT_STATUS_ACTIVE
 
 
 def test_product_service_expired_offset_expires_at_is_not_active(business_env, tmp_path, monkeypatch):

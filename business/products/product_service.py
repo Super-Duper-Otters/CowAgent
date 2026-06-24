@@ -283,6 +283,37 @@ def invalidate_active_products(
         )
 
 
+def invalidate_active_products_except(
+    *,
+    business_type: str,
+    target_key: str,
+    exclude_product_id: str,
+    business_date: str = "",
+    version_fingerprint: str = "",
+) -> int:
+    now = _now()
+    conditions = _active_product_conditions(
+        business_type=business_type,
+        target_key=target_key,
+        business_date=business_date,
+        version_fingerprint=version_fingerprint,
+    )
+    conditions.append(investment_products.c.product_id != _text(exclude_product_id))
+    with connect() as conn:
+        return int(
+            conn.execute(
+                update(investment_products)
+                .where(and_(*conditions))
+                .values(
+                    status=PRODUCT_STATUS_INVALIDATED,
+                    invalidated_at=now,
+                    updated_at=now,
+                )
+            ).rowcount
+            or 0
+        )
+
+
 def increment_product_hit(product_id: str) -> None:
     with connect() as conn:
         conn.execute(
@@ -293,6 +324,10 @@ def increment_product_hit(product_id: str) -> None:
                 updated_at=_now(),
             )
         )
+
+
+def invalidate_product_if_unchanged(product: dict) -> bool:
+    return _invalidate_product_if_unchanged(product)
 
 
 def _invalidate_product_if_unchanged(product: dict) -> bool:
