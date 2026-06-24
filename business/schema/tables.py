@@ -168,6 +168,37 @@ investment_cache_entries = Table(
     Index("idx_cache_entries_service_date", "service_type", "market_date", "status"),
 )
 
+investment_products = Table(
+    "products",
+    metadata,
+    Column("product_id", Text, primary_key=True),
+    Column("business_type", Text, nullable=False),
+    Column("target_key", Text, nullable=False),
+    Column("target_label", Text),
+    Column("business_date", Text),
+    Column("logical_key", Text, nullable=False),
+    Column("version_fingerprint", Text),
+    Column("status", Text, nullable=False),
+    Column("source_request_id", Text),
+    Column("source_content_id", Text),
+    Column("source_cache_key", Text),
+    Column("source_type", Text),
+    Column("source_files", Text, nullable=False, server_default="[]"),
+    Column("output_files", Text, nullable=False, server_default="[]"),
+    Column("text_content", Text),
+    Column("metadata", Text, key="product_metadata"),
+    Column("hit_count", Integer, nullable=False, server_default="0"),
+    Column("expires_at", Text),
+    Column("effective_at", Text),
+    Column("invalidated_at", Text),
+    Column("archived_at", Text),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index("idx_products_lookup", "business_type", "target_key", "business_date", "version_fingerprint", "status"),
+    Index("idx_products_logical_status", "logical_key", "status"),
+    Index("idx_products_business_date", "business_type", "business_date", "status"),
+)
+
 investment_configs = Table(
     "configs",
     metadata,
@@ -309,6 +340,7 @@ request_records = investment_request_records
 content_records = investment_daily_contents
 artifacts = investment_output_files
 cache_entries = investment_cache_entries
+products = investment_products
 configs = investment_configs
 operation_audits = investment_operation_audits
 stock_symbols = investment_stock_symbols

@@ -126,6 +126,33 @@ def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
         "status",
     )
     assert cache_indexes["idx_cache_entries_service_date"] == ("service_type", "market_date", "status")
+    assert inspector.has_table("products")
+    product_columns = {column["name"] for column in inspector.get_columns("products")}
+    assert {
+        "product_id",
+        "business_type",
+        "target_key",
+        "target_label",
+        "business_date",
+        "logical_key",
+        "version_fingerprint",
+        "status",
+        "source_request_id",
+        "source_content_id",
+        "source_cache_key",
+        "source_type",
+        "source_files",
+        "output_files",
+        "text_content",
+        "metadata",
+        "hit_count",
+        "expires_at",
+        "effective_at",
+        "invalidated_at",
+        "archived_at",
+        "created_at",
+        "updated_at",
+    }.issubset(product_columns)
     stock_pk = inspector.get_pk_constraint("stock_symbols").get("constrained_columns") or []
     stock_unique_columns = {
         tuple(item.get("column_names") or [])

@@ -37,6 +37,7 @@ def test_business_schema_declares_all_tables():
         "stock_symbols",
         "operation_audits",
         "ai_generation_audits",
+        "products",
     }.issubset(metadata.tables)
     assert "internal_call_records" not in metadata.tables
 
@@ -106,6 +107,31 @@ def test_business_schema_declares_all_tables():
         "input_prompt",
         "result",
     }.issubset({column.name for column in metadata.tables["ai_generation_audits"].columns})
+    assert {
+        "product_id",
+        "business_type",
+        "target_key",
+        "target_label",
+        "business_date",
+        "logical_key",
+        "version_fingerprint",
+        "status",
+        "source_request_id",
+        "source_content_id",
+        "source_cache_key",
+        "source_type",
+        "source_files",
+        "output_files",
+        "text_content",
+        "metadata",
+        "hit_count",
+        "expires_at",
+        "effective_at",
+        "invalidated_at",
+        "archived_at",
+        "created_at",
+        "updated_at",
+    }.issubset({column.name for column in metadata.tables["products"].columns})
 
 
 def test_business_schema_uses_simplified_physical_column_names():
@@ -9571,6 +9597,75 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
     assert cache_policy.latest_market_date_for_symbol("00700.HK", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("AAPL.US", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert calls == ["600519.SH", "00700.HK", "AAPL.US"]
+
+
+def test_product_service_appends_and_invalidates_active_product(business_env, tmp_path):
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+        find_active_product,
+        invalidate_active_products,
+        list_products_page,
+    )
+
+    first_card = tmp_path / "first-card.png"
+    second_card = tmp_path / "second-card.png"
+    first_card.write_bytes(b"first")
+    second_card.write_bytes(b"second")
+
+    first = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_request_id="request-1",
+        source_type="request",
+        output_files=[str(first_card)],
+        text_content="first product",
+        metadata={"version": 1},
+    )
+
+    assert find_active_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    )["product_id"] == first["product_id"]
+
+    assert invalidate_active_products(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    ) == 1
+
+    second = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_request_id="request-2",
+        source_type="request",
+        output_files=[str(second_card)],
+        text_content="second product",
+        metadata={"version": 2},
+    )
+
+    assert find_active_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    )["product_id"] == second["product_id"]
+
+    rows, total = list_products_page(include_invalidated=True, business_type="technical_analysis")
+
+    assert total == 2
+    assert [row["product_id"] for row in rows] == [second["product_id"], first["product_id"]]
+    assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
 
 
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(business_env, tmp_path):
