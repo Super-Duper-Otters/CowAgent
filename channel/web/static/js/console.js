@@ -3760,7 +3760,9 @@ async function loadInvestmentGeneratedContent() {
 }
 
 async function loadInvestmentProducts() {
-    const list = document.getElementById('investment-content-list');
+    const isRecordsProductsTab = currentView === 'invest-records' && investmentRecordsState.tab === 'products';
+    const list = document.getElementById(isRecordsProductsTab ? 'investment-records-list' : 'investment-content-list');
+    const pagination = document.getElementById('investment-records-pagination');
     if (list) investmentLoading(list);
     try {
         const query = investmentRecordsQueryParams('products');
@@ -3782,8 +3784,13 @@ async function loadInvestmentProducts() {
             business_dates: data.business_dates || investmentGeneratedDateValues([], entries),
         };
         investmentRecordsApplyPagination('products', data.pagination);
-        if (list) list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
-        syncInvestmentCachePeriodMode(investmentCachePeriodMode());
+        if (list) {
+            list.innerHTML = isRecordsProductsTab
+                ? renderInvestmentProductsTable(investmentRecordsState.data.products.entries)
+                : renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
+        }
+        if (pagination && isRecordsProductsTab) pagination.innerHTML = renderInvestmentRecordsPagination('products');
+        if (!isRecordsProductsTab) syncInvestmentCachePeriodMode(investmentCachePeriodMode());
         closeInvestmentRecordDrawer();
     } catch (error) {
         investmentError(list, error);
@@ -3799,6 +3806,7 @@ function renderInvestmentRecordsShell() {
                     ${renderInvestmentRecordsTabButton('requests', '公众号入口', 'fa-message')}
                     ${renderInvestmentRecordsTabButton('backendRequests', '后台入口', 'fa-terminal')}
                     ${renderInvestmentRecordsTabButton('contents', '后台内容生成', 'fa-gears')}
+                    ${renderInvestmentRecordsTabButton('products', '产物', 'fa-box-archive')}
                     ${renderInvestmentRecordsTabButton('audits', '操作流水', 'fa-clock-rotate-left')}
                 </div>
                 <div class="investment-records-filters" id="investment-records-filters">${renderInvestmentRecordsFilters(investmentRecordsState.tab)}</div>
@@ -3992,6 +4000,13 @@ function renderInvestmentRecordsFilters(tab) {
                     <div class="content-record-month-field ${isMonthMode ? '' : 'hidden'}">${select('record_month', '月份', investmentRecordMonthOptions())}</div>
                 </div>
             </div>`;
+    } else if (tab === 'products') {
+        controls = [
+            field('keyword', '关键字'),
+            select('business_type', '业务', investmentRecordServiceOptions(false)),
+            field('business_date', '业务日期', 'date'),
+            select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']]),
+        ].join('');
     } else if (tab === 'cache') {
         controls = [
             select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']]),
@@ -4042,7 +4057,7 @@ function renderInvestmentRecordsFilters(tab) {
 }
 
 async function switchInvestmentRecordsTab(tab) {
-    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(tab)) tab = 'requests';
+    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     investmentRecordsState.filters[tab] = investmentRecordsState.filters[tab] || investmentRecordsDefaultFilters(tab);
     investmentRecordsState.selected = null;
@@ -4140,7 +4155,7 @@ async function changeInvestmentRecordsPageSize(tab, pageSize) {
 }
 
 async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
-    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(tab)) tab = 'requests';
+    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)) tab = 'requests';
     investmentRecordsState.tab = tab;
     const currentPagination = investmentRecordsState.pagination[tab] || {};
     const list = document.getElementById('investment-records-list');
@@ -4168,6 +4183,9 @@ async function loadInvestmentRecordsTab(tab = investmentRecordsState.tab) {
             investmentRecordsState.data.contents = data.records || [];
             investmentRecordsApplyPagination('contents', data.pagination);
             html = renderInvestmentContentRecordsTable(investmentRecordsState.data.contents);
+        } else if (tab === 'products') {
+            await loadInvestmentProducts();
+            return;
         } else {
             const data = await investmentFetchJson(`/api/investment/audits?${investmentRecordsQueryParams('audits').toString()}`);
             investmentRecordsState.data.audits = data.audits || [];
@@ -4187,7 +4205,7 @@ async function renderInvestmentRecords(options = {}) {
     if (!element) return;
     await ensureInvestmentComponentsLoaded();
     if (options.tab) investmentRecordsState.tab = options.tab;
-    if (!['requests', 'backendRequests', 'contents', 'audits'].includes(investmentRecordsState.tab)) {
+    if (!['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(investmentRecordsState.tab)) {
         investmentRecordsState.tab = 'requests';
     }
     element.innerHTML = renderInvestmentRecordsShell();

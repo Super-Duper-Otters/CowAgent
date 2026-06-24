@@ -2192,12 +2192,22 @@ def test_investment_records_use_unified_products_api():
     invalidate_body = _js_function_body(js, "invalidateInvestmentProduct")
     drawer_body = _js_function_body(js, "renderInvestmentRecordDrawerBody")
     product_drawer_body = _js_function_body(js, "renderInvestmentProductDrawer")
+    records_shell_body = _js_function_body(js, "renderInvestmentRecordsShell")
+    switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
+    load_tab_body = _js_function_body(js, "loadInvestmentRecordsTab")
+    records_body = _js_function_body(js, "renderInvestmentRecords")
 
     assert "/api/investment/products" in js
     assert "renderInvestmentProductsTable" in js
     assert "renderInvestmentCacheTableLegacy" in js
     assert "renderInvestmentContentRecordsTable" in js
     assert "renderInvestmentProductDrawer" in js
+    assert "renderInvestmentRecordsTabButton('products', '产物'" in records_shell_body
+    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)" in switch_body
+    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(tab)" in load_tab_body
+    assert "['requests', 'backendRequests', 'contents', 'products', 'audits'].includes(investmentRecordsState.tab)" in records_body
+    assert "tab === 'products'" in load_tab_body
+    assert "await loadInvestmentProducts()" in load_tab_body
     assert "/api/investment/products/${encodedProductId}/invalidate" in invalidate_body
     assert "method: 'POST'" in invalidate_body
     assert "type === 'product' ? renderInvestmentProductDrawer(record)" in drawer_body
