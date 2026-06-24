@@ -4332,7 +4332,7 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
             output_files=[f"/tmp/product-only-card-{index}.png"],
         )
 
-    original_list_products_page = product_service.list_products_page
+    original_list_products_page = product_service.list_products_cache_history_page
     product_page_sizes = []
 
     def guarded_list_products_page(*args, **kwargs):
@@ -4340,7 +4340,7 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
         assert int(kwargs.get("page_size") or 0) <= 6
         return original_list_products_page(*args, **kwargs)
 
-    monkeypatch.setattr(product_service, "list_products_page", guarded_list_products_page)
+    monkeypatch.setattr(product_service, "list_products_cache_history_page", guarded_list_products_page)
     monkeypatch.setattr(
         cache_service,
         "list_generated_history_page",
@@ -4380,6 +4380,38 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
         if entry.get("source_type") == "cache"
     }
     assert not returned_duplicate_keys.intersection(duplicate_cache_keys)
+
+
+def test_cache_handler_product_page_uses_updated_order_for_bounded_fetch(business_env, monkeypatch):
+    from business.config.constants import ServiceType
+    from business.products import product_service
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    products = []
+    for index in range(3):
+        products.append(
+            product_service.create_product(
+                business_type="technical_analysis",
+                target_key=f"30050{index}.SZ",
+                target_label=f"产品{index}",
+                business_date="2026-06-24",
+                version_fingerprint="v1",
+                output_files=[f"/tmp/product-card-{index}.png"],
+            )
+        )
+
+    product_service.increment_product_hit(products[0]["product_id"])
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "1", "service_type": str(ServiceType.TECHNICAL_ANALYSIS), "market_date": "2026-06-24"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 3
+    assert payload["entries"][0]["source_type"] == "product"
+    assert payload["entries"][0]["product_id"] == products[0]["product_id"]
 
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):

@@ -806,6 +806,75 @@ def list_products_page(
     return [_row_to_product(row) for row in rows], total
 
 
+def list_products_cache_history_page(
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    include_invalidated: bool = False,
+    business_type: str = "",
+    target_key: str = "",
+    business_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+) -> tuple[list[dict], int]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 50))
+    offset = (page - 1) * page_size
+    conditions = []
+    if business_type:
+        conditions.append(investment_products.c.business_type == _text(business_type))
+    if target_key:
+        conditions.append(investment_products.c.target_key == _text(target_key))
+    if business_date:
+        conditions.append(investment_products.c.business_date == _text(business_date))
+    else:
+        if start_date:
+            conditions.append(investment_products.c.business_date >= _text(start_date))
+        if end_date:
+            conditions.append(investment_products.c.business_date <= _text(end_date))
+    normalized_keyword = _text(keyword).lower()
+    if normalized_keyword:
+        pattern = _keyword_like_pattern(normalized_keyword)
+        conditions.append(
+            or_(
+                func.lower(investment_products.c.product_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_label).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_date).like(pattern, escape="\\"),
+                func.lower(investment_products.c.version_fingerprint).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_request_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_content_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_cache_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
+            )
+        )
+    if not include_invalidated:
+        conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
+    stmt = select(investment_products)
+    count_stmt = select(func.count()).select_from(investment_products)
+    if conditions:
+        stmt = stmt.where(and_(*conditions))
+        count_stmt = count_stmt.where(and_(*conditions))
+    stmt = (
+        stmt.order_by(
+            desc(investment_products.c.updated_at),
+            desc(investment_products.c.business_date),
+            desc(investment_products.c.created_at),
+            desc(investment_products.c.product_id),
+        )
+        .limit(page_size)
+        .offset(offset)
+    )
+    with connect() as conn:
+        total = int(conn.execute(count_stmt).scalar_one() or 0)
+        rows = conn.execute(stmt).fetchall()
+    return [_row_to_product(row) for row in rows], total
+
+
 def list_product_business_dates(business_type: str = "", include_invalidated: bool = False) -> list[str]:
     conditions = [investment_products.c.business_date != ""]
     if business_type:

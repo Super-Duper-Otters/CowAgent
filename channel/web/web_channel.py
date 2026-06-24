@@ -3848,14 +3848,14 @@ def _investment_list_merged_cache_history(
     keyword: str = "",
     include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
-    from business.products.product_service import list_products_page
+    from business.products.product_service import list_products_cache_history_page
 
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
     offset = (page - 1) * page_size
     source_limit = offset + page_size
 
-    product_rows, product_total = list_products_page(
+    product_rows, product_total = list_products_cache_history_page(
         page=1,
         page_size=source_limit,
         business_type=business_type,
