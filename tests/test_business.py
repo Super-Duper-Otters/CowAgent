@@ -10255,6 +10255,40 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     assert clear_payload["removed"] == 1
 
 
+def test_investment_products_api_lists_and_invalidates_products(business_env, monkeypatch):
+    from business.products import product_service
+    from channel.web.web_channel import InvestmentProductInvalidateHandler, InvestmentProductsHandler
+
+    product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_request_id="request-1",
+        source_type="request",
+        output_files=["/tmp/card.png"],
+    )
+
+    list_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"business_type": "technical_analysis", "include_invalidated": "1"},
+    )
+
+    assert list_payload["status"] == "success"
+    assert list_payload["entries"][0]["product_id"] == product["product_id"]
+    assert list_payload["entries"][0]["status"] == "active"
+
+    invalidate_payload = _call_investment_json_handler(
+        monkeypatch,
+        lambda: InvestmentProductInvalidateHandler().POST(product["product_id"]),
+    )
+
+    assert invalidate_payload["status"] == "success"
+    assert invalidate_payload["invalidated"] is True
+
+
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

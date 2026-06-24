@@ -1047,6 +1047,8 @@ class WebChannel(ChatChannel):
             '/api/history', 'HistoryHandler',
             '/api/logs', 'LogsHandler',
             '/api/version', 'VersionHandler',
+            '/api/investment/products', 'InvestmentProductsHandler',
+            '/api/investment/products/(.*)/invalidate', 'InvestmentProductInvalidateHandler',
             *INVESTMENT_API_URLS,
             '/assets/(.*)', 'AssetsHandler',
         )
@@ -3811,6 +3813,70 @@ class InvestmentCacheHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] cache entries error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentProductsHandler:
+    def GET(self):
+        _require_investment_permission("cache.read")
+        try:
+            from business.products.product_service import list_product_business_dates, list_products_page
+
+            params = web.input(
+                page='1',
+                page_size='',
+                limit='50',
+                business_type='',
+                business_date='',
+                start_date='',
+                end_date='',
+                keyword='',
+                include_invalidated='',
+            )
+            page, page_size = _investment_safe_pagination(params, 120)
+            business_type = getattr(params, "business_type", "") or ""
+            include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
+            entries, total = list_products_page(
+                page=page,
+                page_size=page_size,
+                business_type=business_type,
+                business_date=getattr(params, "business_date", "") or "",
+                start_date=getattr(params, "start_date", "") or "",
+                end_date=getattr(params, "end_date", "") or "",
+                keyword=getattr(params, "keyword", "") or "",
+                include_invalidated=include_invalidated,
+            )
+            return _investment_json_response({
+                "status": "success",
+                "entries": entries,
+                "business_dates": list_product_business_dates(
+                    business_type=business_type,
+                    include_invalidated=include_invalidated,
+                ),
+                "pagination": _investment_pagination_payload(page, page_size, total),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] products error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentProductInvalidateHandler:
+    def POST(self, product_id):
+        admin = _require_investment_permission("cache.write")
+        try:
+            from business.products.product_service import invalidate_product
+
+            invalidated = invalidate_product(product_id)
+            _record_investment_operation(
+                "product.invalidate",
+                "investment_product",
+                target_id=product_id,
+                admin=admin,
+                detail={"invalidated": invalidated},
+            )
+            return _investment_json_response({"status": "success", "invalidated": invalidated})
+        except Exception as e:
+            logger.error(f"[Investment] product invalidate error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

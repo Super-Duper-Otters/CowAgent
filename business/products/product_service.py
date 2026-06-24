@@ -519,6 +519,30 @@ def invalidate_product_if_unchanged(product: dict) -> bool:
     return _invalidate_product_if_unchanged(product)
 
 
+def invalidate_product(product_id: str) -> bool:
+    normalized_product_id = _text(product_id)
+    if not normalized_product_id:
+        return False
+    now = _now()
+    with connect() as conn:
+        return bool(
+            conn.execute(
+                update(investment_products)
+                .where(
+                    and_(
+                        investment_products.c.product_id == normalized_product_id,
+                        investment_products.c.status != PRODUCT_STATUS_INVALIDATED,
+                    )
+                )
+                .values(
+                    status=PRODUCT_STATUS_INVALIDATED,
+                    invalidated_at=now,
+                    updated_at=now,
+                )
+            ).rowcount
+        )
+
+
 def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
     normalized_source_content_id = _text(source_content_id)
     if not normalized_source_content_id:
@@ -678,6 +702,7 @@ def list_products_page(
     business_date: str = "",
     start_date: str = "",
     end_date: str = "",
+    keyword: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -694,6 +719,24 @@ def list_products_page(
             conditions.append(investment_products.c.business_date >= _text(start_date))
         if end_date:
             conditions.append(investment_products.c.business_date <= _text(end_date))
+    normalized_keyword = _text(keyword).lower()
+    if normalized_keyword:
+        pattern = f"%{normalized_keyword}%"
+        conditions.append(
+            or_(
+                func.lower(investment_products.c.product_id).like(pattern),
+                func.lower(investment_products.c.business_type).like(pattern),
+                func.lower(investment_products.c.target_key).like(pattern),
+                func.lower(investment_products.c.target_label).like(pattern),
+                func.lower(investment_products.c.business_date).like(pattern),
+                func.lower(investment_products.c.version_fingerprint).like(pattern),
+                func.lower(investment_products.c.source_request_id).like(pattern),
+                func.lower(investment_products.c.source_content_id).like(pattern),
+                func.lower(investment_products.c.source_cache_key).like(pattern),
+                func.lower(investment_products.c.source_type).like(pattern),
+                func.lower(investment_products.c.text_content).like(pattern),
+            )
+        )
     if not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
     stmt = select(investment_products)
@@ -706,3 +749,19 @@ def list_products_page(
         total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()
     return [_row_to_product(row) for row in rows], total
+
+
+def list_product_business_dates(business_type: str = "", include_invalidated: bool = False) -> list[str]:
+    conditions = [investment_products.c.business_date != ""]
+    if business_type:
+        conditions.append(investment_products.c.business_type == _text(business_type))
+    if not include_invalidated:
+        conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+    stmt = (
+        select(investment_products.c.business_date)
+        .where(and_(*conditions))
+        .distinct()
+        .order_by(desc(investment_products.c.business_date))
+    )
+    with connect() as conn:
+        return [str(row[0]) for row in conn.execute(stmt).fetchall() if row[0]]
