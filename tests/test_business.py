@@ -4240,6 +4240,50 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     assert invalidated_payload["entries"][0]["cache_key"] == legacy_cache_key
 
 
+def test_cache_handler_keyword_search_suppresses_legacy_when_product_source_exists(business_env, monkeypatch):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products import product_service
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-24", "v1")
+    product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=["/tmp/product-card.png"],
+    )
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=["/tmp/legacy-only-keyword-card.png"],
+        artifact_owner_id="legacy-only-keyword-owner",
+    )
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={
+            "page": "1",
+            "page_size": "20",
+            "service_type": "technical_analysis",
+            "market_date": "2026-06-24",
+            "keyword": "legacy-only-keyword",
+        },
+    )
+
+    assert payload["status"] == "success"
+    assert payload["entries"] == []
+    assert payload["pagination"]["total"] == 0
+
+
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

@@ -3824,7 +3824,7 @@ class InvestmentCacheHandler:
                 business_date=market_date,
                 start_date=start_date,
                 end_date=end_date,
-                keyword=keyword,
+                keyword="",
                 include_invalidated=True,
             )
             suppression_rows = suppression_preview
@@ -3836,7 +3836,7 @@ class InvestmentCacheHandler:
                     business_date=market_date,
                     start_date=start_date,
                     end_date=end_date,
-                    keyword=keyword,
+                    keyword="",
                     include_invalidated=True,
                 )
             product_cache_keys = {product.get("source_cache_key") for product in suppression_rows if product.get("source_cache_key")}
