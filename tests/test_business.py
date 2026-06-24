@@ -9668,6 +9668,100 @@ def test_product_service_appends_and_invalidates_active_product(business_env, tm
     assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
 
 
+def test_product_service_expired_offset_expires_at_is_not_active(business_env, tmp_path, monkeypatch):
+    import business.products.product_service as product_service
+
+    card = tmp_path / "expired-card.png"
+    card.write_bytes(b"expired")
+    monkeypatch.setattr(product_service, "_now", lambda: "2026-06-24T00:00:01+00:00")
+
+    product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(card)],
+        expires_at="2026-06-24T08:00:00+08:00",
+    )
+
+    assert product["expires_at"] == "2026-06-24T00:00:00+00:00"
+    assert product_service.find_active_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    ) is None
+
+
+def test_product_service_normalizes_naive_and_date_only_expires_at(business_env, tmp_path):
+    from business.products import product_service
+
+    card = tmp_path / "date-card.png"
+    card.write_bytes(b"date")
+
+    naive = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="naive",
+        output_files=[str(card)],
+        expires_at="2026-06-24T08:00:00",
+    )
+    date_only = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="date-only",
+        output_files=[str(card)],
+        expires_at="2026-06-24",
+    )
+
+    assert naive["expires_at"] == "2026-06-24T08:00:00+00:00"
+    assert date_only["expires_at"] == "2026-06-24T00:00:00+00:00"
+
+
+def test_product_service_uses_deterministic_order_when_created_timestamps_tie(
+    business_env, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import business.products.product_service as product_service
+
+    card = tmp_path / "tie-card.png"
+    card.write_bytes(b"tie")
+    product_ids = iter(
+        [
+            SimpleNamespace(hex="f" * 32),
+            SimpleNamespace(hex="0" * 32),
+        ]
+    )
+    monkeypatch.setattr(product_service, "_now", lambda: "2026-06-24T00:00:00+00:00")
+    monkeypatch.setattr(product_service, "uuid4", lambda: next(product_ids))
+
+    first = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(card)],
+    )
+    second = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(card)],
+    )
+
+    assert first["created_at"] == second["created_at"]
+    assert product_service.find_active_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    )["product_id"] == second["product_id"]
+
+
 def test_find_cache_entry_missing_cache_file_invalidates_active_entry(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, find_cache_entry, list_cache_entries, write_cache_entry
     from business.config.constants import ServiceType

@@ -1,5 +1,6 @@
 # encoding:utf-8
 import hashlib
+import itertools
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,10 +16,28 @@ PRODUCT_STATUS_ACTIVE = "active"
 PRODUCT_STATUS_INVALIDATED = "invalidated"
 PRODUCT_STATUS_ARCHIVED = "archived"
 PRODUCT_STATUS_FAILED = "failed"
+_PRODUCT_ID_COUNTER = itertools.count(1)
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
+
+
+def _canonical_utc_timestamp(value: str) -> str:
+    text = _text(value)
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"invalid timestamp: {text}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _new_product_id() -> str:
+    return f"prod_{next(_PRODUCT_ID_COUNTER):020d}_{uuid4().hex}"
 
 
 def _json_list(values: list[str] | None) -> str:
@@ -109,10 +128,11 @@ def _row_to_product(row) -> dict:
 
 
 def _expires_at_condition(now: str):
+    canonical_now = _canonical_utc_timestamp(now)
     return or_(
         investment_products.c.expires_at.is_(None),
         investment_products.c.expires_at == "",
-        investment_products.c.expires_at > now,
+        investment_products.c.expires_at > canonical_now,
     )
 
 
@@ -166,7 +186,7 @@ def create_product(
         business_date=business_date,
         version_fingerprint=version_fingerprint,
     )
-    product_id = f"prod_{uuid4().hex}"
+    product_id = _new_product_id()
     values = {
         "product_id": product_id,
         "business_type": _text(business_type),
@@ -185,7 +205,7 @@ def create_product(
         "text_content": text_content or "",
         "product_metadata": _json_object(metadata),
         "hit_count": 0,
-        "expires_at": _text(expires_at),
+        "expires_at": _canonical_utc_timestamp(expires_at),
         "effective_at": _text(effective_at),
         "invalidated_at": "",
         "archived_at": _text(archived_at),
@@ -216,7 +236,11 @@ def find_active_product(
     stmt = (
         select(investment_products)
         .where(and_(*conditions))
-        .order_by(desc(investment_products.c.effective_at), desc(investment_products.c.created_at))
+        .order_by(
+            desc(investment_products.c.effective_at),
+            desc(investment_products.c.created_at),
+            desc(investment_products.c.product_id),
+        )
         .limit(1)
     )
     with connect() as conn:
