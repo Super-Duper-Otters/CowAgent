@@ -3773,6 +3773,7 @@ class InvestmentCacheHandler:
         try:
             from business.cache.cache_service import list_generated_history_market_dates, list_generated_history_page
             from business.config.constants import ServiceType, normalize_service
+            from business.products.product_service import list_product_business_dates, list_products_page
 
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3785,18 +3786,88 @@ class InvestmentCacheHandler:
                     "market_dates": [],
                     "pagination": _investment_pagination_payload(page, page_size, 0),
                 })
-            include_invalidated = str(getattr(params, "include_invalidated", "")).lower() in {"1", "true", "yes"}
+            include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
             page, page_size = _investment_safe_pagination(params, 120)
-            entries, total = list_generated_history_page(
-                page=page,
-                page_size=page_size,
-                service_type=service_type,
-                market_date=getattr(params, "market_date", "") or "",
-                start_date=_investment_date_bound(getattr(params, "start_date", "")),
-                end_date=_investment_date_bound(getattr(params, "end_date", ""), end=True),
-                keyword=getattr(params, "keyword", "") or "",
+            business_type = str(service_type) if service_type is not None else ""
+            market_date = getattr(params, "market_date", "") or ""
+            start_date = getattr(params, "start_date", "") or ""
+            end_date = getattr(params, "end_date", "") or ""
+            keyword = getattr(params, "keyword", "") or ""
+
+            product_preview, product_total = list_products_page(
+                page=1,
+                page_size=1,
+                business_type=business_type,
+                business_date=market_date,
+                start_date=start_date,
+                end_date=end_date,
+                keyword=keyword,
                 include_invalidated=include_invalidated,
             )
+            product_rows = product_preview
+            if product_total > len(product_preview):
+                product_rows, product_total = list_products_page(
+                    page=1,
+                    page_size=product_total,
+                    business_type=business_type,
+                    business_date=market_date,
+                    start_date=start_date,
+                    end_date=end_date,
+                    keyword=keyword,
+                    include_invalidated=include_invalidated,
+                )
+            product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
+            product_cache_keys = {entry.get("cache_key") for entry in product_entries if entry.get("cache_key")}
+            product_content_ids = {entry.get("content_id") for entry in product_entries if entry.get("content_id")}
+
+            legacy_preview, legacy_total = list_generated_history_page(
+                page=1,
+                page_size=1,
+                service_type=service_type,
+                market_date=market_date,
+                start_date=_investment_date_bound(start_date),
+                end_date=_investment_date_bound(end_date, end=True),
+                keyword=keyword,
+                include_invalidated=include_invalidated,
+            )
+            legacy_entries = legacy_preview
+            if legacy_total > len(legacy_preview):
+                legacy_entries, legacy_total = list_generated_history_page(
+                    page=1,
+                    page_size=legacy_total,
+                    service_type=service_type,
+                    market_date=market_date,
+                    start_date=_investment_date_bound(start_date),
+                    end_date=_investment_date_bound(end_date, end=True),
+                    keyword=keyword,
+                    include_invalidated=include_invalidated,
+                )
+            entries = list(product_entries)
+            for entry in legacy_entries:
+                if entry.get("cache_key") and entry.get("cache_key") in product_cache_keys:
+                    continue
+                if entry.get("content_id") and entry.get("content_id") in product_content_ids:
+                    continue
+                entries.append(entry)
+            entries.sort(key=_investment_cache_history_sort_key, reverse=True)
+            total = len(entries)
+            offset = (page - 1) * page_size
+            entries = entries[offset : offset + page_size]
+
+            market_dates = sorted(
+                {
+                    *list_generated_history_market_dates(
+                        service_type=service_type,
+                        include_invalidated=include_invalidated,
+                    ),
+                    *list_product_business_dates(
+                        business_type=business_type,
+                        include_invalidated=include_invalidated,
+                    ),
+                },
+                reverse=True,
+            )
+
             from business.records.business_records import list_output_files
 
             for entry in entries:
@@ -3805,15 +3876,59 @@ class InvestmentCacheHandler:
             return _investment_json_response({
                 "status": "success",
                 "entries": entries,
-                "market_dates": list_generated_history_market_dates(
-                    service_type=service_type,
-                    include_invalidated=include_invalidated,
-                ),
+                "market_dates": market_dates,
                 "pagination": _investment_pagination_payload(page, page_size, total),
             })
         except Exception as e:
             logger.error(f"[Investment] cache entries error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
+
+
+def _investment_product_to_cache_entry(product: dict) -> dict:
+    source_content_id = product.get("source_content_id") or ""
+    source_request_id = product.get("source_request_id") or ""
+    source_cache_key = product.get("source_cache_key") or ""
+    if product.get("source_type") == "content" and source_content_id:
+        artifact_owner_id = source_content_id
+    else:
+        artifact_owner_id = source_request_id or source_content_id or source_cache_key or product.get("product_id", "")
+    entry = {
+        "source_type": "product",
+        "product_id": product.get("product_id") or "",
+        "cache_key": source_cache_key,
+        "content_id": source_content_id,
+        "service_type": product.get("business_type") or "",
+        "business_type": product.get("business_type") or "",
+        "normalized_target": product.get("target_key") or "",
+        "target_key": product.get("target_key") or "",
+        "target_label": product.get("target_label") or "",
+        "market_date": product.get("business_date") or "",
+        "business_date": product.get("business_date") or "",
+        "effective_date": product.get("business_date") or product.get("effective_at") or "",
+        "version_fingerprint": product.get("version_fingerprint") or "",
+        "output_files": product.get("output_files") or [],
+        "artifact_owner_id": artifact_owner_id,
+        "status": product.get("status") or "",
+        "hit_count": int(product.get("hit_count") or 0),
+        "created_at": product.get("created_at") or "",
+        "updated_at": product.get("updated_at") or "",
+        "source_request_id": source_request_id,
+        "source_content_id": source_content_id,
+        "source_cache_key": source_cache_key,
+        "product_source_type": product.get("source_type") or "",
+        "expires_at": product.get("expires_at") or "",
+        "effective_at": product.get("effective_at") or "",
+    }
+    if product.get("text_content"):
+        entry["generated_text"] = product.get("text_content") or ""
+    return entry
+
+
+def _investment_cache_history_sort_key(entry: dict) -> tuple[str, str]:
+    return (
+        str(entry.get("updated_at") or entry.get("created_at") or ""),
+        str(entry.get("market_date") or entry.get("business_date") or ""),
+    )
 
 
 class InvestmentProductsHandler:

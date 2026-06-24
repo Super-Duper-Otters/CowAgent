@@ -4133,6 +4133,101 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
     assert code_entries[0]["normalized_target"] == "300502.SZ"
 
 
+def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_env, monkeypatch, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, update_generation_success
+    from business.products import product_service
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    product_cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-24", "v1")
+    product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_request_id="request-product",
+        source_cache_key=product_cache_key,
+        source_type="cache",
+        output_files=["/tmp/product-card.png"],
+    )
+    write_cache_entry(
+        cache_key=product_cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=["/tmp/legacy-card.png"],
+        artifact_owner_id="request-legacy",
+    )
+    legacy_cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "601288.SH", "2026-06-24", "v1")
+    write_cache_entry(
+        cache_key=legacy_cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="601288.SH",
+        market_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=["/tmp/legacy-only-card.png"],
+        artifact_owner_id="request-legacy-only",
+    )
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "service_type": "technical_analysis", "market_date": "2026-06-24"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 2
+    assert [entry["cache_key"] for entry in payload["entries"]].count(product_cache_key) == 1
+    product_entry = next(entry for entry in payload["entries"] if entry["cache_key"] == product_cache_key)
+    assert product_entry["source_type"] == "product"
+    assert product_entry["product_id"] == product["product_id"]
+    assert product_entry["service_type"] == "technical_analysis"
+    assert product_entry["business_type"] == "technical_analysis"
+    assert product_entry["normalized_target"] == "300502.SZ"
+    assert product_entry["target_key"] == "300502.SZ"
+    assert product_entry["market_date"] == "2026-06-24"
+    assert product_entry["business_date"] == "2026-06-24"
+    assert product_entry["artifact_owner_id"] == "request-product"
+    assert product_entry["output_files"] == ["/tmp/product-card.png"]
+    assert any(entry["cache_key"] == legacy_cache_key and entry["source_type"] == "cache" for entry in payload["entries"])
+
+    rate_image = tmp_path / "rate-legacy.png"
+    rate_image.write_bytes(b"rate")
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="公开市场净投放",
+        effective_date="2026-06-24",
+        operator="ops",
+    )
+    update_generation_success(content_id, "利率生成结果", str(rate_image))
+    content_product = product_service.create_product(
+        business_type="rate",
+        target_key="RATE",
+        target_label="利率内容",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        source_content_id=content_id,
+        source_type="content",
+        output_files=["/tmp/product-rate-card.png"],
+    )
+
+    content_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "service_type": "rate", "market_date": "2026-06-24"},
+    )
+
+    assert content_payload["status"] == "success"
+    assert content_payload["pagination"]["total"] == 1
+    assert content_payload["entries"][0]["source_type"] == "product"
+    assert content_payload["entries"][0]["product_id"] == content_product["product_id"]
+    assert content_payload["entries"][0]["content_id"] == content_id
+    assert content_payload["entries"][0]["artifact_owner_id"] == content_id
+
+
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
