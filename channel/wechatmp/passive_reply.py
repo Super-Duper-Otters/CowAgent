@@ -462,6 +462,10 @@ def _cached_result_source_is_valid(cached_result):
         except KeyError:
             return False
         return str(getattr(record, "status", "") or "") == str(Status.EFFECTIVE)
+    if source_type == "product":
+        from business.products.product_service import find_active_product_by_id
+
+        return find_active_product_by_id(source_id) is not None
     return True
 
 

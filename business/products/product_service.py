@@ -550,6 +550,70 @@ def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
         return _invalidate(product_conn)
 
 
+def update_products_expires_at_by_source(*, source_content_id: str, expires_at: str = "", conn=None) -> int:
+    normalized_source_content_id = _text(source_content_id)
+    if not normalized_source_content_id:
+        return 0
+    canonical_expires_at = _canonical_utc_timestamp(expires_at)
+
+    def _update(product_conn) -> int:
+        now = _now()
+        values = {
+            "expires_at": canonical_expires_at,
+            "updated_at": now,
+        }
+        if canonical_expires_at and canonical_expires_at <= now:
+            values.update(
+                status=PRODUCT_STATUS_INVALIDATED,
+                invalidated_at=now,
+            )
+        return int(
+            product_conn.execute(
+                update(investment_products)
+                .where(
+                    and_(
+                        investment_products.c.source_content_id == normalized_source_content_id,
+                        investment_products.c.status != PRODUCT_STATUS_INVALIDATED,
+                    )
+                )
+                .values(**values)
+            ).rowcount
+            or 0
+        )
+
+    if conn is not None:
+        return _update(conn)
+    with connect() as product_conn:
+        return _update(product_conn)
+
+
+def find_active_product_by_id(product_id: str) -> dict | None:
+    normalized_product_id = _text(product_id)
+    if not normalized_product_id:
+        return None
+    now = _now()
+    stmt = (
+        select(investment_products)
+        .where(
+            and_(
+                investment_products.c.product_id == normalized_product_id,
+                investment_products.c.status == PRODUCT_STATUS_ACTIVE,
+                _expires_at_condition(now),
+            )
+        )
+        .limit(1)
+    )
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    if row is None:
+        return None
+    product = _row_to_product(row)
+    if not _files_available(product["output_files"]):
+        _invalidate_product_if_unchanged(product)
+        return None
+    return product
+
+
 def find_active_product_by_source_content_id(source_content_id: str) -> dict | None:
     normalized_source_content_id = _text(source_content_id)
     if not normalized_source_content_id:

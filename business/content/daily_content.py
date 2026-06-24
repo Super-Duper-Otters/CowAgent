@@ -14,7 +14,11 @@ from business.config.constants import ActionType, ActorType, EntryType, ErrorCod
 from business.schema.db import connect, row_to_dict
 from business.records.records import create_business_workflow_record, finish_business_workflow_record, record_output_file
 from business.content.render_service import DEFAULT_RENDERER_PATH, template_for_service
-from business.products.product_service import create_product_archiving_active, invalidate_products_by_source
+from business.products.product_service import (
+    create_product_archiving_active,
+    invalidate_products_by_source,
+    update_products_expires_at_by_source,
+)
 from business.schema.tables import investment_daily_contents
 from business.schema.storage import get_storage_dirs
 from business.versioning import file_fingerprint
@@ -342,11 +346,17 @@ def _mark_generation_started(content_id: str, *, actor: Any | None = None) -> No
     values = {"status": str(Status.GENERATING), "error_message": "", "updated_at": _now()}
     values.update(_content_actor_values(actor, prefix="updated"))
     with connect() as conn:
+        row = conn.execute(
+            select(investment_daily_contents.c.status).where(investment_daily_contents.c.content_id == content_id)
+        ).fetchone()
         conn.execute(
             update(investment_daily_contents)
             .where(investment_daily_contents.c.content_id == content_id)
             .values(**values)
         )
+        item = row_to_dict(row)
+        if item.get("status") == str(Status.EFFECTIVE):
+            invalidate_products_by_source(source_content_id=content_id, conn=conn)
 
 
 def mark_generation_started(content_id: str, *, actor: Any | None = None) -> DailyContentResult:
@@ -399,6 +409,8 @@ def update_generation_success(content_id: str, generated_text: str, output_image
                 updated_at=_now(),
             )
         )
+        if item.get("status") == str(Status.EFFECTIVE):
+            invalidate_products_by_source(source_content_id=content_id, conn=conn)
     if stored_output_image and service_type is not None:
         record_output_file(
             content_id,
@@ -450,6 +462,8 @@ def update_generation_failure(content_id: str, detail: str, input_prompt: str = 
                 updated_at=_now(),
             )
         )
+        if item.get("status") == str(Status.EFFECTIVE):
+            invalidate_products_by_source(source_content_id=content_id, conn=conn)
     record_operation_audit(
         "content.generate",
         "daily_content",
@@ -764,7 +778,7 @@ def set_content_effective(
             target_key=target_key,
             target_label=target_key,
             business_date=normalized_effective_date,
-            version_fingerprint=f"content-v{int(item.get('content_version') or 1)}",
+            version_fingerprint=f"v{int(item.get('content_version') or 1)}",
             source_type="content",
             source_content_id=content_id,
             output_files=[final_image] if final_image else [],
@@ -843,6 +857,11 @@ def update_content_expires_at(
                 operator=operator,
                 **actor_values,
             )
+        )
+        update_products_expires_at_by_source(
+            source_content_id=content_id,
+            expires_at=normalized_expires_at,
+            conn=conn,
         )
     record_operation_audit(
         "content.update_expiry",

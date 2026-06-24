@@ -5535,6 +5535,30 @@ def test_request_record_delivery_status_is_business_facing(business_env):
     assert failed_record.delivery_detail == "no active content"
 
 
+def test_passive_reply_validation_rejects_invalidated_product_source(business_env, tmp_path):
+    from types import SimpleNamespace
+
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, invalidate_content, set_content_effective
+    from business.products.product_service import list_products_page
+    from channel.wechatmp.passive_reply import _cached_result_source_is_valid
+
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"rate")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), effective_date="2026-06-24", operator="ops")
+
+    products, total = list_products_page(business_type=str(ServiceType.RATE))
+    assert total == 1
+    cached_result = SimpleNamespace(source_type="product", source_id=products[0]["product_id"])
+
+    assert _cached_result_source_is_valid(cached_result) is True
+
+    invalidate_content(content_id, operator="ops")
+
+    assert _cached_result_source_is_valid(cached_result) is False
+
+
 def test_export_request_records_hides_internal_delivery_marker(business_env):
     from business.config.constants import ServiceType
     from business.records.export_service import export_request_records_xlsx
@@ -10945,7 +10969,66 @@ def test_daily_content_publish_creates_active_product_and_archives_previous_prod
     assert by_content_id[first_id]["status"] == PRODUCT_STATUS_ARCHIVED
     assert by_content_id[second_id]["status"] == PRODUCT_STATUS_ACTIVE
     assert by_content_id[second_id]["business_date"] == "2026-06-24"
+    assert by_content_id[first_id]["version_fingerprint"] == "v1"
+    assert by_content_id[second_id]["version_fingerprint"] == "v2"
     assert by_content_id[second_id]["output_files"]
+
+
+def test_daily_content_regenerate_invalidates_existing_product(business_env, tmp_path):
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, regenerate_content, set_content_effective
+    from business.products.product_service import PRODUCT_STATUS_INVALIDATED, list_products_page
+    from business.records.records import get_content_record
+
+    first_image = tmp_path / "published-rate.png"
+    second_image = tmp_path / "regenerated-rate.png"
+    first_image.write_bytes(b"published")
+    second_image.write_bytes(b"regenerated")
+
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(first_image), effective_date="2026-06-24", operator="ops")
+
+    def fake_ai(service_type, source_text):
+        return SimpleNamespace(success=True, text=f"regenerated text: {source_text}", prompt="")
+
+    def fake_renderer(service_type, generated_text):
+        second_image.write_bytes(generated_text.encode("utf-8"))
+        return SimpleNamespace(success=True, image_path=str(second_image))
+
+    result = regenerate_content(content_id, ai_generator=fake_ai, renderer=fake_renderer)
+
+    content = get_content_record(content_id)
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+
+    assert result.success is True
+    assert content.status == Status.GENERATED
+    assert total == 1
+    assert products[0]["source_content_id"] == content_id
+    assert products[0]["status"] == PRODUCT_STATUS_INVALIDATED
+
+
+def test_daily_content_update_expiry_syncs_product_and_invalidates_past_expiry(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective, update_content_expires_at
+    from business.products.product_service import PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED, list_products_page
+
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"rate")
+
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), effective_date="2026-06-24", operator="ops")
+
+    update_content_expires_at(content_id, "2099-01-01T00:00", operator="ops")
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    assert total == 1
+    assert products[0]["status"] == PRODUCT_STATUS_ACTIVE
+    assert products[0]["expires_at"] == "2098-12-31T16:00:00+00:00"
+
+    update_content_expires_at(content_id, "2000-01-01T00:00", operator="ops")
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    assert total == 1
+    assert products[0]["status"] == PRODUCT_STATUS_INVALIDATED
+    assert products[0]["expires_at"] == "1999-12-31T16:00:00+00:00"
 
 
 def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(business_env, tmp_path):
