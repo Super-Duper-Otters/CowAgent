@@ -1486,6 +1486,12 @@ def _product_matches_package_id(item: dict, normalized_package_id: str) -> bool:
     }
 
 
+def _artifact_keyword_like_pattern(keyword: str) -> str:
+    text = str(keyword or "").strip().lower()
+    text = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{text}%"
+
+
 def _product_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
     conditions = []
     if service_type is not None and str(service_type or "").strip():
@@ -1496,21 +1502,21 @@ def _product_artifact_conditions(service_type: ServiceType | str | None, start_d
         conditions.append(investment_products.c.business_date <= str(end_date))
     keyword_text = str(keyword or "").strip().lower()
     if keyword_text:
-        pattern = f"%{keyword_text}%"
+        pattern = _artifact_keyword_like_pattern(keyword_text)
         conditions.append(
             or_(
-                func.lower(investment_products.c.product_id).like(pattern),
-                func.lower(investment_products.c.business_type).like(pattern),
-                func.lower(investment_products.c.target_key).like(pattern),
-                func.lower(investment_products.c.target_label).like(pattern),
-                func.lower(investment_products.c.business_date).like(pattern),
-                func.lower(investment_products.c.version_fingerprint).like(pattern),
-                func.lower(investment_products.c.source_request_id).like(pattern),
-                func.lower(investment_products.c.source_content_id).like(pattern),
-                func.lower(investment_products.c.source_cache_key).like(pattern),
-                func.lower(investment_products.c.source_type).like(pattern),
-                func.lower(investment_products.c.output_files).like(pattern),
-                func.lower(investment_products.c.text_content).like(pattern),
+                func.lower(investment_products.c.product_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_label).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_date).like(pattern, escape="\\"),
+                func.lower(investment_products.c.version_fingerprint).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_request_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_content_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_cache_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.output_files).like(pattern, escape="\\"),
+                func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
             )
         )
     return conditions

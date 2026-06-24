@@ -4605,6 +4605,72 @@ def test_artifact_product_package_output_files_have_path_file_urls_without_artif
     assert output_files[1]["file_url"] == f"/api/file?path={quote(str(report))}"
 
 
+def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tmp_path):
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    product_file = tmp_path / "card.png"
+    product_file.write_text("product", encoding="utf-8")
+    percent_product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="needle%target",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+    )
+    underscore_product = create_product(
+        business_type="technical_analysis",
+        target_key="300503.SZ",
+        target_label="needle_target",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+    )
+    create_product(
+        business_type="technical_analysis",
+        target_key="300504.SZ",
+        target_label="needleAtarget",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+    )
+
+    percent_packages, percent_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        start_date="2026-06-24",
+        end_date="2026-06-24",
+        keyword="needle%",
+    )
+    percent_dates, percent_date_total = list_artifact_folder_nodes(
+        level="date",
+        service_type="technical_analysis",
+        month="2026-06",
+        keyword="needle%",
+    )
+    underscore_packages, underscore_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        start_date="2026-06-24",
+        end_date="2026-06-24",
+        keyword="needle_",
+    )
+    underscore_dates, underscore_date_total = list_artifact_folder_nodes(
+        level="date",
+        service_type="technical_analysis",
+        month="2026-06",
+        keyword="needle_",
+    )
+
+    assert percent_total == 1
+    assert percent_packages[0]["package_id"] == percent_product["product_id"]
+    assert percent_date_total == 1
+    assert percent_dates[0]["count"] == 1
+    assert underscore_total == 1
+    assert underscore_packages[0]["package_id"] == underscore_product["product_id"]
+    assert underscore_date_total == 1
+    assert underscore_dates[0]["count"] == 1
+
+
 def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_product(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
