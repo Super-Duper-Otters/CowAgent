@@ -10802,7 +10802,7 @@ def test_router_technical_analysis_reply_exposes_cache_source_for_delivery_queue
     assert reply.source_id == "technical_analysis:300502.SZ:2026-06-05:test"
 
 
-def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(business_env, tmp_path):
+def test_router_daily_content_reply_exposes_product_source_for_delivery_queue(business_env, tmp_path):
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, set_content_effective
     from business.routing.router import handle_text_message
@@ -10817,8 +10817,9 @@ def test_router_daily_content_reply_exposes_content_source_for_delivery_queue(bu
     reply = handle_text_message("ok", "利率")
 
     assert reply.success is True
-    assert reply.source_type == "content"
-    assert reply.source_id == content_id
+    assert reply.source_type == "product"
+    assert reply.source_id.startswith("prod_")
+    assert reply.source_id != content_id
 
 
 def test_daily_content_activation_and_query(business_env, tmp_path):
@@ -10883,6 +10884,7 @@ def test_daily_content_expired_effective_content_is_not_returned(business_env, t
 def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_path):
     from business.config.constants import ServiceType, Status
     from business.content.daily_content import create_content_draft, mark_expired_daily_contents_invalidated, set_content_effective
+    from business.products.product_service import PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED, list_products_page
     from business.records.records import get_content_record
 
     expired_image = tmp_path / "expired.png"
@@ -10909,6 +10911,41 @@ def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_
 
     assert get_content_record(expired_id).status == Status.INVALIDATED
     assert get_content_record(fresh_id).status == Status.EFFECTIVE
+    products, total = list_products_page(include_invalidated=True)
+    by_content_id = {product["source_content_id"]: product for product in products}
+    assert total == 2
+    assert by_content_id[expired_id]["status"] == PRODUCT_STATUS_INVALIDATED
+    assert by_content_id[fresh_id]["status"] == PRODUCT_STATUS_ACTIVE
+
+
+def test_daily_content_publish_creates_active_product_and_archives_previous_product(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_ARCHIVED,
+        list_products_page,
+    )
+
+    first_image = tmp_path / "first-rate.png"
+    second_image = tmp_path / "second-rate.png"
+    first_image.write_bytes(b"first")
+    second_image.write_bytes(b"second")
+
+    first_id = create_content_draft(ServiceType.RATE, source_text="first")
+    second_id = create_content_draft(ServiceType.RATE, source_text="second")
+
+    set_content_effective(first_id, str(first_image), effective_date="2026-06-24", operator="ops")
+    set_content_effective(second_id, str(second_image), effective_date="2026-06-24", operator="ops")
+
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    by_content_id = {product["source_content_id"]: product for product in products}
+
+    assert total == 2
+    assert by_content_id[first_id]["status"] == PRODUCT_STATUS_ARCHIVED
+    assert by_content_id[second_id]["status"] == PRODUCT_STATUS_ACTIVE
+    assert by_content_id[second_id]["business_date"] == "2026-06-24"
+    assert by_content_id[second_id]["output_files"]
 
 
 def test_daily_content_republishing_historical_expired_record_clears_stale_expiry(business_env, tmp_path):
@@ -10951,6 +10988,7 @@ def test_daily_content_manual_invalidate_and_expiry_update(business_env, tmp_pat
         set_content_effective,
         update_content_expires_at,
     )
+    from business.products.product_service import PRODUCT_STATUS_INVALIDATED, list_products_page
     from business.records.records import get_content_record
 
     image = tmp_path / "current.png"
@@ -10970,6 +11008,10 @@ def test_daily_content_manual_invalidate_and_expiry_update(business_env, tmp_pat
     invalidated = get_content_record(content_id)
     assert invalidated.status == Status.INVALIDATED
     assert invalidated.archived_at
+    products, total = list_products_page(include_invalidated=True)
+    assert total == 1
+    assert products[0]["source_content_id"] == content_id
+    assert products[0]["status"] == PRODUCT_STATUS_INVALIDATED
     latest = get_latest_effective_content(ServiceType.RATE)
     assert latest.success is False
     assert latest.error_code == ErrorCode.NO_CONTENT

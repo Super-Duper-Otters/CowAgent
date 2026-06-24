@@ -14,6 +14,7 @@ from business.config.constants import ActionType, ActorType, EntryType, ErrorCod
 from business.schema.db import connect, row_to_dict
 from business.records.records import create_business_workflow_record, finish_business_workflow_record, record_output_file
 from business.content.render_service import DEFAULT_RENDERER_PATH, template_for_service
+from business.products.product_service import create_product_archiving_active, invalidate_products_by_source
 from business.schema.tables import investment_daily_contents
 from business.schema.storage import get_storage_dirs
 from business.versioning import file_fingerprint
@@ -691,6 +692,8 @@ def set_content_effective(
                 investment_daily_contents.c.output_image,
                 investment_daily_contents.c.effective_date,
                 investment_daily_contents.c.expires_at,
+                investment_daily_contents.c.generated_text,
+                investment_daily_contents.c.content_version,
             ).where(
                 investment_daily_contents.c.content_id == content_id
             )
@@ -753,6 +756,22 @@ def set_content_effective(
                 operator=operator,
                 **publish_values,
             )
+        )
+        target_key = module_key or str(final_service_type)
+        create_product_archiving_active(
+            conn=conn,
+            business_type=str(final_service_type),
+            target_key=target_key,
+            target_label=target_key,
+            business_date=normalized_effective_date,
+            version_fingerprint=f"content-v{int(item.get('content_version') or 1)}",
+            source_type="content",
+            source_content_id=content_id,
+            output_files=[final_image] if final_image else [],
+            text_content=item.get("generated_text") or "",
+            expires_at=normalized_expires_at,
+            effective_at=now,
+            metadata={"module_key": module_key},
         )
     if final_image:
         record_output_file(
@@ -874,6 +893,7 @@ def invalidate_content(
                 )
             )
             invalidated = bool(result.rowcount)
+        invalidate_products_by_source(source_content_id=content_id, conn=conn)
     record_operation_audit(
         "content.invalidate",
         "daily_content",
@@ -954,20 +974,26 @@ def get_latest_effective_content(service_type: ServiceType, module_key: str = ""
 def mark_expired_daily_contents_invalidated(now: str | None = None) -> int:
     current = now or _now()
     with connect() as conn:
-        return int(
+        conditions = and_(
+            investment_daily_contents.c.status.in_(
+                [str(Status.GENERATED), str(Status.EFFECTIVE)]
+            ),
+            investment_daily_contents.c.expires_at.is_not(None),
+            investment_daily_contents.c.expires_at != "",
+            investment_daily_contents.c.expires_at <= current,
+        )
+        expired_rows = conn.execute(
+            select(investment_daily_contents.c.content_id).where(conditions)
+        ).fetchall()
+        expired_content_ids = [row_to_dict(row)["content_id"] for row in expired_rows]
+        updated = int(
             conn.execute(
                 update(investment_daily_contents)
-                .where(
-                    and_(
-                        investment_daily_contents.c.status.in_(
-                            [str(Status.GENERATED), str(Status.EFFECTIVE)]
-                        ),
-                        investment_daily_contents.c.expires_at.is_not(None),
-                        investment_daily_contents.c.expires_at != "",
-                        investment_daily_contents.c.expires_at <= current,
-                    )
-                )
+                .where(conditions)
                 .values(status=str(Status.INVALIDATED), updated_at=current)
             ).rowcount
             or 0
         )
+        for expired_content_id in expired_content_ids:
+            invalidate_products_by_source(source_content_id=expired_content_id, conn=conn)
+        return updated

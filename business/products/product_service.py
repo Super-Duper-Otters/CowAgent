@@ -330,6 +330,77 @@ def invalidate_active_products(
         )
 
 
+def _archive_active_products_on_connection(
+    conn,
+    *,
+    business_type: str,
+    target_key: str,
+    business_date: str = "",
+    version_fingerprint: str = "",
+) -> int:
+    now = _now()
+    conditions = _active_product_conditions(
+        business_type=business_type,
+        target_key=target_key,
+        business_date=business_date,
+        version_fingerprint=version_fingerprint,
+    )
+    return int(
+        conn.execute(
+            update(investment_products)
+            .where(and_(*conditions))
+            .values(
+                status=PRODUCT_STATUS_ARCHIVED,
+                archived_at=now,
+                updated_at=now,
+            )
+        ).rowcount
+        or 0
+    )
+
+
+def archive_active_products(
+    *,
+    business_type: str,
+    target_key: str,
+    business_date: str = "",
+    version_fingerprint: str = "",
+    conn=None,
+) -> int:
+    if conn is not None:
+        return _archive_active_products_on_connection(
+            conn,
+            business_type=business_type,
+            target_key=target_key,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+        )
+    with connect() as product_conn:
+        return _archive_active_products_on_connection(
+            product_conn,
+            business_type=business_type,
+            target_key=target_key,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+        )
+
+
+def create_product_archiving_active(*, conn=None, **kwargs) -> dict:
+    def _create(product_conn) -> dict:
+        _archive_active_products_on_connection(
+            product_conn,
+            business_type=kwargs["business_type"],
+            target_key=kwargs["target_key"],
+            business_date=kwargs.get("business_date", ""),
+        )
+        return _create_product_on_connection(product_conn, **kwargs)
+
+    if conn is not None:
+        return _create(conn)
+    with connect() as product_conn:
+        return _create(product_conn)
+
+
 def _invalidate_prior_active_products_on_connection(
     conn,
     *,
@@ -446,6 +517,69 @@ def increment_product_hit(product_id: str) -> None:
 
 def invalidate_product_if_unchanged(product: dict) -> bool:
     return _invalidate_product_if_unchanged(product)
+
+
+def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
+    normalized_source_content_id = _text(source_content_id)
+    if not normalized_source_content_id:
+        return 0
+
+    def _invalidate(product_conn) -> int:
+        now = _now()
+        return int(
+            product_conn.execute(
+                update(investment_products)
+                .where(
+                    and_(
+                        investment_products.c.source_content_id == normalized_source_content_id,
+                        investment_products.c.status != PRODUCT_STATUS_INVALIDATED,
+                    )
+                )
+                .values(
+                    status=PRODUCT_STATUS_INVALIDATED,
+                    invalidated_at=now,
+                    updated_at=now,
+                )
+            ).rowcount
+            or 0
+        )
+
+    if conn is not None:
+        return _invalidate(conn)
+    with connect() as product_conn:
+        return _invalidate(product_conn)
+
+
+def find_active_product_by_source_content_id(source_content_id: str) -> dict | None:
+    normalized_source_content_id = _text(source_content_id)
+    if not normalized_source_content_id:
+        return None
+    now = _now()
+    stmt = (
+        select(investment_products)
+        .where(
+            and_(
+                investment_products.c.source_content_id == normalized_source_content_id,
+                investment_products.c.status == PRODUCT_STATUS_ACTIVE,
+                _expires_at_condition(now),
+            )
+        )
+        .order_by(
+            desc(investment_products.c.effective_at),
+            desc(investment_products.c.created_at),
+            desc(investment_products.c.product_id),
+        )
+        .limit(1)
+    )
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    if row is None:
+        return None
+    product = _row_to_product(row)
+    if not _files_available(product["output_files"]):
+        _invalidate_product_if_unchanged(product)
+        return None
+    return product
 
 
 def _invalidate_product_if_unchanged(product: dict) -> bool:

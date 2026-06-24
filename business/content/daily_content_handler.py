@@ -9,6 +9,7 @@ from business.records.business_records import (
 from business.config.config_service import sanitize_sensitive_text
 from business.config.constants import ErrorCode, ServiceType
 from business.execution.daily_content_executor import get_daily_content_business
+from business.products.product_service import find_active_product_by_source_content_id
 
 
 def _image_reply(paths: list[str]) -> str:
@@ -66,6 +67,9 @@ def handle_daily_content(
         )
 
     output_files = [content.output_image]
+    product = find_active_product_by_source_content_id(content.content_id)
+    source_type = "product" if product is not None else "content"
+    source_id = product["product_id"] if product is not None else content.content_id
     succeed_request_record(
         request_id,
         output_files=output_files,
@@ -79,7 +83,7 @@ def handle_daily_content(
         output_files,
         service_type,
         request_id=request_id,
-        source_type="content",
-        source_id=content.content_id,
+        source_type=source_type,
+        source_id=source_id,
         module_key=module_key,
     )
