@@ -656,7 +656,6 @@ def fail_request_record(
                 updated_at=_now(),
             )
         )
-        conn.execute(delete(investment_output_files).where(investment_output_files.c.owner_id == request_id))
     openid, raw_input = _request_identity(request_id)
     _record_request_event_safe(
         request_id=request_id,

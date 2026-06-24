@@ -950,6 +950,33 @@ def test_request_records_emit_lifecycle_events(business_env):
     assert failed_events[1].error == "no content"
 
 
+def test_fail_request_record_preserves_artifact_index_rows(business_env, tmp_path):
+    from business.config.constants import ErrorCode, ServiceType
+    from business.records.records import (
+        create_request_record,
+        fail_request_record,
+        list_output_files,
+        record_output_file,
+    )
+
+    request_id = create_request_record("openid-artifact-fail", "新易盛 技术分析", ServiceType.TECHNICAL_ANALYSIS)
+    output_file = tmp_path / "signal-card.png"
+    output_file.write_bytes(b"png")
+    record_output_file(
+        request_id,
+        str(output_file),
+        "image",
+        ServiceType.TECHNICAL_ANALYSIS,
+        artifact_role="signal_card",
+    )
+
+    fail_request_record(request_id, ErrorCode.SYSTEM_ERROR, detail="late failure", elapsed_ms=9)
+
+    artifacts = list_output_files(request_id)
+    assert len(artifacts) == 1
+    assert artifacts[0]["file_path"] == str(output_file)
+
+
 def test_external_request_record_declares_entry_and_actor(business_env):
     from business.config.constants import ActionType, ActorType, EntryType, ServiceType
     from business.records.records import create_request_record, get_request_record
