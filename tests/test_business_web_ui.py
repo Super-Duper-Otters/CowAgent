@@ -2191,6 +2191,7 @@ def test_investment_records_use_unified_products_api():
     state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
     invalidate_body = _js_function_body(js, "invalidateInvestmentProduct")
     drawer_body = _js_function_body(js, "renderInvestmentRecordDrawerBody")
+    product_drawer_body = _js_function_body(js, "renderInvestmentProductDrawer")
 
     assert "/api/investment/products" in js
     assert "renderInvestmentProductsTable" in js
@@ -2200,6 +2201,9 @@ def test_investment_records_use_unified_products_api():
     assert "/api/investment/products/${encodedProductId}/invalidate" in invalidate_body
     assert "method: 'POST'" in invalidate_body
     assert "type === 'product' ? renderInvestmentProductDrawer(record)" in drawer_body
+    assert "record.version_fingerprint" in product_drawer_body
+    assert "record.text_content" in product_drawer_body
+    assert "record.generated_text" in product_drawer_body
     assert "filters: {" in state_body
     assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: investmentTodayDate(), keyword: ''}" in state_body
     assert "pagination: {" in state_body

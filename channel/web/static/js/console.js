@@ -4966,7 +4966,8 @@ function renderInvestmentProductDrawer(record) {
         sourceContent ? `内容：${sourceContent}` : '',
         sourceCache ? `缓存：${sourceCache}` : '',
     ].filter(Boolean).join('\n');
-    const version = record.version || record.version_tag || record.product_version || record.content_version || record.program_version || '-';
+    const version = record.version_fingerprint || record.version || record.version_tag || record.product_version || record.content_version || record.program_version || '-';
+    const generatedText = record.text_content || record.generated_text || '';
     return `
         ${investmentDrawerSection('基础信息', investmentDrawerFacts([
             ['产物 ID', escapeHtml(record.product_id || '-')],
@@ -4981,7 +4982,7 @@ function renderInvestmentProductDrawer(record) {
         ${investmentDrawerPre('来源请求', sourceLines || '-')}
         ${investmentDrawerSection('输出文件', `<div class="investment-detail-links">${investmentFileLinks(record.output_files || [])}</div>`)}
         ${investmentDrawerSection('产物审计', investmentArtifactTable(record.output_artifacts || []))}
-        ${record.generated_text ? investmentDrawerPre('生成文本', record.generated_text) : ''}
+        ${generatedText ? investmentDrawerPre('生成文本', generatedText) : ''}
     `;
 }
 
