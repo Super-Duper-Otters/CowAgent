@@ -4284,6 +4284,78 @@ def test_cache_handler_keyword_search_suppresses_legacy_when_product_source_exis
     assert payload["pagination"]["total"] == 0
 
 
+def test_cache_handler_merged_products_keep_pagination_totals(business_env, monkeypatch):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products import product_service
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    duplicate_cache_keys = []
+    for index in range(3):
+        cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, f"30050{index}.SZ", "2026-06-24", "v1")
+        duplicate_cache_keys.append(cache_key)
+        product_service.create_product(
+            business_type="technical_analysis",
+            target_key=f"30050{index}.SZ",
+            target_label=f"产品{index}",
+            business_date="2026-06-24",
+            version_fingerprint="v1",
+            source_cache_key=cache_key,
+            source_type="cache",
+            output_files=[f"/tmp/product-card-{index}.png"],
+        )
+        write_cache_entry(
+            cache_key=cache_key,
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=f"30050{index}.SZ",
+            market_date="2026-06-24",
+            version_fingerprint="v1",
+            output_files=[f"/tmp/legacy-card-{index}.png"],
+        )
+    for index in range(2):
+        write_cache_entry(
+            cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, f"60128{index}.SH", "2026-06-24", "v1"),
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=f"60128{index}.SH",
+            market_date="2026-06-24",
+            version_fingerprint="v1",
+            output_files=[f"/tmp/legacy-only-card-{index}.png"],
+        )
+
+    page_one = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "2", "service_type": "technical_analysis", "market_date": "2026-06-24"},
+    )
+    page_three = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "3", "page_size": "2", "service_type": "technical_analysis", "market_date": "2026-06-24"},
+    )
+    page_two = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "2", "page_size": "2", "service_type": "technical_analysis", "market_date": "2026-06-24"},
+    )
+
+    assert page_one["status"] == "success"
+    assert page_one["pagination"] == {"page": 1, "page_size": 2, "total": 5, "total_pages": 3}
+    assert len(page_one["entries"]) == 2
+    assert page_two["status"] == "success"
+    assert page_two["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
+    assert len(page_two["entries"]) == 2
+    assert page_three["status"] == "success"
+    assert page_three["pagination"] == {"page": 3, "page_size": 2, "total": 5, "total_pages": 3}
+    assert len(page_three["entries"]) == 1
+    returned_duplicate_keys = {
+        entry["cache_key"]
+        for payload in (page_one, page_two, page_three)
+        for entry in payload["entries"]
+        if entry.get("source_type") == "cache"
+    }
+    assert not returned_duplicate_keys.intersection(duplicate_cache_keys)
+
+
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
@@ -10415,6 +10487,7 @@ def test_write_cache_entry_concurrent_same_key_uses_single_active_entry(business
 def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products import product_service
     from channel.web.web_channel import InvestmentCacheClearHandler, InvestmentCacheEntryInvalidateHandler, InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -10465,6 +10538,17 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
         output_files=["/tmp/card.png"],
         artifact_owner_id="request-2",
     )
+    product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-05-25",
+        version_fingerprint="v1",
+        source_request_id="request-product",
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=["/tmp/product-card.png"],
+    )
     clear_payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheClearHandler().POST,
@@ -10472,7 +10556,27 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     )
 
     assert clear_payload["status"] == "success"
-    assert clear_payload["removed"] == 1
+    assert clear_payload["removed"] == 2
+    assert clear_payload["legacy_removed"] == 1
+    assert clear_payload["products_invalidated"] == 1
+
+    cleared_default_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"limit": "20", "service_type": "technical_analysis", "market_date": "2026-05-25"},
+    )
+    assert cleared_default_payload["status"] == "success"
+    assert cleared_default_payload["entries"] == []
+
+    cleared_invalidated_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"limit": "20", "service_type": "technical_analysis", "market_date": "2026-05-25", "include_invalidated": "1"},
+    )
+    assert cleared_invalidated_payload["status"] == "success"
+    assert cleared_invalidated_payload["entries"][0]["source_type"] == "product"
+    assert cleared_invalidated_payload["entries"][0]["product_id"] == product["product_id"]
+    assert cleared_invalidated_payload["entries"][0]["status"] == "invalidated"
 
 
 def test_investment_products_api_lists_and_invalidates_products(business_env, monkeypatch):

@@ -549,6 +549,54 @@ def invalidate_product(product_id: str) -> bool:
         )
 
 
+def _product_scope_conditions(
+    *,
+    business_type: str = "",
+    business_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> list:
+    conditions = []
+    if business_type:
+        conditions.append(investment_products.c.business_type == _text(business_type))
+    if business_date:
+        conditions.append(investment_products.c.business_date == _text(business_date))
+    else:
+        if start_date:
+            conditions.append(investment_products.c.business_date >= _text(start_date))
+        if end_date:
+            conditions.append(investment_products.c.business_date <= _text(end_date))
+    return conditions
+
+
+def invalidate_products_by_scope(
+    *,
+    business_type: str = "",
+    business_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> int:
+    conditions = _product_scope_conditions(
+        business_type=business_type,
+        business_date=business_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+    now = _now()
+    stmt = (
+        update(investment_products)
+        .where(and_(*conditions))
+        .values(
+            status=PRODUCT_STATUS_INVALIDATED,
+            invalidated_at=now,
+            updated_at=now,
+        )
+    )
+    with connect() as conn:
+        return int(conn.execute(stmt).rowcount or 0)
+
+
 def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
     normalized_source_content_id = _text(source_content_id)
     if not normalized_source_content_id:
@@ -773,3 +821,45 @@ def list_product_business_dates(business_type: str = "", include_invalidated: bo
     )
     with connect() as conn:
         return [str(row[0]) for row in conn.execute(stmt).fetchall() if row[0]]
+
+
+def list_product_source_refs(
+    *,
+    business_type: str = "",
+    business_date: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    include_invalidated: bool = True,
+) -> list[dict]:
+    conditions = _product_scope_conditions(
+        business_type=business_type,
+        business_date=business_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    conditions.append(
+        or_(
+            investment_products.c.source_cache_key != "",
+            investment_products.c.source_content_id != "",
+        )
+    )
+    if not include_invalidated:
+        conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
+    stmt = (
+        select(
+            investment_products.c.source_cache_key,
+            investment_products.c.source_content_id,
+        )
+        .where(and_(*conditions))
+        .distinct()
+    )
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    return [
+        {
+            "source_cache_key": row[0] or "",
+            "source_content_id": row[1] or "",
+        }
+        for row in rows
+    ]

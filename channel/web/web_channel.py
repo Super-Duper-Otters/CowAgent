@@ -3773,7 +3773,7 @@ class InvestmentCacheHandler:
         try:
             from business.cache.cache_service import list_generated_history_market_dates, list_generated_history_page
             from business.config.constants import ServiceType, normalize_service
-            from business.products.product_service import list_product_business_dates, list_products_page
+            from business.products.product_service import list_product_business_dates, list_product_source_refs, list_products_page
 
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
@@ -3817,30 +3817,15 @@ class InvestmentCacheHandler:
                     include_invalidated=include_invalidated,
                 )
             product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
-            suppression_preview, suppression_total = list_products_page(
-                page=1,
-                page_size=1,
+            suppression_refs = list_product_source_refs(
                 business_type=business_type,
                 business_date=market_date,
                 start_date=start_date,
                 end_date=end_date,
-                keyword="",
                 include_invalidated=True,
             )
-            suppression_rows = suppression_preview
-            if suppression_total > len(suppression_preview):
-                suppression_rows, suppression_total = list_products_page(
-                    page=1,
-                    page_size=suppression_total,
-                    business_type=business_type,
-                    business_date=market_date,
-                    start_date=start_date,
-                    end_date=end_date,
-                    keyword="",
-                    include_invalidated=True,
-                )
-            product_cache_keys = {product.get("source_cache_key") for product in suppression_rows if product.get("source_cache_key")}
-            product_content_ids = {product.get("source_content_id") for product in suppression_rows if product.get("source_content_id")}
+            product_cache_keys = {ref.get("source_cache_key") for ref in suppression_refs if ref.get("source_cache_key")}
+            product_content_ids = {ref.get("source_content_id") for ref in suppression_refs if ref.get("source_content_id")}
 
             legacy_preview, legacy_total = list_generated_history_page(
                 page=1,
@@ -4051,20 +4036,37 @@ class InvestmentCacheClearHandler:
         try:
             from business.cache.cache_service import clear_business_cache
             from business.config.constants import ServiceType, normalize_service
+            from business.products.product_service import invalidate_products_by_scope
 
             body = _investment_json_body()
             service_type = normalize_service(body.get("service_type", "")) if body.get("service_type") else None
             if service_type == ServiceType.UNMATCHED:
                 service_type = None
             market_date = str(body.get("market_date") or "").strip()
-            removed = clear_business_cache(service_type=service_type, market_date=market_date)
+            legacy_removed = clear_business_cache(service_type=service_type, market_date=market_date)
+            products_invalidated = invalidate_products_by_scope(
+                business_type=str(service_type) if service_type else "",
+                business_date=market_date,
+            )
+            removed = legacy_removed + products_invalidated
             _record_investment_operation(
                 "cache.clear",
                 "investment_cache_entry",
                 admin=admin,
-                detail={"service_type": str(service_type) if service_type else "", "market_date": market_date, "removed": removed},
+                detail={
+                    "service_type": str(service_type) if service_type else "",
+                    "market_date": market_date,
+                    "removed": removed,
+                    "legacy_removed": legacy_removed,
+                    "products_invalidated": products_invalidated,
+                },
             )
-            return _investment_json_response({"status": "success", "removed": removed})
+            return _investment_json_response({
+                "status": "success",
+                "removed": removed,
+                "legacy_removed": legacy_removed,
+                "products_invalidated": products_invalidated,
+            })
         except Exception as e:
             logger.error(f"[Investment] cache clear error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
