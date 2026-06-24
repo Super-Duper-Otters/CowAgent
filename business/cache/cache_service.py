@@ -424,6 +424,7 @@ def write_cache_entry(
     output_files: list[str],
     artifact_owner_id: str = "",
 ) -> CacheEntry:
+    # Compatibility path for legacy cache_entries consumers; new reusable outputs live in products.
     now = _now()
     values = {
         "cache_key": cache_key,

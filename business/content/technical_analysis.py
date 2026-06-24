@@ -22,6 +22,7 @@ from business.cache.cache_service import (
 )
 from business.config.config_service import get_config, sanitize_sensitive_text
 from business.config.constants import ErrorCode, ServiceType, user_message
+from business.products.product_service import find_active_product, increment_product_hit
 from business.schema.db import connect
 from business.content.market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from business.content.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
@@ -59,6 +60,8 @@ class TechnicalAnalysisResult:
     version_fingerprint: str = ""
     cache_key: str = ""
     cache_hit: bool = False
+    source_type: str = ""
+    source_id: str = ""
 
 
 @dataclass
@@ -606,6 +609,39 @@ def run_technical_analysis(
         resolved_market_date = cache_context.resolved_market_date
     else:
         resolved_market_date = _resolve_market_date(target_info, requested_market_date)
+    if resolved_market_date.known and resolved_market_date.market_date:
+        product = find_active_product(
+            business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+            target_key=symbol,
+            business_date=resolved_market_date.market_date,
+            version_fingerprint=cache_lookup_version,
+        )
+        if product is not None:
+            increment_product_hit(product["product_id"])
+            output_files = list(product.get("output_files") or [])
+            signal_card_path = output_files[0] if output_files else ""
+            main_chart_path = output_files[1] if len(output_files) > 1 else ""
+            cached_report_path = output_files[2] if len(output_files) > 2 else ""
+            return TechnicalAnalysisResult(
+                True,
+                signal_card_path,
+                main_chart_path,
+                cached_report_path,
+                output_files=output_files,
+                normalized_target=symbol,
+                stock_code=symbol,
+                stock_name=target_info.stock_name,
+                market_date=str(product.get("business_date") or ""),
+                program_version=program_version,
+                ta_version=ta_version,
+                renderer_version=renderer_version,
+                template_version=template_version,
+                version_fingerprint=str(product.get("version_fingerprint") or cache_lookup_version),
+                cache_key=str(product.get("product_id") or ""),
+                cache_hit=True,
+                source_type="product",
+                source_id=str(product.get("product_id") or ""),
+            )
     if use_cache_context and cache_context.cache_key:
         cached = _find_cache_context_entry(
             cache_context,
@@ -670,6 +706,8 @@ def run_technical_analysis(
             version_fingerprint=combined_version,
             cache_key=cached.cache_key,
             cache_hit=True,
+            source_type="cache",
+            source_id=cached.cache_key,
         )
     output_base = Path(
         str(

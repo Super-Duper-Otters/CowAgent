@@ -7716,6 +7716,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     from business.content import technical_analysis as technical_analysis
     from business.cache.cache_service import list_cache_entries
     from business.config.constants import ServiceType
+    from business.products.product_service import list_products_page
     from business.records.records import list_request_records
     from business.routing.router import handle_text_message
     from business.accounts.user_service import create_user
@@ -7742,9 +7743,14 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     records = list_request_records(limit=2)
     assert records[0].cache_hit is True
     assert records[1].cache_hit is False
-    assert records[0].cache_key == records[1].cache_key
+    assert records[0].cache_key != records[1].cache_key
+    assert second.source_type == "product"
+    assert second.source_id == records[0].cache_key
+    products, product_total = list_products_page(business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert product_total == 1
+    assert products[0]["hit_count"] == 1
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
-    assert cache_entry.hit_count == 1
+    assert cache_entry.hit_count == 0
     assert cache_entry.market_date == "2026-05-25"
     assert cache_entry.artifact_owner_id == records[1].request_id
 
@@ -8061,7 +8067,9 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(busi
     records = list_request_records(limit=2)
     assert records[0].cache_hit is True
     assert records[1].cache_hit is False
-    assert records[0].cache_key == records[1].cache_key
+    assert records[0].cache_key != records[1].cache_key
+    assert second.source_type == "product"
+    assert second.source_id == records[0].cache_key
     assert records[0].market_date == "2026-05-25"
     assert records[1].market_date == "2026-05-25"
 
@@ -9250,7 +9258,9 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     assert records[1].market_date == "2026-05-25"
     assert records[0].cache_key
     assert records[1].cache_key
-    assert records[0].cache_key == records[1].cache_key
+    assert records[0].cache_key != records[1].cache_key
+    assert second.source_type == "product"
+    assert second.source_id == records[0].cache_key
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
     assert cache_entry.market_date == "2026-05-25"
 
@@ -9666,6 +9676,93 @@ def test_product_service_appends_and_invalidates_active_product(business_env, tm
     assert total == 2
     assert [row["product_id"] for row in rows] == [second["product_id"], first["product_id"]]
     assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
+
+
+def test_technical_analysis_product_reuse_invalidates_old_product_without_overwriting(
+    business_env, tmp_path
+):
+    from business.config.constants import ServiceType
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.content.technical_analysis_handler import handle_technical_analysis
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_INVALIDATED,
+        invalidate_active_products,
+        list_products_page,
+    )
+    from business.routing.router import RouteResult
+
+    route = RouteResult(True, ServiceType.TECHNICAL_ANALYSIS, "300502.SZ 技术分析", "300502.SZ")
+    outputs = []
+    for suffix in ("first", "second"):
+        card = tmp_path / f"{suffix}-signal.png"
+        chart = tmp_path / f"{suffix}-chart.png"
+        report = tmp_path / f"{suffix}-report.md"
+        card.write_bytes(f"{suffix}-card".encode("utf-8"))
+        chart.write_bytes(f"{suffix}-chart".encode("utf-8"))
+        report.write_text(f"{suffix} report", encoding="utf-8")
+        outputs.append([str(card), str(chart), str(report)])
+
+    def fake_handler(_openid, _raw_input, _target):
+        output_files = outputs.pop(0)
+        return TechnicalAnalysisResult(
+            True,
+            signal_card_path=output_files[0],
+            main_chart_path=output_files[1],
+            report_path=output_files[2],
+            output_files=output_files,
+            normalized_target="300502.SZ",
+            stock_code="300502.SZ",
+            stock_name="新易盛",
+            market_date="2026-06-24",
+            program_version="program-v1",
+            ta_version="ta-v1",
+            renderer_version="renderer-v1",
+            template_version="template-v1",
+            version_fingerprint="v1",
+            cache_key="technical_analysis:300502.SZ:2026-06-24:v1",
+            cache_hit=False,
+        )
+
+    first_reply = handle_technical_analysis(
+        "ok",
+        "300502.SZ 技术分析",
+        route,
+        technical_analysis_handler=fake_handler,
+        cache_context=SimpleNamespace(cache_key="", normalized_target="300502.SZ", market_date="2026-06-24"),
+    )
+
+    assert first_reply.success is True
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert total == 1
+    assert rows[0]["status"] == PRODUCT_STATUS_ACTIVE
+    first_product_id = rows[0]["product_id"]
+    first_product_files = rows[0]["output_files"]
+
+    assert invalidate_active_products(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+    ) == 1
+
+    second_reply = handle_technical_analysis(
+        "ok",
+        "300502.SZ 技术分析",
+        route,
+        technical_analysis_handler=fake_handler,
+        cache_context=SimpleNamespace(cache_key="", normalized_target="300502.SZ", market_date="2026-06-24"),
+    )
+
+    assert second_reply.success is True
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+
+    assert total == 2
+    assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
+    assert rows[0]["product_id"] != first_product_id
+    assert rows[1]["product_id"] == first_product_id
+    assert rows[0]["output_files"] != first_product_files
+    assert rows[1]["output_files"] == first_product_files
 
 
 def test_product_service_expired_offset_expires_at_is_not_active(business_env, tmp_path, monkeypatch):

@@ -14,6 +14,7 @@ from business.execution.technical_analysis_executor import (
     run_technical_analysis_business,
 )
 from business.health.job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
+from business.products.product_service import create_product, invalidate_active_products
 
 
 RUNNING_JOB_PROMPT = "正在运行，请稍候。"
@@ -28,6 +29,14 @@ def _failure_reply_with_detail(prompt: str, detail: str) -> str:
     if not safe_detail:
         return prompt
     return f"{prompt}\n原因：{safe_detail}"
+
+
+def _target_label(stock_code: str, stock_name: str) -> str:
+    code = str(stock_code or "").strip()
+    name = str(stock_name or "").strip()
+    if code and name and code != name:
+        return f"{code} {name}"
+    return code or name
 
 
 def validate_technical_analysis_request(raw_input: str, route) -> str:
@@ -180,6 +189,38 @@ def handle_technical_analysis(
             archived_path_map.get(result.signal_card_path, result.signal_card_path),
             archived_path_map.get(result.main_chart_path, result.main_chart_path),
         ]
+        product_id = ""
+        if (
+            not result.cache_hit
+            and result.normalized_target
+            and result.market_date
+            and result.version_fingerprint
+            and record_output_files
+        ):
+            invalidate_active_products(
+                business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+                target_key=result.normalized_target,
+                business_date=result.market_date,
+                version_fingerprint=result.version_fingerprint,
+            )
+            product = create_product(
+                business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+                target_key=result.normalized_target,
+                target_label=_target_label(result.stock_code, result.stock_name),
+                business_date=result.market_date,
+                version_fingerprint=result.version_fingerprint,
+                output_files=record_output_files,
+                source_type="request",
+                source_request_id=request_id,
+                source_cache_key=result.cache_key,
+                metadata={
+                    "program_version": result.program_version,
+                    "ta_version": result.ta_version,
+                    "renderer_version": result.renderer_version,
+                    "template_version": result.template_version,
+                },
+            )
+            product_id = str(product.get("product_id") or "")
         if result.cache_key and not result.cache_hit:
             write_business_cache(
                 cache_key=result.cache_key,
@@ -216,8 +257,13 @@ def handle_technical_analysis(
             user_output_files,
             route.service_type,
             request_id=request_id,
-            source_type="cache" if result.cache_key else "",
-            source_id=result.cache_key or "",
+            source_type=(
+                "product"
+                if product_id
+                else result.source_type
+                or ("cache" if result.cache_key else "")
+            ),
+            source_id=product_id or result.source_id or result.cache_key or "",
         )
     except Exception as exc:
         detail = sanitize_sensitive_text(str(exc))
