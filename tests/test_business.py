@@ -11769,6 +11769,79 @@ def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_
     assert by_content_id[fresh_id]["status"] == PRODUCT_STATUS_ACTIVE
 
 
+def test_backfill_products_from_legacy_cache_entries_is_idempotent(business_env, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
+
+    card = tmp_path / "legacy-card.png"
+    report = tmp_path / "legacy-report.md"
+    card.write_text("card", encoding="utf-8")
+    report.write_text("report", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-20", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-20",
+        version_fingerprint="v1",
+        output_files=[str(card), str(report)],
+        artifact_owner_id="req-legacy-cache",
+    )
+
+    first = backfill_products_from_legacy_sources()
+    second = backfill_products_from_legacy_sources()
+
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert first["cache_created"] == 1
+    assert second["cache_created"] == 0
+    assert total == 1
+    assert rows[0]["source_type"] == "cache"
+    assert rows[0]["source_cache_key"] == cache_key
+    assert rows[0]["output_files"] == [str(card), str(report)]
+
+
+def test_backfill_products_from_legacy_daily_content_preserves_status_and_text(business_env, tmp_path):
+    from sqlalchemy import update
+
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft
+    from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents
+
+    image = tmp_path / "rate.png"
+    image.write_text("rate image", encoding="utf-8")
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="公开市场操作",
+        effective_date="2026-06-20",
+        operator="ops",
+    )
+    with connect() as conn:
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == content_id)
+            .values(
+                status=str(Status.EFFECTIVE),
+                generated_text="生成后的利率内容",
+                output_image=str(image),
+            )
+        )
+
+    result = backfill_products_from_legacy_sources()
+
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    assert result["content_created"] == 1
+    assert total == 1
+    assert rows[0]["source_type"] == "content"
+    assert rows[0]["source_content_id"] == content_id
+    assert rows[0]["business_date"] == "2026-06-20"
+    assert rows[0]["text_content"] == "生成后的利率内容"
+    assert rows[0]["output_files"] == [str(image)]
+    assert rows[0]["status"] == "active"
+
+
 def test_daily_content_publish_creates_active_product_and_archives_previous_product(business_env, tmp_path):
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, set_content_effective

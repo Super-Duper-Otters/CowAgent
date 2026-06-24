@@ -184,6 +184,8 @@ def _product_values(
     expires_at: str = "",
     effective_at: str = "",
     archived_at: str = "",
+    created_at: str = "",
+    updated_at: str = "",
 ) -> tuple[str, dict]:
     now = _now()
     logical_key = product_logical_key(
@@ -215,8 +217,8 @@ def _product_values(
         "effective_at": _text(effective_at),
         "invalidated_at": "",
         "archived_at": _text(archived_at),
-        "created_at": now,
-        "updated_at": now,
+        "created_at": _text(created_at) or now,
+        "updated_at": _text(updated_at) or now,
     }
     return product_id, values
 
@@ -226,6 +228,80 @@ def _create_product_on_connection(conn, **kwargs) -> dict:
     conn.execute(investment_products.insert().values(**values))
     row = conn.execute(select(investment_products).where(investment_products.c.product_id == product_id)).fetchone()
     return _row_to_product(row)
+
+
+def product_exists_for_source(*, source_cache_key: str = "", source_content_id: str = "", conn=None) -> bool:
+    conditions = []
+    if source_cache_key:
+        conditions.append(investment_products.c.source_cache_key == _text(source_cache_key))
+    if source_content_id:
+        conditions.append(investment_products.c.source_content_id == _text(source_content_id))
+    if not conditions:
+        return False
+    stmt = select(func.count()).select_from(investment_products).where(or_(*conditions))
+    if conn is not None:
+        return int(conn.execute(stmt).scalar_one() or 0) > 0
+    with connect() as active_conn:
+        return int(active_conn.execute(stmt).scalar_one() or 0) > 0
+
+
+def backfill_products_from_legacy_sources() -> dict[str, int]:
+    from business.schema.tables import investment_cache_entries, investment_daily_contents
+
+    created_cache = 0
+    created_content = 0
+    with connect() as conn:
+        cache_rows = conn.execute(select(investment_cache_entries)).fetchall()
+        for row in cache_rows:
+            item = row_to_dict(row)
+            cache_key = str(item.get("cache_key") or "")
+            if not cache_key or product_exists_for_source(source_cache_key=cache_key, conn=conn):
+                continue
+            _create_product_on_connection(
+                conn,
+                business_type=str(item.get("service_type") or ""),
+                target_key=str(item.get("normalized_target") or ""),
+                target_label=str(item.get("normalized_target") or ""),
+                business_date=str(item.get("market_date") or ""),
+                version_fingerprint=str(item.get("version_fingerprint") or ""),
+                source_type="cache",
+                source_cache_key=cache_key,
+                source_request_id=str(item.get("artifact_owner_id") or ""),
+                output_files=_load_list(item.get("output_files")),
+                status=str(item.get("status") or PRODUCT_STATUS_ACTIVE),
+                effective_at=str(item.get("created_at") or ""),
+                created_at=str(item.get("created_at") or ""),
+                updated_at=str(item.get("updated_at") or ""),
+            )
+            created_cache += 1
+
+        content_rows = conn.execute(select(investment_daily_contents)).fetchall()
+        for row in content_rows:
+            item = row_to_dict(row)
+            content_id = str(item.get("content_id") or "")
+            if not content_id or product_exists_for_source(source_content_id=content_id, conn=conn):
+                continue
+            status = str(item.get("status") or "")
+            product_status = PRODUCT_STATUS_ACTIVE if status in {"generated", "effective"} else PRODUCT_STATUS_INVALIDATED
+            _create_product_on_connection(
+                conn,
+                business_type=str(item.get("service_type") or ""),
+                target_key=str(item.get("service_type") or ""),
+                target_label=str(item.get("service_type") or ""),
+                business_date=str(item.get("effective_date") or ""),
+                version_fingerprint=f"v{item.get('content_version') or 1}",
+                source_type="content",
+                source_content_id=content_id,
+                output_files=[str(item.get("output_image") or "")] if item.get("output_image") else [],
+                text_content=str(item.get("generated_text") or ""),
+                status=product_status,
+                expires_at=str(item.get("expires_at") or ""),
+                effective_at=str(item.get("created_at") or ""),
+                created_at=str(item.get("created_at") or ""),
+                updated_at=str(item.get("updated_at") or ""),
+            )
+            created_content += 1
+    return {"cache_created": created_cache, "content_created": created_content}
 
 
 def create_product(
