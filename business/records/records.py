@@ -15,6 +15,7 @@ from business.schema.tables import (
     investment_cache_entries,
     investment_daily_contents,
     investment_output_files,
+    investment_products,
     investment_request_records,
     investment_users,
     request_events,
@@ -1473,6 +1474,73 @@ def _internal_call_artifact_conditions(service_type: ServiceType | str | None, s
     return conditions
 
 
+def _product_matches_package_id(item: dict, normalized_package_id: str) -> bool:
+    return normalized_package_id in {
+        str(item.get("product_id") or ""),
+        str(item.get("source_cache_key") or ""),
+        str(item.get("source_content_id") or ""),
+        str(item.get("source_request_id") or ""),
+    }
+
+
+def _product_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+    conditions = []
+    if service_type is not None and str(service_type or "").strip():
+        conditions.append(investment_products.c.business_type == str(service_type))
+    if start_date:
+        conditions.append(investment_products.c.business_date >= str(start_date))
+    if end_date:
+        conditions.append(investment_products.c.business_date <= str(end_date))
+    keyword_text = str(keyword or "").strip().lower()
+    if keyword_text:
+        pattern = f"%{keyword_text}%"
+        conditions.append(
+            or_(
+                func.lower(investment_products.c.product_id).like(pattern),
+                func.lower(investment_products.c.business_type).like(pattern),
+                func.lower(investment_products.c.target_key).like(pattern),
+                func.lower(investment_products.c.target_label).like(pattern),
+                func.lower(investment_products.c.business_date).like(pattern),
+                func.lower(investment_products.c.version_fingerprint).like(pattern),
+                func.lower(investment_products.c.source_request_id).like(pattern),
+                func.lower(investment_products.c.source_content_id).like(pattern),
+                func.lower(investment_products.c.source_cache_key).like(pattern),
+                func.lower(investment_products.c.source_type).like(pattern),
+                func.lower(investment_products.c.output_files).like(pattern),
+                func.lower(investment_products.c.text_content).like(pattern),
+            )
+        )
+    return conditions
+
+
+def _product_source_dedupe_keys(
+    *,
+    service_type: ServiceType | str | None,
+    start_date: str = "",
+    end_date: str = "",
+    package_id: str = "",
+) -> tuple[set[str], set[str], set[str]]:
+    from business.products.product_service import list_products_page
+
+    product_rows, _product_total = list_products_page(
+        page=1,
+        page_size=10000,
+        business_type=str(service_type or ""),
+        start_date=start_date,
+        end_date=end_date,
+        keyword="",
+        include_invalidated=True,
+    )
+    if package_id:
+        normalized_package_id = str(package_id)
+        product_rows = [item for item in product_rows if _product_matches_package_id(item, normalized_package_id)]
+    return (
+        {str(item.get("source_cache_key") or "") for item in product_rows if item.get("source_cache_key")},
+        {str(item.get("source_content_id") or "") for item in product_rows if item.get("source_content_id")},
+        {str(item.get("source_request_id") or "") for item in product_rows if item.get("source_request_id")},
+    )
+
+
 def _artifact_package_sources(
     *,
     service_type: ServiceType | str | None,
@@ -1484,14 +1552,6 @@ def _artifact_package_sources(
     rows: list[dict] = []
     total = 0
     from business.products.product_service import list_products_page
-
-    def _product_matches_package_id(item: dict, normalized_package_id: str) -> bool:
-        return normalized_package_id in {
-            str(item.get("product_id") or ""),
-            str(item.get("source_cache_key") or ""),
-            str(item.get("source_content_id") or ""),
-            str(item.get("source_request_id") or ""),
-        }
 
     product_query = {
         "page": 1,
@@ -1519,15 +1579,9 @@ def _artifact_package_sources(
         ]
     rows.extend({"kind": "product", "item": item} for item in product_rows)
     total += len(product_rows)
-    product_cache_keys = {
-        str(item.get("source_cache_key") or "") for item in product_source_rows if item.get("source_cache_key")
-    }
-    product_content_ids = {
-        str(item.get("source_content_id") or "") for item in product_source_rows if item.get("source_content_id")
-    }
-    product_request_ids = {
-        str(item.get("source_request_id") or "") for item in product_source_rows if item.get("source_request_id")
-    }
+    product_cache_keys = {str(item.get("source_cache_key") or "") for item in product_source_rows if item.get("source_cache_key")}
+    product_content_ids = {str(item.get("source_content_id") or "") for item in product_source_rows if item.get("source_content_id")}
+    product_request_ids = {str(item.get("source_request_id") or "") for item in product_source_rows if item.get("source_request_id")}
 
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
     if cache_conditions is not None:
@@ -1777,9 +1831,48 @@ def list_artifact_folder_nodes(
         return nodes[offset : offset + page_size], total
 
     grouped: dict[str, dict] = {}
+    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys(
+        service_type=service_type,
+        start_date=bounded_start,
+        end_date=bounded_end,
+    )
+    if normalized_level == "service":
+        product_key_expr = investment_products.c.business_type
+    else:
+        slices = {"year": 4, "month": 7, "date": 10, "day": 10}
+        length = slices.get(normalized_level)
+        if not length:
+            return [], 0
+        product_key_expr = func.substr(investment_products.c.business_date, 1, length)
+    product_conditions = _product_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
+    if normalized_level != "service":
+        product_conditions.append(investment_products.c.business_date != "")
+    product_grouped = (
+        select(
+            product_key_expr.label("key"),
+            func.count().label("count"),
+            func.max(investment_products.c.updated_at).label("updated_at"),
+        )
+        .where(*product_conditions)
+        .group_by(product_key_expr)
+    )
+    with connect() as conn:
+        for row in conn.execute(product_grouped).fetchall():
+            item = row_to_dict(row)
+            key = str(item.get("key") or "")
+            if not key:
+                continue
+            grouped[key] = {
+                "key": key,
+                "count": int(item.get("count") or 0),
+                "updated_at": str(item.get("updated_at") or ""),
+            }
+
     cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, bounded_start, bounded_end, keyword)
     if cache_conditions is not None:
         cache_conditions.append(investment_cache_entries.c.market_date != "")
+        if product_cache_keys:
+            cache_conditions.append(~investment_cache_entries.c.cache_key.in_(list(product_cache_keys)))
         if normalized_level == "service":
             cache_key_expr = investment_cache_entries.c.service_type
         else:
@@ -1817,6 +1910,8 @@ def list_artifact_folder_nodes(
         content_key_expr = func.substr(_content_generated_at_expr(), 1, length)
     content_conditions = _content_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
     if content_conditions is not None:
+        if product_content_ids:
+            content_conditions.append(~investment_daily_contents.c.content_id.in_(list(product_content_ids)))
         content_grouped = (
             select(
                 content_key_expr.label("key"),
@@ -1838,6 +1933,8 @@ def list_artifact_folder_nodes(
 
     internal_conditions = _internal_call_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
     if internal_conditions is not None:
+        if product_request_ids:
+            internal_conditions.append(~investment_request_records.c.request_id.in_(list(product_request_ids)))
         if normalized_level == "service":
             internal_key_expr = case(
                 (

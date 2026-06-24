@@ -4624,6 +4624,53 @@ def test_artifact_packages_keyword_filter_does_not_resurrect_legacy_cache_for_pr
     assert packages == []
 
 
+def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, monkeypatch, tmp_path):
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_folder_nodes
+    from channel.web.web_channel import InvestmentArtifactFoldersHandler
+
+    product_file = tmp_path / "product-card.png"
+    product_file.write_text("product", encoding="utf-8")
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(product_file)],
+        source_type="request",
+        source_request_id="req-product-only",
+    )
+
+    services, service_total = list_artifact_folder_nodes(level="service")
+    years, year_total = list_artifact_folder_nodes(level="year", service_type="technical_analysis")
+    months, month_total = list_artifact_folder_nodes(level="month", service_type="technical_analysis", year="2026")
+    dates, date_total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
+    packages, package_total = list_artifact_folder_nodes(
+        level="package",
+        service_type="technical_analysis",
+        date="2026-06-24",
+    )
+    date_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactFoldersHandler().GET,
+        params={"level": "date", "service_type": "technical_analysis", "month": "2026-06"},
+    )
+
+    assert service_total == 1
+    assert services[0]["key"] == "technical_analysis"
+    assert year_total == 1
+    assert years[0]["key"] == "2026"
+    assert month_total == 1
+    assert months[0]["key"] == "2026-06"
+    assert date_total == 1
+    assert dates[0]["key"] == "2026-06-24"
+    assert package_total == 1
+    assert packages[0]["package_id"] == product["product_id"]
+    assert date_payload["status"] == "success"
+    assert date_payload["nodes"][0]["key"] == "2026-06-24"
+
+
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
