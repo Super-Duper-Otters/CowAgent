@@ -78,6 +78,12 @@ def _text(value) -> str:
     return str(value or "").strip()
 
 
+def _keyword_like_pattern(keyword: str) -> str:
+    text = _text(keyword).lower()
+    text = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{text}%"
+
+
 def product_logical_key(
     *,
     business_type: str,
@@ -721,24 +727,25 @@ def list_products_page(
             conditions.append(investment_products.c.business_date <= _text(end_date))
     normalized_keyword = _text(keyword).lower()
     if normalized_keyword:
-        pattern = f"%{normalized_keyword}%"
+        pattern = _keyword_like_pattern(normalized_keyword)
         conditions.append(
             or_(
-                func.lower(investment_products.c.product_id).like(pattern),
-                func.lower(investment_products.c.business_type).like(pattern),
-                func.lower(investment_products.c.target_key).like(pattern),
-                func.lower(investment_products.c.target_label).like(pattern),
-                func.lower(investment_products.c.business_date).like(pattern),
-                func.lower(investment_products.c.version_fingerprint).like(pattern),
-                func.lower(investment_products.c.source_request_id).like(pattern),
-                func.lower(investment_products.c.source_content_id).like(pattern),
-                func.lower(investment_products.c.source_cache_key).like(pattern),
-                func.lower(investment_products.c.source_type).like(pattern),
-                func.lower(investment_products.c.text_content).like(pattern),
+                func.lower(investment_products.c.product_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.target_label).like(pattern, escape="\\"),
+                func.lower(investment_products.c.business_date).like(pattern, escape="\\"),
+                func.lower(investment_products.c.version_fingerprint).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_request_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_content_id).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_cache_key).like(pattern, escape="\\"),
+                func.lower(investment_products.c.source_type).like(pattern, escape="\\"),
+                func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
             )
         )
     if not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
     stmt = select(investment_products)
     count_stmt = select(func.count()).select_from(investment_products)
     if conditions:
@@ -757,6 +764,7 @@ def list_product_business_dates(business_type: str = "", include_invalidated: bo
         conditions.append(investment_products.c.business_type == _text(business_type))
     if not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
     stmt = (
         select(investment_products.c.business_date)
         .where(and_(*conditions))

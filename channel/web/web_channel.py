@@ -3817,8 +3817,30 @@ class InvestmentCacheHandler:
                     include_invalidated=include_invalidated,
                 )
             product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
-            product_cache_keys = {entry.get("cache_key") for entry in product_entries if entry.get("cache_key")}
-            product_content_ids = {entry.get("content_id") for entry in product_entries if entry.get("content_id")}
+            suppression_preview, suppression_total = list_products_page(
+                page=1,
+                page_size=1,
+                business_type=business_type,
+                business_date=market_date,
+                start_date=start_date,
+                end_date=end_date,
+                keyword=keyword,
+                include_invalidated=True,
+            )
+            suppression_rows = suppression_preview
+            if suppression_total > len(suppression_preview):
+                suppression_rows, suppression_total = list_products_page(
+                    page=1,
+                    page_size=suppression_total,
+                    business_type=business_type,
+                    business_date=market_date,
+                    start_date=start_date,
+                    end_date=end_date,
+                    keyword=keyword,
+                    include_invalidated=True,
+                )
+            product_cache_keys = {product.get("source_cache_key") for product in suppression_rows if product.get("source_cache_key")}
+            product_content_ids = {product.get("source_content_id") for product in suppression_rows if product.get("source_content_id")}
 
             legacy_preview, legacy_total = list_generated_history_page(
                 page=1,

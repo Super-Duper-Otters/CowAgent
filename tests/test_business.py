@@ -4227,6 +4227,18 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     assert content_payload["entries"][0]["content_id"] == content_id
     assert content_payload["entries"][0]["artifact_owner_id"] == content_id
 
+    product_service.invalidate_product(product["product_id"])
+    invalidated_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "service_type": "technical_analysis", "market_date": "2026-06-24"},
+    )
+
+    assert invalidated_payload["status"] == "success"
+    assert invalidated_payload["pagination"]["total"] == 1
+    assert all(entry["cache_key"] != product_cache_key for entry in invalidated_payload["entries"])
+    assert invalidated_payload["entries"][0]["cache_key"] == legacy_cache_key
+
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
@@ -9811,6 +9823,75 @@ def test_product_service_appends_and_invalidates_active_product(business_env, tm
     assert total == 2
     assert [row["product_id"] for row in rows] == [second["product_id"], first["product_id"]]
     assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
+
+
+def test_product_service_list_filters_expired_active_products_from_active_views(business_env, tmp_path):
+    from business.products import product_service
+
+    card = tmp_path / "expired-card.png"
+    card.write_bytes(b"expired")
+
+    expired = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="expired",
+        output_files=[str(card)],
+        expires_at="2000-01-01T00:00:00+00:00",
+    )
+
+    active_rows, active_total = product_service.list_products_page(
+        business_type="technical_analysis",
+        business_date="2026-06-24",
+    )
+    all_rows, all_total = product_service.list_products_page(
+        include_invalidated=True,
+        business_type="technical_analysis",
+        business_date="2026-06-24",
+    )
+
+    assert active_rows == []
+    assert active_total == 0
+    assert all_total == 1
+    assert all_rows[0]["product_id"] == expired["product_id"]
+    assert product_service.list_product_business_dates("technical_analysis") == []
+    assert product_service.list_product_business_dates("technical_analysis", include_invalidated=True) == ["2026-06-24"]
+
+
+def test_product_service_keyword_treats_percent_as_literal(business_env, tmp_path):
+    from business.products import product_service
+
+    percent_card = tmp_path / "percent-card.png"
+    plain_card = tmp_path / "plain-card.png"
+    percent_card.write_bytes(b"percent")
+    plain_card.write_bytes(b"plain")
+
+    percent_product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="PERCENT.SZ",
+        target_label="literal % marker",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(percent_card)],
+    )
+    product_service.create_product(
+        business_type="technical_analysis",
+        target_key="PLAIN.SZ",
+        target_label="plain marker",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(plain_card)],
+    )
+
+    rows, total = product_service.list_products_page(
+        business_type="technical_analysis",
+        keyword="%",
+        include_invalidated=True,
+    )
+
+    assert total == 1
+    assert [row["product_id"] for row in rows] == [percent_product["product_id"]]
 
 
 def test_product_service_replace_active_product_rolls_back_when_invalidation_fails(
