@@ -245,6 +245,17 @@ def product_exists_for_source(*, source_cache_key: str = "", source_content_id: 
         return int(active_conn.execute(stmt).scalar_one() or 0) > 0
 
 
+def _legacy_content_product_status(status: str) -> str:
+    status_map = {
+        "generated": PRODUCT_STATUS_ACTIVE,
+        "effective": PRODUCT_STATUS_ACTIVE,
+        "archived": PRODUCT_STATUS_ARCHIVED,
+        "generate_failed": PRODUCT_STATUS_FAILED,
+        "invalidated": PRODUCT_STATUS_INVALIDATED,
+    }
+    return status_map.get(_text(status), "")
+
+
 def backfill_products_from_legacy_sources() -> dict[str, int]:
     from business.schema.tables import investment_cache_entries, investment_daily_contents
 
@@ -282,7 +293,11 @@ def backfill_products_from_legacy_sources() -> dict[str, int]:
             if not content_id or product_exists_for_source(source_content_id=content_id, conn=conn):
                 continue
             status = str(item.get("status") or "")
-            product_status = PRODUCT_STATUS_ACTIVE if status in {"generated", "effective"} else PRODUCT_STATUS_INVALIDATED
+            product_status = _legacy_content_product_status(status)
+            output_image = str(item.get("output_image") or "")
+            generated_text = str(item.get("generated_text") or "")
+            if not product_status or not (output_image or generated_text):
+                continue
             _create_product_on_connection(
                 conn,
                 business_type=str(item.get("service_type") or ""),
@@ -292,11 +307,11 @@ def backfill_products_from_legacy_sources() -> dict[str, int]:
                 version_fingerprint=f"v{item.get('content_version') or 1}",
                 source_type="content",
                 source_content_id=content_id,
-                output_files=[str(item.get("output_image") or "")] if item.get("output_image") else [],
-                text_content=str(item.get("generated_text") or ""),
+                output_files=[output_image] if output_image else [],
+                text_content=generated_text,
                 status=product_status,
                 expires_at=str(item.get("expires_at") or ""),
-                effective_at=str(item.get("created_at") or ""),
+                effective_at=str(item.get("effective_at") or item.get("created_at") or ""),
                 created_at=str(item.get("created_at") or ""),
                 updated_at=str(item.get("updated_at") or ""),
             )

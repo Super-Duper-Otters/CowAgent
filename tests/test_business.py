@@ -11826,6 +11826,7 @@ def test_backfill_products_from_legacy_daily_content_preserves_status_and_text(b
                 status=str(Status.EFFECTIVE),
                 generated_text="生成后的利率内容",
                 output_image=str(image),
+                effective_at="2026-06-20T09:30:00+00:00",
             )
         )
 
@@ -11837,9 +11838,95 @@ def test_backfill_products_from_legacy_daily_content_preserves_status_and_text(b
     assert rows[0]["source_type"] == "content"
     assert rows[0]["source_content_id"] == content_id
     assert rows[0]["business_date"] == "2026-06-20"
+    assert rows[0]["effective_at"] == "2026-06-20T09:30:00+00:00"
     assert rows[0]["text_content"] == "生成后的利率内容"
     assert rows[0]["output_files"] == [str(image)]
     assert rows[0]["status"] == "active"
+
+
+def test_backfill_products_from_legacy_daily_content_skips_unproduced_rows_and_maps_statuses(business_env, tmp_path):
+    from sqlalchemy import update
+
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft
+    from business.products.product_service import (
+        PRODUCT_STATUS_ARCHIVED,
+        PRODUCT_STATUS_FAILED,
+        PRODUCT_STATUS_INVALIDATED,
+        backfill_products_from_legacy_sources,
+        list_products_page,
+    )
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents
+
+    archived_image = tmp_path / "archived-rate.png"
+    failed_image = tmp_path / "failed-rate.png"
+    invalidated_image = tmp_path / "invalidated-rate.png"
+    archived_image.write_text("archived image", encoding="utf-8")
+    failed_image.write_text("failed image", encoding="utf-8")
+    invalidated_image.write_text("invalidated image", encoding="utf-8")
+
+    draft_id = create_content_draft(ServiceType.RATE, source_text="draft", effective_date="2026-06-21")
+    generating_id = create_content_draft(ServiceType.RATE, source_text="generating", effective_date="2026-06-22")
+    empty_failed_id = create_content_draft(ServiceType.RATE, source_text="failed empty", effective_date="2026-06-23")
+    archived_id = create_content_draft(ServiceType.RATE, source_text="archived", effective_date="2026-06-24")
+    failed_id = create_content_draft(ServiceType.RATE, source_text="failed output", effective_date="2026-06-25")
+    invalidated_id = create_content_draft(ServiceType.RATE, source_text="invalidated output", effective_date="2026-06-26")
+
+    with connect() as conn:
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == generating_id)
+            .values(status=str(Status.GENERATING))
+        )
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == empty_failed_id)
+            .values(status=str(Status.GENERATE_FAILED))
+        )
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == archived_id)
+            .values(
+                status=str(Status.ARCHIVED),
+                generated_text="历史归档内容",
+                output_image=str(archived_image),
+                effective_at="2026-06-24T08:00:00+00:00",
+            )
+        )
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == failed_id)
+            .values(
+                status=str(Status.GENERATE_FAILED),
+                generated_text="失败但已有输出",
+                output_image=str(failed_image),
+            )
+        )
+        conn.execute(
+            update(investment_daily_contents)
+            .where(investment_daily_contents.c.content_id == invalidated_id)
+            .values(
+                status=str(Status.INVALIDATED),
+                generated_text="已失效历史内容",
+                output_image=str(invalidated_image),
+            )
+        )
+
+    result = backfill_products_from_legacy_sources()
+
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    by_content_id = {row["source_content_id"]: row for row in rows}
+    assert result["content_created"] == 3
+    assert total == 3
+    assert draft_id not in by_content_id
+    assert generating_id not in by_content_id
+    assert empty_failed_id not in by_content_id
+    assert by_content_id[archived_id]["status"] == PRODUCT_STATUS_ARCHIVED
+    assert by_content_id[archived_id]["effective_at"] == "2026-06-24T08:00:00+00:00"
+    assert by_content_id[failed_id]["status"] == PRODUCT_STATUS_FAILED
+    assert by_content_id[failed_id]["text_content"] == "失败但已有输出"
+    assert by_content_id[invalidated_id]["status"] == PRODUCT_STATUS_INVALIDATED
 
 
 def test_daily_content_publish_creates_active_product_and_archives_previous_product(business_env, tmp_path):
