@@ -353,6 +353,21 @@ const VIEW_META = {
 
 let currentView = 'chat';
 
+function isChatViewActive() {
+    return currentView === 'chat';
+}
+
+function updateSessionPanelAvailability() {
+    const toggleBtn = document.getElementById('session-toggle-btn');
+    if (toggleBtn) {
+        toggleBtn.classList.toggle('hidden', !isChatViewActive());
+        toggleBtn.setAttribute('aria-hidden', isChatViewActive() ? 'false' : 'true');
+    }
+    if (!isChatViewActive()) {
+        closeSessionPanel();
+    }
+}
+
 function navigateTo(viewId) {
     const removedViews = new Set(['memory', 'knowledge', 'tasks', 'skills']);
     if (removedViews.has(viewId)) {
@@ -374,6 +389,7 @@ function navigateTo(viewId) {
     document.getElementById('breadcrumb-page').textContent = t(meta.page);
     document.getElementById('breadcrumb-page').dataset.i18n = meta.page;
     currentView = viewId;
+    updateSessionPanelAvailability();
     loadInvestmentView(viewId);
     if (window.innerWidth < 1024) closeSidebar();
 }
@@ -1657,8 +1673,16 @@ function showInvestmentModal(title, bodyHtml) {
                 </div>
                 <div id="investment-modal-body" class="investment-modal-body overflow-auto p-4"></div>
             </div>`;
-        overlay.addEventListener('click', event => {
-            if (event.target === overlay) hideInvestmentModal();
+        let overlayPointerStartedOnBackdrop = false;
+        overlay.addEventListener('pointerdown', event => {
+            overlayPointerStartedOnBackdrop = event.target === overlay;
+        });
+        overlay.addEventListener('pointerup', event => {
+            if (event.target === overlay && overlayPointerStartedOnBackdrop) hideInvestmentModal();
+            overlayPointerStartedOnBackdrop = false;
+        });
+        overlay.addEventListener('pointercancel', () => {
+            overlayPointerStartedOnBackdrop = false;
         });
         document.body.appendChild(overlay);
     }
@@ -8226,6 +8250,7 @@ function closeSessionPanel() {
 }
 
 function toggleSessionPanel() {
+    if (!isChatViewActive()) return;
     const panel = document.getElementById('session-panel');
     if (!panel) return;
     sessionPanelOpen = !sessionPanelOpen;
@@ -8240,6 +8265,7 @@ function toggleSessionPanel() {
 }
 
 function openSessionPanel() {
+    if (!isChatViewActive()) return;
     const panel = document.getElementById('session-panel');
     if (!panel || sessionPanelOpen) return;
     sessionPanelOpen = true;
@@ -8252,6 +8278,11 @@ function openSessionPanel() {
 function _restoreSessionPanel() {
     const panel = document.getElementById('session-panel');
     if (!panel) return;
+    if (!isChatViewActive()) {
+        panel.classList.add('hidden');
+        _hideSessionOverlay();
+        return;
+    }
     if (sessionPanelOpen && !_isMobileView()) {
         panel.classList.remove('hidden');
         _showSessionOverlay();

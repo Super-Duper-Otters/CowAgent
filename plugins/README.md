@@ -176,43 +176,43 @@
 
 ## 插件编写示例
 
-以`plugins/hello`为例，其中编写了一个简单的`Hello`插件。
+下面以一个自定义回复插件为例。
 
 ### 1. 创建插件
 
-在`plugins`目录下创建一个插件文件夹`hello`。然后，在该文件夹中创建``__init__.py``文件，在``__init__.py``中将其他编写的模块文件导入。在程序启动时，插件管理器会读取``__init__.py``的所有内容。
+在`plugins`目录下创建一个插件文件夹，例如`custom_reply`。然后，在该文件夹中创建``__init__.py``文件，在``__init__.py``中将其他编写的模块文件导入。在程序启动时，插件管理器会读取``__init__.py``的所有内容。
 
 ```
 plugins/
-└── hello
+└── custom_reply
     ├── __init__.py
-    └── hello.py
+    └── custom_reply.py
 ```
 
 ``__init__.py``的内容：
 ```
-from .hello import *
+from .custom_reply import *
 ```
 
 ### 2. 编写插件类
 
-在`hello.py`文件中，创建插件类，它继承自`Plugin`。
+在`custom_reply.py`文件中，创建插件类，它继承自`Plugin`。
 
 在类定义之前需要使用`@plugins.register`装饰器注册插件，并填写插件的相关信息，其中`desire_priority`表示插件默认的优先级，越大优先级越高。初次加载插件后可在`plugins/plugins.json`中修改插件优先级。
 
 并在`__init__`中绑定你编写的事件处理函数。
 
-`Hello`插件为事件`ON_HANDLE_CONTEXT`绑定了一个处理函数`on_handle_context`，它表示之后每次生成回复前，都会由`on_handle_context`先处理。
+自定义插件为事件`ON_HANDLE_CONTEXT`绑定了一个处理函数`on_handle_context`，它表示之后每次生成回复前，都会由`on_handle_context`先处理。
 
 PS: `ON_HANDLE_CONTEXT`是最常用的事件，如果要根据不同的消息来生成回复，就用它。
 
 ```python
-@plugins.register(name="Hello", desc="A simple plugin that says hello", version="0.1", author="lanvent", desire_priority= -1)
-class Hello(Plugin):
+@plugins.register(name="CustomReply", desc="A simple custom reply plugin", version="0.1", author="custom", desire_priority= -1)
+class CustomReply(Plugin):
     def __init__(self):
         super().__init__()
         self.handlers[Event.ON_HANDLE_CONTEXT] = self.on_handle_context
-        logger.info("[Hello] inited")
+        logger.info("[CustomReply] inited")
 ```
 
 ### 3. 编写事件处理函数
@@ -235,7 +235,7 @@ class Hello(Plugin):
 
 #### 示例处理函数
 
-`Hello`插件处理`Context`类型为`TEXT`的消息：
+自定义插件处理`Context`类型为`TEXT`的消息：
 
 - 如果内容是`Hello`，就将回复设置为`Hello+用户昵称`，并跳过之后的插件和默认逻辑。
 - 如果内容是`End`，就将`Context`的类型更改为`IMAGE_CREATE`，并让事件继续，如果最终交付到默认逻辑，会调用默认的画图Bot来画画。

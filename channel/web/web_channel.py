@@ -381,6 +381,45 @@ def _format_investment_web_reply(reply: Reply) -> str:
     return "已生成投资业务图片：\n\n" + "\n\n".join(links)
 
 
+def _web_reply_history_content(reply: Reply) -> str:
+    if reply is None:
+        return ""
+    text_content = getattr(reply, "text_content", "")
+    if text_content:
+        return str(text_content)
+    content = reply.content
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(item) for item in content if item)
+    return str(content)
+
+
+def _persist_web_visible_turn(session_id: str, user_content: str, reply: Reply) -> None:
+    if not session_id or not user_content or reply is None:
+        return
+    assistant_content = _web_reply_history_content(reply)
+    if not assistant_content:
+        return
+    try:
+        if not conf().get("conversation_persistence", True):
+            return
+        from agent.memory import get_conversation_store
+
+        get_conversation_store().append_messages(
+            session_id,
+            [
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": assistant_content},
+            ],
+            channel_type="web",
+        )
+    except Exception as exc:
+        logger.warning(f"[WebChannel] Failed to persist web conversation for session={session_id}: {exc}")
+
+
 def _build_investment_web_reply(session_id: str, prompt: str):
     from business.routing.router import parse_route
 
@@ -453,6 +492,7 @@ class WebChannel(ChatChannel):
                 session_id = context.get("session_id") or getattr(context.get("msg"), "from_user_id", "") or "web"
                 investment_reply = _build_investment_web_reply(session_id, context.content)
                 if investment_reply is not None:
+                    _persist_web_visible_turn(session_id, context.content, investment_reply)
                     return investment_reply
             except Exception as exc:
                 logger.exception(f"[WebChannel] investment router failed: {exc}")
@@ -461,7 +501,10 @@ class WebChannel(ChatChannel):
                 return Reply(ReplyType.TEXT, user_message(ErrorCode.SYSTEM_ERROR))
         from bridge.bridge import Bridge
 
-        return Bridge().fetch_reply_content(context.content, context)
+        reply = Bridge().fetch_reply_content(context.content, context)
+        session_id = context.get("session_id") or getattr(context.get("msg"), "from_user_id", "") or "web"
+        _persist_web_visible_turn(session_id, context.content, reply)
+        return reply
 
     def send(self, reply: Reply, context: Context):
         try:

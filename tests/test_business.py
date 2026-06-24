@@ -12042,6 +12042,39 @@ def test_web_open_chat_uses_plain_model_without_agent_bridge(business_env, monke
     assert calls == [("普通聊天", "web-session")]
 
 
+def test_web_open_chat_reply_is_persisted_to_session_history(business_env, monkeypatch):
+    from bridge.reply import Reply, ReplyType
+    from business.config.config_service import save_config
+    from bridge.context import Context, ContextType
+    from agent.memory import get_conversation_store
+    from channel.web.web_channel import WebChannel, WebMessage
+
+    save_config("router.enable_web_open_chat", True, operator_role="admin")
+
+    import bridge.bridge as bridge_module
+
+    monkeypatch.setattr(
+        bridge_module.Bridge(),
+        "fetch_reply_content",
+        lambda query, context: Reply(ReplyType.TEXT, "plain model reply"),
+    )
+
+    context = Context(ContextType.TEXT, "普通聊天", {"msg": WebMessage("msg-1", "普通聊天")})
+    context["session_id"] = "web-session-persist"
+
+    reply = WebChannel()._generate_reply(context)
+
+    assert reply.type == ReplyType.TEXT
+    store = get_conversation_store()
+    sessions = store.list_sessions(channel_type="web", page=1, page_size=10)
+    assert [item["session_id"] for item in sessions["sessions"]] == ["web-session-persist"]
+    history = store.load_history_page("web-session-persist", page=1, page_size=10)
+    assert [(item["role"], item["content"]) for item in history["messages"]] == [
+        ("user", "普通聊天"),
+        ("assistant", "plain model reply"),
+    ]
+
+
 def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business_env, tmp_path, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType

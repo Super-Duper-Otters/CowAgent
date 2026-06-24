@@ -90,7 +90,7 @@ python3 -m pip install pyttsx3
 现在认证公众号和非认证公众号都可以实现的图片和语音回复。但是非认证公众号使用了永久素材接口，每天有1000次的调用上限（每个月有10次重置机会，程序中已设定遇到上限会自动重置），且永久素材库存也有上限。因此对于非认证公众号，我们会在回复图片或者语音消息后的10秒内从永久素材库存内删除该素材。
 
 ## 测试
-目前在`RoboStyle`这个公众号上进行了测试（基于[wechatmp分支](https://github.com/JS00000/chatgpt-on-wechat/tree/wechatmp)），感兴趣的可以关注并体验。开启了godcmd, Banwords, role, dungeon, finish这五个插件，其他的插件还没有详尽测试。百度的接口暂未测试。[wechatmp-stable分支](https://github.com/JS00000/chatgpt-on-wechat/tree/wechatmp-stable)是较稳定的上个版本，但也缺少最新的功能支持。
+目前在`RoboStyle`这个公众号上进行了测试（基于[wechatmp分支](https://github.com/JS00000/chatgpt-on-wechat/tree/wechatmp)），感兴趣的可以关注并体验。历史版本曾测试过godcmd、Banwords、role、dungeon、finish等插件；当前业务公众号路径已默认绕过插件，仅保留必要的管理插件。百度的接口暂未测试。[wechatmp-stable分支](https://github.com/JS00000/chatgpt-on-wechat/tree/wechatmp-stable)是较稳定的上个版本，但也缺少最新的功能支持。
 
 ## TODO
  - [x] 语音输入

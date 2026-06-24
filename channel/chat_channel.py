@@ -42,7 +42,7 @@ class ChatChannel(Channel):
     def _plugins_enabled_for_context(self, context: Context) -> bool:
         if context.get("skip_plugins"):
             return False
-        return context.get("channel_type") not in {"wechatmp", "web"}
+        return context.get("channel_type") not in {"wechatmp", "wechatmp_service", "web"}
 
     # 根据消息构造context，消息内容相关的触发项写在这里
     def _compose_context(self, ctype: ContextType, content, **kwargs):

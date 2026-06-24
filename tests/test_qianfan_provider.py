@@ -377,11 +377,9 @@ class TestQianfanSurfaces(unittest.TestCase):
         self.assertIn('"qianfan_api_base"', source)
         self.assertIn('"qianfan_api_key"', source)
 
-    def test_session_plugins_allow_qianfan(self):
-        role_source = self._read("plugins/role/role.py")
+    def test_session_admin_plugin_allows_qianfan(self):
         godcmd_source = self._read("plugins/godcmd/godcmd.py")
 
-        self.assertIn("const.QIANFAN", role_source)
         self.assertIn("const.QIANFAN", godcmd_source)
 
 

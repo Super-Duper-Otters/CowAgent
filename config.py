@@ -180,6 +180,7 @@ available_setting = {
     "debug": False,  # 是否开启debug模式，开启后会打印更多日志
     "appdata_dir": "",  # 数据目录
     # 插件配置
+    "plugins_enabled": False,  # 是否启用旧版聊天插件系统；投研部署默认关闭，避免扫描无关插件
     "plugin_trigger_prefix": "$",  # 规范插件提供聊天相关指令的前缀，建议不要和管理员指令前缀"#"冲突
     # 是否使用全局插件配置
     "use_global_plugin_config": False,

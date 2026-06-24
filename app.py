@@ -76,7 +76,7 @@ class ChannelManager:
                 self._primary_channel = channels[0][1]
 
             if first_start:
-                PluginManager().load_plugins()
+                _load_plugins_if_enabled(first_start=True)
 
                 # Cloud client is optional. It is only started when
                 # use_linkai=True AND cloud_deployment_id is set.
@@ -259,6 +259,16 @@ def _clear_singleton_cache(channel_name: str):
                     pass
     except Exception as e:
         logger.warning(f"[ChannelManager] Failed to clear singleton cache: {e}")
+
+
+def _load_plugins_if_enabled(first_start: bool = False) -> bool:
+    if not first_start:
+        return False
+    if not conf().get("plugins_enabled", False):
+        logger.info("[App] Legacy chat plugins are disabled")
+        return False
+    PluginManager().load_plugins()
+    return True
 
 
 def sigterm_handler_wrap(_signo):

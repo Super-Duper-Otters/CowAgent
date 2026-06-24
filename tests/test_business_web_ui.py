@@ -74,6 +74,24 @@ def test_non_business_management_pages_are_removed_from_frontend_navigation():
     assert 'data-view="invest-health"' in manage_group
 
 
+def test_session_history_panel_is_limited_to_chat_view():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    navigate_body = _js_function_body(js, "navigateTo")
+    toggle_body = _js_function_body(js, "toggleSessionPanel")
+    open_body = _js_function_body(js, "openSessionPanel")
+    restore_body = _js_function_body(js, "_restoreSessionPanel")
+    availability_body = _js_function_body(js, "updateSessionPanelAvailability")
+
+    assert "function isChatViewActive()" in js
+    assert "return currentView === 'chat';" in js
+    assert "updateSessionPanelAvailability();" in navigate_body
+    assert "toggleBtn.classList.toggle('hidden', !isChatViewActive());" in availability_body
+    assert "closeSessionPanel();" in availability_body
+    assert "if (!isChatViewActive()) return;" in toggle_body
+    assert "if (!isChatViewActive()) return;" in open_body
+    assert "if (!isChatViewActive()) {" in restore_body
+
+
 def test_chat_message_images_are_scaled_inside_reply_bubbles():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
@@ -436,6 +454,7 @@ def test_chat_header_omits_external_nav_buttons():
 def test_business_user_edit_and_record_details_use_modal_dialogs():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
+    show_body = _js_function_body(js, "showInvestmentModal")
 
     assert "function showInvestmentModal(" in js
     assert "function hideInvestmentModal(" in js
@@ -445,6 +464,11 @@ def test_business_user_edit_and_record_details_use_modal_dialogs():
     assert "showInvestmentModal('内容详情" in js
     assert ".investment-modal-overlay" in css
     assert ".investment-modal" in css
+    assert "let overlayPointerStartedOnBackdrop = false;" in show_body
+    assert "overlay.addEventListener('pointerdown'" in show_body
+    assert "overlay.addEventListener('pointerup'" in show_body
+    assert "event.target === overlay && overlayPointerStartedOnBackdrop" in show_body
+    assert "overlayPointerStartedOnBackdrop = false;" in show_body
 
 
 def test_business_config_fields_save_individually_after_change():

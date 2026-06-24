@@ -21,6 +21,7 @@
   "voice_reply_voice": false,
   "speech_recognition": true,
   "group_speech_recognition": false,
+  "plugins_enabled": false,
   "use_linkai": false,
   "linkai_api_key": "",
   "linkai_app_code": "",

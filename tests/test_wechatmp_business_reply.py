@@ -1,9 +1,35 @@
 # encoding:utf-8
+import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from business.config.constants import ServiceType
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_legacy_plugin_bundle_is_trimmed_to_core_plugins():
+    plugin_root = ROOT / "plugins"
+    removed_plugins = {
+        "agent",
+        "banwords",
+        "dungeon",
+        "finish",
+        "hello",
+        "keyword",
+        "linkai",
+        "role",
+        "tool",
+    }
+    retained_plugins = {"cow_cli", "godcmd"}
+
+    for plugin_name in removed_plugins:
+        assert not (plugin_root / plugin_name).exists()
+    for plugin_name in retained_plugins:
+        assert (plugin_root / plugin_name).is_dir()
 
 
 
@@ -465,7 +491,7 @@ def test_investment_channels_disable_chat_plugin_hooks():
     from channel.chat_channel import ChatChannel
 
     channel = ChatChannel.__new__(ChatChannel)
-    for channel_type in ("wechatmp", "web"):
+    for channel_type in ("wechatmp", "wechatmp_service", "web"):
         context = Context(ContextType.TEXT, "利率", {"channel_type": channel_type})
         assert channel._plugins_enabled_for_context(context) is False
 
@@ -474,6 +500,67 @@ def test_investment_channels_disable_chat_plugin_hooks():
 
     general = Context(ContextType.TEXT, "hello", {"channel_type": "terminal"})
     assert channel._plugins_enabled_for_context(general) is True
+
+
+def test_plugin_loading_is_disabled_by_default_for_investment_deploy(monkeypatch):
+    import app
+
+    class PluginManagerStub:
+        loaded = False
+
+        def load_plugins(self):
+            PluginManagerStub.loaded = True
+
+    monkeypatch.setattr(app, "PluginManager", lambda: PluginManagerStub())
+    monkeypatch.setattr(app, "conf", lambda: {"plugins_enabled": False, "use_linkai": False})
+
+    app._load_plugins_if_enabled(first_start=True)
+
+    assert PluginManagerStub.loaded is False
+
+
+def test_plugin_loading_can_be_enabled_explicitly(monkeypatch):
+    import app
+
+    class PluginManagerStub:
+        loaded = False
+
+        def load_plugins(self):
+            PluginManagerStub.loaded = True
+
+    monkeypatch.setattr(app, "PluginManager", lambda: PluginManagerStub())
+    monkeypatch.setattr(app, "conf", lambda: {"plugins_enabled": True, "use_linkai": False})
+
+    app._load_plugins_if_enabled(first_start=True)
+
+    assert PluginManagerStub.loaded is True
+
+
+def test_legacy_plugins_are_disabled_by_default():
+    import config
+    from plugins import PluginManager
+
+    template = json.loads((ROOT / "config-template.json").read_text(encoding="utf-8"))
+    plugin_manager = PluginManager()
+    original_path = plugin_manager.current_plugin_path
+    original_plugin = plugin_manager.plugins.get("TDD_DISABLED_BY_DEFAULT")
+
+    assert config.available_setting["plugins_enabled"] is False
+    assert template["plugins_enabled"] is False
+    try:
+        plugin_manager.current_plugin_path = "tests"
+
+        @plugin_manager.register(name="tdd_disabled_by_default")
+        class TddDisabledByDefault:
+            pass
+
+        assert plugin_manager.plugins["TDD_DISABLED_BY_DEFAULT"].enabled is False
+    finally:
+        plugin_manager.current_plugin_path = original_path
+        if original_plugin is None:
+            plugin_manager.plugins.pop("TDD_DISABLED_BY_DEFAULT", None)
+        else:
+            plugin_manager.plugins["TDD_DISABLED_BY_DEFAULT"] = original_plugin
 
 
 def test_wechatmp_business_success_returns_image_reply(business_env, monkeypatch, tmp_path):
