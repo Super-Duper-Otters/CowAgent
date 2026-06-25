@@ -2169,6 +2169,7 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     from business.records.business_records import get_request_record, list_artifact_folder_nodes, list_artifact_packages_page
     from business.components.import_service import create_component_from_import, preview_skill_zip
     from business.config.constants import ActorType, EntryType, ServiceType
+    from business.products.product_service import create_product
     from business.routing.router import handle_text_message
     from business.schema.storage import get_storage_dirs
     from business.accounts.user_service import create_user
@@ -2276,6 +2277,16 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     assert set(reply.output_files).issubset(set(record.output_files))
     component_root = get_storage_dirs()["files"] / "components" / "technical-analysis"
     assert all(Path(path).resolve().is_relative_to(component_root.resolve()) for path in record.output_files)
+    product = create_product(
+        business_type="component:technical-analysis",
+        target_key="300502.SZ",
+        target_label="300502.SZ 技术分析",
+        business_date=str(record.created_at)[:10],
+        version_fingerprint="component-test",
+        source_type="request",
+        source_request_id=reply.request_id,
+        output_files=record.output_files,
+    )
 
     service_nodes, _total = list_artifact_folder_nodes(level="service")
     component_node = next(node for node in service_nodes if node["key"] == "component:technical-analysis")
@@ -2283,15 +2294,17 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
 
     packages, total = list_artifact_packages_page(service_type="component:technical-analysis")
     assert total == 1
+    assert packages[0]["source_type"] == "product"
     assert packages[0]["service_type"] == "component:technical-analysis"
-    assert packages[0]["service_label"] == "技术分析路由组件"
-    assert packages[0]["module_key"] == "technical-analysis"
-    assert packages[0]["package_id"] == reply.request_id
+    assert packages[0]["package_id"] == product["product_id"]
+    assert packages[0]["source_request_id"] == reply.request_id
     assert packages[0]["files"]
 
     package_detail, detail_total = list_artifact_packages_page(package_id=reply.request_id)
     assert detail_total == 1
-    assert package_detail[0]["package_id"] == reply.request_id
+    assert package_detail[0]["source_type"] == "product"
+    assert package_detail[0]["package_id"] == product["product_id"]
+    assert package_detail[0]["source_request_id"] == reply.request_id
     assert len(package_detail[0]["files"]) >= 2
 
 
