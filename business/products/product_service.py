@@ -256,20 +256,21 @@ def _legacy_content_product_status(status: str) -> str:
     return status_map.get(_text(status), "")
 
 
-def backfill_products_from_legacy_sources() -> dict[str, int]:
+def backfill_products_from_legacy_sources(conn=None) -> dict[str, int]:
     from business.schema.tables import investment_cache_entries, investment_daily_contents
 
-    created_cache = 0
-    created_content = 0
-    with connect() as conn:
-        cache_rows = conn.execute(select(investment_cache_entries)).fetchall()
+    def _backfill(product_conn) -> dict[str, int]:
+        created_cache = 0
+        created_content = 0
+
+        cache_rows = product_conn.execute(select(investment_cache_entries)).fetchall()
         for row in cache_rows:
             item = row_to_dict(row)
             cache_key = str(item.get("cache_key") or "")
-            if not cache_key or product_exists_for_source(source_cache_key=cache_key, conn=conn):
+            if not cache_key or product_exists_for_source(source_cache_key=cache_key, conn=product_conn):
                 continue
             _create_product_on_connection(
-                conn,
+                product_conn,
                 business_type=str(item.get("service_type") or ""),
                 target_key=str(item.get("normalized_target") or ""),
                 target_label=str(item.get("normalized_target") or ""),
@@ -286,11 +287,11 @@ def backfill_products_from_legacy_sources() -> dict[str, int]:
             )
             created_cache += 1
 
-        content_rows = conn.execute(select(investment_daily_contents)).fetchall()
+        content_rows = product_conn.execute(select(investment_daily_contents)).fetchall()
         for row in content_rows:
             item = row_to_dict(row)
             content_id = str(item.get("content_id") or "")
-            if not content_id or product_exists_for_source(source_content_id=content_id, conn=conn):
+            if not content_id or product_exists_for_source(source_content_id=content_id, conn=product_conn):
                 continue
             status = str(item.get("status") or "")
             product_status = _legacy_content_product_status(status)
@@ -299,7 +300,7 @@ def backfill_products_from_legacy_sources() -> dict[str, int]:
             if not product_status or not (output_image or generated_text):
                 continue
             _create_product_on_connection(
-                conn,
+                product_conn,
                 business_type=str(item.get("service_type") or ""),
                 target_key=str(item.get("service_type") or ""),
                 target_label=str(item.get("service_type") or ""),
@@ -316,7 +317,12 @@ def backfill_products_from_legacy_sources() -> dict[str, int]:
                 updated_at=str(item.get("updated_at") or ""),
             )
             created_content += 1
-    return {"cache_created": created_cache, "content_created": created_content}
+        return {"cache_created": created_cache, "content_created": created_content}
+
+    if conn is not None:
+        return _backfill(conn)
+    with connect() as product_conn:
+        return _backfill(product_conn)
 
 
 def create_product(

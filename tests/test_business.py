@@ -180,6 +180,14 @@ def test_business_migration_removes_generation_records_table(business_env):
     assert "ai_generation_audits" in tables
 
 
+def test_product_backfill_migration_revision_exists():
+    path = Path("migrations/business/versions/20260624_0027_backfill_products.py")
+    text = path.read_text(encoding="utf-8")
+    assert 'revision = "20260624_0027"' in text
+    assert 'down_revision = "20260624_0026"' in text
+    assert "backfill_products_from_legacy_sources" in text
+
+
 def test_business_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
     from sqlalchemy import inspect
     from business.schema import db as db
