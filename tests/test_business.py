@@ -8790,6 +8790,75 @@ def _write_legacy_technical_analysis_cache(
     return cache_key, [str(cached_card), str(cached_chart), str(cached_report)]
 
 
+def test_technical_analysis_compatible_cache_reads_products_not_cache_entries(
+    business_env, tmp_path, monkeypatch
+):
+    from sqlalchemy import select
+
+    from business.cache.cache_service import build_cache_key, version_fingerprint
+    from business.config.constants import ServiceType
+    from business.content import technical_analysis
+    from business.products.product_service import create_product
+    from business.records.records import create_request_record, succeed_request_record
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries
+
+    output = tmp_path / "compatible-product-cache.png"
+    output.write_text("compatible", encoding="utf-8")
+    vf = version_fingerprint("compatible-product-cache")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-06-25", vf)
+    request_id = create_request_record(
+        "ok",
+        "天娱数科 技术分析",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="002354.SZ",
+    )
+    succeed_request_record(
+        request_id,
+        output_files=[str(output)],
+        elapsed_ms=1,
+        normalized_target="002354.SZ",
+        stock_code="002354.SZ",
+        stock_name="天娱数科",
+        market_date="2026-06-25",
+        cache_key=cache_key,
+        ta_version="ta-product-compatible",
+        renderer_version="renderer-product-compatible",
+        template_version="template-product-compatible",
+    )
+    create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="002354.SZ",
+        target_label="天娱数科",
+        business_date="2026-06-25",
+        version_fingerprint=vf,
+        status="active",
+        source_request_id=request_id,
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=[str(output)],
+    )
+    with connect() as conn:
+        assert conn.execute(select(investment_cache_entries)).fetchall() == []
+    monkeypatch.setattr(technical_analysis, "technical_analysis_cache_expired_after_close", lambda *args, **kwargs: False)
+
+    cached = technical_analysis._find_compatible_cache_entry_for_market_date(
+        symbol="002354.SZ",
+        market_date="2026-06-25",
+        current_version_fingerprint="different-current-vf",
+        ta_version="ta-product-compatible",
+        renderer_version="renderer-product-compatible",
+        template_version="template-product-compatible",
+    )
+
+    assert cached is not None
+    assert cached.cache_key == cache_key
+    assert cached.normalized_target == "002354.SZ"
+    assert cached.market_date == "2026-06-25"
+    assert cached.version_fingerprint == vf
+    assert cached.output_files == [str(output)]
+
+
 def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_resolver_confirms_market_date(
     business_env, tmp_path, monkeypatch
 ):
@@ -8823,14 +8892,14 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     records = list_request_records(limit=2)
     assert records[0].cache_hit is True
     assert records[1].cache_hit is False
-    assert records[0].cache_key != records[1].cache_key
+    assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
     assert second.source_id == records[0].cache_key
     products, product_total = list_products_page(business_type=str(ServiceType.TECHNICAL_ANALYSIS))
     assert product_total == 1
     assert products[0]["hit_count"] == 1
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
-    assert cache_entry.hit_count == 0
+    assert cache_entry.hit_count == 1
     assert cache_entry.market_date == "2026-05-25"
     assert cache_entry.artifact_owner_id == records[1].request_id
 
@@ -8889,7 +8958,7 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     from business.config.config_service import save_config
     from business.records.records import list_request_records
     from business.routing.router import handle_text_message
-    from business.schema.tables import cache_entries, investment_products
+    from business.schema.tables import investment_products
     from business.accounts.user_service import create_user
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -8917,13 +8986,8 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
     first_product_id = products[0]["product_id"]
     with connect() as conn:
         conn.execute(
-            cache_entries.update()
-            .where(cache_entries.c.cache_key == first_record.cache_key)
-            .values(updated_at="2026-05-29T07:00:00+00:00")
-        )
-        conn.execute(
             investment_products.update()
-            .where(investment_products.c.product_id == first_product_id)
+            .where(investment_products.c.source_cache_key == first_record.cache_key)
             .values(updated_at="2026-05-29T07:00:00+00:00")
         )
 
@@ -8943,9 +9007,10 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
         include_invalidated=True,
         business_type=str(ServiceType.TECHNICAL_ANALYSIS),
     )
-    assert product_total == 2
-    assert [product["status"] for product in products] == ["active", "invalidated"]
-    assert products[1]["product_id"] == first_product_id
+    assert product_total == 4
+    assert [product["status"] for product in products].count("active") == 1
+    assert [product["status"] for product in products].count("invalidated") == 3
+    assert any(product["product_id"] == first_product_id and product["status"] == "invalidated" for product in products)
 
 
 def test_technical_analysis_keeps_previous_trading_day_cache_after_close(
@@ -9163,7 +9228,7 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(busi
     records = list_request_records(limit=2)
     assert records[0].cache_hit is True
     assert records[1].cache_hit is False
-    assert records[0].cache_key != records[1].cache_key
+    assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
     assert second.source_id == records[0].cache_key
     assert records[0].market_date == "2026-05-25"
@@ -9621,7 +9686,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     from business.config.config_service import save_config
     from business.records.records import list_request_records
     from business.routing.router import handle_text_message
-    from business.schema.tables import cache_entries
+    from business.schema.tables import investment_products
     from business.content.stock_resolver import refresh_stock_symbols
     from business.accounts.user_service import create_user
 
@@ -9654,8 +9719,8 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
     )
     with connect() as conn:
         conn.execute(
-            cache_entries.update()
-            .where(cache_entries.c.cache_key == compatible_key)
+            investment_products.update()
+            .where(investment_products.c.source_cache_key == compatible_key)
             .values(updated_at="2026-05-29T07:00:00+00:00")
         )
 

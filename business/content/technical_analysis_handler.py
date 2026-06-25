@@ -69,7 +69,8 @@ def get_ready_technical_analysis_reply(
     record_context: dict | None = None,
     elapsed=lambda: 0,
 ):
-    from business.cache.cache_service import find_cache_entry_by_key, invalidate_cache_entry, technical_analysis_cache_expired_after_close
+    from business.cache.cache_service import find_cache_entry_by_key, technical_analysis_cache_expired_after_close
+    from business.products.product_service import invalidate_products_by_source
 
     cache_context = prepare_technical_analysis_business_context(raw_input, route.target_text)
     if not cache_context.cache_key:
@@ -82,7 +83,7 @@ def get_ready_technical_analysis_reply(
         entry.updated_at,
         normalized_target=entry.normalized_target,
     ):
-        invalidate_cache_entry(entry.cache_key)
+        invalidate_products_by_source(source_cache_key=entry.cache_key)
         return None
     return handle_technical_analysis(
         openid,
@@ -254,10 +255,10 @@ def handle_technical_analysis(
             source_type=(
                 "product"
                 if product_id
-                else result.source_type
+                else getattr(result, "source_type", "")
                 or ("cache" if result.cache_key else "")
             ),
-            source_id=product_id or result.source_id or result.cache_key or "",
+            source_id=product_id or getattr(result, "source_id", "") or result.cache_key or "",
         )
     except Exception as exc:
         detail = sanitize_sensitive_text(str(exc))

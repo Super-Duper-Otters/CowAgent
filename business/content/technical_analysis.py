@@ -26,7 +26,7 @@ from business.products.product_service import find_active_product, increment_pro
 from business.schema.db import connect
 from business.content.market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from business.content.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
-from business.schema.tables import investment_cache_entries, investment_request_records
+from business.schema.tables import investment_products, investment_request_records
 from business.schema.storage import get_storage_dirs
 from business.content.stock_resolver import get_stock_symbol_by_code, get_tushare_token, list_exact_stock_name_matches, resolve_stock
 from business.versioning import file_fingerprint
@@ -354,28 +354,47 @@ def _compatible_cache_entries(
     market_date: str = "",
 ) -> list[cache_service.CacheEntry]:
     conditions = [
-        investment_cache_entries.c.service_type == str(ServiceType.TECHNICAL_ANALYSIS),
-        investment_cache_entries.c.normalized_target == symbol,
-        investment_cache_entries.c.status == "active",
-        investment_cache_entries.c.version_fingerprint != current_version_fingerprint,
+        investment_products.c.business_type == str(ServiceType.TECHNICAL_ANALYSIS),
+        investment_products.c.target_key == symbol,
+        investment_products.c.source_cache_key != "",
+        investment_products.c.status == "active",
+        investment_products.c.version_fingerprint != current_version_fingerprint,
         investment_request_records.c.ta_version == ta_version,
         investment_request_records.c.renderer_version == renderer_version,
         investment_request_records.c.template_version == template_version,
     ]
     if market_date:
-        conditions.append(investment_cache_entries.c.market_date == market_date)
+        conditions.append(investment_products.c.business_date == market_date)
     stmt = (
-        select(investment_cache_entries)
+        select(investment_products)
         .join(
             investment_request_records,
-            investment_cache_entries.c.artifact_owner_id == investment_request_records.c.request_id,
+            investment_products.c.source_request_id == investment_request_records.c.request_id,
         )
         .where(and_(*conditions))
-        .order_by(desc(investment_cache_entries.c.market_date), desc(investment_cache_entries.c.updated_at))
+        .order_by(desc(investment_products.c.business_date), desc(investment_products.c.updated_at))
     )
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()
-    return [cache_service._row_to_entry(row) for row in rows]
+    entries = []
+    for row in rows:
+        item = dict(row._mapping)
+        entries.append(
+            cache_service.CacheEntry(
+                cache_key=str(item.get("source_cache_key") or ""),
+                service_type=ServiceType(item.get("business_type")),
+                normalized_target=str(item.get("target_key") or ""),
+                market_date=str(item.get("business_date") or ""),
+                version_fingerprint=str(item.get("version_fingerprint") or ""),
+                output_files=cache_service._load_list(item.get("output_files")),
+                artifact_owner_id=str(item.get("source_request_id") or ""),
+                status=str(item.get("status") or "active"),
+                hit_count=int(item.get("hit_count") or 0),
+                created_at=str(item.get("created_at") or ""),
+                updated_at=str(item.get("updated_at") or ""),
+            )
+        )
+    return entries
 
 
 def _compatible_cache_entry_has_files(entry: cache_service.CacheEntry) -> bool:
@@ -465,6 +484,33 @@ def _cache_entry_owner_matches_versions(
         select(investment_request_records.c.request_id)
         .where(
             investment_request_records.c.request_id == entry.artifact_owner_id,
+            investment_request_records.c.ta_version == ta_version,
+            investment_request_records.c.renderer_version == renderer_version,
+            investment_request_records.c.template_version == template_version,
+        )
+        .limit(1)
+    )
+    with connect() as conn:
+        return conn.execute(stmt).fetchone() is not None
+
+
+def _product_owner_matches_versions(
+    product: dict,
+    *,
+    current_version_fingerprint: str,
+    ta_version: str,
+    renderer_version: str,
+    template_version: str,
+) -> bool:
+    if str(product.get("version_fingerprint") or "") == current_version_fingerprint:
+        return True
+    source_request_id = str(product.get("source_request_id") or "")
+    if not source_request_id:
+        return False
+    stmt = (
+        select(investment_request_records.c.request_id)
+        .where(
+            investment_request_records.c.request_id == source_request_id,
             investment_request_records.c.ta_version == ta_version,
             investment_request_records.c.renderer_version == renderer_version,
             investment_request_records.c.template_version == template_version,
@@ -631,8 +677,20 @@ def run_technical_analysis(
             business_date=resolved_market_date.market_date,
             version_fingerprint=cache_lookup_version,
         )
-        if product is not None and _technical_analysis_product_allowed(product, normalized_target=symbol):
+        if product is not None and not _technical_analysis_product_allowed(product, normalized_target=symbol):
+            product = None
+        if product is not None and not _product_owner_matches_versions(
+            product,
+            current_version_fingerprint=combined_version,
+            ta_version=ta_version,
+            renderer_version=renderer_version,
+            template_version=template_version,
+        ):
+            product = None
+        if product is not None:
             increment_product_hit(product["product_id"])
+            product_cache_key = str(product.get("source_cache_key") or "")
+            product_source_id = product_cache_key or str(product.get("product_id") or "")
             output_files = list(product.get("output_files") or [])
             signal_card_path = output_files[0] if output_files else ""
             main_chart_path = output_files[1] if len(output_files) > 1 else ""
@@ -652,10 +710,10 @@ def run_technical_analysis(
                 renderer_version=renderer_version,
                 template_version=template_version,
                 version_fingerprint=str(product.get("version_fingerprint") or cache_lookup_version),
-                cache_key=str(product.get("product_id") or ""),
+                cache_key=product_cache_key,
                 cache_hit=True,
                 source_type="product",
-                source_id=str(product.get("product_id") or ""),
+                source_id=product_source_id,
             )
     if use_cache_context and cache_context.cache_key:
         cached = _find_cache_context_entry(

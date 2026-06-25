@@ -371,7 +371,7 @@ def find_latest_cache_entry(
         investment_products.c.business_type == str(service_type),
         investment_products.c.target_key == normalized_target,
         investment_products.c.version_fingerprint == version_fingerprint,
-        investment_products.c.source_type == "cache",
+        investment_products.c.source_cache_key != "",
         investment_products.c.status == CACHE_STATUS_ACTIVE,
     ]
     stmt = (
@@ -486,7 +486,6 @@ def invalidate_cache_entry(cache_key: str) -> bool:
                 update(investment_products)
                 .where(
                     investment_products.c.source_cache_key == cache_key,
-                    investment_products.c.source_type == "cache",
                     investment_products.c.status == CACHE_STATUS_ACTIVE,
                 )
                 .values(status=CACHE_STATUS_INVALIDATED, invalidated_at=_now(), updated_at=_now())
@@ -514,7 +513,7 @@ def _invalidate_cache_entry_if_unchanged(entry: CacheEntry) -> bool:
 
 def clear_cache_entries(*, service_type: ServiceType | None = None, market_date: str = "") -> int:
     conditions = [
-        investment_products.c.source_type == "cache",
+        investment_products.c.source_cache_key != "",
         investment_products.c.status == CACHE_STATUS_ACTIVE,
     ]
     if service_type is not None:
@@ -563,7 +562,7 @@ def list_cache_entries_page(
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
     offset = (page - 1) * page_size
-    conditions = [investment_products.c.source_type == "cache"]
+    conditions = [investment_products.c.source_cache_key != ""]
     if service_type is not None:
         conditions.append(investment_products.c.business_type == str(service_type))
     if market_date:
@@ -654,7 +653,7 @@ def list_cache_market_dates(
     include_invalidated: bool = False,
 ) -> list[str]:
     conditions = [
-        investment_products.c.source_type == "cache",
+        investment_products.c.source_cache_key != "",
         investment_products.c.business_date != "",
     ]
     if service_type is not None:
