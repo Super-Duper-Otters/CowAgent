@@ -4292,6 +4292,8 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
         output_files=["/tmp/legacy-only-card.png"],
         artifact_owner_id="request-legacy-only",
     )
+    backfill_result = product_service.backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 1
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -4313,7 +4315,11 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     assert product_entry["business_date"] == "2026-06-24"
     assert product_entry["artifact_owner_id"] == "request-product"
     assert product_entry["output_files"] == ["/tmp/product-card.png"]
-    assert any(entry["cache_key"] == legacy_cache_key and entry["source_type"] == "cache" for entry in payload["entries"])
+    legacy_entry = next(entry for entry in payload["entries"] if entry["cache_key"] == legacy_cache_key)
+    assert legacy_entry["source_type"] == "product"
+    assert legacy_entry["product_source_type"] == "cache"
+    assert legacy_entry["source_cache_key"] == legacy_cache_key
+    assert legacy_entry["artifact_owner_id"] == "request-legacy-only"
 
     rate_image = tmp_path / "rate-legacy.png"
     rate_image.write_bytes(b"rate")
@@ -4356,12 +4362,36 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     )
 
     assert invalidated_payload["status"] == "success"
-    assert invalidated_payload["pagination"]["total"] == 2
-    assert any(entry["cache_key"] == product_cache_key and entry["source_type"] == "cache" for entry in invalidated_payload["entries"])
-    assert any(entry["cache_key"] == legacy_cache_key and entry["source_type"] == "cache" for entry in invalidated_payload["entries"])
+    assert invalidated_payload["pagination"]["total"] == 1
+    assert invalidated_payload["entries"][0]["cache_key"] == legacy_cache_key
+    assert invalidated_payload["entries"][0]["source_type"] == "product"
+
+    invalidated_visible_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={
+            "page": "1",
+            "page_size": "20",
+            "service_type": "technical_analysis",
+            "market_date": "2026-06-24",
+            "include_invalidated": "1",
+        },
+    )
+
+    assert invalidated_visible_payload["status"] == "success"
+    assert invalidated_visible_payload["pagination"]["total"] == 2
+    invalidated_product_entry = next(
+        entry for entry in invalidated_visible_payload["entries"] if entry["product_id"] == product["product_id"]
+    )
+    assert invalidated_product_entry["source_type"] == "product"
+    assert invalidated_product_entry["status"] == "invalidated"
+    assert any(
+        entry["cache_key"] == legacy_cache_key and entry["source_type"] == "product"
+        for entry in invalidated_visible_payload["entries"]
+    )
 
 
-def test_cache_handler_keyword_search_keeps_legacy_when_product_is_not_visible(business_env, monkeypatch):
+def test_cache_handler_keyword_search_excludes_legacy_when_product_is_not_visible(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products import product_service
@@ -4401,9 +4431,25 @@ def test_cache_handler_keyword_search_keeps_legacy_when_product_is_not_visible(b
     )
 
     assert payload["status"] == "success"
-    assert payload["pagination"]["total"] == 1
-    assert payload["entries"][0]["source_type"] == "cache"
-    assert payload["entries"][0]["cache_key"] == cache_key
+    assert payload["pagination"]["total"] == 0
+    assert payload["entries"] == []
+
+    product_keyword_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={
+            "page": "1",
+            "page_size": "20",
+            "service_type": "technical_analysis",
+            "market_date": "2026-06-24",
+            "keyword": "300502",
+        },
+    )
+
+    assert product_keyword_payload["status"] == "success"
+    assert product_keyword_payload["pagination"]["total"] == 1
+    assert product_keyword_payload["entries"][0]["source_type"] == "product"
+    assert product_keyword_payload["entries"][0]["cache_key"] == cache_key
 
 
 def test_cache_handler_merged_products_keep_pagination_totals(business_env, monkeypatch):
@@ -4444,6 +4490,8 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
             version_fingerprint="v1",
             output_files=[f"/tmp/legacy-only-card-{index}.png"],
         )
+    backfill_result = product_service.backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 2
     for index in range(4):
         product_service.create_product(
             business_type="technical_analysis",
@@ -4495,13 +4543,10 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
     assert page_three["pagination"] == {"page": 3, "page_size": 2, "total": 9, "total_pages": 5}
     assert len(page_three["entries"]) == 2
     assert max(product_page_sizes) <= 6
-    returned_duplicate_keys = {
-        entry["cache_key"]
-        for payload in (page_one, page_two, page_three)
-        for entry in payload["entries"]
-        if entry.get("source_type") == "cache"
-    }
-    assert not returned_duplicate_keys.intersection(duplicate_cache_keys)
+    returned_entries = [entry for payload in (page_one, page_two, page_three) for entry in payload["entries"]]
+    assert all(entry["source_type"] == "product" for entry in returned_entries)
+    for cache_key in duplicate_cache_keys:
+        assert [entry["source_cache_key"] for entry in returned_entries].count(cache_key) <= 1
 
 
 def test_cache_handler_product_page_uses_updated_order_for_bounded_fetch(business_env, monkeypatch):
@@ -10981,7 +11026,17 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
 
     assert list_payload["status"] == "success", list_payload
+    assert list_payload["entries"] == []
+
+    backfill_result = product_service.backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 1
+    list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
+
+    assert list_payload["status"] == "success", list_payload
+    product_id = list_payload["entries"][0]["product_id"]
+    assert list_payload["entries"][0]["source_type"] == "product"
     assert list_payload["entries"][0]["cache_key"] == cache_key
+    assert list_payload["entries"][0]["source_cache_key"] == cache_key
     assert list_payload["entries"][0]["output_files"] == ["/tmp/card.png", "/tmp/chart.png", "/tmp/report.md"]
 
     invalidate_payload = _call_investment_json_handler(
@@ -10995,7 +11050,8 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
 
     default_list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
     assert default_list_payload["status"] == "success"
-    assert default_list_payload["entries"] == []
+    assert default_list_payload["entries"][0]["product_id"] == product_id
+    assert default_list_payload["entries"][0]["status"] == "active"
 
     invalidated_list_payload = _call_investment_json_handler(
         monkeypatch,
@@ -11003,8 +11059,8 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
         params={"limit": "20", "include_invalidated": "1"},
     )
     assert invalidated_list_payload["status"] == "success"
-    assert invalidated_list_payload["entries"][0]["cache_key"] == cache_key
-    assert invalidated_list_payload["entries"][0]["status"] == "invalidated"
+    assert invalidated_list_payload["entries"][0]["product_id"] == product_id
+    assert invalidated_list_payload["entries"][0]["status"] == "active"
 
     write_cache_entry(
         cache_key=cache_key,
@@ -11014,17 +11070,6 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
         version_fingerprint="v1",
         output_files=["/tmp/card.png"],
         artifact_owner_id="request-2",
-    )
-    product = product_service.create_product(
-        business_type="technical_analysis",
-        target_key="300502.SZ",
-        target_label="新易盛",
-        business_date="2026-05-25",
-        version_fingerprint="v1",
-        source_request_id="request-product",
-        source_cache_key=cache_key,
-        source_type="cache",
-        output_files=["/tmp/product-card.png"],
     )
     clear_payload = _call_investment_json_handler(
         monkeypatch,
@@ -11052,7 +11097,7 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     )
     assert cleared_invalidated_payload["status"] == "success"
     assert cleared_invalidated_payload["entries"][0]["source_type"] == "product"
-    assert cleared_invalidated_payload["entries"][0]["product_id"] == product["product_id"]
+    assert cleared_invalidated_payload["entries"][0]["product_id"] == product_id
     assert cleared_invalidated_payload["entries"][0]["status"] == "invalidated"
 
 
@@ -11125,6 +11170,7 @@ def test_generated_history_api_reads_backfilled_products_not_legacy_sources(busi
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
     from channel.web.web_channel import InvestmentCacheHandler
 
     cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-05-25", "v1")
@@ -11137,6 +11183,8 @@ def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_servic
         output_files=["/tmp/card.png"],
         artifact_owner_id="request-1",
     )
+    backfill_result = backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 1
 
     invalid_limit_payload = _call_investment_json_handler(
         monkeypatch,
