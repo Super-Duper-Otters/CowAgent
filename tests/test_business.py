@@ -4123,6 +4123,7 @@ def test_operation_audit_records_admin_actor_fields(business_env):
 def test_cache_entries_page_returns_total_and_filter_pagination(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
     from business.schema.db import connect
     from channel.web.web_channel import InvestmentCacheHandler
 
@@ -4159,6 +4160,9 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
         service_type=ServiceType.TECHNICAL_ANALYSIS,
         market_date="2026-05-29",
     )
+    backfill_result = backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 6
+
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheHandler().GET,
@@ -4168,6 +4172,8 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
     assert total == 5
     assert [entry.cache_key for entry in entries] == [cache_keys[2], cache_keys[1]]
     assert [entry["cache_key"] for entry in payload["entries"]] == [cache_keys[2], cache_keys[1]]
+    assert all(entry["source_type"] == "product" for entry in payload["entries"])
+    assert all(entry["product_source_type"] == "cache" for entry in payload["entries"])
     assert payload["pagination"] == {"page": 2, "page_size": 2, "total": 5, "total_pages": 3}
     assert payload["market_dates"] == ["2026-05-29"]
 
@@ -4175,6 +4181,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
 def test_cache_handler_without_market_date_returns_history_across_dates(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -4193,6 +4200,8 @@ def test_cache_handler_without_market_date_returns_history_across_dates(business
         version_fingerprint="v1",
         output_files=["/tmp/rate-new.png"],
     )
+    backfill_result = backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 2
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -4201,6 +4210,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(business
     )
 
     assert {entry["market_date"] for entry in payload["entries"]} == {"2026-05-28", "2026-06-03"}
+    assert all(entry["source_type"] == "product" for entry in payload["entries"])
     assert payload["market_dates"] == ["2026-06-03", "2026-05-28"]
     assert payload["pagination"]["total"] == 2
 
@@ -4209,6 +4219,7 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
     from business.cache.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, update_generation_success
+    from business.products.product_service import backfill_products_from_legacy_sources
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -4235,9 +4246,13 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
         effective_date="2026-06-05",
         operator="ops",
     )
-    update_generation_success(content_id, "利率生成结果", str(rate_image))
+    update_generation_success(content_id, "利率生成结果 keyword-match", str(rate_image))
 
     entries, total = list_generated_history_page(page=1, page_size=20, keyword="keyword-match")
+    backfill_result = backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 2
+    assert backfill_result["content_created"] == 1
+
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheHandler().GET,
@@ -4248,10 +4263,21 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
     assert [entry["content_id"] for entry in entries] == [content_id]
     assert payload["pagination"]["total"] == 1
     assert [entry["content_id"] for entry in payload["entries"]] == [content_id]
+    assert payload["entries"][0]["source_type"] == "product"
+    assert payload["entries"][0]["product_source_type"] == "content"
 
     code_entries, code_total = list_generated_history_page(page=1, page_size=20, keyword="300502")
     assert code_total == 1
     assert code_entries[0]["normalized_target"] == "300502.SZ"
+
+    code_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"page": "1", "page_size": "20", "keyword": "300502"},
+    )
+    assert code_payload["pagination"]["total"] == 1
+    assert code_payload["entries"][0]["normalized_target"] == "300502.SZ"
+    assert code_payload["entries"][0]["source_type"] == "product"
 
 
 def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_env, monkeypatch, tmp_path):
