@@ -4764,6 +4764,32 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
     assert packages[0]["file_count"] == 2
 
 
+def test_artifact_browser_lists_only_product_packages_after_backfill(business_env, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
+    from business.records.records import list_artifact_packages_page
+
+    output = tmp_path / "legacy-card.png"
+    output.write_text("legacy", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-20", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-20",
+        version_fingerprint="v1",
+        output_files=[str(output)],
+    )
+    backfill_products_from_legacy_sources()
+
+    packages, total = list_artifact_packages_page(service_type="technical_analysis")
+
+    assert total == 1
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["file_count"] == 1
+
+
 def test_artifact_product_package_output_files_have_path_file_urls_without_artifact_rows(business_env, tmp_path):
     from urllib.parse import quote
 
@@ -4860,7 +4886,7 @@ def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tm
     assert underscore_dates[0]["count"] == 1
 
 
-def test_artifact_packages_keyword_filter_keeps_legacy_cache_when_product_is_not_visible(business_env, tmp_path):
+def test_artifact_packages_keyword_filter_excludes_legacy_cache_when_product_is_not_visible(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products.product_service import create_product
@@ -4911,12 +4937,10 @@ def test_artifact_packages_keyword_filter_keeps_legacy_cache_when_product_is_not
         keyword="legacy-keyword",
     )
 
-    assert total == 1
-    assert packages[0]["source_type"] == "cache"
-    assert packages[0]["package_id"] == cache_key
-    assert date_total == 1
-    assert dates[0]["key"] == "2026-06-24"
-    assert dates[0]["count"] == 1
+    assert total == 0
+    assert packages == []
+    assert date_total == 0
+    assert dates == []
 
 
 def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, monkeypatch, tmp_path):
@@ -4969,7 +4993,7 @@ def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, 
 def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_at(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
-    from business.products.product_service import create_product
+    from business.products.product_service import backfill_products_from_legacy_sources, create_product
     from business.records.records import list_artifact_folder_nodes
     from business.schema.db import connect
     from business.schema.tables import investment_cache_entries, investment_products
@@ -5008,6 +5032,7 @@ def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_a
             .where(investment_cache_entries.c.cache_key == cache_key)
             .values(created_at="2026-06-24T08:00:00+00:00", updated_at="2026-06-24T10:00:00+00:00")
         )
+    backfill_products_from_legacy_sources()
 
     dates, total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
 
@@ -5020,6 +5045,7 @@ def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_a
 def test_artifact_folder_api_returns_lightweight_directory_summaries(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
     from business.schema.db import connect
     from business.schema.tables import investment_cache_entries
     from business.records.records import list_artifact_folder_nodes
@@ -5046,6 +5072,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
                 .where(investment_cache_entries.c.cache_key == cache_key)
                 .values(created_at=generated_at, updated_at=generated_at)
             )
+    backfill_products_from_legacy_sources()
 
     months, month_total = list_artifact_folder_nodes(
         level="month",
@@ -5060,7 +5087,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
     packages, package_total = list_artifact_folder_nodes(
         level="package",
         service_type=ServiceType.TECHNICAL_ANALYSIS,
-        date="2026-06-09",
+        date="2026-06-08",
         page=1,
         page_size=20,
     )
@@ -5072,28 +5099,32 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
     package_payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentArtifactFoldersHandler().GET,
-        params={"level": "package", "service_type": "technical_analysis", "date": "2026-06-09"},
+        params={"level": "package", "service_type": "technical_analysis", "date": "2026-06-08"},
     )
 
     assert month_total == 2
-    assert [(node["key"], node["count"]) for node in months] == [("2026-06", 2), ("2026-04", 1)]
+    assert [(node["key"], node["count"]) for node in months] == [("2026-06", 2), ("2026-05", 1)]
     assert day_total == 2
-    assert [(node["key"], node["count"]) for node in days] == [("2026-06-09", 1), ("2026-06-07", 1)]
+    assert [(node["key"], node["count"]) for node in days] == [("2026-06-08", 1), ("2026-06-07", 1)]
     assert package_total == 1
     assert packages[0]["level"] == "package"
-    assert packages[0]["package_id"].startswith("technical_analysis:JUN-B:2026-06-08")
-    assert packages[0]["generated_date"] == "2026-06-09"
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["business_date"] == "2026-06-08"
+    assert packages[0]["normalized_target"] == "JUN-B"
     assert "files" not in packages[0]
     assert payload["status"] == "success"
     assert payload["nodes"][0]["key"] == "2026-06"
     assert "packages" not in payload
     assert package_payload["status"] == "success"
-    assert package_payload["nodes"][0]["package_id"].startswith("technical_analysis:JUN-B:2026-06-08")
+    assert package_payload["nodes"][0]["source_type"] == "product"
+    assert package_payload["nodes"][0]["business_date"] == "2026-06-08"
+    assert package_payload["nodes"][0]["normalized_target"] == "JUN-B"
 
 
 def test_artifact_folder_api_includes_daily_content_records(business_env, monkeypatch, tmp_path):
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, update_generation_success
+    from business.products.product_service import backfill_products_from_legacy_sources
     from business.schema.db import connect
     from business.schema.tables import investment_daily_contents, investment_output_files
     from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
@@ -5140,11 +5171,12 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
             .where(investment_output_files.c.owner_id == cb_content_id)
             .values(created_at="2026-06-09T08:00:00+00:00")
         )
+    backfill_products_from_legacy_sources()
 
     services, service_total = list_artifact_folder_nodes(level="service", page=1, page_size=20)
     rate_months, month_total = list_artifact_folder_nodes(level="month", service_type=ServiceType.RATE, year="2026")
     rate_days, day_total = list_artifact_folder_nodes(level="date", service_type=ServiceType.RATE, month="2026-06")
-    rate_packages, package_total = list_artifact_folder_nodes(level="package", service_type=ServiceType.RATE, date="2026-06-10")
+    rate_packages, package_total = list_artifact_folder_nodes(level="package", service_type=ServiceType.RATE, date="2026-06-08")
     detail_packages, detail_total = list_artifact_packages_page(package_id=rate_content_id, page=1, page_size=1)
 
     service_keys = {node["key"] for node in services}
@@ -5152,32 +5184,27 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
     assert {"rate", "convertible_bond"} <= service_keys
     assert month_total == 1
     assert rate_months[0]["key"] == "2026-06"
-    assert rate_days[0]["key"] == "2026-06-10"
+    assert rate_days[0]["key"] == "2026-06-08"
     assert day_total == 1
     assert package_total == 1
-    assert rate_packages[0]["package_id"] == rate_content_id
-    assert rate_packages[0]["source_type"] == "content"
-    assert rate_packages[0]["label"] == "利率内容"
-    assert rate_packages[0]["generated_date"] == "2026-06-10"
-    assert rate_packages[0]["effective_date"] == "2026-06-08"
+    assert rate_packages[0]["source_type"] == "product"
+    assert rate_packages[0]["label"] == "rate"
+    assert rate_packages[0]["business_date"] == "2026-06-08"
     assert detail_total == 1
-    assert detail_packages[0]["package_id"] == rate_content_id
-    assert detail_packages[0]["source_type"] == "content"
-    assert detail_packages[0]["generated_date"] == "2026-06-10"
-    assert detail_packages[0]["market_date"] == "2026-06-10"
-    assert detail_packages[0]["effective_date"] == "2026-06-08"
-    assert [file["virtual_path"] for file in detail_packages[0]["files"]] == [
-        "input/raw_input.txt",
-        "output/output_image.png",
-        "intermediate/generated_text.txt",
-    ]
-    assert detail_packages[0]["files"][0]["content"] == "rate source text"
-    assert detail_packages[0]["files"][2]["content"] == "rate generated text"
+    assert detail_packages[0]["source_type"] == "product"
+    assert detail_packages[0]["source_content_id"] == rate_content_id
+    assert detail_packages[0]["business_date"] == "2026-06-08"
+    assert detail_packages[0]["file_count"] == 1
+    virtual_paths = [file["virtual_path"] for file in detail_packages[0]["files"]]
+    assert virtual_paths[0].startswith("output/output_image_rate-history_")
+    assert virtual_paths[0].endswith(".png")
+    assert virtual_paths[1] == "intermediate/generated_text.txt"
+    assert detail_packages[0]["files"][1]["content"] == "rate generated text"
 
     folder_payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentArtifactFoldersHandler().GET,
-        params={"level": "package", "service_type": "rate", "date": "2026-06-10"},
+        params={"level": "package", "service_type": "rate", "date": "2026-06-08"},
     )
     package_payload = _call_investment_json_handler(
         monkeypatch,
@@ -5186,10 +5213,10 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
     )
 
     assert folder_payload["status"] == "success"
-    assert folder_payload["nodes"][0]["package_id"] == rate_content_id
+    assert folder_payload["nodes"][0]["source_type"] == "product"
     assert package_payload["status"] == "success"
-    assert package_payload["packages"][0]["package_id"] == rate_content_id
-    assert package_payload["packages"][0]["files"][1]["file_url"].startswith("/api/file?id=")
+    assert package_payload["packages"][0]["source_content_id"] == rate_content_id
+    assert package_payload["packages"][0]["files"][0]["file_url"].startswith("/api/file?path=")
     assert cb_content_id
 
 

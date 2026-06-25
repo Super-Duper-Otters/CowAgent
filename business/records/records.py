@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from business.config.config_service import sanitize_sensitive_text
 from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
@@ -1572,8 +1572,6 @@ def _artifact_package_sources(
     keyword: str = "",
     package_id: str = "",
 ) -> tuple[list[dict], int]:
-    rows: list[dict] = []
-    total = 0
     product_conditions = _product_artifact_conditions(service_type, start_date, end_date, keyword)
     if package_id:
         normalized_package_id = str(package_id)
@@ -1592,56 +1590,9 @@ def _artifact_package_sources(
         product_count = product_count.where(*product_conditions)
     product_stmt = product_stmt.order_by(investment_products.c.created_at.desc(), investment_products.c.product_id.desc())
     with connect() as conn:
-        total += int(conn.execute(product_count).scalar_one() or 0)
+        total = int(conn.execute(product_count).scalar_one() or 0)
         product_rows = [row_to_dict(row) for row in conn.execute(product_stmt).fetchall()]
-        rows.extend({"kind": "product", "item": row} for row in product_rows)
-    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys_from_rows(product_rows)
-
-    cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, start_date, end_date, keyword)
-    if cache_conditions is not None:
-        if package_id:
-            cache_conditions.append(investment_cache_entries.c.cache_key == str(package_id))
-        if product_cache_keys:
-            cache_conditions.append(~investment_cache_entries.c.cache_key.in_(list(product_cache_keys)))
-        cache_stmt = select(investment_cache_entries)
-        cache_count = select(func.count()).select_from(investment_cache_entries)
-        if cache_conditions:
-            cache_stmt = cache_stmt.where(*cache_conditions)
-            cache_count = cache_count.where(*cache_conditions)
-        with connect() as conn:
-            total += int(conn.execute(cache_count).scalar_one() or 0)
-            rows.extend({"kind": "cache", "item": row_to_dict(row)} for row in conn.execute(cache_stmt).fetchall())
-
-    content_conditions = _content_artifact_conditions(service_type, start_date, end_date, keyword)
-    if content_conditions is not None:
-        if package_id:
-            content_conditions.append(investment_daily_contents.c.content_id == str(package_id))
-        if product_content_ids:
-            content_conditions.append(~investment_daily_contents.c.content_id.in_(list(product_content_ids)))
-        generated_at = _content_generated_at_expr().label("generated_at")
-        content_stmt = select(investment_daily_contents, generated_at)
-        content_count = select(func.count()).select_from(investment_daily_contents)
-        if content_conditions:
-            content_stmt = content_stmt.where(*content_conditions)
-            content_count = content_count.where(*content_conditions)
-        with connect() as conn:
-            total += int(conn.execute(content_count).scalar_one() or 0)
-            rows.extend({"kind": "content", "item": row_to_dict(row)} for row in conn.execute(content_stmt).fetchall())
-
-    internal_conditions = _internal_call_artifact_conditions(service_type, start_date, end_date, keyword)
-    if internal_conditions is not None:
-        if package_id:
-            internal_conditions.append(investment_request_records.c.request_id == str(package_id))
-        if product_request_ids:
-            internal_conditions.append(~investment_request_records.c.request_id.in_(list(product_request_ids)))
-        internal_stmt = select(investment_request_records)
-        internal_count = select(func.count()).select_from(investment_request_records)
-        if internal_conditions:
-            internal_stmt = internal_stmt.where(*internal_conditions)
-            internal_count = internal_count.where(*internal_conditions)
-        with connect() as conn:
-            total += int(conn.execute(internal_count).scalar_one() or 0)
-            rows.extend({"kind": "internal_call", "item": row_to_dict(row)} for row in conn.execute(internal_stmt).fetchall())
+    rows = [{"kind": "product", "item": row} for row in product_rows]
     return rows, total
 
 
@@ -1844,7 +1795,6 @@ def list_artifact_folder_nodes(
         offset = (page - 1) * page_size
         return nodes[offset : offset + page_size], total
 
-    grouped: dict[str, dict] = {}
     if normalized_level == "service":
         product_key_expr = investment_products.c.business_type
     else:
@@ -1865,127 +1815,22 @@ def list_artifact_folder_nodes(
         .where(*product_conditions)
         .group_by(product_key_expr)
     )
-    product_source_refs = select(
-        investment_products.c.source_cache_key,
-        investment_products.c.source_content_id,
-        investment_products.c.source_request_id,
-    ).where(*product_conditions).distinct()
     with connect() as conn:
-        product_source_rows = [row_to_dict(row) for row in conn.execute(product_source_refs).fetchall()]
+        grouped = []
         for row in conn.execute(product_grouped).fetchall():
             item = row_to_dict(row)
             key = str(item.get("key") or "")
             if not key:
                 continue
-            grouped[key] = {
-                "key": key,
-                "count": int(item.get("count") or 0),
-                "updated_at": str(item.get("updated_at") or ""),
-            }
-    product_cache_keys, product_content_ids, product_request_ids = _product_source_dedupe_keys_from_rows(product_source_rows)
-
-    cache_conditions = _artifact_package_conditions(investment_cache_entries, service_type, bounded_start, bounded_end, keyword)
-    if cache_conditions is not None:
-        cache_conditions.append(investment_cache_entries.c.market_date != "")
-        if product_cache_keys:
-            cache_conditions.append(~investment_cache_entries.c.cache_key.in_(list(product_cache_keys)))
-        if normalized_level == "service":
-            cache_key_expr = investment_cache_entries.c.service_type
-        else:
-            slices = {"year": 4, "month": 7, "date": 10, "day": 10}
-            length = slices.get(normalized_level)
-            if not length:
-                return [], 0
-            cache_key_expr = func.substr(investment_cache_entries.c.created_at, 1, length)
-        cache_grouped = (
-            select(
-                cache_key_expr.label("key"),
-                func.count().label("count"),
-                func.max(investment_cache_entries.c.updated_at).label("updated_at"),
+            grouped.append(
+                {
+                    "key": key,
+                    "count": int(item.get("count") or 0),
+                    "updated_at": str(item.get("updated_at") or ""),
+                }
             )
-            .where(*cache_conditions)
-            .group_by(cache_key_expr)
-        )
-        with connect() as conn:
-            for row in conn.execute(cache_grouped).fetchall():
-                item = row_to_dict(row)
-                key = str(item.get("key") or "")
-                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
-                current["count"] += int(item.get("count") or 0)
-                updated_at = str(item.get("updated_at") or "")
-                if updated_at > str(current.get("updated_at") or ""):
-                    current["updated_at"] = updated_at
 
-    if normalized_level == "service":
-        content_key_expr = investment_daily_contents.c.service_type
-    else:
-        slices = {"year": 4, "month": 7, "date": 10, "day": 10}
-        length = slices.get(normalized_level)
-        if not length:
-            return [], 0
-        content_key_expr = func.substr(_content_generated_at_expr(), 1, length)
-    content_conditions = _content_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
-    if content_conditions is not None:
-        if product_content_ids:
-            content_conditions.append(~investment_daily_contents.c.content_id.in_(list(product_content_ids)))
-        content_grouped = (
-            select(
-                content_key_expr.label("key"),
-                func.count().label("count"),
-                func.max(investment_daily_contents.c.updated_at).label("updated_at"),
-            )
-            .where(*content_conditions)
-            .group_by(content_key_expr)
-        )
-        with connect() as conn:
-            for row in conn.execute(content_grouped).fetchall():
-                item = row_to_dict(row)
-                key = str(item.get("key") or "")
-                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
-                current["count"] += int(item.get("count") or 0)
-                updated_at = str(item.get("updated_at") or "")
-                if updated_at > str(current.get("updated_at") or ""):
-                    current["updated_at"] = updated_at
-
-    internal_conditions = _internal_call_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
-    if internal_conditions is not None:
-        if product_request_ids:
-            internal_conditions.append(~investment_request_records.c.request_id.in_(list(product_request_ids)))
-        if normalized_level == "service":
-            internal_key_expr = case(
-                (
-                    (investment_request_records.c.service_type == str(ServiceType.UNMATCHED))
-                    & (investment_request_records.c.module_key != ""),
-                    literal("component:") + investment_request_records.c.module_key,
-                ),
-                else_=investment_request_records.c.service_type,
-            )
-        else:
-            slices = {"year": 4, "month": 7, "date": 10, "day": 10}
-            length = slices.get(normalized_level)
-            if not length:
-                return [], 0
-            internal_key_expr = func.substr(investment_request_records.c.created_at, 1, length)
-        internal_grouped = (
-            select(
-                internal_key_expr.label("key"),
-                func.count().label("count"),
-                func.max(investment_request_records.c.updated_at).label("updated_at"),
-            )
-            .where(*internal_conditions)
-            .group_by(internal_key_expr)
-        )
-        with connect() as conn:
-            for row in conn.execute(internal_grouped).fetchall():
-                item = row_to_dict(row)
-                key = str(item.get("key") or "")
-                current = grouped.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
-                current["count"] += int(item.get("count") or 0)
-                updated_at = str(item.get("updated_at") or "")
-                if updated_at > str(current.get("updated_at") or ""):
-                    current["updated_at"] = updated_at
-
-    rows = sorted(grouped.values(), key=lambda item: str(item.get("key") or ""), reverse=True)
+    rows = sorted(grouped, key=lambda item: str(item.get("key") or ""), reverse=True)
     total = len(rows)
     offset = (page - 1) * page_size
     rows = rows[offset : offset + page_size]
