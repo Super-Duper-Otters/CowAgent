@@ -2115,6 +2115,19 @@ def test_generated_history_uses_product_api_with_category_and_artifact_tree():
     assert "renderInvestmentArtifactViewer()" in detail_body
 
 
+def test_generated_history_artifact_requests_include_invalidated_when_product_filter_enabled():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    folder_query_body = _js_function_body(js, "investmentArtifactFolderQuery")
+    package_body = _js_function_body(js, "loadInvestmentArtifactPackage")
+
+    assert "investmentRecordsState.filters.products?.include_invalidated === '1'" in folder_query_body
+    assert "query.set('include_invalidated', '1')" in folder_query_body
+    assert "const query = new URLSearchParams({package_id: packageId, page_size: '1'});" in package_body
+    assert "investmentRecordsState.filters.products?.include_invalidated === '1'" in package_body
+    assert "query.set('include_invalidated', '1')" in package_body
+    assert "investmentFetchJson(`/api/investment/artifacts?${query.toString()}`)" in package_body
+
+
 def test_generated_history_ui_has_no_legacy_cache_loader():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     assert "renderInvestmentCacheTableLegacy" not in js

@@ -11452,6 +11452,99 @@ def test_generated_history_apis_filter_component_products_by_service_type(busine
     assert cache_payload["entries"][0]["product_id"] == product["product_id"]
 
 
+def test_artifact_browser_includes_invalidated_products_only_when_requested(business_env, monkeypatch):
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_ARCHIVED,
+        PRODUCT_STATUS_FAILED,
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+    )
+    from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+    from channel.web.web_channel import InvestmentArtifactFoldersHandler, InvestmentArtifactPackagesHandler
+
+    def make_product(label, status=PRODUCT_STATUS_ACTIVE, expires_at=""):
+        return create_product(
+            business_type="technical_analysis",
+            target_key=f"target-{label}",
+            target_label=f"Target {label}",
+            business_date="2026-06-24",
+            version_fingerprint=f"v-{label}",
+            status=status,
+            source_type="request",
+            source_request_id=f"request-{label}",
+            output_files=[f"/tmp/{label}.png"],
+            expires_at=expires_at,
+        )
+
+    active = make_product("active")
+    invalidated = make_product("invalidated", PRODUCT_STATUS_INVALIDATED)
+    archived = make_product("archived", PRODUCT_STATUS_ARCHIVED)
+    failed = make_product("failed", PRODUCT_STATUS_FAILED)
+    expired = make_product("expired", PRODUCT_STATUS_ACTIVE, expires_at="2000-01-01T00:00:00+00:00")
+
+    default_packages, default_total = list_artifact_packages_page(service_type="technical_analysis", page_size=20)
+    default_dates, default_dates_total = list_artifact_folder_nodes(
+        level="date",
+        service_type="technical_analysis",
+        month="2026-06",
+        page_size=20,
+    )
+
+    assert default_total == 1
+    assert [item["product_id"] for item in default_packages] == [active["product_id"]]
+    assert default_dates_total == 1
+    assert default_dates[0]["count"] == 1
+
+    included_packages, included_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        page_size=20,
+        include_invalidated=True,
+    )
+    included_dates, included_dates_total = list_artifact_folder_nodes(
+        level="date",
+        service_type="technical_analysis",
+        month="2026-06",
+        page_size=20,
+        include_invalidated=True,
+    )
+
+    assert included_total == 5
+    assert {item["product_id"] for item in included_packages} == {
+        active["product_id"],
+        invalidated["product_id"],
+        archived["product_id"],
+        failed["product_id"],
+        expired["product_id"],
+    }
+    assert included_dates_total == 1
+    assert included_dates[0]["count"] == 5
+
+    default_handler_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactPackagesHandler().GET,
+        params={"service_type": "technical_analysis", "page_size": "20"},
+    )
+    included_handler_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactPackagesHandler().GET,
+        params={"service_type": "technical_analysis", "page_size": "20", "include_invalidated": "1"},
+    )
+    included_folder_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentArtifactFoldersHandler().GET,
+        params={"level": "date", "service_type": "technical_analysis", "month": "2026-06", "include_invalidated": "1"},
+    )
+
+    assert default_handler_payload["status"] == "success"
+    assert default_handler_payload["pagination"]["total"] == 1
+    assert default_handler_payload["packages"][0]["product_id"] == active["product_id"]
+    assert included_handler_payload["status"] == "success"
+    assert included_handler_payload["pagination"]["total"] == 5
+    assert included_folder_payload["status"] == "success"
+    assert included_folder_payload["nodes"][0]["count"] == 5
+
+
 def test_cache_key_invalidation_invalidates_backfilled_product_history(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

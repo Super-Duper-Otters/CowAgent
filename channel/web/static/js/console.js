@@ -4497,6 +4497,8 @@ function investmentArtifactFolderQuery(serviceType, level, key) {
     const query = new URLSearchParams();
     query.set('service_type', serviceType);
     query.set('page_size', '100');
+    const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
+    if (includeInvalidated) query.set('include_invalidated', '1');
     if (level === 'all') {
         query.set('level', 'year');
     } else if (level === 'year') {
@@ -4554,7 +4556,10 @@ async function loadInvestmentArtifactPackage(group, packageId) {
     if (!items) return;
     items.innerHTML = '<div class="investment-muted-inline">加载中...</div>';
     try {
-        const data = await investmentFetchJson(`/api/investment/artifacts?package_id=${encodeURIComponent(packageId)}&page_size=1`);
+        const query = new URLSearchParams({package_id: packageId, page_size: '1'});
+        const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
+        if (includeInvalidated) query.set('include_invalidated', '1');
+        const data = await investmentFetchJson(`/api/investment/artifacts?${query.toString()}`);
         const pkg = (data.packages || [])[0];
         if (!pkg) {
             items.innerHTML = '<div class="investment-history-empty investment-generated-history-empty">暂无文件</div>';

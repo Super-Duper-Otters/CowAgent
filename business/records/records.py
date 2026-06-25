@@ -1493,12 +1493,19 @@ def _artifact_keyword_like_pattern(keyword: str) -> str:
     return f"%{text}%"
 
 
-def _product_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+def _product_artifact_conditions(
+    service_type: ServiceType | str | None,
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    include_invalidated: bool = False,
+):
     conditions = []
     if service_type is not None and str(service_type or "").strip():
         conditions.append(investment_products.c.business_type == str(service_type))
-    conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
-    conditions.append(_product_expires_at_condition(_now()))
+    if not include_invalidated:
+        conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_product_expires_at_condition(_now()))
     if start_date:
         conditions.append(investment_products.c.business_date >= str(start_date))
     if end_date:
@@ -1531,8 +1538,15 @@ def _product_source_dedupe_keys(
     start_date: str = "",
     end_date: str = "",
     package_id: str = "",
+    include_invalidated: bool = False,
 ) -> tuple[set[str], set[str], set[str]]:
-    conditions = _product_artifact_conditions(service_type, start_date, end_date, keyword="")
+    conditions = _product_artifact_conditions(
+        service_type,
+        start_date,
+        end_date,
+        keyword="",
+        include_invalidated=include_invalidated,
+    )
     if package_id:
         normalized_package_id = str(package_id)
         conditions.append(
@@ -1575,8 +1589,15 @@ def _artifact_package_sources(
     end_date: str = "",
     keyword: str = "",
     package_id: str = "",
+    include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
-    product_conditions = _product_artifact_conditions(service_type, start_date, end_date, keyword)
+    product_conditions = _product_artifact_conditions(
+        service_type,
+        start_date,
+        end_date,
+        keyword,
+        include_invalidated=include_invalidated,
+    )
     if package_id:
         normalized_package_id = str(package_id)
         product_conditions.append(
@@ -1609,6 +1630,7 @@ def list_artifact_packages_page(
     end_date: str = "",
     keyword: str = "",
     package_id: str = "",
+    include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -1618,6 +1640,7 @@ def list_artifact_packages_page(
         end_date=end_date,
         keyword=keyword,
         package_id=package_id,
+        include_invalidated=include_invalidated,
     )
     packages = [_row_to_product_artifact_package(item["item"]) for item in source_rows]
     packages.sort(key=lambda item: (str(item.get("generated_date") or item.get("market_date") or ""), str(item.get("updated_at") or "")), reverse=True)
@@ -1767,6 +1790,7 @@ def list_artifact_folder_nodes(
     start_date: str = "",
     end_date: str = "",
     keyword: str = "",
+    include_invalidated: bool = False,
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 100))
@@ -1778,6 +1802,7 @@ def list_artifact_folder_nodes(
             start_date=bounded_start,
             end_date=bounded_end,
             keyword=keyword,
+            include_invalidated=include_invalidated,
         )
         nodes = [
             _product_artifact_package_summary(item["item"])
@@ -1808,7 +1833,13 @@ def list_artifact_folder_nodes(
         if not length:
             return [], 0
         product_key_expr = func.substr(investment_products.c.business_date, 1, length)
-    product_conditions = _product_artifact_conditions(service_type, bounded_start, bounded_end, keyword)
+    product_conditions = _product_artifact_conditions(
+        service_type,
+        bounded_start,
+        bounded_end,
+        keyword,
+        include_invalidated=include_invalidated,
+    )
     if normalized_level != "service":
         product_conditions.append(investment_products.c.business_date != "")
     product_grouped = (
