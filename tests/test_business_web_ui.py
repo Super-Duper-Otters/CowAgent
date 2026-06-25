@@ -309,8 +309,8 @@ def test_business_generated_content_uses_shared_artifact_file_tree():
     load_body = _js_function_body(js, "loadInvestmentProducts")
     category_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
 
-    assert "/api/investment/cache" in load_body
-    assert "/api/investment/products" not in load_body
+    assert "/api/investment/products" in load_body
+    assert "/api/investment/cache" not in load_body
     assert "investment-artifact-browser" in category_body
     assert "investment-artifact-tree" in category_body
     assert "renderInvestmentArtifactLazyTree(" in category_body
@@ -1994,7 +1994,8 @@ def test_business_content_page_uses_date_grouped_category_view():
     products_body = _js_function_body(js, "renderInvestmentProductsTable")
     assert "investment-generated-content-home" in cache_home_body
     assert "investment-generated-content-entry" in category_cards_body
-    assert "renderInvestmentProductsTable(visibleEntries)" in cache_body
+    assert "renderInvestmentProductsTable(visibleEntries)" not in cache_body
+    assert "renderInvestmentGeneratedContentHome(investmentGeneratedCategories(visibleEntries), visibleEntries)" in cache_body
     assert "<th>业务</th><th>对象</th><th>业务日期</th><th>有效性</th><th>产物</th><th>生成时间</th><th>操作</th>" in products_body
     assert "function investmentGeneratedCategories(" in js
     assert "['technical_analysis', 'rate', 'convertible_bond'].forEach(serviceType => addCategory(serviceType));" in js
@@ -2020,10 +2021,10 @@ def test_business_content_page_defaults_to_history_overview():
     assert "const visibleEntries = values;" in cache_body
     assert "selectedDate ? values.filter(entry => (entry.market_date || '') === selectedDate) : values" not in cache_body
     assert "haystack.includes(keyword)" not in cache_body
-    assert "renderInvestmentProductsTable(visibleEntries)" in cache_body
-    assert "renderInvestmentRecordsPagination('cache')" in cache_body
-    assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" in load_body
-    assert "investmentFetchJson(`/api/investment/products?${query.toString()}`)" not in load_body
+    assert "renderInvestmentProductsTable(visibleEntries)" not in cache_body
+    assert "renderInvestmentRecordsPagination('cache')" not in cache_body
+    assert "investmentFetchJson(`/api/investment/products?${query.toString()}`)" in load_body
+    assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" not in load_body
     assert "renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination('cache')" not in load_body
     assert "investment-generated-category-strip" in home_body
     assert "investment-generated-table-panel" not in home_body
@@ -2039,7 +2040,22 @@ def test_business_content_page_defaults_to_history_overview():
     assert "investmentRecordsState.filters.products.start_date = range.startDate;" in apply_body
     assert "investmentRecordsState.filters.cache.period_mode = investmentCachePeriodMode();" in apply_body
     assert "investmentRecordsState.filters.cache.start_date = range.startDate;" in apply_body
-    assert "query.delete('market_date')" in load_body
+    assert "query.delete('business_date')" in load_body
+
+
+def test_generated_history_uses_product_api_with_category_and_artifact_tree():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    load_body = _js_function_body(js, "loadInvestmentProducts")
+    render_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
+    detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
+
+    assert "investmentFetchJson(`/api/investment/products?${query.toString()}`)" in load_body
+    assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" not in load_body
+    assert "renderInvestmentGeneratedContentHome(investmentGeneratedCategories(visibleEntries), visibleEntries)" in render_body
+    assert "renderInvestmentProductsTable(visibleEntries)" not in render_body
+    assert "investment-artifact-browser" in detail_body
+    assert "renderInvestmentArtifactLazyTree(serviceType)" in detail_body
+    assert "renderInvestmentArtifactViewer()" in detail_body
 
 
 def test_business_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
@@ -2174,9 +2190,9 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "const drawerType = sourceType === 'product' ? 'product' : investmentGeneratedRecordDrawerType(product);" in products_body
     assert "openInvestmentRecordDrawer('${drawerType}'" in products_body
     assert "invalidateInvestmentProduct" in products_body
-    assert "query.delete('market_date')" in load_body
-    assert "/api/investment/cache" in load_body
-    assert "/api/investment/products" not in load_body
+    assert "query.delete('business_date')" in load_body
+    assert "/api/investment/products" in load_body
+    assert "/api/investment/cache" not in load_body
     assert "query.set('start_date', range.startDate)" in load_body
     assert "query.set('end_date', range.endDate)" in load_body
     assert "periodMode === 'month'" in normalize_body
@@ -2525,8 +2541,8 @@ def test_business_records_tabs_use_independent_loaders_and_filters():
     assert "entry_type=internal_call" in load_body
     assert "/api/investment/records/contents" in load_body
     assert "loadInvestmentProducts()" in content_load_body
-    assert "/api/investment/cache" in _js_function_body(js, "loadInvestmentProducts")
-    assert "/api/investment/products" not in _js_function_body(js, "loadInvestmentProducts")
+    assert "/api/investment/products" in _js_function_body(js, "loadInvestmentProducts")
+    assert "/api/investment/cache" not in _js_function_body(js, "loadInvestmentProducts")
     assert "/api/investment/audits" in load_body
     assert "investmentRecordsState.filters[tab]" in js
     assert "['invalidated', '已失效']" in filters_body
@@ -2597,7 +2613,7 @@ def test_generated_content_keyword_search_is_backend_query_not_page_filter():
 
     assert "investmentRecordsState.filters.products.keyword" in apply_body
     assert "investmentRecordsState.filters.cache.keyword" in apply_body
-    assert "investmentRecordsQueryParams('cache')" in _js_function_body(js, "loadInvestmentProducts")
+    assert "investmentRecordsQueryParams('products')" in _js_function_body(js, "loadInvestmentProducts")
     assert "haystack.includes(keyword)" not in render_body
     assert "values.filter(entry => {" not in render_body
 
@@ -2646,7 +2662,7 @@ def test_business_content_and_cache_date_filters_are_exposed():
     assert "refreshInvestmentContentRecords(serviceType, {effective_date: investmentContentHistoryEffectiveDate(serviceType)})" in js
     assert "investment-records-filter-market_date" in js
     assert "investmentCacheMarketDate()" in js
-    assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" in js
+    assert "investmentFetchJson(`/api/investment/products?${query.toString()}`)" in js
     assert "investmentGeneratedOutputState(entry)" in js
     assert "investmentRecordFileSummary(entry.output_files || [])" not in js
 

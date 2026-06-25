@@ -3760,29 +3760,29 @@ async function loadInvestmentProducts() {
     const pagination = document.getElementById('investment-records-pagination');
     if (list) investmentLoading(list);
     try {
-        const query = investmentRecordsQueryParams('cache');
+        const query = investmentRecordsQueryParams('products');
         const range = investmentNormalizeCacheDateFilters();
         query.delete('period_mode');
         query.delete('period_value');
-        query.delete('market_date');
+        query.delete('business_date');
         query.delete('start_date');
         query.delete('end_date');
         if (range.marketDate) {
-            query.set('market_date', range.marketDate);
+            query.set('business_date', range.marketDate);
         }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
-        const data = await investmentFetchJson(`/api/investment/cache?${query.toString()}`);
+        const data = await investmentFetchJson(`/api/investment/products?${query.toString()}`);
         const entries = data.entries || [];
-        investmentRecordsState.data.cache = {
+        investmentRecordsState.data.products = {
             entries,
-            market_dates: data.market_dates || investmentGeneratedDateValues([], entries),
+            business_dates: data.business_dates || investmentGeneratedDateValues([], entries),
         };
-        investmentRecordsApplyPagination('cache', data.pagination);
+        investmentRecordsApplyPagination('products', data.pagination);
         if (list) {
-            list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache);
+            list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
         }
-        if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination('cache');
+        if (pagination) pagination.innerHTML = "";
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
         closeInvestmentRecordDrawer();
     } catch (error) {
@@ -4331,6 +4331,12 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const visibleEntries = values;
+    const content = investmentRecordsState.cacheCategory
+        ? renderInvestmentGeneratedContentCategoryDetail(
+            investmentRecordsState.cacheCategory,
+            visibleEntries.filter(entry => investmentProductBusinessType(entry) === investmentRecordsState.cacheCategory),
+        )
+        : renderInvestmentGeneratedContentHome(investmentGeneratedCategories(visibleEntries), visibleEntries);
     return `
         <div class="investment-generated-content">
             <div class="investment-generated-content-toolbar">
@@ -4357,8 +4363,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
                 </div>
             </div>
-            ${renderInvestmentProductsTable(visibleEntries)}
-            ${renderInvestmentRecordsPagination('cache')}
+            ${content}
         </div>`;
 }
 
