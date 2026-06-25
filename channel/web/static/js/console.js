@@ -4380,7 +4380,7 @@ function investmentGeneratedCategories(entries = []) {
         });
     };
     ['technical_analysis', 'rate', 'convertible_bond'].forEach(serviceType => addCategory(serviceType));
-    (entries || []).forEach(entry => addCategory(entry.service_type, entry.service_label));
+    (entries || []).forEach(entry => addCategory(investmentProductBusinessType(entry), entry.service_label));
     return categories;
 }
 
@@ -4413,7 +4413,7 @@ function renderInvestmentGeneratedContentHome(categories, entries) {
 function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
     return categories.map(category => {
         const serviceType = category.service_type || category;
-        const entries = entriesForScope.filter(entry => entry.service_type === serviceType);
+        const entries = entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType);
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
         const contentCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.count || 0), 0);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
@@ -4766,15 +4766,15 @@ async function applyInvestmentCacheDate() {
 
 async function selectInvestmentCacheCategory(serviceType) {
     investmentRecordsState.cacheCategory = serviceType;
-    investmentRecordsState.filters.cache.service_type = serviceType;
-    investmentRecordsState.filters.cache.page = '1';
+    investmentRecordsState.filters.products.service_type = serviceType;
+    investmentRecordsState.filters.products.page = '1';
     scheduleInvestmentCacheFilterRefresh();
 }
 
 async function backInvestmentCacheCategoryMenu() {
     investmentRecordsState.cacheCategory = '';
-    delete investmentRecordsState.filters.cache.service_type;
-    investmentRecordsState.filters.cache.page = '1';
+    delete investmentRecordsState.filters.products.service_type;
+    investmentRecordsState.filters.products.page = '1';
     await loadInvestmentGeneratedContent();
 }
 

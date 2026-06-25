@@ -1999,9 +1999,13 @@ def test_business_content_page_uses_date_grouped_category_view():
     assert "<th>业务</th><th>对象</th><th>业务日期</th><th>有效性</th><th>产物</th><th>生成时间</th><th>操作</th>" in products_body
     assert "function investmentGeneratedCategories(" in js
     assert "['technical_analysis', 'rate', 'convertible_bond'].forEach(serviceType => addCategory(serviceType));" in js
-    assert "entry.service_label" in _js_function_body(js, "investmentGeneratedCategories")
+    categories_body = _js_function_body(js, "investmentGeneratedCategories")
+    assert "addCategory(investmentProductBusinessType(entry), entry.service_label)" in categories_body
+    assert "entry.service_type" not in categories_body
     assert "fa-puzzle-piece" in _js_function_body(js, "investmentGeneratedServiceIcon")
     assert "investmentGeneratedCategoryLabel(category)" in category_cards_body
+    assert "entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType)" in category_cards_body
+    assert "entry.service_type" not in category_cards_body
     assert "investment-records-cache-layout" not in js
     assert "investment-records-date-list" not in js
 
@@ -2643,12 +2647,14 @@ def test_business_cache_category_selection_uses_server_side_filtering():
     select_body = _js_function_body(js, "selectInvestmentCacheCategory")
     back_body = _js_function_body(js, "backInvestmentCacheCategoryMenu")
 
-    assert "investmentRecordsState.filters.cache.service_type = serviceType" in select_body
-    assert "investmentRecordsState.filters.cache.page = '1'" in select_body
+    assert "investmentRecordsState.filters.products.service_type = serviceType" in select_body
+    assert "investmentRecordsState.filters.products.page = '1'" in select_body
+    assert "investmentRecordsState.filters.cache.service_type" not in select_body
     assert "scheduleInvestmentCacheFilterRefresh()" in select_body
     assert "await loadInvestmentGeneratedContent()" not in select_body
-    assert "delete investmentRecordsState.filters.cache.service_type" in back_body
-    assert "investmentRecordsState.filters.cache.page = '1'" in back_body
+    assert "delete investmentRecordsState.filters.products.service_type" in back_body
+    assert "investmentRecordsState.filters.products.page = '1'" in back_body
+    assert "investmentRecordsState.filters.cache.service_type" not in back_body
     assert "await loadInvestmentGeneratedContent()" in back_body
 
 
