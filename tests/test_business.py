@@ -4699,12 +4699,12 @@ def test_cache_handler_clamps_excessive_page_for_merged_history(business_env, mo
 
 
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
-    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.cache.cache_service import build_cache_key
     from business.config.constants import ServiceType
     from business.products.product_service import create_product
     from business.schema.db import connect
     from business.records.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
-    from business.schema.tables import investment_cache_entries, investment_products
+    from business.schema.tables import investment_products
     from channel.web.web_channel import InvestmentArtifactPackagesHandler
 
     signal = tmp_path / "signal-card.png"
@@ -4737,22 +4737,6 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(busi
         cache_key=cache_key,
     )
     first_record = get_request_record(first_request_id)
-    write_cache_entry(
-        cache_key=cache_key,
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        normalized_target="300502.SZ",
-        market_date="2026-06-08",
-        version_fingerprint="version-a",
-        output_files=first_record.output_files,
-        artifact_owner_id=first_request_id,
-    )
-    with connect() as conn:
-        conn.execute(
-            investment_cache_entries.update()
-            .where(investment_cache_entries.c.cache_key == cache_key)
-            .values(created_at="2026-06-08T08:00:00+00:00", updated_at="2026-06-08T08:00:00+00:00")
-        )
-
     second_request_id = create_request_record(
         "openid-b",
         "300502.SZ 技术分析",
@@ -4856,6 +4840,70 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
     assert packages[0]["package_id"] == product["product_id"]
     assert packages[0]["source_type"] == "product"
     assert packages[0]["file_count"] == 2
+
+
+def test_artifact_packages_do_not_query_cache_entries_for_product_sources(business_env, tmp_path):
+    from sqlalchemy import select
+
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records import records
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries
+
+    output = tmp_path / "artifact-product-only.png"
+    output.write_text("artifact", encoding="utf-8")
+    create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-artifact-product-only",
+        status="active",
+        source_cache_key="legacy-cache-key-for-display-only",
+        source_type="cache",
+        output_files=[str(output)],
+    )
+    with connect() as conn:
+        assert conn.execute(select(investment_cache_entries)).fetchall() == []
+
+    packages, total = records.list_artifact_packages_page(service_type=ServiceType.TECHNICAL_ANALYSIS)
+
+    assert total == 1
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["source_cache_key"] == "legacy-cache-key-for-display-only"
+    assert packages[0]["file_count"] == 1
+
+
+def test_artifact_packages_normalize_service_aliases_for_product_sources(business_env, tmp_path):
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    output = tmp_path / "artifact-alias-product.png"
+    output.write_text("alias", encoding="utf-8")
+    create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-artifact-alias",
+        status="active",
+        source_cache_key="technical-analysis-alias-cache-key",
+        source_type="cache",
+        output_files=[str(output)],
+    )
+
+    packages, total = list_artifact_packages_page(service_type="技术分析")
+    folder_packages, folder_total = list_artifact_folder_nodes(
+        level="package",
+        service_type="技术分析",
+        date="2026-06-25",
+    )
+
+    assert total == 1
+    assert packages[0]["source_cache_key"] == "technical-analysis-alias-cache-key"
+    assert folder_total == 1
+    assert folder_packages[0]["package_id"] == packages[0]["package_id"]
 
 
 def test_product_artifact_package_dates_use_business_date_for_folder_metadata(business_env, tmp_path):
@@ -5124,32 +5172,11 @@ def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tm
 
 
 def test_artifact_packages_keyword_filter_excludes_legacy_cache_when_product_is_not_visible(business_env, tmp_path):
-    from business.cache.cache_service import build_cache_key, write_cache_entry
-    from business.config.constants import ServiceType
     from business.products.product_service import create_product
     from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
-    from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries
 
     product_file = tmp_path / "product-card.png"
-    legacy_file = tmp_path / "legacy-keyword-card.png"
     product_file.write_text("product", encoding="utf-8")
-    legacy_file.write_text("legacy", encoding="utf-8")
-    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-24", "v1")
-    write_cache_entry(
-        cache_key=cache_key,
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        normalized_target="300502.SZ",
-        market_date="2026-06-24",
-        version_fingerprint="v1",
-        output_files=[str(legacy_file)],
-    )
-    with connect() as conn:
-        conn.execute(
-            investment_cache_entries.update()
-            .where(investment_cache_entries.c.cache_key == cache_key)
-            .values(created_at="2026-06-24T08:00:00+00:00", updated_at="2026-06-24T08:00:00+00:00")
-        )
     create_product(
         business_type="technical_analysis",
         target_key="300502.SZ",
@@ -5158,7 +5185,7 @@ def test_artifact_packages_keyword_filter_excludes_legacy_cache_when_product_is_
         version_fingerprint="v1",
         output_files=[str(product_file)],
         source_type="request",
-        source_cache_key=cache_key,
+        source_cache_key="technical_analysis:300502.SZ:2026-06-24:v1",
     )
 
     packages, total = list_artifact_packages_page(
@@ -5228,12 +5255,10 @@ def test_artifact_folder_hierarchy_includes_product_only_packages(business_env, 
 
 
 def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_at(business_env, tmp_path):
-    from business.cache.cache_service import build_cache_key, write_cache_entry
-    from business.config.constants import ServiceType
-    from business.products.product_service import backfill_products_from_legacy_sources, create_product
+    from business.products.product_service import create_product
     from business.records.records import list_artifact_folder_nodes
     from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries, investment_products
+    from business.schema.tables import investment_products
 
     product_file = tmp_path / "product-card.png"
     cache_file = tmp_path / "cache-card.png"
@@ -5249,13 +5274,14 @@ def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_a
         source_type="request",
         source_request_id="req-product-bucket",
     )
-    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "600000.SH", "2026-06-24", "v1")
-    write_cache_entry(
-        cache_key=cache_key,
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        normalized_target="600000.SH",
-        market_date="2026-06-24",
+    cache_product = create_product(
+        business_type="technical_analysis",
+        target_key="600000.SH",
+        target_label="600000.SH",
+        business_date="2026-06-24",
         version_fingerprint="v1",
+        source_type="cache",
+        source_cache_key="technical_analysis:600000.SH:2026-06-24:v1",
         output_files=[str(cache_file)],
     )
     with connect() as conn:
@@ -5265,11 +5291,10 @@ def test_artifact_folder_product_and_cache_same_bucket_merge_count_and_updated_a
             .values(updated_at="2026-06-24T09:00:00+00:00")
         )
         conn.execute(
-            investment_cache_entries.update()
-            .where(investment_cache_entries.c.cache_key == cache_key)
+            investment_products.update()
+            .where(investment_products.c.product_id == cache_product["product_id"])
             .values(created_at="2026-06-24T08:00:00+00:00", updated_at="2026-06-24T10:00:00+00:00")
         )
-    backfill_products_from_legacy_sources()
 
     dates, total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
 

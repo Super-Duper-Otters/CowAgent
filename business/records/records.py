@@ -13,7 +13,6 @@ from business.config.constants import ActionType, ActorType, EntryType, ErrorCod
 from business.products.product_service import PRODUCT_STATUS_ACTIVE, _expires_at_condition as _product_expires_at_condition
 from business.schema.db import connect, row_to_dict
 from business.schema.tables import (
-    investment_cache_entries,
     investment_daily_contents,
     investment_output_files,
     investment_products,
@@ -1132,18 +1131,6 @@ def _dedupe_files(files: list[dict]) -> list[dict]:
     return sorted(result, key=lambda item: (order.get(item.get("group"), 99), item.get("virtual_path") or ""))
 
 
-def _request_rows_by_cache_key(cache_key: str) -> list[dict]:
-    if not cache_key:
-        return []
-    with connect() as conn:
-        rows = conn.execute(
-            select(investment_request_records)
-            .where(investment_request_records.c.cache_key == cache_key)
-            .order_by(investment_request_records.c.created_at.desc())
-        ).fetchall()
-    return [row_to_dict(row) for row in rows]
-
-
 def _request_row(request_id: str) -> dict:
     if not request_id:
         return {}
@@ -1309,74 +1296,6 @@ def _row_to_product_artifact_package(item: dict) -> dict:
     }
 
 
-def _row_to_artifact_package(cache_item: dict) -> dict:
-    cache_key = str(cache_item.get("cache_key") or "")
-    owner_id = str(cache_item.get("artifact_owner_id") or "")
-    requests = _request_rows_by_cache_key(cache_key)
-    created_from = _request_row(owner_id) if owner_id else (requests[-1] if requests else {})
-    if not owner_id:
-        owner_id = str(created_from.get("request_id") or "")
-    service_type = str(cache_item.get("service_type") or created_from.get("service_type") or "")
-    market_date = str(cache_item.get("market_date") or created_from.get("market_date") or "")
-    generated_at = str(cache_item.get("created_at") or "")
-    generated_date = _date_part(generated_at)
-    target = str(cache_item.get("normalized_target") or created_from.get("normalized_target") or "")
-    stock_name = str(created_from.get("stock_name") or "")
-    target_item = {"normalized_target": target, "stock_name": stock_name}
-    output_files = _load_list(cache_item.get("output_files"))
-    raw_input = str(created_from.get("raw_input") or (requests[-1].get("raw_input") if requests else "") or "")
-    related_request_ids = [str(item.get("request_id") or "") for item in requests if item.get("request_id")]
-    files = [_virtual_input_file(raw_input)] if raw_input else []
-    files.extend(_artifact_files_for_owner(owner_id, output_files))
-    return {
-        "package_id": cache_key,
-        "source_type": "cache",
-        "service_type": service_type,
-        "service_label": _artifact_service_label(service_type),
-        "market_date": market_date,
-        "generated_at": generated_at,
-        "generated_date": generated_date,
-        "normalized_target": target,
-        "stock_name": stock_name,
-        "display_name": _artifact_target_label(target_item),
-        "display_path": [_artifact_service_label(service_type), generated_date or market_date, _artifact_target_label(target_item)],
-        "version_fingerprint": cache_item.get("version_fingerprint") or "",
-        "created_from_request_id": owner_id,
-        "related_request_ids": related_request_ids,
-        "request_count": len(related_request_ids),
-        "hit_count": int(cache_item.get("hit_count") or 0),
-        "created_at": cache_item.get("created_at") or "",
-        "updated_at": cache_item.get("updated_at") or "",
-        "files": _dedupe_files(files),
-    }
-
-
-def _artifact_package_conditions(table, service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
-    conditions = []
-    service_condition, impossible = _service_condition(table, service_type)
-    if impossible:
-        return None
-    if service_condition is not None:
-        conditions.append(service_condition)
-    if start_date:
-        conditions.append(func.substr(table.c.created_at, 1, 10) >= str(start_date))
-    if end_date:
-        conditions.append(func.substr(table.c.created_at, 1, 10) <= str(end_date))
-    keyword_text = str(keyword or "").strip()
-    if keyword_text:
-        pattern = f"%{keyword_text}%"
-        conditions.append(
-            or_(
-                table.c.cache_key.ilike(pattern),
-                table.c.service_type.ilike(pattern),
-                table.c.normalized_target.ilike(pattern),
-                table.c.market_date.ilike(pattern),
-                table.c.output_files.ilike(pattern),
-            )
-        )
-    return conditions
-
-
 def _content_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
     conditions = []
     if _component_filter_key(service_type):
@@ -1452,13 +1371,6 @@ def _internal_call_artifact_conditions(service_type: ServiceType | str | None, s
             )
         )
     conditions.append(investment_request_records.c.status == str(Status.SUCCESS))
-    conditions.append(
-        ~exists(
-            select(investment_cache_entries.c.cache_key).where(
-                investment_cache_entries.c.artifact_owner_id == investment_request_records.c.request_id
-            )
-        )
-    )
     if start_date:
         conditions.append(func.substr(investment_request_records.c.created_at, 1, 10) >= str(start_date))
     if end_date:
@@ -1502,7 +1414,16 @@ def _product_artifact_conditions(
 ):
     conditions = []
     if service_type is not None and str(service_type or "").strip():
-        conditions.append(investment_products.c.business_type == str(service_type))
+        component_key = _component_filter_key(service_type)
+        if component_key:
+            conditions.append(investment_products.c.business_type == _component_service_key(component_key))
+        else:
+            normalized_service = normalize_service(service_type)
+            valid_unmatched_inputs = {str(ServiceType.UNMATCHED), "unmatched"}
+            if normalized_service == ServiceType.UNMATCHED and str(service_type) not in valid_unmatched_inputs:
+                conditions.append(investment_products.c.business_type == "__none__")
+            else:
+                conditions.append(investment_products.c.business_type == str(normalized_service))
     if not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
         conditions.append(_product_expires_at_condition(_now()))
@@ -1666,28 +1587,6 @@ def _artifact_period_bounds(*, year: str = "", month: str = "", date: str = "", 
     return str(start_date or ""), str(end_date or "")
 
 
-def _artifact_package_summary(item: dict) -> dict:
-    output_files = _load_list(item.get("output_files"))
-    generated_date = _date_part(str(item.get("created_at") or ""))
-    return {
-        "level": "package",
-        "key": str(item.get("cache_key") or ""),
-        "package_id": str(item.get("cache_key") or ""),
-        "label": str(item.get("normalized_target") or "产物包"),
-        "service_type": str(item.get("service_type") or ""),
-        "market_date": generated_date,
-        "generated_at": str(item.get("created_at") or ""),
-        "generated_date": generated_date,
-        "business_date": str(item.get("market_date") or ""),
-        "normalized_target": str(item.get("normalized_target") or ""),
-        "version_fingerprint": str(item.get("version_fingerprint") or ""),
-        "artifact_owner_id": str(item.get("artifact_owner_id") or ""),
-        "file_count": len(output_files),
-        "hit_count": int(item.get("hit_count") or 0),
-        "updated_at": str(item.get("updated_at") or ""),
-    }
-
-
 def _product_artifact_package_summary(item: dict) -> dict:
     product_id = str(item.get("product_id") or "")
     service_type = str(item.get("business_type") or "")
@@ -1804,16 +1703,7 @@ def list_artifact_folder_nodes(
             keyword=keyword,
             include_invalidated=include_invalidated,
         )
-        nodes = [
-            _product_artifact_package_summary(item["item"])
-            if item["kind"] == "product"
-            else _artifact_package_summary(item["item"])
-            if item["kind"] == "cache"
-            else _content_artifact_package_summary(item["item"])
-            if item["kind"] == "content"
-            else _internal_call_artifact_package_summary(item["item"])
-            for item in source_rows
-        ]
+        nodes = [_product_artifact_package_summary(item["item"]) for item in source_rows if item["kind"] == "product"]
         nodes.sort(
             key=lambda item: (
                 str(item.get("generated_date") or item.get("market_date") or ""),
