@@ -3778,301 +3778,11 @@ class InvestmentCacheHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.cache.cache_service import list_generated_history_market_dates
-            from business.config.constants import ServiceType, normalize_service
-            from business.products.product_service import list_product_business_dates
-
             params = web.input(limit='50', page='1', page_size='', service_type='', market_date='', start_date='', end_date='', keyword='', include_invalidated='')
-            service_value = str(getattr(params, "service_type", "") or "").strip()
-            service_type = normalize_service(service_value) if service_value else None
-            if service_type == ServiceType.UNMATCHED:
-                page, page_size = _investment_safe_pagination(params, 120)
-                page = _investment_cache_history_page(page)
-                return _investment_json_response({
-                    "status": "success",
-                    "entries": [],
-                    "market_dates": [],
-                    "pagination": _investment_pagination_payload(page, page_size, 0),
-                })
-            include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
-            page, page_size = _investment_safe_pagination(params, 120)
-            page = _investment_cache_history_page(page)
-            business_type = str(service_type) if service_type is not None else ""
-            market_date = getattr(params, "market_date", "") or ""
-            start_date = getattr(params, "start_date", "") or ""
-            end_date = getattr(params, "end_date", "") or ""
-            keyword = getattr(params, "keyword", "") or ""
-
-            entries, total = _investment_list_merged_cache_history(
-                page=page,
-                page_size=page_size,
-                service_type=service_type,
-                business_type=business_type,
-                market_date=market_date,
-                start_date=start_date,
-                end_date=end_date,
-                keyword=keyword,
-                include_invalidated=include_invalidated,
-            )
-
-            market_dates = sorted(
-                {
-                    *list_generated_history_market_dates(
-                        service_type=service_type,
-                        include_invalidated=include_invalidated,
-                    ),
-                    *list_product_business_dates(
-                        business_type=business_type,
-                        include_invalidated=include_invalidated,
-                    ),
-                },
-                reverse=True,
-            )
-
-            from business.records.business_records import list_output_files
-
-            for entry in entries:
-                owner_id = entry.get("content_id") if entry.get("source_type") == "content" else entry.get("artifact_owner_id")
-                entry["output_artifacts"] = list_output_files(owner_id) if owner_id else []
-            return _investment_json_response({
-                "status": "success",
-                "entries": entries,
-                "market_dates": market_dates,
-                "pagination": _investment_pagination_payload(page, page_size, total),
-            })
+            return _investment_json_response(_investment_products_payload(params, cache_history_shape=True))
         except Exception as e:
             logger.error(f"[Investment] cache entries error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
-
-
-def _investment_list_merged_cache_history(
-    *,
-    page: int,
-    page_size: int,
-    service_type,
-    business_type: str,
-    market_date: str = "",
-    start_date: str = "",
-    end_date: str = "",
-    keyword: str = "",
-    include_invalidated: bool = False,
-) -> tuple[list[dict], int]:
-    from business.products.product_service import list_products_cache_history_page
-
-    page = _investment_cache_history_page(page)
-    page_size = max(1, int(page_size or 50))
-    offset = (page - 1) * page_size
-    source_limit = offset + page_size
-
-    product_rows, product_total = list_products_cache_history_page(
-        page=1,
-        page_size=source_limit,
-        business_type=business_type,
-        business_date=market_date,
-        start_date=start_date,
-        end_date=end_date,
-        keyword=keyword,
-        include_invalidated=include_invalidated,
-    )
-    product_entries = [_investment_product_to_cache_entry(product) for product in product_rows]
-    legacy_entries, legacy_total = _investment_list_legacy_history_without_product_sources(
-        limit=source_limit,
-        service_type=service_type,
-        business_type=business_type,
-        market_date=market_date,
-        start_date=start_date,
-        end_date=end_date,
-        keyword=keyword,
-        include_invalidated=include_invalidated,
-    )
-    entries = [*product_entries, *legacy_entries]
-    entries.sort(key=_investment_cache_history_sort_key, reverse=True)
-    return entries[offset : offset + page_size], product_total + legacy_total
-
-
-def _investment_product_exists_for_source_condition(products, *, business_type: str, market_date: str, start_date: str, end_date: str) -> list:
-    conditions = []
-    if business_type:
-        conditions.append(products.c.business_type == business_type)
-    if market_date:
-        conditions.append(products.c.business_date == market_date)
-    else:
-        if start_date:
-            conditions.append(products.c.business_date >= start_date)
-        if end_date:
-            conditions.append(products.c.business_date <= end_date)
-    return conditions
-
-
-def _investment_visible_product_conditions(
-    products,
-    *,
-    business_type: str,
-    market_date: str,
-    start_date: str,
-    end_date: str,
-    keyword: str,
-    include_invalidated: bool,
-) -> list:
-    conditions = _investment_product_exists_for_source_condition(
-        products,
-        business_type=business_type,
-        market_date=market_date,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    if not include_invalidated:
-        from business.products.product_service import PRODUCT_STATUS_ACTIVE, _expires_at_condition, _now
-
-        conditions.append(products.c.status == PRODUCT_STATUS_ACTIVE)
-        conditions.append(_expires_at_condition(_now()))
-    normalized_keyword = str(keyword or "").strip().lower()
-    if normalized_keyword:
-        from business.products.product_service import _keyword_like_pattern
-        from sqlalchemy import func, or_
-
-        pattern = _keyword_like_pattern(normalized_keyword)
-        conditions.append(
-            or_(
-                func.lower(products.c.product_id).like(pattern, escape="\\"),
-                func.lower(products.c.business_type).like(pattern, escape="\\"),
-                func.lower(products.c.target_key).like(pattern, escape="\\"),
-                func.lower(products.c.target_label).like(pattern, escape="\\"),
-                func.lower(products.c.business_date).like(pattern, escape="\\"),
-                func.lower(products.c.version_fingerprint).like(pattern, escape="\\"),
-                func.lower(products.c.source_request_id).like(pattern, escape="\\"),
-                func.lower(products.c.source_content_id).like(pattern, escape="\\"),
-                func.lower(products.c.source_cache_key).like(pattern, escape="\\"),
-                func.lower(products.c.source_type).like(pattern, escape="\\"),
-                func.lower(products.c.text_content).like(pattern, escape="\\"),
-            )
-        )
-    return conditions
-
-
-def _investment_list_legacy_history_without_product_sources(
-    *,
-    limit: int,
-    service_type,
-    business_type: str,
-    market_date: str = "",
-    start_date: str = "",
-    end_date: str = "",
-    keyword: str = "",
-    include_invalidated: bool = False,
-) -> tuple[list[dict], int]:
-    from sqlalchemy import and_, desc, exists, func, or_, select
-
-    from business.cache.cache_service import (
-        _cache_entry_to_history,
-        _content_history_conditions,
-        _content_row_to_history,
-        _keyword_match_condition,
-        _row_to_entry,
-    )
-    from business.config.constants import ServiceType
-    from business.content.daily_content import mark_expired_daily_contents_invalidated
-    from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries, investment_daily_contents, investment_products
-
-    mark_expired_daily_contents_invalidated()
-    limit = max(1, int(limit or 1))
-    legacy_start_date = _investment_date_bound(start_date)
-    legacy_end_date = _investment_date_bound(end_date, end=True)
-
-    product_scope_conditions = _investment_visible_product_conditions(
-        investment_products,
-        business_type=business_type,
-        market_date=market_date,
-        start_date=start_date,
-        end_date=end_date,
-        keyword=keyword,
-        include_invalidated=include_invalidated,
-    )
-
-    cache_conditions = []
-    if service_type is not None:
-        cache_conditions.append(investment_cache_entries.c.service_type == str(service_type))
-    if market_date:
-        cache_conditions.append(investment_cache_entries.c.market_date == market_date)
-    else:
-        if legacy_start_date:
-            cache_conditions.append(investment_cache_entries.c.market_date >= legacy_start_date)
-        if legacy_end_date:
-            cache_conditions.append(investment_cache_entries.c.market_date <= legacy_end_date)
-    if not include_invalidated:
-        cache_conditions.append(investment_cache_entries.c.status == "active")
-    cache_keyword = _keyword_match_condition(
-        keyword,
-        [
-            investment_cache_entries.c.cache_key,
-            investment_cache_entries.c.service_type,
-            investment_cache_entries.c.normalized_target,
-            investment_cache_entries.c.market_date,
-            investment_cache_entries.c.version_fingerprint,
-            investment_cache_entries.c.output_files,
-            investment_cache_entries.c.artifact_owner_id,
-            investment_cache_entries.c.status,
-        ],
-        investment_cache_entries.c.service_type,
-    )
-    if cache_keyword is not None:
-        cache_conditions.append(cache_keyword)
-    cache_product_exists = exists(
-        select(1).where(
-            and_(
-                investment_products.c.source_cache_key == investment_cache_entries.c.cache_key,
-                *product_scope_conditions,
-            )
-        )
-    )
-    cache_conditions.append(~cache_product_exists)
-
-    content_conditions = _content_history_conditions(
-        service_type=service_type,
-        market_date=market_date,
-        start_date=legacy_start_date,
-        end_date=legacy_end_date,
-        keyword=keyword,
-        include_invalidated=include_invalidated,
-    )
-    content_product_exists = exists(
-        select(1).where(
-            and_(
-                investment_products.c.source_content_id == investment_daily_contents.c.content_id,
-                *product_scope_conditions,
-            )
-        )
-    )
-    content_conditions.append(~content_product_exists)
-
-    cache_stmt = (
-        select(investment_cache_entries)
-        .where(and_(*cache_conditions))
-        .order_by(desc(investment_cache_entries.c.updated_at))
-        .limit(limit)
-    )
-    cache_count_stmt = select(func.count()).select_from(investment_cache_entries).where(and_(*cache_conditions))
-    content_stmt = (
-        select(investment_daily_contents)
-        .where(and_(*content_conditions))
-        .order_by(desc(investment_daily_contents.c.updated_at))
-        .limit(limit)
-    )
-    content_count_stmt = select(func.count()).select_from(investment_daily_contents).where(and_(*content_conditions))
-
-    if service_type == ServiceType.UNMATCHED:
-        return [], 0
-
-    with connect() as conn:
-        cache_total = int(conn.execute(cache_count_stmt).scalar_one() or 0)
-        content_total = int(conn.execute(content_count_stmt).scalar_one() or 0)
-        cache_rows = conn.execute(cache_stmt).fetchall()
-        content_rows = conn.execute(content_stmt).fetchall()
-
-    entries = [_cache_entry_to_history(_row_to_entry(row)) for row in cache_rows]
-    entries.extend(_content_row_to_history(row) for row in content_rows)
-    return entries, cache_total + content_total
 
 
 def _investment_product_to_cache_entry(product: dict) -> dict:
@@ -4115,52 +3825,76 @@ def _investment_product_to_cache_entry(product: dict) -> dict:
     return entry
 
 
-def _investment_cache_history_sort_key(entry: dict) -> tuple[str, str]:
-    return (
-        str(entry.get("updated_at") or entry.get("created_at") or ""),
-        str(entry.get("market_date") or entry.get("business_date") or ""),
+def _investment_products_payload(params, *, cache_history_shape: bool = False) -> dict:
+    from business.config.constants import ServiceType, normalize_service
+    from business.products.product_service import list_product_business_dates, list_products_cache_history_page, list_products_page
+
+    page, page_size = _investment_safe_pagination(params, 120)
+    if cache_history_shape:
+        page = _investment_cache_history_page(page)
+    include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
+
+    business_type = str(getattr(params, "business_type", "") or "").strip()
+    service_value = str(getattr(params, "service_type", "") or "").strip()
+    if not business_type and service_value:
+        service_type = normalize_service(service_value)
+        if service_type == ServiceType.UNMATCHED:
+            return {
+                "status": "success",
+                "entries": [],
+                "business_dates": [],
+                "market_dates": [],
+                "pagination": _investment_pagination_payload(page, page_size, 0),
+            }
+        business_type = str(service_type)
+
+    business_date = str(getattr(params, "business_date", "") or "").strip()
+    if not business_date:
+        business_date = str(getattr(params, "market_date", "") or "").strip()
+
+    list_page = list_products_cache_history_page if cache_history_shape else list_products_page
+    products, total = list_page(
+        page=page,
+        page_size=page_size,
+        business_type=business_type,
+        business_date=business_date,
+        start_date=getattr(params, "start_date", "") or "",
+        end_date=getattr(params, "end_date", "") or "",
+        keyword=getattr(params, "keyword", "") or "",
+        include_invalidated=include_invalidated,
     )
+    entries = [_investment_product_to_cache_entry(product) for product in products] if cache_history_shape else products
+    business_dates = list_product_business_dates(
+        business_type=business_type,
+        include_invalidated=include_invalidated,
+    )
+    return {
+        "status": "success",
+        "entries": entries,
+        "business_dates": business_dates,
+        "market_dates": business_dates,
+        "pagination": _investment_pagination_payload(page, page_size, total),
+    }
 
 
 class InvestmentProductsHandler:
     def GET(self):
         _require_investment_permission("cache.read")
         try:
-            from business.products.product_service import list_product_business_dates, list_products_page
-
             params = web.input(
                 page='1',
                 page_size='',
                 limit='50',
                 business_type='',
+                service_type='',
                 business_date='',
+                market_date='',
                 start_date='',
                 end_date='',
                 keyword='',
                 include_invalidated='',
             )
-            page, page_size = _investment_safe_pagination(params, 120)
-            business_type = getattr(params, "business_type", "") or ""
-            include_invalidated = _investment_bool(getattr(params, "include_invalidated", ""))
-            entries, total = list_products_page(
-                page=page,
-                page_size=page_size,
-                business_type=business_type,
-                business_date=getattr(params, "business_date", "") or "",
-                start_date=getattr(params, "start_date", "") or "",
-                end_date=getattr(params, "end_date", "") or "",
-                keyword=getattr(params, "keyword", "") or "",
-                include_invalidated=include_invalidated,
-            )
-            return _investment_json_response({
-                "status": "success",
-                "entries": entries,
-                "business_dates": list_product_business_dates(
-                    business_type=business_type,
-                    include_invalidated=include_invalidated,
-                ),
-                "pagination": _investment_pagination_payload(page, page_size, total),
-            })
+            return _investment_json_response(_investment_products_payload(params))
         except Exception as e:
             logger.error(f"[Investment] products error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})

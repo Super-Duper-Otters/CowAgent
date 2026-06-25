@@ -11090,6 +11090,38 @@ def test_investment_products_api_lists_and_invalidates_products(business_env, mo
     assert invalidate_payload["invalidated"] is True
 
 
+def test_generated_history_api_reads_backfilled_products_not_legacy_sources(business_env, monkeypatch, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
+    from channel.web.web_channel import InvestmentProductsHandler
+
+    output = tmp_path / "legacy.png"
+    output.write_text("legacy", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-20", "v1")
+    write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-20",
+        version_fingerprint="v1",
+        output_files=[str(output)],
+        artifact_owner_id="req-backfilled",
+    )
+    backfill_products_from_legacy_sources()
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"include_invalidated": "1", "page_size": "20"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 1
+    assert payload["entries"][0]["source_type"] == "cache"
+    assert payload["entries"][0]["source_cache_key"] == cache_key
+
+
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
