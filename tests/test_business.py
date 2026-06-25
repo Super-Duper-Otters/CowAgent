@@ -12722,6 +12722,54 @@ def test_backfill_products_from_product_cache_sources_is_idempotent(business_env
     assert rows[0]["output_files"] == [str(card), str(report)]
 
 
+def test_product_source_fields_support_request_content_and_legacy_cache_sources(business_env, tmp_path):
+    from business.products.product_service import create_product, list_products_page
+
+    output = tmp_path / "source-fields.png"
+    output.write_text("source", encoding="utf-8")
+    create_product(
+        business_type="component:testcomponent",
+        target_key="testcomponent",
+        target_label="testcomponent",
+        business_date="2026-06-25",
+        version_fingerprint="vf-source-fields-request",
+        status="active",
+        source_type="request",
+        source_request_id="req-source-fields",
+        output_files=[str(output)],
+    )
+    create_product(
+        business_type="rate",
+        target_key="利率内容",
+        target_label="利率内容",
+        business_date="2026-06-25",
+        version_fingerprint="vf-source-fields-content",
+        status="active",
+        source_type="content",
+        source_content_id="content-source-fields",
+        output_files=[str(output)],
+    )
+    create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-source-fields-cache",
+        status="active",
+        source_type="cache",
+        source_cache_key="cache-source-fields",
+        output_files=[str(output)],
+    )
+
+    products, total = list_products_page(include_invalidated=True)
+
+    assert total == 3
+    assert {item["source_type"] for item in products} == {"request", "content", "cache"}
+    assert any(item["source_request_id"] == "req-source-fields" for item in products)
+    assert any(item["source_content_id"] == "content-source-fields" for item in products)
+    assert any(item["source_cache_key"] == "cache-source-fields" for item in products)
+
+
 def test_backfill_products_from_success_request_records_creates_component_products(business_env, tmp_path):
     from business.config.constants import ServiceType
     from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
