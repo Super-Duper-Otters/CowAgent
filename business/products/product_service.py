@@ -926,6 +926,88 @@ def find_active_product_by_id(product_id: str) -> dict | None:
     return product
 
 
+def _product_to_cache_entry_dict(product: dict) -> dict:
+    return {
+        "product_id": str(product.get("product_id") or ""),
+        "cache_key": str(product.get("source_cache_key") or ""),
+        "service_type": str(product.get("business_type") or ""),
+        "normalized_target": str(product.get("target_key") or ""),
+        "market_date": str(product.get("business_date") or ""),
+        "version_fingerprint": str(product.get("version_fingerprint") or ""),
+        "output_files": list(product.get("output_files") or []),
+        "artifact_owner_id": str(product.get("source_request_id") or ""),
+        "status": str(product.get("status") or ""),
+        "hit_count": int(product.get("hit_count") or 0),
+        "created_at": str(product.get("created_at") or ""),
+        "updated_at": str(product.get("updated_at") or ""),
+    }
+
+
+def find_product_cache_entry_by_key(cache_key: str, *, require_files: bool = True) -> dict | None:
+    normalized_cache_key = _text(cache_key)
+    if not normalized_cache_key:
+        return None
+    now = _now()
+    stmt = (
+        select(investment_products)
+        .where(
+            and_(
+                investment_products.c.source_cache_key == normalized_cache_key,
+                investment_products.c.status == PRODUCT_STATUS_ACTIVE,
+                _expires_at_condition(now),
+            )
+        )
+        .order_by(desc(investment_products.c.updated_at), desc(investment_products.c.created_at))
+        .limit(1)
+    )
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    if row is None:
+        return None
+    product = _row_to_product(row)
+    if require_files and not _files_available(product["output_files"]):
+        _invalidate_product_if_unchanged(product)
+        return None
+    return _product_to_cache_entry_dict(product)
+
+
+def find_product_cache_entry(
+    *,
+    service_type,
+    normalized_target: str,
+    version_fingerprint: str,
+    market_date: str = "",
+    require_files: bool = True,
+) -> dict | None:
+    if not market_date:
+        return None
+    now = _now()
+    stmt = (
+        select(investment_products)
+        .where(
+            and_(
+                investment_products.c.business_type == str(service_type),
+                investment_products.c.target_key == _text(normalized_target),
+                investment_products.c.business_date == _text(market_date),
+                investment_products.c.version_fingerprint == _text(version_fingerprint),
+                investment_products.c.status == PRODUCT_STATUS_ACTIVE,
+                _expires_at_condition(now),
+            )
+        )
+        .order_by(desc(investment_products.c.updated_at), desc(investment_products.c.created_at))
+        .limit(1)
+    )
+    with connect() as conn:
+        row = conn.execute(stmt).fetchone()
+    if row is None:
+        return None
+    product = _row_to_product(row)
+    if require_files and not _files_available(product["output_files"]):
+        _invalidate_product_if_unchanged(product)
+        return None
+    return _product_to_cache_entry_dict(product)
+
+
 def find_active_product_by_source_content_id(source_content_id: str) -> dict | None:
     normalized_source_content_id = _text(source_content_id)
     if not normalized_source_content_id:

@@ -10774,6 +10774,73 @@ def test_product_service_appends_and_invalidates_active_product(business_env, tm
     assert [row["status"] for row in rows] == [PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED]
 
 
+def test_product_cache_lookup_by_cache_key_returns_active_product(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product, find_product_cache_entry_by_key
+
+    output = tmp_path / "cache-product.png"
+    output.write_text("image", encoding="utf-8")
+    product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-product-cache",
+        status="active",
+        source_cache_key="technical_analysis:300502.SZ:2026-06-25:vf-product-cache",
+        source_type="cache",
+        output_files=[str(output)],
+    )
+
+    entry = find_product_cache_entry_by_key("technical_analysis:300502.SZ:2026-06-25:vf-product-cache")
+
+    assert entry is not None
+    assert entry["product_id"] == product["product_id"]
+    assert entry["cache_key"] == "technical_analysis:300502.SZ:2026-06-25:vf-product-cache"
+    assert entry["service_type"] == str(ServiceType.TECHNICAL_ANALYSIS)
+    assert entry["normalized_target"] == "300502.SZ"
+    assert entry["market_date"] == "2026-06-25"
+    assert entry["version_fingerprint"] == "vf-product-cache"
+    assert entry["output_files"] == [str(output)]
+    assert entry["status"] == "active"
+
+
+def test_product_cache_lookup_invalidates_missing_files_without_deleting_product(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.products.product_service import (
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+        find_product_cache_entry,
+        list_products_page,
+    )
+
+    missing = tmp_path / "missing.png"
+    create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-missing-product-cache",
+        status="active",
+        source_cache_key="technical_analysis:300502.SZ:2026-06-25:vf-missing-product-cache",
+        source_type="cache",
+        output_files=[str(missing)],
+    )
+
+    entry = find_product_cache_entry(
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        version_fingerprint="vf-missing-product-cache",
+        market_date="2026-06-25",
+    )
+
+    assert entry is None
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert total == 1
+    assert products[0]["status"] == PRODUCT_STATUS_INVALIDATED
+    assert products[0]["output_files"] == [str(missing)]
+
+
 def test_product_service_list_filters_expired_active_products_from_active_views(business_env, tmp_path):
     from business.products import product_service
 
