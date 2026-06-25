@@ -719,6 +719,63 @@ def replace_active_product(
         return _replace(product_conn)
 
 
+def replace_product_by_source_cache_key(
+    *,
+    business_type: str,
+    target_key: str,
+    target_label: str = "",
+    business_date: str = "",
+    version_fingerprint: str = "",
+    status: str = PRODUCT_STATUS_ACTIVE,
+    source_request_id: str = "",
+    source_cache_key: str = "",
+    source_type: str = "",
+    output_files: list[str] | None = None,
+    metadata: dict | str | None = None,
+    conn=None,
+) -> dict:
+    normalized_cache_key = _text(source_cache_key)
+
+    def _replace(product_conn) -> dict:
+        product = _create_product_on_connection(
+            product_conn,
+            business_type=business_type,
+            target_key=target_key,
+            target_label=target_label,
+            business_date=business_date,
+            version_fingerprint=version_fingerprint,
+            status=status,
+            source_request_id=source_request_id,
+            source_cache_key=normalized_cache_key,
+            source_type=source_type,
+            output_files=output_files,
+            metadata=metadata,
+        )
+        if normalized_cache_key:
+            now = _now()
+            product_conn.execute(
+                update(investment_products)
+                .where(
+                    and_(
+                        investment_products.c.source_cache_key == normalized_cache_key,
+                        investment_products.c.product_id != product["product_id"],
+                        investment_products.c.status == PRODUCT_STATUS_ACTIVE,
+                    )
+                )
+                .values(
+                    status=PRODUCT_STATUS_INVALIDATED,
+                    invalidated_at=now,
+                    updated_at=now,
+                )
+            )
+        return product
+
+    if conn is not None:
+        return _replace(conn)
+    with connect() as product_conn:
+        return _replace(product_conn)
+
+
 def increment_product_hit(product_id: str) -> None:
     with connect() as conn:
         conn.execute(

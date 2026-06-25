@@ -437,14 +437,14 @@ def write_cache_entry(
     output_files: list[str],
     artifact_owner_id: str = "",
 ) -> CacheEntry:
-    from business.products.product_service import find_product_cache_entry_by_key, replace_active_product
+    from business.products.product_service import find_product_cache_entry_by_key, replace_product_by_source_cache_key
 
     with connect() as conn:
         if conn.dialect.name == "postgresql":
             conn.execute(text("select pg_advisory_xact_lock(hashtext(:cache_key))"), {"cache_key": cache_key})
         previous = find_product_cache_entry_by_key(cache_key, require_files=False)
         previous_hit_count = int((previous or {}).get("hit_count") or 0)
-        product = replace_active_product(
+        product = replace_product_by_source_cache_key(
             business_type=str(service_type),
             target_key=normalized_target,
             target_label=normalized_target,

@@ -222,6 +222,7 @@ def handle_technical_analysis(
         product_id = ""
         if (
             not result.cache_hit
+            and not result.cache_key
             and result.normalized_target
             and result.market_date
             and result.version_fingerprint

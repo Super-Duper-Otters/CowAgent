@@ -9104,9 +9104,9 @@ def test_technical_analysis_invalidates_today_intraday_cache_after_close_and_rer
         include_invalidated=True,
         business_type=str(ServiceType.TECHNICAL_ANALYSIS),
     )
-    assert product_total == 4
+    assert product_total == 2
     assert [product["status"] for product in products].count("active") == 1
-    assert [product["status"] for product in products].count("invalidated") == 3
+    assert [product["status"] for product in products].count("invalidated") == 1
     assert any(product["product_id"] == first_product_id and product["status"] == "invalidated" for product in products)
 
 
@@ -10516,10 +10516,11 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     assert records[1].market_date == "2026-05-25"
     assert records[0].cache_key
     assert records[1].cache_key
-    assert records[0].cache_key != records[1].cache_key
+    assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
     assert second.source_id == records[0].cache_key
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
+    assert cache_entry.hit_count == 1
     assert cache_entry.market_date == "2026-05-25"
 
 
