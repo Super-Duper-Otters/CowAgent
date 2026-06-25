@@ -5196,6 +5196,7 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
 def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, list_cache_entries_page, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources
     from channel.web.web_channel import InvestmentCacheHandler
 
     for market_date, target in [
@@ -5220,6 +5221,9 @@ def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatc
         start_date="2026-05-01",
         end_date="2026-05-31",
     )
+    backfill_result = backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 4
+
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheHandler().GET,
@@ -5235,13 +5239,16 @@ def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatc
     assert total == 2
     assert {entry.market_date for entry in entries} == {"2026-05-01", "2026-05-31"}
     assert {entry["market_date"] for entry in payload["entries"]} == {"2026-05-01", "2026-05-31"}
+    assert all(entry["source_type"] == "product" for entry in payload["entries"])
+    assert all(entry["product_source_type"] == "cache" for entry in payload["entries"])
     assert payload["pagination"]["total"] == 2
 
 
 def test_generated_content_history_api_combines_cache_and_daily_content_records(business_env, monkeypatch, tmp_path):
-    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.cache.cache_service import build_cache_key, list_generated_history_page, write_cache_entry
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, update_generation_success
+    from business.products.product_service import backfill_products_from_legacy_sources
     from channel.web.web_channel import InvestmentCacheHandler
 
     write_cache_entry(
@@ -5271,6 +5278,18 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
     )
     update_generation_success(cb_content_id, "cb generated", str(cb_image))
 
+    legacy_entries, legacy_total = list_generated_history_page(
+        page=1,
+        page_size=20,
+        start_date="2026-06-01",
+        end_date="2026-06-30",
+    )
+    backfill_result = backfill_products_from_legacy_sources()
+    assert legacy_total == 2
+    assert {entry["source_type"] for entry in legacy_entries} == {"cache", "content"}
+    assert backfill_result["cache_created"] == 1
+    assert backfill_result["content_created"] == 2
+
     payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheHandler().GET,
@@ -5280,17 +5299,16 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
     assert payload["pagination"]["total"] == 2
     services = {entry["service_type"] for entry in payload["entries"]}
     assert services == {"technical_analysis", "rate"}
+    assert all(entry["source_type"] == "product" for entry in payload["entries"])
     rate_entry = next(entry for entry in payload["entries"] if entry["service_type"] == "rate")
-    assert rate_entry["source_type"] == "content"
+    assert rate_entry["product_source_type"] == "content"
     assert rate_entry["content_id"] == rate_content_id
     assert rate_entry["market_date"] == "2026-06-05"
-    assert rate_entry["normalized_target"] == "利率内容"
-    assert rate_entry["status"] == "generated"
-    assert rate_entry["output_files"]
-    assert rate_entry["output_image"] == rate_entry["output_files"][0]
-    assert rate_entry["output_artifacts"]
-    assert rate_entry["output_artifacts"][0]["file_id"]
-    assert rate_entry["output_artifacts"][0]["file_url"].startswith("/api/file?id=")
+    assert rate_entry["normalized_target"] == "rate"
+    assert rate_entry["status"] == "active"
+    assert rate_entry["generated_text"] == "rate generated"
+    assert len(rate_entry["output_files"]) == 1
+    assert "rate-card" in rate_entry["output_files"][0]
     assert "2026-06-05" in payload["market_dates"]
 
 
