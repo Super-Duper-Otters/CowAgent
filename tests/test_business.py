@@ -2296,6 +2296,8 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     assert total == 1
     assert packages[0]["source_type"] == "product"
     assert packages[0]["service_type"] == "component:technical-analysis"
+    assert packages[0]["service_label"] == "技术分析路由组件"
+    assert packages[0]["module_key"] == "technical-analysis"
     assert packages[0]["package_id"] == product["product_id"]
     assert packages[0]["source_request_id"] == reply.request_id
     assert packages[0]["files"]
@@ -2303,6 +2305,8 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     package_detail, detail_total = list_artifact_packages_page(package_id=reply.request_id)
     assert detail_total == 1
     assert package_detail[0]["source_type"] == "product"
+    assert package_detail[0]["service_label"] == "技术分析路由组件"
+    assert package_detail[0]["module_key"] == "technical-analysis"
     assert package_detail[0]["package_id"] == product["product_id"]
     assert package_detail[0]["source_request_id"] == reply.request_id
     assert len(package_detail[0]["files"]) >= 2
@@ -4636,9 +4640,10 @@ def test_cache_handler_clamps_excessive_page_for_merged_history(business_env, mo
 def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products.product_service import create_product
     from business.schema.db import connect
     from business.records.records import create_request_record, get_request_record, list_artifact_packages_page, succeed_request_record
-    from business.schema.tables import investment_cache_entries
+    from business.schema.tables import investment_cache_entries, investment_products
     from channel.web.web_channel import InvestmentArtifactPackagesHandler
 
     signal = tmp_path / "signal-card.png"
@@ -4709,6 +4714,24 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(busi
         market_date="2026-06-08",
         cache_key=cache_key,
     )
+    product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ 新易盛",
+        business_date="2026-06-08",
+        version_fingerprint="version-a",
+        source_type="cache",
+        source_request_id=first_request_id,
+        source_cache_key=cache_key,
+        output_files=first_record.output_files,
+        effective_at="2026-06-08T08:00:00+00:00",
+    )
+    with connect() as conn:
+        conn.execute(
+            investment_products.update()
+            .where(investment_products.c.product_id == product["product_id"])
+            .values(created_at="2026-06-08T08:00:00+00:00", updated_at="2026-06-08T08:00:00+00:00")
+        )
 
     packages, total = list_artifact_packages_page(
         page=1,
@@ -4725,25 +4748,22 @@ def test_artifact_package_tree_groups_shared_technical_outputs_by_cache_key(busi
 
     assert total == 1
     package = packages[0]
-    assert package["package_id"] == cache_key
+    assert package["package_id"] == product["product_id"]
+    assert package["source_cache_key"] == cache_key
     assert package["display_path"] == ["技术分析", "2026-06-08", "300502.SZ 新易盛"]
-    assert package["related_request_ids"] == [second_request_id, first_request_id]
+    assert package["related_request_ids"] == [first_request_id]
     assert package["created_from_request_id"] == first_request_id
-    assert [file["virtual_path"] for file in package["files"]] == [
-        "input/raw_input.txt",
-        "output/signal_card.png",
-        "intermediate/main_chart.png",
-        "intermediate/markdown_report.md",
-    ]
-    assert package["files"][0]["content"] == "新易盛 技术分析"
+    assert [file["group"] for file in package["files"]] == ["output", "output", "intermediate"]
+    assert all(file["virtual_path"].startswith(("output/", "intermediate/")) for file in package["files"])
     assert len([file for file in package["files"] if file.get("file_path")]) == 3
     assert all(first_request_id not in file["virtual_path"] for file in package["files"])
     assert payload["status"] == "success"
     assert payload["pagination"]["total"] == 1
-    assert payload["packages"][0]["package_id"] == cache_key
+    assert payload["packages"][0]["package_id"] == product["product_id"]
+    assert payload["packages"][0]["source_cache_key"] == cache_key
     assert payload["tree"][0]["dir"] == "2026-06-08"
     assert payload["tree"][0]["children"][0]["dir"] == "300502.SZ 新易盛"
-    assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["input", "output", "intermediate"]
+    assert [group["dir"] for group in payload["tree"][0]["children"][0]["children"]] == ["output", "intermediate"]
 
 
 def test_artifact_packages_include_unified_products_without_legacy_cache_or_content(business_env, tmp_path):
@@ -4831,6 +4851,104 @@ def test_artifact_product_package_output_files_have_path_file_urls_without_artif
     assert len(output_files) == 2
     assert output_files[0]["file_url"] == f"/api/file?path={quote(str(image))}"
     assert output_files[1]["file_url"] == f"/api/file?path={quote(str(report))}"
+
+
+def test_artifact_product_package_detail_does_not_surface_legacy_request_raw_input(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records.records import create_request_record, list_artifact_packages_page, succeed_request_record
+
+    output = tmp_path / "product-card.png"
+    output.write_text("product", encoding="utf-8")
+    request_id = create_request_record(
+        "openid-product-input",
+        "legacy request raw input",
+        ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-24",
+    )
+    succeed_request_record(
+        request_id,
+        output_files=[str(output)],
+        elapsed_ms=20,
+        normalized_target="300502.SZ",
+        market_date="2026-06-24",
+    )
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(output)],
+        source_type="request",
+        source_request_id=request_id,
+    )
+
+    packages, total = list_artifact_packages_page(package_id=product["product_id"])
+
+    assert total == 1
+    assert packages[0]["package_id"] == product["product_id"]
+    assert [file["virtual_path"] for file in packages[0]["files"]] == ["output/product-card.png"]
+    assert all(file.get("artifact_role") != "raw_input" for file in packages[0]["files"])
+
+
+def test_artifact_product_packages_and_folders_default_to_active_non_expired_products(business_env, tmp_path):
+    from business.products.product_service import (
+        PRODUCT_STATUS_ARCHIVED,
+        PRODUCT_STATUS_FAILED,
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+    )
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    output = tmp_path / "active-card.png"
+    output.write_text("active", encoding="utf-8")
+    active = create_product(
+        business_type="technical_analysis",
+        target_key="ACTIVE.SZ",
+        target_label="active product",
+        business_date="2026-06-24",
+        version_fingerprint="active",
+        output_files=[str(output)],
+    )
+    for status in (PRODUCT_STATUS_INVALIDATED, PRODUCT_STATUS_ARCHIVED, PRODUCT_STATUS_FAILED):
+        create_product(
+            business_type="technical_analysis",
+            target_key=f"{status.upper()}.SZ",
+            target_label=f"{status} product",
+            business_date="2026-06-24",
+            version_fingerprint=status,
+            status=status,
+            output_files=[str(output)],
+        )
+    create_product(
+        business_type="technical_analysis",
+        target_key="EXPIRED.SZ",
+        target_label="expired product",
+        business_date="2026-06-24",
+        version_fingerprint="expired",
+        expires_at="2000-01-01T00:00:00+00:00",
+        output_files=[str(output)],
+    )
+
+    packages, total = list_artifact_packages_page(service_type="technical_analysis")
+    services, service_total = list_artifact_folder_nodes(level="service")
+    dates, date_total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
+    folder_packages, folder_package_total = list_artifact_folder_nodes(
+        level="package",
+        service_type="technical_analysis",
+        date="2026-06-24",
+    )
+
+    assert total == 1
+    assert [package["package_id"] for package in packages] == [active["product_id"]]
+    assert service_total == 1
+    assert services[0]["count"] == 1
+    assert date_total == 1
+    assert dates[0]["count"] == 1
+    assert folder_package_total == 1
+    assert [package["package_id"] for package in folder_packages] == [active["product_id"]]
 
 
 def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tmp_path):

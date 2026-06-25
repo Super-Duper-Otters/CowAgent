@@ -10,6 +10,7 @@ from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from business.config.config_service import sanitize_sensitive_text
 from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
+from business.products.product_service import PRODUCT_STATUS_ACTIVE, _expires_at_condition as _product_expires_at_condition
 from business.schema.db import connect, row_to_dict
 from business.schema.tables import (
     investment_cache_entries,
@@ -1259,6 +1260,7 @@ def _row_to_internal_call_artifact_package(call_item: dict) -> dict:
 def _row_to_product_artifact_package(item: dict) -> dict:
     product_id = str(item.get("product_id") or "")
     service_type = str(item.get("business_type") or "")
+    module_key = _component_filter_key(service_type)
     output_files = _load_list(item.get("output_files"))
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
@@ -1266,14 +1268,12 @@ def _row_to_product_artifact_package(item: dict) -> dict:
     target = str(item.get("target_key") or "")
     display_name = str(item.get("target_label") or target or "产物")
     source_request_id = str(item.get("source_request_id") or "")
-    source_request = _request_row(source_request_id) if source_request_id else {}
-    raw_input = str(source_request.get("raw_input") or "")
-    files = [_virtual_input_file(raw_input)] if raw_input else []
+    files = []
     files.extend(_artifact_files_for_owner(product_id, output_files))
     text_content = str(item.get("text_content") or "")
     if text_content:
         files.append(_virtual_generated_text_file(text_content))
-    service_label = _artifact_service_label(service_type)
+    service_label = _service_or_component_label(service_type)
     return {
         "level": "package",
         "key": product_id,
@@ -1281,6 +1281,7 @@ def _row_to_product_artifact_package(item: dict) -> dict:
         "source_type": "product",
         "label": display_name,
         "service_type": service_type,
+        "module_key": module_key,
         "service_label": service_label,
         "market_date": generated_date,
         "generated_at": generated_at,
@@ -1495,6 +1496,8 @@ def _product_artifact_conditions(service_type: ServiceType | str | None, start_d
     conditions = []
     if service_type is not None and str(service_type or "").strip():
         conditions.append(investment_products.c.business_type == str(service_type))
+    conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+    conditions.append(_product_expires_at_condition(_now()))
     if start_date:
         conditions.append(investment_products.c.business_date >= str(start_date))
     if end_date:
@@ -1615,16 +1618,7 @@ def list_artifact_packages_page(
         keyword=keyword,
         package_id=package_id,
     )
-    packages = [
-        _row_to_product_artifact_package(item["item"])
-        if item["kind"] == "product"
-        else _row_to_artifact_package(item["item"])
-        if item["kind"] == "cache"
-        else _row_to_content_artifact_package(item["item"])
-        if item["kind"] == "content"
-        else _row_to_internal_call_artifact_package(item["item"])
-        for item in source_rows
-    ]
+    packages = [_row_to_product_artifact_package(item["item"]) for item in source_rows]
     packages.sort(key=lambda item: (str(item.get("generated_date") or item.get("market_date") or ""), str(item.get("updated_at") or "")), reverse=True)
     offset = (page - 1) * page_size
     return packages[offset : offset + page_size], total
@@ -1672,6 +1666,8 @@ def _artifact_package_summary(item: dict) -> dict:
 
 def _product_artifact_package_summary(item: dict) -> dict:
     product_id = str(item.get("product_id") or "")
+    service_type = str(item.get("business_type") or "")
+    module_key = _component_filter_key(service_type)
     output_files = _load_list(item.get("output_files"))
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
@@ -1681,7 +1677,9 @@ def _product_artifact_package_summary(item: dict) -> dict:
         "package_id": product_id,
         "source_type": "product",
         "label": str(item.get("target_label") or item.get("target_key") or "产物"),
-        "service_type": str(item.get("business_type") or ""),
+        "service_type": service_type,
+        "module_key": module_key,
+        "service_label": _service_or_component_label(service_type),
         "market_date": generated_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
