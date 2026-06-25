@@ -694,9 +694,15 @@ def invalidate_products_by_scope(
         return int(conn.execute(stmt).rowcount or 0)
 
 
-def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
+def invalidate_products_by_source(*, source_content_id: str = "", source_cache_key: str = "", conn=None) -> int:
     normalized_source_content_id = _text(source_content_id)
-    if not normalized_source_content_id:
+    normalized_source_cache_key = _text(source_cache_key)
+    conditions = []
+    if normalized_source_content_id:
+        conditions.append(investment_products.c.source_content_id == normalized_source_content_id)
+    if normalized_source_cache_key:
+        conditions.append(investment_products.c.source_cache_key == normalized_source_cache_key)
+    if not conditions:
         return 0
 
     def _invalidate(product_conn) -> int:
@@ -706,7 +712,7 @@ def invalidate_products_by_source(*, source_content_id: str, conn=None) -> int:
                 update(investment_products)
                 .where(
                     and_(
-                        investment_products.c.source_content_id == normalized_source_content_id,
+                        or_(*conditions),
                         investment_products.c.status != PRODUCT_STATUS_INVALIDATED,
                     )
                 )

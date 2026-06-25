@@ -3925,8 +3925,11 @@ class InvestmentCacheEntryInvalidateHandler:
         admin = _require_investment_permission("cache.write")
         try:
             from business.cache.cache_service import invalidate_business_cache
+            from business.products.product_service import invalidate_products_by_source
 
-            invalidated = invalidate_business_cache(cache_key)
+            legacy_invalidated = invalidate_business_cache(cache_key)
+            products_invalidated = invalidate_products_by_source(source_cache_key=cache_key)
+            invalidated = bool(legacy_invalidated or products_invalidated)
             queued_removed = 0
             if invalidated:
                 try:
@@ -3940,9 +3943,20 @@ class InvestmentCacheEntryInvalidateHandler:
                 "investment_cache_entry",
                 target_id=cache_key,
                 admin=admin,
-                detail={"invalidated": invalidated, "queued_removed": queued_removed},
+                detail={
+                    "invalidated": invalidated,
+                    "legacy_invalidated": legacy_invalidated,
+                    "products_invalidated": products_invalidated,
+                    "queued_removed": queued_removed,
+                },
             )
-            return _investment_json_response({"status": "success", "invalidated": invalidated, "queued_removed": queued_removed})
+            return _investment_json_response({
+                "status": "success",
+                "invalidated": invalidated,
+                "legacy_invalidated": legacy_invalidated,
+                "products_invalidated": products_invalidated,
+                "queued_removed": queued_removed,
+            })
         except Exception as e:
             logger.error(f"[Investment] cache invalidate error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
