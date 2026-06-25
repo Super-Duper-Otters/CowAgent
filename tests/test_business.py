@@ -4797,6 +4797,51 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
     assert packages[0]["file_count"] == 2
 
 
+def test_product_artifact_package_dates_use_business_date_for_folder_metadata(business_env, tmp_path):
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_products
+
+    output = tmp_path / "product-card.png"
+    output.write_text("product", encoding="utf-8")
+    product = create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="v1",
+        output_files=[str(output)],
+        source_type="request",
+        source_request_id="req-product-date",
+    )
+    with connect() as conn:
+        conn.execute(
+            investment_products.update()
+            .where(investment_products.c.product_id == product["product_id"])
+            .values(created_at="2026-06-25T08:00:00+00:00", updated_at="2026-06-25T08:00:00+00:00")
+        )
+
+    packages, total = list_artifact_packages_page(service_type="technical_analysis")
+    detail_packages, detail_total = list_artifact_packages_page(package_id=product["product_id"])
+    folder_packages, folder_total = list_artifact_folder_nodes(
+        level="package",
+        service_type="technical_analysis",
+        date="2026-06-24",
+    )
+
+    assert total == 1
+    assert detail_total == 1
+    assert folder_total == 1
+    for package in (packages[0], detail_packages[0], folder_packages[0]):
+        assert package["package_id"] == product["product_id"]
+        assert package["market_date"] == "2026-06-24"
+        assert package["generated_at"] == "2026-06-25T08:00:00+00:00"
+        assert package["generated_date"] == "2026-06-25"
+        assert package["business_date"] == "2026-06-24"
+        assert package["display_path"][1] == "2026-06-24"
+
+
 def test_artifact_browser_lists_only_product_packages_after_backfill(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

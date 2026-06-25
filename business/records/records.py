@@ -1265,6 +1265,7 @@ def _row_to_product_artifact_package(item: dict) -> dict:
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
     business_date = str(item.get("business_date") or "")
+    folder_date = business_date or generated_date
     target = str(item.get("target_key") or "")
     display_name = str(item.get("target_label") or target or "产物")
     source_request_id = str(item.get("source_request_id") or "")
@@ -1283,14 +1284,14 @@ def _row_to_product_artifact_package(item: dict) -> dict:
         "service_type": service_type,
         "module_key": module_key,
         "service_label": service_label,
-        "market_date": generated_date,
+        "market_date": folder_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
         "business_date": business_date,
         "normalized_target": target,
         "stock_name": "",
         "display_name": display_name,
-        "display_path": [service_label, generated_date or business_date, display_name],
+        "display_path": [service_label, folder_date, display_name],
         "version_fingerprint": str(item.get("version_fingerprint") or ""),
         "product_id": product_id,
         "source_request_id": source_request_id,
@@ -1671,20 +1672,26 @@ def _product_artifact_package_summary(item: dict) -> dict:
     output_files = _load_list(item.get("output_files"))
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
+    business_date = str(item.get("business_date") or "")
+    folder_date = business_date or generated_date
+    display_name = str(item.get("target_label") or item.get("target_key") or "产物")
+    service_label = _service_or_component_label(service_type)
     return {
         "level": "package",
         "key": product_id,
         "package_id": product_id,
         "source_type": "product",
-        "label": str(item.get("target_label") or item.get("target_key") or "产物"),
+        "label": display_name,
         "service_type": service_type,
         "module_key": module_key,
-        "service_label": _service_or_component_label(service_type),
-        "market_date": generated_date,
+        "service_label": service_label,
+        "market_date": folder_date,
         "generated_at": generated_at,
         "generated_date": generated_date,
-        "business_date": str(item.get("business_date") or ""),
+        "business_date": business_date,
         "normalized_target": str(item.get("target_key") or ""),
+        "display_name": display_name,
+        "display_path": [service_label, folder_date, display_name],
         "version_fingerprint": str(item.get("version_fingerprint") or ""),
         "product_id": product_id,
         "file_count": len(output_files),
