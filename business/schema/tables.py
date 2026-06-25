@@ -150,24 +150,6 @@ investment_output_files = Table(
     Index("idx_artifacts_owner", "owner_id"),
 )
 
-investment_cache_entries = Table(
-    "cache_entries",
-    metadata,
-    Column("cache_key", Text, primary_key=True),
-    Column("service", Text, nullable=False, key="service_type"),
-    Column("normalized_target", Text, nullable=False),
-    Column("market_date", Text, nullable=False),
-    Column("version_fingerprint", Text, nullable=False),
-    Column("outputs", Text, nullable=False, key="output_files"),
-    Column("artifact_owner_id", Text),
-    Column("status", Text, nullable=False),
-    Column("hit_count", Integer, nullable=False, server_default="0"),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    Index("idx_cache_entries_lookup", "service_type", "normalized_target", "market_date", "version_fingerprint", "status"),
-    Index("idx_cache_entries_service_date", "service_type", "market_date", "status"),
-)
-
 investment_products = Table(
     "products",
     metadata,
@@ -341,7 +323,6 @@ admin_sessions = investment_admin_sessions
 request_records = investment_request_records
 content_records = investment_daily_contents
 artifacts = investment_output_files
-cache_entries = investment_cache_entries
 products = investment_products
 configs = investment_configs
 operation_audits = investment_operation_audits

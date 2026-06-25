@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from business.artifacts.artifact_service import archive_artifact_file
 from business.config.constants import ServiceType
 from business.schema.db import connect, row_to_dict
-from business.schema.tables import investment_cache_entries, investment_daily_contents, investment_output_files, investment_request_records
+from business.schema.tables import investment_daily_contents, investment_output_files, investment_request_records
 from business.schema.storage import get_storage_dirs
 
 
@@ -145,21 +145,6 @@ def migrate_legacy_files_to_unified_storage() -> int:
                     if service_type is not None and (item["content_id"], source_path, "source_image") not in existing_artifacts:
                         pending_artifacts.append((item["content_id"], source_path, service_type, "source_image", "content"))
                         existing_artifacts.add((item["content_id"], source_path, "source_image"))
-
-            for row in conn.execute(select(investment_cache_entries)).mappings().all():
-                service_type = _service_type(row.get("service_type"))
-                owner_id = row.get("artifact_owner_id") or row.get("cache_key") or "cache"
-                files = _load_list(row.get("output_files"))
-                new_files = [
-                    migrate_path(owner_id, "request", service_type, role_by_owner_path.get((owner_id, path), "artifact"), path)
-                    for path in files
-                ]
-                if new_files != files:
-                    conn.execute(
-                        update(investment_cache_entries)
-                        .where(investment_cache_entries.c.cache_key == row["cache_key"])
-                        .values(output_files=_json_list(new_files))
-                    )
 
             for old_path, new_path in moved.items():
                 if old_path == new_path:

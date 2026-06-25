@@ -377,36 +377,12 @@ def _legacy_content_product_status(status: str) -> str:
 
 
 def backfill_products_from_legacy_sources(conn=None) -> dict[str, int]:
-    from business.schema.tables import investment_cache_entries, investment_daily_contents
+    from business.schema.tables import investment_daily_contents
 
     def _backfill(product_conn) -> dict[str, int]:
         created_cache = 0
         created_content = 0
         created_request = 0
-
-        cache_rows = product_conn.execute(select(investment_cache_entries)).fetchall()
-        for row in cache_rows:
-            item = row_to_dict(row)
-            cache_key = str(item.get("cache_key") or "")
-            if not cache_key or product_exists_for_source(source_cache_key=cache_key, conn=product_conn):
-                continue
-            _create_product_on_connection(
-                product_conn,
-                business_type=str(item.get("service_type") or ""),
-                target_key=str(item.get("normalized_target") or ""),
-                target_label=str(item.get("normalized_target") or ""),
-                business_date=str(item.get("market_date") or ""),
-                version_fingerprint=str(item.get("version_fingerprint") or ""),
-                source_type="cache",
-                source_cache_key=cache_key,
-                source_request_id=str(item.get("artifact_owner_id") or ""),
-                output_files=_load_list(item.get("output_files")),
-                status=str(item.get("status") or PRODUCT_STATUS_ACTIVE),
-                effective_at=str(item.get("created_at") or ""),
-                created_at=str(item.get("created_at") or ""),
-                updated_at=str(item.get("updated_at") or ""),
-            )
-            created_cache += 1
 
         content_rows = product_conn.execute(select(investment_daily_contents)).fetchall()
         for row in content_rows:

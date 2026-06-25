@@ -81,7 +81,6 @@ def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
     assert inspector.has_table("request_records")
     assert inspector.has_table("content_records")
     assert inspector.has_table("artifacts")
-    assert inspector.has_table("cache_entries")
     assert inspector.has_table("operation_audits")
     assert inspector.has_table("stock_symbols")
     assert inspector.has_table("alembic_version")
@@ -105,27 +104,6 @@ def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
     assert {"input_prompt"}.issubset(ai_audit_columns)
     output_file_columns = {column["name"] for column in inspector.get_columns("artifacts")}
     assert {"artifact_role", "file_size", "file_hash", "version_tag"}.issubset(output_file_columns)
-    cache_columns = {column["name"] for column in inspector.get_columns("cache_entries")}
-    assert {
-        "cache_key",
-        "service_type",
-        "normalized_target",
-        "market_date",
-        "version_fingerprint",
-        "output_files",
-        "artifact_owner_id",
-        "status",
-        "hit_count",
-    }.issubset(cache_columns)
-    cache_indexes = {index["name"]: tuple(index.get("column_names") or []) for index in inspector.get_indexes("cache_entries")}
-    assert cache_indexes["idx_cache_entries_lookup"] == (
-        "service_type",
-        "normalized_target",
-        "market_date",
-        "version_fingerprint",
-        "status",
-    )
-    assert cache_indexes["idx_cache_entries_service_date"] == ("service_type", "market_date", "status")
     assert inspector.has_table("products")
     product_columns = {column["name"] for column in inspector.get_columns("products")}
     assert {
@@ -232,3 +210,24 @@ def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
 
     recent_ids = {record.request_id for record in list_request_records(limit=10)}
     assert {success_request_id, failed_request_id}.issubset(recent_ids)
+
+
+def test_business_postgres_schema_uses_products_for_cache(business_postgres_env):
+    from sqlalchemy import inspect
+
+    from business.schema.db import get_engine
+
+    inspector = inspect(get_engine())
+    assert inspector.has_table("products")
+    assert not inspector.has_table("cache_entries")
+    product_columns = {column["name"] for column in inspector.get_columns("products")}
+    assert {
+        "business_type",
+        "target_key",
+        "business_date",
+        "version_fingerprint",
+        "source_cache_key",
+        "output_files",
+        "hit_count",
+        "status",
+    }.issubset(product_columns)

@@ -32,7 +32,6 @@ def test_business_schema_declares_all_tables():
         "request_records",
         "content_records",
         "artifacts",
-        "cache_entries",
         "configs",
         "stock_symbols",
         "operation_audits",
@@ -138,6 +137,13 @@ def test_business_schema_declares_all_tables():
     }.issubset({index.name for index in metadata.tables["products"].indexes})
 
 
+def test_business_schema_no_longer_defines_cache_entries_table():
+    from business.schema.tables import metadata
+
+    assert "products" in metadata.tables
+    assert "cache_entries" not in metadata.tables
+
+
 def test_business_schema_uses_simplified_physical_column_names():
     from business.schema.tables import metadata
 
@@ -147,7 +153,6 @@ def test_business_schema_uses_simplified_physical_column_names():
             "request_records",
             "content_records",
             "artifacts",
-            "cache_entries",
             "operation_audits",
         )
     }
@@ -157,7 +162,6 @@ def test_business_schema_uses_simplified_physical_column_names():
         physical_names["content_records"]
     )
     assert {"service"}.issubset(physical_names["artifacts"])
-    assert {"service", "outputs"}.issubset(physical_names["cache_entries"])
     assert {"category", "result", "error"}.issubset(physical_names["operation_audits"])
 
     assert {"service_type", "output_files", "error_message"}.isdisjoint(physical_names["request_records"])
@@ -165,7 +169,6 @@ def test_business_schema_uses_simplified_physical_column_names():
         physical_names["content_records"]
     )
     assert {"service_type"}.isdisjoint(physical_names["artifacts"])
-    assert {"service_type", "output_files"}.isdisjoint(physical_names["cache_entries"])
     assert {"operation_category", "result_status", "error_message"}.isdisjoint(physical_names["operation_audits"])
 
 
@@ -186,6 +189,91 @@ def test_product_backfill_migration_revision_exists():
     assert 'revision = "20260624_0027"' in text
     assert 'down_revision = "20260624_0026"' in text
     assert "backfill_products_from_legacy_sources" in text
+
+
+def test_drop_cache_entries_migration_preserves_legacy_cache_rows(tmp_path, monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect
+
+    from business.schema import db as db
+    from business.schema import migrations as migrations
+
+    base_url = os.environ.get("COWAGENT_TEST_POSTGRES_URL") or db.DEFAULT_DATABASE_URL
+    schema_name = f"cowagent_cache_drop_{uuid4().hex}"
+    url = make_url(base_url)
+    schema_url = url.set(
+        query={
+            **dict(url.query),
+            "options": f"-csearch_path={schema_name}",
+        },
+    ).render_as_string(hide_password=False)
+    admin_engine = create_engine(base_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(text(f'create schema "{schema_name}"'))
+
+    monkeypatch.setenv("COWAGENT_INVESTMENT_DATABASE_URL", schema_url)
+    monkeypatch.setenv("COWAGENT_BUSINESS_STORAGE_ROOT", str(tmp_path / "storage"))
+    db.reset_engine_for_tests()
+    try:
+        migrations.upgrade("20260624_0026")
+        engine = db.get_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    insert into cache_entries (
+                        cache_key, service, normalized_target, market_date,
+                        version_fingerprint, outputs, artifact_owner_id,
+                        status, hit_count, created_at, updated_at
+                    ) values (
+                        'legacy-cache-before-drop', 'technical_analysis', '300502.SZ', '2026-06-25',
+                        'legacy-v1', '["/tmp/legacy-cache.png"]', 'legacy-request',
+                        'active', 7, '2026-06-25T01:00:00+00:00', '2026-06-25T02:00:00+00:00'
+                    )
+                    """
+                )
+            )
+
+        migrations.upgrade("head")
+
+        inspector = inspect(engine)
+        assert not inspector.has_table("cache_entries")
+        with engine.begin() as conn:
+            product = conn.execute(
+                text("select * from products where source_cache_key = 'legacy-cache-before-drop'")
+            ).mappings().one()
+        assert product["business_type"] == "technical_analysis"
+        assert product["target_key"] == "300502.SZ"
+        assert product["business_date"] == "2026-06-25"
+        assert product["version_fingerprint"] == "legacy-v1"
+        assert product["output_files"] == '["/tmp/legacy-cache.png"]'
+        assert product["source_request_id"] == "legacy-request"
+        assert product["hit_count"] == 7
+
+        config = Config(str(migrations.alembic_config_path()))
+        config.set_main_option("sqlalchemy.url", schema_url.replace("%", "%%"))
+        command.downgrade(config, "20260624_0027")
+
+        inspector = inspect(engine)
+        assert inspector.has_table("cache_entries")
+        with engine.begin() as conn:
+            cache = conn.execute(
+                text("select * from cache_entries where cache_key = 'legacy-cache-before-drop'")
+            ).mappings().one()
+        assert cache["service"] == "technical_analysis"
+        assert cache["normalized_target"] == "300502.SZ"
+        assert cache["market_date"] == "2026-06-25"
+        assert cache["version_fingerprint"] == "legacy-v1"
+        assert cache["outputs"] == '["/tmp/legacy-cache.png"]'
+        assert cache["artifact_owner_id"] == "legacy-request"
+        assert cache["status"] == "active"
+        assert cache["hit_count"] == 7
+    finally:
+        db.reset_engine_for_tests()
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'drop schema if exists "{schema_name}" cascade'))
+        admin_engine.dispose()
 
 
 def test_business_migration_transfers_generation_records_to_new_tables(tmp_path, monkeypatch):
@@ -3513,7 +3601,6 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
     from business.records.cleanup import cleanup_useless_business_records
     from business.schema.tables import (
         admin_sessions,
-        cache_entries,
         configs,
         content_records,
         request_records,
@@ -3579,23 +3666,6 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
                 "content_version": 1,
             },
         )
-        conn.execute(
-            cache_entries.insert(),
-            {
-                "cache_key": "old-invalid-cache-cleanup",
-                "service_type": "technical_analysis",
-                "normalized_target": "300502.SZ",
-                "market_date": "2026-01-01",
-                "version_fingerprint": "v1",
-                "output_files": "[]",
-                "artifact_owner_id": "old-unmatched-cleanup",
-                "status": "invalidated",
-                "hit_count": 0,
-                "created_at": "2026-01-01T00:00:00+00:00",
-                "updated_at": "2026-01-01T00:00:00+00:00",
-            },
-        )
-
     dry_run = cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=True)
     assert dry_run["runtime_test_configs"] == 1
     assert dry_run["runtime_test_stocks"] == 1
@@ -3615,14 +3685,13 @@ def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(busi
         assert conn.execute(text("select count(*) from admin_sessions where session_id = 'expired-session'")).scalar_one() == 0
         assert conn.execute(text("select count(*) from request_records where request_id = 'old-unmatched-cleanup'")).scalar_one() == 1
         assert conn.execute(text("select count(*) from content_records where content_id = 'old-failed-content-cleanup'")).scalar_one() == 1
-        assert conn.execute(text("select count(*) from cache_entries where cache_key = 'old-invalid-cache-cleanup'")).scalar_one() == 1
 
 
 def test_cleanup_does_not_delete_products_or_legacy_product_sources(business_env, tmp_path):
     from business.products.product_service import create_product, list_products_page
     from business.records.cleanup import cleanup_useless_business_records
     from business.schema.db import connect
-    from business.schema.tables import cache_entries, content_records, request_records
+    from business.schema.tables import content_records, request_records
 
     product_file = tmp_path / "cleanup-product.png"
     product_file.write_bytes(b"product")
@@ -3671,23 +3740,6 @@ def test_cleanup_does_not_delete_products_or_legacy_product_sources(business_env
                 "content_version": 1,
             },
         )
-        conn.execute(
-            cache_entries.insert(),
-            {
-                "cache_key": "cleanup-source-cache",
-                "service_type": "technical_analysis",
-                "normalized_target": "300502.SZ",
-                "market_date": "2026-06-24",
-                "version_fingerprint": "cleanup-v1",
-                "output_files": "[]",
-                "artifact_owner_id": "cleanup-source-request",
-                "status": "active",
-                "hit_count": 0,
-                "created_at": "2026-01-01T00:00:00+00:00",
-                "updated_at": "2026-01-01T00:00:00+00:00",
-            },
-        )
-
     cleanup_useless_business_records(now="2026-06-02T00:00:00+00:00", dry_run=False)
 
     products, total = list_products_page(include_invalidated=True, business_type="technical_analysis")
@@ -3697,7 +3749,6 @@ def test_cleanup_does_not_delete_products_or_legacy_product_sources(business_env
     with connect() as conn:
         assert conn.execute(text("select count(*) from request_records where request_id = 'cleanup-source-request'")).scalar_one() == 1
         assert conn.execute(text("select count(*) from content_records where content_id = 'cleanup-source-content'")).scalar_one() == 1
-        assert conn.execute(text("select count(*) from cache_entries where cache_key = 'cleanup-source-cache'")).scalar_one() == 1
 
 
 def test_web_daily_content_generate_marks_generating_before_background_task(business_env, monkeypatch):
@@ -4328,7 +4379,7 @@ def test_cache_handler_keyword_search_filters_backend_results_and_total(business
 
     entries, total = list_generated_history_page(page=1, page_size=20, keyword="keyword-match")
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 2
+    assert backfill_result["cache_created"] == 0
     assert backfill_result["content_created"] == 1
 
     payload = _call_investment_json_handler(
@@ -4397,7 +4448,7 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
         artifact_owner_id="request-legacy-only",
     )
     backfill_result = product_service.backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 1
+    assert backfill_result["cache_created"] == 0
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -4410,15 +4461,15 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     assert [entry["cache_key"] for entry in payload["entries"]].count(product_cache_key) == 1
     product_entry = next(entry for entry in payload["entries"] if entry["cache_key"] == product_cache_key)
     assert product_entry["source_type"] == "product"
-    assert product_entry["product_id"] == product["product_id"]
+    assert product_entry["product_id"] != product["product_id"]
     assert product_entry["service_type"] == "technical_analysis"
     assert product_entry["business_type"] == "technical_analysis"
     assert product_entry["normalized_target"] == "300502.SZ"
     assert product_entry["target_key"] == "300502.SZ"
     assert product_entry["market_date"] == "2026-06-24"
     assert product_entry["business_date"] == "2026-06-24"
-    assert product_entry["artifact_owner_id"] == "request-product"
-    assert product_entry["output_files"] == ["/tmp/product-card.png"]
+    assert product_entry["artifact_owner_id"] == "request-legacy"
+    assert product_entry["output_files"] == ["/tmp/legacy-card.png"]
     legacy_entry = next(entry for entry in payload["entries"] if entry["cache_key"] == legacy_cache_key)
     assert legacy_entry["source_type"] == "product"
     assert legacy_entry["product_source_type"] == "cache"
@@ -4458,7 +4509,7 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     assert content_payload["entries"][0]["content_id"] == content_id
     assert content_payload["entries"][0]["artifact_owner_id"] == content_id
 
-    product_service.invalidate_product(product["product_id"])
+    product_service.invalidate_product(product_entry["product_id"])
     invalidated_payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheHandler().GET,
@@ -4483,19 +4534,24 @@ def test_cache_handler_merges_product_rows_and_dedupes_legacy_sources(business_e
     )
 
     assert invalidated_visible_payload["status"] == "success"
-    assert invalidated_visible_payload["pagination"]["total"] == 2
+    assert invalidated_visible_payload["pagination"]["total"] == 3
     invalidated_product_entry = next(
         entry for entry in invalidated_visible_payload["entries"] if entry["product_id"] == product["product_id"]
     )
     assert invalidated_product_entry["source_type"] == "product"
     assert invalidated_product_entry["status"] == "invalidated"
+    invalidated_current_entry = next(
+        entry for entry in invalidated_visible_payload["entries"] if entry["product_id"] == product_entry["product_id"]
+    )
+    assert invalidated_current_entry["source_type"] == "product"
+    assert invalidated_current_entry["status"] == "invalidated"
     assert any(
         entry["cache_key"] == legacy_cache_key and entry["source_type"] == "product"
         for entry in invalidated_visible_payload["entries"]
     )
 
 
-def test_cache_handler_keyword_search_excludes_legacy_when_product_is_not_visible(business_env, monkeypatch):
+def test_cache_handler_keyword_search_reads_product_cache_payload(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products import product_service
@@ -4535,8 +4591,10 @@ def test_cache_handler_keyword_search_excludes_legacy_when_product_is_not_visibl
     )
 
     assert payload["status"] == "success"
-    assert payload["pagination"]["total"] == 0
-    assert payload["entries"] == []
+    assert payload["pagination"]["total"] == 1
+    assert payload["entries"][0]["source_type"] == "product"
+    assert payload["entries"][0]["source_cache_key"] == cache_key
+    assert payload["entries"][0]["output_files"] == ["/tmp/legacy-only-keyword-card.png"]
 
     product_keyword_payload = _call_investment_json_handler(
         monkeypatch,
@@ -4595,7 +4653,7 @@ def test_cache_handler_merged_products_keep_pagination_totals(business_env, monk
             output_files=[f"/tmp/legacy-only-card-{index}.png"],
         )
     backfill_result = product_service.backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 2
+    assert backfill_result["cache_created"] == 0
     for index in range(4):
         product_service.create_product(
             business_type="technical_analysis",
@@ -4843,13 +4901,9 @@ def test_artifact_packages_include_unified_products_without_legacy_cache_or_cont
 
 
 def test_artifact_packages_do_not_query_cache_entries_for_product_sources(business_env, tmp_path):
-    from sqlalchemy import select
-
     from business.config.constants import ServiceType
     from business.products.product_service import create_product
     from business.records import records
-    from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries
 
     output = tmp_path / "artifact-product-only.png"
     output.write_text("artifact", encoding="utf-8")
@@ -4864,8 +4918,6 @@ def test_artifact_packages_do_not_query_cache_entries_for_product_sources(busine
         source_type="cache",
         output_files=[str(output)],
     )
-    with connect() as conn:
-        assert conn.execute(select(investment_cache_entries)).fetchall() == []
 
     packages, total = records.list_artifact_packages_page(service_type=ServiceType.TECHNICAL_ANALYSIS)
 
@@ -5335,7 +5387,7 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
     from business.config.constants import ServiceType
     from business.products.product_service import backfill_products_from_legacy_sources
     from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries
+    from business.schema.tables import investment_products
     from business.records.records import list_artifact_folder_nodes
     from channel.web.web_channel import InvestmentArtifactFoldersHandler
 
@@ -5356,8 +5408,8 @@ def test_artifact_folder_api_returns_lightweight_directory_summaries(business_en
         )
         with connect() as conn:
             conn.execute(
-                investment_cache_entries.update()
-                .where(investment_cache_entries.c.cache_key == cache_key)
+                investment_products.update()
+                .where(investment_products.c.source_cache_key == cache_key)
                 .values(created_at=generated_at, updated_at=generated_at)
             )
     backfill_products_from_legacy_sources()
@@ -5537,7 +5589,7 @@ def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatc
         end_date="2026-05-31",
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 4
+    assert backfill_result["cache_created"] == 0
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -5602,7 +5654,7 @@ def test_generated_content_history_api_combines_cache_and_daily_content_records(
     backfill_result = backfill_products_from_legacy_sources()
     assert legacy_total == 2
     assert {entry["source_type"] for entry in legacy_entries} == {"cache", "content"}
-    assert backfill_result["cache_created"] == 1
+    assert backfill_result["cache_created"] == 0
     assert backfill_result["content_created"] == 2
 
     payload = _call_investment_json_handler(
@@ -5839,7 +5891,7 @@ def test_web_record_endpoints_filter_main_fields_with_realistic_web_input(busine
         output_files=["/tmp/ta.png"],
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 2
+    assert backfill_result["cache_created"] == 0
     with connect() as conn:
         for request_id in (rate_request_id, ta_request_id):
             conn.execute(
@@ -8844,15 +8896,11 @@ def _write_legacy_technical_analysis_cache(
 def test_technical_analysis_compatible_cache_reads_products_not_cache_entries(
     business_env, tmp_path, monkeypatch
 ):
-    from sqlalchemy import select
-
     from business.cache.cache_service import build_cache_key, version_fingerprint
     from business.config.constants import ServiceType
     from business.content import technical_analysis
     from business.products.product_service import create_product
     from business.records.records import create_request_record, succeed_request_record
-    from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries
 
     output = tmp_path / "compatible-product-cache.png"
     output.write_text("compatible", encoding="utf-8")
@@ -8889,8 +8937,6 @@ def test_technical_analysis_compatible_cache_reads_products_not_cache_entries(
         source_type="cache",
         output_files=[str(output)],
     )
-    with connect() as conn:
-        assert conn.execute(select(investment_cache_entries)).fetchall() == []
     monkeypatch.setattr(technical_analysis, "technical_analysis_cache_expired_after_close", lambda *args, **kwargs: False)
 
     cached = technical_analysis._find_compatible_cache_entry_for_market_date(
@@ -10538,13 +10584,10 @@ def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(business
 
 
 def test_write_cache_entry_creates_product_without_cache_row(business_env, tmp_path):
-    from sqlalchemy import select
-
     from business.cache.cache_service import build_cache_key, find_cache_entry_by_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products.product_service import list_products_page
-    from business.schema.db import connect
-    from business.schema.tables import investment_cache_entries
+    from business.schema.tables import metadata
 
     output = tmp_path / "product-cache-write.png"
     output.write_text("product-cache-write", encoding="utf-8")
@@ -10562,8 +10605,6 @@ def test_write_cache_entry_creates_product_without_cache_row(business_env, tmp_p
 
     found = find_cache_entry_by_key(cache_key)
     products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
-    with connect() as conn:
-        legacy_rows = conn.execute(select(investment_cache_entries)).fetchall()
 
     assert written.cache_key == cache_key
     assert found is not None
@@ -10572,7 +10613,7 @@ def test_write_cache_entry_creates_product_without_cache_row(business_env, tmp_p
     assert products[0]["source_cache_key"] == cache_key
     assert products[0]["source_request_id"] == "req-product-cache-write"
     assert products[0]["output_files"] == [str(output)]
-    assert legacy_rows == []
+    assert "cache_entries" not in metadata.tables
 
 
 def test_beijing_now_returns_beijing_timezone_datetime():
@@ -11559,18 +11600,14 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
 
     assert list_payload["status"] == "success", list_payload
-    assert list_payload["entries"] == []
-
-    backfill_result = product_service.backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 1
-    list_payload = _call_investment_json_handler(monkeypatch, InvestmentCacheHandler().GET, params={"limit": "20"})
-
-    assert list_payload["status"] == "success", list_payload
+    assert list_payload["pagination"]["total"] == 1
     product_id = list_payload["entries"][0]["product_id"]
     assert list_payload["entries"][0]["source_type"] == "product"
     assert list_payload["entries"][0]["cache_key"] == cache_key
     assert list_payload["entries"][0]["source_cache_key"] == cache_key
     assert list_payload["entries"][0]["output_files"] == ["/tmp/card.png", "/tmp/chart.png", "/tmp/report.md"]
+    backfill_result = product_service.backfill_products_from_legacy_sources()
+    assert backfill_result["cache_created"] == 0
 
     invalidate_payload = _call_investment_json_handler(
         monkeypatch,
@@ -11604,6 +11641,13 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
         output_files=["/tmp/card.png"],
         artifact_owner_id="request-2",
     )
+    active_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"limit": "20", "service_type": "technical_analysis", "market_date": "2026-05-25"},
+    )
+    active_product_id = active_payload["entries"][0]["product_id"]
+    assert active_product_id != product_id
     clear_payload = _call_investment_json_handler(
         monkeypatch,
         InvestmentCacheClearHandler().POST,
@@ -11630,7 +11674,7 @@ def test_web_business_cache_handlers_list_and_clear_entries(business_env, monkey
     )
     assert cleared_invalidated_payload["status"] == "success"
     assert cleared_invalidated_payload["entries"][0]["source_type"] == "product"
-    assert cleared_invalidated_payload["entries"][0]["product_id"] == product_id
+    assert cleared_invalidated_payload["entries"][0]["product_id"] == active_product_id
     assert cleared_invalidated_payload["entries"][0]["status"] == "invalidated"
 
 
@@ -11847,7 +11891,7 @@ def test_cache_key_invalidation_invalidates_backfilled_product_history(business_
         artifact_owner_id="req-cache-invalidate",
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 1
+    assert backfill_result["cache_created"] == 0
 
     initial_payload = _call_investment_json_handler(
         monkeypatch,
@@ -11973,7 +12017,7 @@ def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_servic
         artifact_owner_id="request-1",
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 1
+    assert backfill_result["cache_created"] == 0
 
     invalid_limit_payload = _call_investment_json_handler(
         monkeypatch,
@@ -12646,7 +12690,7 @@ def test_daily_content_expiration_persists_invalidated_status(business_env, tmp_
     assert by_content_id[fresh_id]["status"] == PRODUCT_STATUS_ACTIVE
 
 
-def test_backfill_products_from_legacy_cache_entries_is_idempotent(business_env, tmp_path):
+def test_backfill_products_from_product_cache_sources_is_idempotent(business_env, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
     from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
@@ -12670,7 +12714,7 @@ def test_backfill_products_from_legacy_cache_entries_is_idempotent(business_env,
     second = backfill_products_from_legacy_sources()
 
     rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
-    assert first["cache_created"] == 1
+    assert first["cache_created"] == 0
     assert second["cache_created"] == 0
     assert total == 1
     assert rows[0]["source_type"] == "cache"
@@ -14467,9 +14511,8 @@ def test_web_channel_uses_admin_session_instead_of_customer_permission(business_
 def test_web_channel_routes_technical_analysis_as_ordinary_business_without_permission(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
     from business.config.constants import ServiceType, Status
+    from business.products.product_service import list_products_page
     from business.records.records import list_request_records
-    from business.schema.tables import investment_cache_entries
-    from business.schema.db import connect
     from business.accounts.user_service import create_user
     from channel.web.web_channel import _build_investment_web_reply
     import business.content.technical_analysis_handler as ta_handler
@@ -14521,20 +14564,19 @@ def test_web_channel_routes_technical_analysis_as_ordinary_business_without_perm
     assert records[0].raw_input == "300502.SZ 技术分析"
     assert records[0].service_type == ServiceType.TECHNICAL_ANALYSIS
     assert records[0].status == Status.SUCCESS
-    with connect() as conn:
-        cache_rows = conn.execute(investment_cache_entries.select()).fetchall()
-    assert len(cache_rows) == 1
-    cache_item = cache_rows[0]._mapping
-    assert cache_item["cache_key"] == "technical_analysis:300502.SZ:2026-06-10:v"
-    assert cache_item["artifact_owner_id"] == records[0].request_id
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    assert total >= 1
+    assert any(
+        product["source_cache_key"] == "technical_analysis:300502.SZ:2026-06-10:v"
+        and product["source_request_id"] == records[0].request_id
+        for product in products
+    )
 
 
 def test_web_technical_analysis_without_cache_key_appears_in_request_history(business_env, tmp_path, monkeypatch):
     from bridge.reply import ReplyType
     from business.config.constants import ServiceType, Status
     from business.records.records import list_request_records
-    from business.schema.tables import investment_cache_entries
-    from business.schema.db import connect
     from channel.web.web_channel import _build_investment_web_reply
     import business.content.technical_analysis_handler as ta_handler
 
@@ -14578,8 +14620,6 @@ def test_web_technical_analysis_without_cache_key_appears_in_request_history(bus
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
-    with connect() as conn:
-        assert conn.execute(investment_cache_entries.select()).fetchall() == []
     records = list_request_records(limit=10)
     assert len(records) == 1
     assert records[0].service_type == ServiceType.TECHNICAL_ANALYSIS
