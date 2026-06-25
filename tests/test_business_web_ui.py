@@ -2018,8 +2018,8 @@ def test_business_content_page_defaults_to_history_overview():
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
 
     assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'}" in js
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'}" in js
-    assert "include_invalidated: '1'" in js
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in js
+    assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in js
     assert "const dateRange = investmentNormalizeCacheDateFilters();" in cache_body
     assert "const selectedDate = dateRange.marketDate;" in cache_body
     assert "const visibleEntries = values;" in cache_body
@@ -2045,6 +2045,23 @@ def test_business_content_page_defaults_to_history_overview():
     assert "investmentRecordsState.filters.cache.period_mode = investmentCachePeriodMode();" in apply_body
     assert "investmentRecordsState.filters.cache.start_date = range.startDate;" in apply_body
     assert "query.delete('business_date')" in load_body
+
+
+def test_generated_history_defaults_to_active_products_without_invalidated_query():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
+    default_body = _js_function_body(js, "investmentRecordsDefaultFilters")
+    filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
+    load_body = _js_function_body(js, "loadInvestmentProducts")
+
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'}" not in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'};" not in default_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};" in default_body
+    assert "investmentRecordsQueryParams('products')" in load_body
+    assert "query.set('include_invalidated', '1')" not in load_body
+    assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in filters_body
 
 
 def test_generated_history_uses_product_api_with_category_and_artifact_tree():
@@ -2240,7 +2257,7 @@ def test_investment_records_use_unified_products_api():
     assert "record.text_content" in product_drawer_body
     assert "record.generated_text" in product_drawer_body
     assert "filters: {" in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
     assert "pagination: {" in state_body
     assert "products: {page: 1, page_size: 120, total: 0, total_pages: 1}" in state_body
     assert "data: {" in state_body

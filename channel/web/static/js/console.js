@@ -489,7 +489,7 @@ let investmentRecordsState = {
         requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
-        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'},
+        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''},
         cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
     },
@@ -3514,7 +3514,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', market_date: '', include_invalidated: '1'};
     }
     if (tab === 'products') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};
     }
     if (tab === 'backendRequests') {
         return {
