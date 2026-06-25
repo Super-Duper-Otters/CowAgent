@@ -356,6 +356,40 @@ def test_business_generated_content_uses_shared_artifact_file_tree():
     assert ".investment-artifact-viewer" in css
 
 
+def test_generated_history_category_detail_hydrates_artifact_tree_after_render():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    load_body = _js_function_body(js, "loadInvestmentProducts")
+    select_body = _js_function_body(js, "selectInvestmentCacheCategory")
+    hydrate_body = _js_function_body(js, "hydrateInvestmentGeneratedArtifactTree")
+
+    assert "list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);" in load_body
+    assert "if (investmentRecordsState.cacheCategory) await hydrateInvestmentGeneratedArtifactTree();" in load_body
+    assert "loadInvestmentArtifactRootNodes(investmentRecordsState.cacheCategory)" in hydrate_body
+    assert "scheduleInvestmentCacheFilterRefresh()" in select_body
+    assert "await loadInvestmentGeneratedContent()" not in select_body
+
+
+def test_generated_history_toolbar_controls_invalidated_products_and_shows_validity_metadata():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
+    toolbar_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
+    toggle_body = _js_function_body(js, "toggleInvestmentGeneratedIncludeInvalidated")
+    cards_body = _js_function_body(js, "renderInvestmentGeneratedCategoryCards")
+    detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
+    meta_body = _js_function_body(js, "investmentGeneratedEntryValidityMeta")
+
+    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
+    assert "include_invalidated: '1'" not in state_body[state_body.index("products: {"):state_body.index("cache: {")]
+    assert "investment-generated-include-invalidated" in toolbar_body
+    assert "investmentSwitch('含归档/失效'" in toolbar_body
+    assert "investmentRecordsState.filters.products.include_invalidated = checked ? '1' : '';" in toggle_body
+    assert "await loadInvestmentProducts();" in toggle_body
+    assert "investmentGeneratedEntryValidityMeta(entries)" in cards_body
+    assert "investmentGeneratedEntryValidityMeta(entries)" in detail_body
+    assert "investmentProductStatusLabel(entry.status)" in meta_body
+    assert "investmentFormatBeijingTime(entry.expires_at)" in meta_body
+
+
 def test_daily_content_tabs_are_built_from_content_components():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 

@@ -3687,6 +3687,7 @@ async function loadInvestmentProducts() {
         investmentRecordsApplyPagination('products', data.pagination);
         if (list) {
             list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
+            if (investmentRecordsState.cacheCategory) await hydrateInvestmentGeneratedArtifactTree();
         }
         if (pagination) pagination.innerHTML = "";
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
@@ -4229,6 +4230,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const visibleEntries = values;
+    const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
     const content = investmentRecordsState.cacheCategory
         ? renderInvestmentGeneratedContentCategoryDetail(
             investmentRecordsState.cacheCategory,
@@ -4258,6 +4260,9 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                         <span>关键词</span>
                         <input id="investment-content-filter-keyword" type="search" value="${escapeHtml(keyword)}" placeholder="类型/标的/文件" onkeydown="if(event.key === 'Enter') applyInvestmentCacheDate()">
                     </label>
+                    <div class="investment-generated-include-invalidated">
+                        ${investmentSwitch('含归档/失效', 'investment-generated-include-invalidated', includeInvalidated, {attrs: 'onchange="toggleInvestmentGeneratedIncludeInvalidated(this.checked)"'})}
+                    </div>
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
                 </div>
             </div>
@@ -4325,9 +4330,29 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
                 <div class="investment-generated-entry-meta">
                     <span>${hitCount} 次命中</span>
                     <span>${escapeHtml(investmentFormatBeijingTime(latest) || '未更新')}</span>
+                    ${investmentGeneratedEntryValidityMeta(entries)}
                 </div>
             </button>`;
     }).join('');
+}
+
+function investmentGeneratedEntryValidityMeta(entries = []) {
+    const values = Array.isArray(entries) ? entries : [];
+    if (!values.length) return '<span>状态 -</span><span>失效 -</span>';
+    const statusCounts = new Map();
+    values.forEach(entry => {
+        const status = entry.status || '';
+        const label = investmentProductStatusLabel(entry.status);
+        if (!status && !label) return;
+        statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
+    });
+    const statusText = Array.from(statusCounts.entries()).map(([label, count]) => `${label} ${count}`).join(' / ') || '-';
+    const expiresValues = values
+        .map(entry => investmentFormatBeijingTime(entry.expires_at))
+        .filter(Boolean)
+        .sort();
+    const expiresText = expiresValues[0] || '长期有效';
+    return `<span>状态 ${escapeHtml(statusText)}</span><span>失效 ${escapeHtml(expiresText)}</span>`;
 }
 
 function investmentGeneratedEntryIsActive(entry) {
@@ -4364,6 +4389,7 @@ function renderInvestmentGeneratedContentCategoryDetail(serviceType, entries) {
                 <div class="investment-generated-content-detail-title">
                     <h3>${escapeHtml(investmentServiceLabel(serviceType))}</h3>
                     <span class="investment-generated-content-detail-count">${entries.length} 条</span>
+                    <span class="investment-generated-content-detail-validity">${investmentGeneratedEntryValidityMeta(entries)}</span>
                 </div>
             </div>
             <div class="investment-artifact-browser">
@@ -4460,6 +4486,11 @@ async function loadInvestmentArtifactRootNodes(serviceType) {
     if (!root) return;
     const button = root.querySelector('.knowledge-tree-group-btn');
     if (button) await toggleInvestmentArtifactNode(button, serviceType, root.dataset.artifactLevel || 'all', root.dataset.artifactKey || 'all', true);
+}
+
+async function hydrateInvestmentGeneratedArtifactTree() {
+    if (!investmentRecordsState.cacheCategory) return;
+    await loadInvestmentArtifactRootNodes(investmentRecordsState.cacheCategory);
 }
 
 function investmentArtifactFolderQuery(serviceType, level, key) {
@@ -4622,6 +4653,12 @@ async function applyInvestmentCacheDate() {
     investmentRecordsState.filters.cache.keyword = document.getElementById('investment-content-filter-keyword')?.value || '';
     investmentRecordsState.filters.cache.page = '1';
     await loadInvestmentGeneratedContent();
+}
+
+async function toggleInvestmentGeneratedIncludeInvalidated(checked) {
+    investmentRecordsState.filters.products.include_invalidated = checked ? '1' : '';
+    investmentRecordsState.filters.products.page = '1';
+    await loadInvestmentProducts();
 }
 
 async function selectInvestmentCacheCategory(serviceType) {
@@ -6458,6 +6495,7 @@ window.openInvestmentRecordDrawer = openInvestmentRecordDrawer;
 window.closeInvestmentRecordDrawer = closeInvestmentRecordDrawer;
 window.selectInvestmentCacheDate = selectInvestmentCacheDate;
 window.applyInvestmentCacheDate = applyInvestmentCacheDate;
+window.toggleInvestmentGeneratedIncludeInvalidated = toggleInvestmentGeneratedIncludeInvalidated;
 window.selectInvestmentCacheCategory = selectInvestmentCacheCategory;
 window.backInvestmentCacheCategoryMenu = backInvestmentCacheCategoryMenu;
 window.showInvestmentContentDetail = showInvestmentContentDetail;
