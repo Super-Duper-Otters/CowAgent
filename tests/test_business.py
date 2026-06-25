@@ -4875,6 +4875,32 @@ def test_artifact_packages_do_not_query_cache_entries_for_product_sources(busine
     assert packages[0]["file_count"] == 1
 
 
+def test_generated_history_api_reads_products_not_cache_entries_after_cache_retirement(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records.records import list_artifact_packages_page
+
+    output = tmp_path / "history-product-only.png"
+    output.write_text("history", encoding="utf-8")
+    create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ",
+        business_date="2026-06-25",
+        version_fingerprint="vf-history-product-only",
+        status="active",
+        source_type="request",
+        source_request_id="req-history-product-only",
+        output_files=[str(output)],
+    )
+
+    packages, total = list_artifact_packages_page(service_type=ServiceType.TECHNICAL_ANALYSIS)
+
+    assert total == 1
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["product_id"]
+
+
 def test_artifact_packages_normalize_service_aliases_for_product_sources(business_env, tmp_path):
     from business.products.product_service import create_product
     from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page

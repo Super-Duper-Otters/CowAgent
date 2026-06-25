@@ -2137,6 +2137,14 @@ def test_generated_history_ui_has_no_legacy_cache_loader():
     assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" not in js
 
 
+def test_generated_history_does_not_call_legacy_cache_endpoint():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    load_products_body = _js_function_body(js, "loadInvestmentProducts")
+    assert "/api/investment/products" in load_products_body
+    assert "/api/investment/cache" not in load_products_body
+    assert "loadInvestmentCacheEntries" not in _js_function_body(js, "loadInvestmentRecordsTab")
+
+
 def test_business_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
