@@ -200,17 +200,28 @@ def handle_prompt_to_image(
             return BusinessReply(True, False, prompt, [], service_type, code, prompt, detail, request_id, module_key=module_key)
 
         output_files = _output_files(render_result)
-        mark_business_success(
+        storage_namespace = f"components/{module_key}" if service_type == ServiceType.UNMATCHED and module_key else ""
+        archived_path_map = mark_business_success(
             request_id,
             output_files=output_files,
             elapsed_ms=elapsed(),
             artifact_roles={path: "output_image" for path in output_files},
+            storage_namespace=storage_namespace,
         )
+        if output_files:
+            from business.products.product_service import create_product_from_success_request
+
+            create_product_from_success_request(
+                request_id,
+                target_key=source_text,
+                target_label=raw_input,
+            )
+        reply_files = [archived_path_map.get(path, path) for path in output_files]
         return BusinessReply(
             True,
             True,
-            _image_reply(output_files),
-            output_files,
+            _image_reply(reply_files),
+            reply_files,
             service_type,
             request_id=request_id,
             source_type="request",

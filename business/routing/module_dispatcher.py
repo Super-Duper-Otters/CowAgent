@@ -181,6 +181,14 @@ def dispatch_module(
                 elapsed_ms=elapsed(),
                 storage_namespace=storage_namespace,
             )
+            if result.archive_files:
+                from business.products.product_service import create_product_from_success_request
+
+                create_product_from_success_request(
+                    request_id,
+                    target_key=getattr(route, "target_text", "") or raw_input,
+                    target_label=raw_input,
+                )
             reply_files = [archived_path_map.get(path, path) for path in result.reply_files]
             return BusinessReply(
                 True,
@@ -219,6 +227,7 @@ def dispatch_module(
             raw_input,
             route.service_type,
             record_context=record_context,
+            module_key=module_key,
             customer_name=customer_metadata.get("customer_name", ""),
             institution=customer_metadata.get("institution", ""),
         )
@@ -241,12 +250,27 @@ def dispatch_module(
                     request_id,
                     module_key=module_key,
                 )
-            mark_business_success(request_id, output_files=result.output_files, elapsed_ms=elapsed())
+            storage_namespace = f"components/{module_key}" if route.service_type == ServiceType.UNMATCHED and module_key else ""
+            archived_path_map = mark_business_success(
+                request_id,
+                output_files=result.output_files,
+                elapsed_ms=elapsed(),
+                storage_namespace=storage_namespace,
+            )
+            if result.output_files:
+                from business.products.product_service import create_product_from_success_request
+
+                create_product_from_success_request(
+                    request_id,
+                    target_key=getattr(route, "target_text", "") or raw_input,
+                    target_label=raw_input,
+                )
+            reply_files = [archived_path_map.get(path, path) for path in result.output_files]
             return BusinessReply(
                 True,
                 True,
                 result.reply_text,
-                result.output_files,
+                reply_files,
                 route.service_type,
                 request_id=request_id,
                 module_key=module_key,

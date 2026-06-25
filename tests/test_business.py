@@ -2107,9 +2107,10 @@ def test_prompt_component_executes_from_business_route_and_records_module_key(bu
 
 
 def test_command_script_component_executes_from_business_route(business_env, tmp_path):
-    from business.records.business_records import get_request_record
+    from business.records.business_records import get_request_record, list_artifact_packages_page
     from business.components.import_service import create_component_from_import, preview_skill_zip
     from business.config.constants import ServiceType
+    from business.products.product_service import list_products_page
     from business.routing.router import handle_text_message
     from business.accounts.user_service import create_user
 
@@ -2163,13 +2164,24 @@ def test_command_script_component_executes_from_business_route(business_env, tmp
     record = get_request_record(reply.request_id)
     assert record.module_key == "technical-analysis"
     assert len(record.output_files) == 2
+    products, total = list_products_page(include_invalidated=True, business_type="component:technical-analysis")
+    assert total == 1
+    assert products[0]["source_type"] == "request"
+    assert products[0]["source_request_id"] == reply.request_id
+    assert products[0]["output_files"] == record.output_files
+
+    packages, package_total = list_artifact_packages_page(service_type="component:technical-analysis")
+    assert package_total == 1
+    assert packages[0]["source_type"] == "product"
+    assert packages[0]["source_request_id"] == reply.request_id
+    assert packages[0]["files"]
 
 
 def test_command_script_component_can_postprocess_default_output_once(business_env, tmp_path):
     from business.records.business_records import get_request_record, list_artifact_folder_nodes, list_artifact_packages_page
     from business.components.import_service import create_component_from_import, preview_skill_zip
     from business.config.constants import ActorType, EntryType, ServiceType
-    from business.products.product_service import create_product
+    from business.products.product_service import list_products_page
     from business.routing.router import handle_text_message
     from business.schema.storage import get_storage_dirs
     from business.accounts.user_service import create_user
@@ -2277,16 +2289,12 @@ def test_command_script_component_can_postprocess_default_output_once(business_e
     assert set(reply.output_files).issubset(set(record.output_files))
     component_root = get_storage_dirs()["files"] / "components" / "technical-analysis"
     assert all(Path(path).resolve().is_relative_to(component_root.resolve()) for path in record.output_files)
-    product = create_product(
-        business_type="component:technical-analysis",
-        target_key="300502.SZ",
-        target_label="300502.SZ 技术分析",
-        business_date=str(record.created_at)[:10],
-        version_fingerprint="component-test",
-        source_type="request",
-        source_request_id=reply.request_id,
-        output_files=record.output_files,
-    )
+    products, product_total = list_products_page(include_invalidated=True, business_type="component:technical-analysis")
+    assert product_total == 1
+    product = products[0]
+    assert product["source_type"] == "request"
+    assert product["source_request_id"] == reply.request_id
+    assert product["output_files"] == record.output_files
 
     service_nodes, _total = list_artifact_folder_nodes(level="service")
     component_node = next(node for node in service_nodes if node["key"] == "component:technical-analysis")
@@ -2385,6 +2393,59 @@ investment:
     assert reply.success is True
     assert reply.service_type == ServiceType.UNMATCHED
     assert reply.reply_text == "macro script ok"
+
+
+def test_uploaded_script_component_archives_outputs_under_component_namespace(business_env, tmp_path):
+    from business.accounts.user_service import create_user
+    from business.components.skill_versions import save_package_upload
+    from business.config.constants import ServiceType
+    from business.records.business_records import get_request_record
+    from business.routing.router import handle_text_message
+    from business.schema.storage import get_storage_dirs
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    package = tmp_path / "testcomponent.zip"
+    skill_md = """---
+name: testcomponent
+description: Test component
+investment:
+  label: Test Component
+  enabled: true
+  routable: true
+  service_type: unmatched
+  match_type: exact
+  triggers:
+    - testcomponent
+  handler_type: script
+  entry: scripts/run.py
+  output_mode: text
+---
+# Test Component
+"""
+    script = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "payload=json.loads(__import__('sys').stdin.read() or '{}')\n"
+        "out=Path(__file__).parent / 'testcomponent-output.txt'\n"
+        "out.write_text('component output:' + payload.get('raw_input', ''), encoding='utf-8')\n"
+        "print(json.dumps({'success': True, 'reply_text': 'ok', 'output_files': [str(out)]}, ensure_ascii=False))\n"
+    )
+    with ZipFile(package, "w") as archive:
+        archive.writestr("SKILL.md", skill_md)
+        archive.writestr("scripts/run.py", script)
+
+    save_package_upload("testcomponent.zip", package.read_bytes(), operator="pytest")
+
+    reply = handle_text_message("ok", "testcomponent")
+
+    assert reply.handled is True
+    assert reply.success is True
+    assert reply.module_key == "testcomponent"
+    record = get_request_record(reply.request_id)
+    assert record.module_key == "testcomponent"
+    assert len(record.output_files) == 1
+    component_root = get_storage_dirs()["files"] / "components" / "testcomponent"
+    assert Path(record.output_files[0]).resolve().is_relative_to(component_root.resolve())
 
 
 def test_web_technical_analysis_script_component_returns_uploaded_text(business_env, tmp_path):
@@ -12395,6 +12456,75 @@ def test_backfill_products_from_legacy_cache_entries_is_idempotent(business_env,
     assert rows[0]["output_files"] == [str(card), str(report)]
 
 
+def test_backfill_products_from_success_request_records_creates_component_products(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
+    from business.records.business_records import create_business_record, mark_business_success
+
+    output = tmp_path / "component-output.png"
+    output.write_bytes(b"component")
+    request_id = create_business_record(
+        "openid",
+        "testcomponent",
+        ServiceType.UNMATCHED,
+        module_key="testcomponent",
+    )
+    mark_business_success(
+        request_id,
+        output_files=[str(output)],
+        elapsed_ms=10,
+        storage_namespace="components/testcomponent",
+    )
+
+    first = backfill_products_from_legacy_sources()
+    second = backfill_products_from_legacy_sources()
+
+    rows, total = list_products_page(include_invalidated=True, business_type="component:testcomponent")
+    assert first["request_created"] == 1
+    assert second["request_created"] == 0
+    assert total == 1
+    assert rows[0]["source_type"] == "request"
+    assert rows[0]["source_request_id"] == request_id
+    assert rows[0]["target_key"] == "testcomponent"
+    assert rows[0]["output_files"]
+    assert all(Path(path).is_file() for path in rows[0]["output_files"])
+
+
+def test_backfill_products_from_request_records_skips_effective_content_delivery_records(business_env, tmp_path):
+    from sqlalchemy import update
+
+    from business.accounts.user_service import create_user
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.products.product_service import backfill_products_from_legacy_sources, list_products_page
+    from business.routing.router import handle_text_message
+    from business.schema.db import connect
+    from business.schema.tables import investment_request_records
+
+    create_user("openid", enabled=True, allowed_services=[ServiceType.ALL])
+    image = tmp_path / "rate.png"
+    image.write_bytes(b"rate")
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate")
+    set_content_effective(content_id, str(image), operator="admin")
+
+    reply = handle_text_message("openid", "利率")
+    assert reply.success is True
+    with connect() as conn:
+        conn.execute(
+            update(investment_request_records)
+            .where(investment_request_records.c.request_id == reply.request_id)
+            .values(action_type="")
+        )
+
+    result = backfill_products_from_legacy_sources()
+
+    rows, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    assert result["request_created"] == 0
+    assert total == 1
+    assert rows[0]["source_type"] == "content"
+    assert rows[0]["source_content_id"] == content_id
+
+
 def test_backfill_products_from_legacy_daily_content_preserves_status_and_text(business_env, tmp_path):
     from sqlalchemy import update
 
@@ -13701,6 +13831,7 @@ def test_prompt_to_image_module_generates_image_from_customer_input(business_env
     import json
 
     from business.components.paths import runtime_component_root
+    from business.products.product_service import list_products_page
     from business.records.records import list_request_records
     from business.routing.router import handle_text_message
 
@@ -13771,9 +13902,17 @@ def test_prompt_to_image_module_generates_image_from_customer_input(business_env
 
     assert reply.success is True
     assert reply.module_key == "macro-brief"
-    assert reply.output_files == [str(output)]
+    assert reply.output_files != [str(output)]
+    assert len(reply.output_files) == 1
+    assert Path(reply.output_files[0]).is_file()
     record = list_request_records(limit=1)[0]
     assert record.module_key == "macro-brief"
+    assert record.output_files == reply.output_files
+    products, total = list_products_page(include_invalidated=True, business_type="component:macro-brief")
+    assert total == 1
+    assert products[0]["source_type"] == "request"
+    assert products[0]["source_request_id"] == reply.request_id
+    assert products[0]["output_files"] == reply.output_files
 
 
 def test_request_records_api_returns_module_label_for_custom_prompt_module(business_env, monkeypatch):

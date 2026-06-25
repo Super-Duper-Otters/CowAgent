@@ -4318,7 +4318,7 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
         const serviceType = category.service_type || category;
         const entries = entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType);
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
-        const contentCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.count || 0), 0);
+        const contentCount = entries.length;
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
             <button class="investment-generated-content-entry" onclick='selectInvestmentCacheCategory(${investmentJsString(serviceType)})'>

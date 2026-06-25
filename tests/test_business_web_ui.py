@@ -2041,6 +2041,8 @@ def test_business_content_page_uses_date_grouped_category_view():
     assert "fa-puzzle-piece" in _js_function_body(js, "investmentGeneratedServiceIcon")
     assert "investmentGeneratedCategoryLabel(category)" in category_cards_body
     assert "entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType)" in category_cards_body
+    assert "const contentCount = entries.length" in category_cards_body
+    assert "entry.request_count || entry.count" not in category_cards_body
     assert "entry.service_type" not in category_cards_body
     assert "investment-records-cache-layout" not in js
     assert "investment-records-date-list" not in js

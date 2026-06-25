@@ -9,7 +9,7 @@ from uuid import uuid4
 from sqlalchemy import and_, desc, func, or_, select, update
 
 from business.schema.db import connect, row_to_dict
-from business.schema.tables import investment_products
+from business.schema.tables import investment_products, investment_request_records
 
 
 PRODUCT_STATUS_ACTIVE = "active"
@@ -230,19 +230,139 @@ def _create_product_on_connection(conn, **kwargs) -> dict:
     return _row_to_product(row)
 
 
-def product_exists_for_source(*, source_cache_key: str = "", source_content_id: str = "", conn=None) -> bool:
+def _existing_product_for_source(
+    *,
+    source_request_id: str = "",
+    source_cache_key: str = "",
+    source_content_id: str = "",
+    conn=None,
+) -> dict | None:
     conditions = []
+    if source_request_id:
+        conditions.append(investment_products.c.source_request_id == _text(source_request_id))
     if source_cache_key:
         conditions.append(investment_products.c.source_cache_key == _text(source_cache_key))
     if source_content_id:
         conditions.append(investment_products.c.source_content_id == _text(source_content_id))
     if not conditions:
-        return False
-    stmt = select(func.count()).select_from(investment_products).where(or_(*conditions))
+        return None
+    stmt = select(investment_products).where(or_(*conditions)).order_by(desc(investment_products.c.created_at)).limit(1)
     if conn is not None:
-        return int(conn.execute(stmt).scalar_one() or 0) > 0
+        row = conn.execute(stmt).fetchone()
+        return _row_to_product(row) if row is not None else None
     with connect() as active_conn:
-        return int(active_conn.execute(stmt).scalar_one() or 0) > 0
+        row = active_conn.execute(stmt).fetchone()
+        return _row_to_product(row) if row is not None else None
+
+
+def product_exists_for_source(
+    *,
+    source_request_id: str = "",
+    source_cache_key: str = "",
+    source_content_id: str = "",
+    conn=None,
+) -> bool:
+    return _existing_product_for_source(
+        source_request_id=source_request_id,
+        source_cache_key=source_cache_key,
+        source_content_id=source_content_id,
+        conn=conn,
+    ) is not None
+
+
+def _request_product_business_type(service_type: str, module_key: str) -> str:
+    if _text(service_type) == "unmatched" and _text(module_key):
+        return f"component:{_text(module_key)}"
+    return _text(service_type)
+
+
+def _is_effective_content_delivery_request(item: dict) -> bool:
+    action_type = _text(item.get("action_type"))
+    if action_type:
+        return action_type == "deliver_effective_content"
+    return _text(item.get("service_type")) in {"rate", "convertible_bond"}
+
+
+def _request_product_target(item: dict, explicit_target: str = "", explicit_label: str = "") -> tuple[str, str]:
+    target_key = (
+        _text(explicit_target)
+        or _text(item.get("normalized_target"))
+        or _text(item.get("stock_code"))
+        or _text(item.get("module_key"))
+        or _text(item.get("raw_input"))
+    )
+    target_label = (
+        _text(explicit_label)
+        or _text(item.get("stock_name"))
+        or _text(item.get("normalized_target"))
+        or _text(item.get("stock_code"))
+        or _text(item.get("raw_input"))
+        or target_key
+    )
+    return target_key, target_label
+
+
+def create_product_from_success_request(
+    request_id: str,
+    *,
+    target_key: str = "",
+    target_label: str = "",
+    business_date: str = "",
+    version_fingerprint: str = "",
+    conn=None,
+) -> dict | None:
+    normalized_request_id = _text(request_id)
+    if not normalized_request_id:
+        return None
+
+    def _create(product_conn) -> dict | None:
+        existing = _existing_product_for_source(source_request_id=normalized_request_id, conn=product_conn)
+        if existing is not None:
+            return existing
+        row = product_conn.execute(
+            select(investment_request_records).where(investment_request_records.c.request_id == normalized_request_id)
+        ).fetchone()
+        if row is None:
+            return None
+        item = row_to_dict(row)
+        if _text(item.get("status")) != "success":
+            return None
+        if _is_effective_content_delivery_request(item):
+            return None
+        output_files = [path for path in _load_list(item.get("output_files")) if Path(path).is_file()]
+        if not output_files:
+            return None
+        service_type = _text(item.get("service_type"))
+        module_key = _text(item.get("module_key"))
+        business_type = _request_product_business_type(service_type, module_key)
+        if not business_type:
+            return None
+        resolved_target_key, resolved_target_label = _request_product_target(item, target_key, target_label)
+        if not resolved_target_key:
+            return None
+        resolved_business_date = _text(business_date) or _text(item.get("market_date")) or _text(item.get("created_at"))[:10]
+        resolved_version = _text(version_fingerprint) or _text(item.get("cache_key")) or normalized_request_id
+        return _create_product_on_connection(
+            product_conn,
+            business_type=business_type,
+            target_key=resolved_target_key,
+            target_label=resolved_target_label,
+            business_date=resolved_business_date,
+            version_fingerprint=resolved_version,
+            source_type="request",
+            source_request_id=normalized_request_id,
+            source_cache_key=_text(item.get("cache_key")),
+            output_files=output_files,
+            effective_at=_text(item.get("created_at")),
+            created_at=_text(item.get("created_at")),
+            updated_at=_text(item.get("updated_at")),
+            metadata={"module_key": module_key} if module_key else {},
+        )
+
+    if conn is not None:
+        return _create(conn)
+    with connect() as product_conn:
+        return _create(product_conn)
 
 
 def _legacy_content_product_status(status: str) -> str:
@@ -262,6 +382,7 @@ def backfill_products_from_legacy_sources(conn=None) -> dict[str, int]:
     def _backfill(product_conn) -> dict[str, int]:
         created_cache = 0
         created_content = 0
+        created_request = 0
 
         cache_rows = product_conn.execute(select(investment_cache_entries)).fetchall()
         for row in cache_rows:
@@ -317,7 +438,17 @@ def backfill_products_from_legacy_sources(conn=None) -> dict[str, int]:
                 updated_at=str(item.get("updated_at") or ""),
             )
             created_content += 1
-        return {"cache_created": created_cache, "content_created": created_content}
+
+        request_rows = product_conn.execute(select(investment_request_records)).fetchall()
+        for row in request_rows:
+            item = row_to_dict(row)
+            request_id = str(item.get("request_id") or "")
+            if not request_id or product_exists_for_source(source_request_id=request_id, conn=product_conn):
+                continue
+            product = create_product_from_success_request(request_id, conn=product_conn)
+            if product is not None:
+                created_request += 1
+        return {"cache_created": created_cache, "content_created": created_content, "request_created": created_request}
 
     if conn is not None:
         return _backfill(conn)
