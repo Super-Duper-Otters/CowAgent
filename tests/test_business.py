@@ -11279,6 +11279,69 @@ def test_cache_key_invalidation_invalidates_backfilled_product_history(business_
     assert archived_payload["entries"][0]["status"] == "invalidated"
 
 
+def test_cache_key_invalidation_preserves_terminal_product_history(business_env):
+    from business.cache.cache_service import build_cache_key
+    from business.config.constants import ServiceType
+    from business.products.product_service import (
+        PRODUCT_STATUS_ACTIVE,
+        PRODUCT_STATUS_ARCHIVED,
+        PRODUCT_STATUS_FAILED,
+        PRODUCT_STATUS_INVALIDATED,
+        create_product,
+        invalidate_products_by_source,
+        list_products_page,
+    )
+
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-22", "v1")
+    active = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-22",
+        version_fingerprint="v1",
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=["/tmp/active-card.png"],
+    )
+    archived = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-22",
+        version_fingerprint="archived-v1",
+        status=PRODUCT_STATUS_ARCHIVED,
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=["/tmp/archived-card.png"],
+    )
+    failed = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-22",
+        version_fingerprint="failed-v1",
+        status=PRODUCT_STATUS_FAILED,
+        source_cache_key=cache_key,
+        source_type="cache",
+        output_files=["/tmp/failed-card.png"],
+    )
+
+    invalidated_count = invalidate_products_by_source(source_cache_key=cache_key)
+
+    products, total = list_products_page(
+        include_invalidated=True,
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        business_date="2026-06-22",
+    )
+    by_product_id = {product["product_id"]: product for product in products}
+    assert invalidated_count == 1
+    assert total == 3
+    assert by_product_id[active["product_id"]]["status"] == PRODUCT_STATUS_INVALIDATED
+    assert by_product_id[archived["product_id"]]["status"] == PRODUCT_STATUS_ARCHIVED
+    assert by_product_id[failed["product_id"]]["status"] == PRODUCT_STATUS_FAILED
+    assert PRODUCT_STATUS_ACTIVE not in {product["status"] for product in products}
+
+
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

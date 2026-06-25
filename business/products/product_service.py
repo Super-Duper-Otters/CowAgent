@@ -713,7 +713,7 @@ def invalidate_products_by_source(*, source_content_id: str = "", source_cache_k
                 .where(
                     and_(
                         or_(*conditions),
-                        investment_products.c.status != PRODUCT_STATUS_INVALIDATED,
+                        investment_products.c.status == PRODUCT_STATUS_ACTIVE,
                     )
                 )
                 .values(
