@@ -3181,83 +3181,6 @@ async function renderInvestmentOperationAudits(targetId = '') {
     }
 }
 
-async function renderInvestmentRecordsLegacy() {
-    const element = investmentContentEl('invest-records-content');
-    investmentLoading(element);
-    try {
-        const cacheRequest = investmentCan('cache.read') ? investmentFetchJson('/api/investment/cache') : Promise.resolve({entries: []});
-        const [requests, contents, caches] = await Promise.all([
-            investmentFetchJson('/api/investment/records/requests'),
-            investmentFetchJson('/api/investment/records/contents'),
-            cacheRequest,
-        ]);
-        const cacheSection = investmentCan('cache.read') ? `
-                <section class="investment-table-panel full">
-                    <div class="investment-panel-heading">
-                        <div class="investment-panel-title"><i class="fas fa-database"></i><span>技术分析缓存</span></div>
-                        <div class="investment-panel-actions">
-                            ${investmentButtonIfCan('cache.write', 'fa-broom', '清理当日技术分析', 'clearInvestmentTechnicalAnalysisCacheByDate()')}
-                        </div>
-                    </div>
-                    ${renderInvestmentCacheTable(caches.entries || [])}
-                </section>` : '';
-        element.innerHTML = `
-            <div class="investment-workbench">
-                <section class="investment-panel investment-workbench-full">
-                    <div class="investment-panel-heading">
-                        <div>
-                            <div class="investment-panel-title"><i class="fas fa-table-list"></i><span>业务记录</span></div>
-                            <div class="investment-subtitle">默认紧凑展示，完整失败原因和输出文件在详情中查看。</div>
-                        </div>
-                        <div class="investment-panel-actions">
-                            ${investmentButton('fa-arrows-rotate', '刷新记录', 'renderInvestmentRecords()', 'primary')}
-                        </div>
-                    </div>
-                    <div class="investment-grid cols-3">
-                        ${investmentField('开始日期', 'invest-export-start-date', '', 'date')}
-                        ${investmentField('结束日期', 'invest-export-end-date', '', 'date')}
-                        <label class="investment-field">
-                            <span>服务类型</span>
-                            ${investmentDropdown('invest-export-service-type', [['', '全部'], ['technical_analysis', '技术分析'], ['rate', '利率'], ['convertible_bond', '转债']], '')}
-                        </label>
-                    </div>
-                    <div class="investment-actions">
-                        ${investmentButtonIfCan('records.export', 'fa-download', '按范围导出', 'exportInvestmentRequestRecordsByRange()', 'primary')}
-                        <label class="investment-field">
-                            <span>月度</span>
-                            <input id="invest-export-month" type="month">
-                        </label>
-                        ${investmentButtonIfCan('records.export', 'fa-calendar-days', '导出月度', 'exportInvestmentRequestRecordsByMonth()')}
-                        <label class="investment-field">
-                            <span>年度</span>
-                            <input id="invest-export-quarter-year" type="number" min="2000" max="2100" value="${new Date().getFullYear()}">
-                        </label>
-                        <label class="investment-field">
-                            <span>季度</span>
-                            ${investmentDropdown('invest-export-quarter', [['1', 'Q1'], ['2', 'Q2'], ['3', 'Q3'], ['4', 'Q4']], '1')}
-                        </label>
-                        ${investmentButtonIfCan('records.export', 'fa-chart-pie', '导出季度', 'exportInvestmentRequestRecordsByQuarter()')}
-                    </div>
-                </section>
-                <section class="investment-table-panel full">
-                    <div class="investment-panel-title"><i class="fas fa-message"></i><span>公众号请求记录</span></div>
-                    ${renderInvestmentRequestRecordsTable(requests.records || [])}
-                </section>
-                <section class="investment-table-panel full">
-                    <div class="investment-panel-title"><i class="fas fa-gears"></i><span>后台内容生成记录</span></div>
-                    ${renderInvestmentContentTable(contents.records || [])}
-                    <div id="invest-content-detail" data-investment-detail-panel class="investment-detail-panel hidden"></div>
-                </section>
-                ${cacheSection}
-                <section class="investment-panel investment-workbench-full">
-                    <div id="invest-record-detail" data-investment-detail-panel class="investment-detail-panel hidden"></div>
-                </section>
-            </div>`;
-    } catch (error) {
-        investmentError(element, error);
-    }
-}
-
 function investmentExportServiceType() {
     return document.getElementById('invest-export-service-type')?.value || '';
 }
@@ -3360,23 +3283,6 @@ function renderInvestmentRequestRecordsTableLegacy(records) {
     </tr>`).join('');
     return investmentTableWrap(`<table class="investment-table">
         <thead><tr><th>ID</th><th>OpenID</th><th>输入</th><th>服务</th><th>状态</th><th>错误码</th><th>缓存</th><th>失败原因</th><th>输出文件</th><th>时间</th><th>动作</th></tr></thead>
-        <tbody>${rows}</tbody>
-    </table>`);
-}
-
-function renderInvestmentCacheTableLegacy(entries) {
-    if (!entries.length) return '<div class="investment-empty">暂无技术分析缓存</div>';
-    const rows = entries.map(entry => `<tr>
-        <td class="investment-mono">${investmentCompactText(entry.cache_key || '', 34)}</td>
-        <td>${investmentServiceLabel(entry.service_type)}</td>
-        <td>${escapeHtml(entry.normalized_target || '')}</td>
-        <td>${escapeHtml(entry.market_date || '')}</td>
-        <td>${escapeHtml(entry.hit_count ?? 0)}</td>
-        <td>${investmentFileSummary(entry.output_files || [])}</td>
-        <td class="investment-row-actions">${investmentIconButtonIfCan('cache.write', 'fa-ban', '失效', `invalidateInvestmentCache('${encodeURIComponent(entry.cache_key || '')}')`, 'danger')}</td>
-    </tr>`).join('');
-    return investmentTableWrap(`<table class="investment-table">
-        <thead><tr><th>Key</th><th>服务</th><th>标的</th><th>日期</th><th>命中</th><th>输出</th><th>操作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
 }
@@ -4316,14 +4222,6 @@ function renderInvestmentProductsTable(entries) {
     </table>`);
 }
 
-function renderInvestmentCacheTable(entries) {
-    return renderInvestmentCacheTableLegacy(entries);
-}
-
-function renderInvestmentRecordsCacheTab(cacheData = {}) {
-    return renderInvestmentDailyGeneratedContent(cacheData);
-}
-
 function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
     const marketDates = cacheData.business_dates || cacheData.market_dates || [];
@@ -4694,48 +4592,10 @@ function renderInvestmentArtifactViewer(pkg = null, file = null) {
         <div class="investment-artifact-viewer-body">${body}</div>`;
 }
 
-function renderInvestmentCacheCategory(serviceType, entries) {
-    return `
-        <div class="investment-cache-category">
-            ${entries.length ? renderInvestmentCacheCompactRows(entries) : '<div class="investment-history-empty investment-generated-history-empty">暂无历史内容</div>'}
-        </div>`;
-}
-
-function renderInvestmentCacheCompactRows(entries) {
-    const header = `
-        <div class="investment-generated-content-header">
-            <span>标的</span>
-            <span>状态</span>
-            <span>命中</span>
-            <span>更新时间</span>
-            <span>产物</span>
-            <span>操作</span>
-        </div>`;
-    const rows = entries.map(entry => {
-        const drawerType = investmentGeneratedRecordDrawerType(entry);
-        return `
-        <div class="investment-generated-content-row">
-            <button class="investment-generated-content-row-main" onclick="openInvestmentRecordDrawer('${drawerType}', '${investmentEncodedRecord(entry)}')" title="查看详情">
-                <span class="investment-generated-target">${investmentRecordClamp(entry.normalized_target || '全市场/当日内容', 1, 34)}</span>
-                <span>${investmentGeneratedEntryStatus(entry)}</span>
-                <span><b>${escapeHtml(entry.hit_count ?? 0)}</b> 次命中</span>
-                <span>${escapeHtml(investmentFormatBeijingTime(entry.updated_at) || '-')}</span>
-                <span>${investmentGeneratedOutputState(entry)}</span>
-            </button>
-            <div class="investment-row-actions">${investmentGeneratedEntryActions(entry)}</div>
-        </div>`;
-    }).join('');
-    return `<div class="investment-generated-content-entries">${header}${rows}</div>`;
-}
-
 function investmentGeneratedOutputState(entry) {
     const files = Array.isArray(entry.output_files) ? entry.output_files.filter(Boolean) : [];
     if (!files.length) return '<span class="investment-muted-inline">无输出</span>';
     return files.length > 1 ? `${files.length} 个输出` : '已生成';
-}
-
-function renderInvestmentCacheEntryRows(entries) {
-    return renderInvestmentCacheCompactRows(entries);
 }
 
 async function selectInvestmentCacheDate(date) {

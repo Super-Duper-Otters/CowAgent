@@ -1433,7 +1433,7 @@ def test_business_console_hides_actions_by_admin_role():
     assert "investmentButtonIfCan('customers.export'" in js
     assert "investmentButtonIfCan('content.upload'" in js
     assert "investmentButtonIfCan('audits.read', 'fa-clock-rotate-left', '操作流水'" in js
-    assert "investmentIconButtonIfCan('cache.write'" in js
+    assert "investmentTextButtonIfCan('cache.write'" in js
     assert "investmentCanView(" in js
 
 
@@ -1951,13 +1951,13 @@ def test_business_records_page_uses_human_filters_customer_display_and_compact_t
     assert "customer_display" in js
     request_table = _js_function_body(js, "renderInvestmentRequestRecordsTable")
     content_table = _js_function_body(js, "renderInvestmentContentRecordsTable")
-    cache_table = _js_function_body(js, "renderInvestmentCacheCompactRows")
+    products_table = _js_function_body(js, "renderInvestmentProductsTable")
     audit_table = _js_function_body(js, "renderInvestmentOperationAuditsTable")
     assert "record.customer_display" in request_table
     assert "<th>ID</th>" not in request_table
     assert "renderInvestmentFilePreview(" not in request_table
     assert "renderInvestmentFilePreview(" not in content_table
-    assert "renderInvestmentFilePreview(" not in cache_table
+    assert "renderInvestmentFilePreview(" not in products_table
     assert "renderInvestmentFilePreview(" not in audit_table
     assert "investmentRecordClamp(" in request_table
     assert "investmentRecordClamp(" in audit_table
@@ -1981,7 +1981,9 @@ def test_business_content_page_uses_date_grouped_category_view():
 
     assert "function renderInvestmentDailyGeneratedContent(" in js
     assert "function renderInvestmentProductsTable(" in js
-    assert "function renderInvestmentCacheCategory(" in js
+    assert "function renderInvestmentGeneratedContentCategoryDetail(" in js
+    assert "function renderInvestmentCacheCategory(" not in js
+    assert "function renderInvestmentCacheCompactRows(" not in js
     assert "function selectInvestmentCacheCategory(" in js
     assert "function backInvestmentCacheCategoryMenu(" in js
     assert "technical_analysis" in js
@@ -2079,14 +2081,21 @@ def test_generated_history_uses_product_api_with_category_and_artifact_tree():
     assert "renderInvestmentArtifactViewer()" in detail_body
 
 
+def test_generated_history_ui_has_no_legacy_cache_loader():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    assert "renderInvestmentCacheTableLegacy" not in js
+    assert "renderInvestmentRecordsCacheTab" not in js
+    assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" not in js
+
+
 def test_business_content_page_removes_redundant_topbar_and_uses_compact_history_layout():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
     render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
-    rows_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
-    category_body = _js_function_body(js, "renderInvestmentCacheCategory")
+    detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
+    artifact_tree_body = _js_function_body(js, "renderInvestmentArtifactLazyTree")
 
     assert "investment-content-workspace" in render_body
     assert "investment-records-topbar" not in render_body
@@ -2095,8 +2104,9 @@ def test_business_content_page_removes_redundant_topbar_and_uses_compact_history
     assert "investment-generated-content-title" in cache_body
     assert "investment-generated-history-empty" not in home_body
     assert "暂无历史内容" not in home_body
-    assert "investment-generated-history-empty" in category_body
-    assert "暂无历史内容" in category_body
+    assert "investment-artifact-browser" in detail_body
+    assert "investment-generated-history-empty" in artifact_tree_body
+    assert "选择日期范围查看目录" in artifact_tree_body
     assert ".investment-content-workspace" in css
     assert ".investment-content-shell" in css
     assert ".investment-content-list" in css
@@ -2129,7 +2139,7 @@ def test_business_generated_content_page_avoids_duplicate_date_controls_and_wide
     assert "当日有关生成内容" not in js
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     home_body = _js_function_body(js, "renderInvestmentGeneratedContentHome")
-    rows_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
+    detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
     assert cache_body.count("investment-records-filter-market_date") == 1
     assert "investment-generated-content-toolbar" in cache_body
     assert "investment-cache-category-grid" not in cache_body
@@ -2139,7 +2149,7 @@ def test_business_generated_content_page_avoids_duplicate_date_controls_and_wide
     assert "investmentNormalizeCacheDateFilters()" in cache_body
     assert "investment-content-filter-keyword" in cache_body
     assert "investmentCacheKeyword()" in cache_body
-    assert "entry.normalized_target" in rows_body
+    assert "renderInvestmentArtifactLazyTree(serviceType)" in detail_body
     assert "entry.output_files" in _js_function_body(js, "investmentGeneratedOutputState")
     assert "investment-generated-library" in home_body
     assert "investment-generated-category-strip" in home_body
@@ -2181,7 +2191,6 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     render_body = _js_function_body(js, "renderInvestmentGeneratedContent")
     cache_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
     cards_body = _js_function_body(js, "renderInvestmentGeneratedCategoryCards")
-    rows_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
     actions_body = _js_function_body(js, "investmentGeneratedEntryActions")
     load_body = _js_function_body(js, "loadInvestmentProducts")
     products_body = _js_function_body(js, "renderInvestmentProductsTable")
@@ -2204,9 +2213,9 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "investmentGeneratedEntryIsActive(entry)).length" not in cards_body
     assert "invalidated: '已失效'" in js
     assert "status === 'invalidated'" in _js_function_body(js, "investmentStatusClass")
-    assert "<span>产物</span>" in rows_body
-    assert "<span>操作</span>" in rows_body
-    assert "investmentGeneratedEntryActions(entry)" in rows_body
+    assert "<th>产物</th>" in products_body
+    assert "<th>操作</th>" in products_body
+    assert "investmentGeneratedEntryActions(product)" in products_body
     assert "investmentTextButtonIfCan('cache.write', '失效'" in actions_body
     assert "const drawerType = sourceType === 'product' ? 'product' : investmentGeneratedRecordDrawerType(product);" in products_body
     assert "openInvestmentRecordDrawer('${drawerType}'" in products_body
@@ -2241,7 +2250,7 @@ def test_investment_records_use_unified_products_api():
 
     assert "/api/investment/products" in js
     assert "renderInvestmentProductsTable" in js
-    assert "renderInvestmentCacheTableLegacy" in js
+    assert "renderInvestmentCacheTableLegacy" not in js
     assert "renderInvestmentContentRecordsTable" in js
     assert "renderInvestmentProductDrawer" in js
     assert "renderInvestmentRecordsTabButton('products', '产物'" not in records_shell_body
@@ -2300,36 +2309,34 @@ def test_business_generated_content_category_detail_is_compact():
     css = CONSOLE_CSS.read_text(encoding="utf-8")
 
     detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
-    category_body = _js_function_body(js, "renderInvestmentCacheCategory")
-    row_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
     actions_body = _js_function_body(js, "investmentGeneratedEntryActions")
     assert "investment-generated-content-detail-count" in detail_body
-    assert "investment-cache-category-title" not in category_body
-    assert "renderInvestmentCacheCompactRows(entries)" in category_body
-    assert "investment-generated-content-header" in row_body
-    assert "<span>标的</span>" in row_body
+    assert "investment-artifact-browser" in detail_body
+    assert "renderInvestmentArtifactLazyTree(serviceType)" in detail_body
+    assert "renderInvestmentArtifactViewer()" in detail_body
+    assert "renderInvestmentCacheCategory" not in js
+    assert "renderInvestmentCacheCompactRows" not in js
     assert "align-content: start;" in css
     assert ".investment-generated-content-header,\n.investment-generated-content-row" in css
     assert "min-height: 44px;" in css
     assert "padding: 0 10px;" in css
     assert "grid-template-columns: minmax(180px, 1.45fr) 84px 82px 156px 110px 86px;" in css
     assert "grid-column: 1 / 6;" in css
-    assert "investmentGeneratedEntryActions(entry)" in row_body
     assert "investmentTextButtonIfCan('cache.write'" in actions_body
 
 
 def test_business_generated_content_rows_treat_daily_content_as_content_records():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
-    row_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
-    assert "investmentGeneratedRecordDrawerType(entry)" in row_body
-    assert "investmentGeneratedEntryActions(entry)" in row_body
+    drawer_type_body = _js_function_body(js, "investmentGeneratedRecordDrawerType")
+    products_body = _js_function_body(js, "renderInvestmentProductsTable")
+    assert "investmentGeneratedRecordDrawerType(product)" in products_body
+    assert "investmentGeneratedEntryActions(product)" in products_body
     assert "source_type === 'cache'" in js
     assert "source_type === 'content'" in js
     assert "invalidateInvestmentCache" in _js_function_body(js, "investmentGeneratedEntryActions")
-    assert "openInvestmentRecordDrawer('content'" not in row_body
-    assert "const drawerType = investmentGeneratedRecordDrawerType(entry);" in row_body
-    assert "openInvestmentRecordDrawer('${drawerType}'" in row_body
+    assert "return 'content';" in drawer_type_body
+    assert "openInvestmentRecordDrawer('${drawerType}'" in products_body
 
 
 def test_business_generated_content_drawer_hides_low_value_long_cache_fields():
@@ -2502,10 +2509,10 @@ def test_business_records_times_are_formatted_as_beijing_time():
     assert "function investmentFormatBeijingTime(" in js
     assert "Asia/Shanghai" in js
     request_body = _js_function_body(js, "renderInvestmentRequestRecordsTable")
-    cache_body = _js_function_body(js, "renderInvestmentCacheCompactRows")
+    products_body = _js_function_body(js, "renderInvestmentProductsTable")
     audit_body = _js_function_body(js, "renderInvestmentOperationAuditsTable")
     assert "investmentFormatBeijingTime(record.created_at)" in request_body
-    assert "investmentFormatBeijingTime(entry.updated_at)" in cache_body
+    assert "investmentFormatBeijingTime(product.created_at || product.updated_at || product.effective_at)" in products_body
     assert "investmentFormatBeijingTime(audit.created_at)" in audit_body
 
 
