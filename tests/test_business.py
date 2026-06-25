@@ -4228,7 +4228,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
     with connect() as conn:
         for index, cache_key in enumerate(cache_keys):
             conn.execute(
-                text("update cache_entries set updated_at = :updated_at where cache_key = :cache_key"),
+                text("update products set updated_at = :updated_at where source_cache_key = :cache_key"),
                 {"updated_at": f"2026-05-29T03:0{index}:00+00:00", "cache_key": cache_key},
             )
 
@@ -4239,7 +4239,7 @@ def test_cache_entries_page_returns_total_and_filter_pagination(business_env, mo
         market_date="2026-05-29",
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 6
+    assert backfill_result["cache_created"] == 0
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -4279,7 +4279,7 @@ def test_cache_handler_without_market_date_returns_history_across_dates(business
         output_files=["/tmp/rate-new.png"],
     )
     backfill_result = backfill_products_from_legacy_sources()
-    assert backfill_result["cache_created"] == 2
+    assert backfill_result["cache_created"] == 0
 
     payload = _call_investment_json_handler(
         monkeypatch,
@@ -10421,6 +10421,44 @@ def test_write_cache_entry_rewrites_payload_without_resetting_hit_count(business
     assert entries[0].status == "active"
 
 
+def test_write_cache_entry_creates_product_without_cache_row(business_env, tmp_path):
+    from sqlalchemy import select
+
+    from business.cache.cache_service import build_cache_key, find_cache_entry_by_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from business.products.product_service import list_products_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_cache_entries
+
+    output = tmp_path / "product-cache-write.png"
+    output.write_text("product-cache-write", encoding="utf-8")
+    cache_key = build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-25", "vf-write-product")
+
+    written = write_cache_entry(
+        cache_key=cache_key,
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-25",
+        version_fingerprint="vf-write-product",
+        output_files=[str(output)],
+        artifact_owner_id="req-product-cache-write",
+    )
+
+    found = find_cache_entry_by_key(cache_key)
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.TECHNICAL_ANALYSIS))
+    with connect() as conn:
+        legacy_rows = conn.execute(select(investment_cache_entries)).fetchall()
+
+    assert written.cache_key == cache_key
+    assert found is not None
+    assert found.cache_key == cache_key
+    assert total == 1
+    assert products[0]["source_cache_key"] == cache_key
+    assert products[0]["source_request_id"] == "req-product-cache-write"
+    assert products[0]["output_files"] == [str(output)]
+    assert legacy_rows == []
+
+
 def test_beijing_now_returns_beijing_timezone_datetime():
     from business.cache.cache_policy import beijing_now
 
@@ -11304,6 +11342,7 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
     from business.cache import cache_service as cache_service
     from business.cache.cache_service import build_cache_key, list_cache_entries, write_cache_entry
     from business.config.constants import ServiceType
+    from business.products import product_service
 
     old_card = tmp_path / "old-card.png"
     new_card = tmp_path / "new-card.png"
@@ -11332,7 +11371,7 @@ def test_find_cache_entry_missing_cache_file_does_not_invalidate_rewritten_activ
         )
         return False
 
-    monkeypatch.setattr(cache_service, "_files_available", rewrite_entry_before_missing_file_result)
+    monkeypatch.setattr(product_service, "_files_available", rewrite_entry_before_missing_file_result)
 
     entry = cache_service.find_cache_entry(
         service_type=ServiceType.TECHNICAL_ANALYSIS,

@@ -704,10 +704,11 @@ def replace_active_product(
     expires_at: str = "",
     effective_at: str = "",
     archived_at: str = "",
+    conn=None,
 ) -> dict:
-    with connect() as conn:
+    def _replace(product_conn) -> dict:
         product = _create_product_on_connection(
-            conn,
+            product_conn,
             business_type=business_type,
             target_key=target_key,
             target_label=target_label,
@@ -727,7 +728,7 @@ def replace_active_product(
             archived_at=archived_at,
         )
         _invalidate_prior_active_products_on_connection(
-            conn,
+            product_conn,
             business_type=business_type,
             target_key=target_key,
             business_date=business_date,
@@ -735,6 +736,11 @@ def replace_active_product(
             exclude_product_id=product["product_id"],
         )
         return product
+
+    if conn is not None:
+        return _replace(conn)
+    with connect() as product_conn:
+        return _replace(product_conn)
 
 
 def increment_product_hit(product_id: str) -> None:

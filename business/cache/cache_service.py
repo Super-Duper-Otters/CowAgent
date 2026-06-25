@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from sqlalchemy import and_, desc, func, or_, select, update
+from sqlalchemy import and_, desc, func, or_, select, text, update
 
 from business.config.constants import ServiceType, Status
 from business.schema.db import connect, row_to_dict
-from business.schema.tables import investment_cache_entries, investment_daily_contents
+from business.schema.tables import investment_daily_contents, investment_products
 
 
 CACHE_STATUS_ACTIVE = "active"
@@ -78,20 +78,38 @@ def _load_list(value: str | None) -> list[str]:
         return []
 
 
-def _row_to_entry(row) -> CacheEntry:
+def _product_row_to_entry(row) -> CacheEntry:
     item = row_to_dict(row)
     return CacheEntry(
-        cache_key=item["cache_key"],
-        service_type=ServiceType(item["service_type"]),
-        normalized_target=item["normalized_target"] or "",
-        market_date=item["market_date"] or "",
+        cache_key=item.get("source_cache_key") or "",
+        service_type=ServiceType(item["business_type"]),
+        normalized_target=item.get("target_key") or "",
+        market_date=item.get("business_date") or "",
         version_fingerprint=item["version_fingerprint"] or "",
         output_files=_load_list(item["output_files"]),
-        artifact_owner_id=item.get("artifact_owner_id") or "",
+        artifact_owner_id=item.get("source_request_id") or "",
         status=item["status"] or CACHE_STATUS_ACTIVE,
         hit_count=int(item.get("hit_count") or 0),
         created_at=item.get("created_at") or "",
         updated_at=item.get("updated_at") or "",
+    )
+
+
+def _product_cache_dict_to_entry(item: dict | None) -> CacheEntry | None:
+    if not item:
+        return None
+    return CacheEntry(
+        cache_key=str(item.get("cache_key") or ""),
+        service_type=ServiceType(item.get("service_type")),
+        normalized_target=str(item.get("normalized_target") or ""),
+        market_date=str(item.get("market_date") or ""),
+        version_fingerprint=str(item.get("version_fingerprint") or ""),
+        output_files=list(item.get("output_files") or []),
+        artifact_owner_id=str(item.get("artifact_owner_id") or ""),
+        status=str(item.get("status") or CACHE_STATUS_ACTIVE),
+        hit_count=int(item.get("hit_count") or 0),
+        created_at=str(item.get("created_at") or ""),
+        updated_at=str(item.get("updated_at") or ""),
     )
 
 
@@ -313,30 +331,17 @@ def find_cache_entry(
     market_date: str = "",
     require_files: bool = True,
 ) -> CacheEntry | None:
-    if not market_date:
-        return None
-    conditions = [
-        investment_cache_entries.c.service_type == str(service_type),
-        investment_cache_entries.c.normalized_target == normalized_target,
-        investment_cache_entries.c.market_date == market_date,
-        investment_cache_entries.c.version_fingerprint == version_fingerprint,
-        investment_cache_entries.c.status == CACHE_STATUS_ACTIVE,
-    ]
-    stmt = (
-        select(investment_cache_entries)
-        .where(and_(*conditions))
-        .order_by(desc(investment_cache_entries.c.market_date), desc(investment_cache_entries.c.updated_at))
-        .limit(1)
+    from business.products.product_service import find_product_cache_entry
+
+    return _product_cache_dict_to_entry(
+        find_product_cache_entry(
+            service_type=service_type,
+            normalized_target=normalized_target,
+            version_fingerprint=version_fingerprint,
+            market_date=market_date,
+            require_files=require_files,
+        )
     )
-    with connect() as conn:
-        row = conn.execute(stmt).fetchone()
-    if row is None:
-        return None
-    entry = _row_to_entry(row)
-    if require_files and not _files_available(entry.output_files):
-        _invalidate_cache_entry_if_unchanged(entry)
-        return None
-    return entry
 
 
 def find_cache_entry_by_key(
@@ -344,25 +349,14 @@ def find_cache_entry_by_key(
     *,
     require_files: bool = True,
 ) -> CacheEntry | None:
-    if not cache_key:
-        return None
-    stmt = (
-        select(investment_cache_entries)
-        .where(
-            investment_cache_entries.c.cache_key == cache_key,
-            investment_cache_entries.c.status == CACHE_STATUS_ACTIVE,
+    from business.products.product_service import find_product_cache_entry_by_key
+
+    return _product_cache_dict_to_entry(
+        find_product_cache_entry_by_key(
+            cache_key,
+            require_files=require_files,
         )
-        .limit(1)
     )
-    with connect() as conn:
-        row = conn.execute(stmt).fetchone()
-    if row is None:
-        return None
-    entry = _row_to_entry(row)
-    if require_files and not _files_available(entry.output_files):
-        _invalidate_cache_entry_if_unchanged(entry)
-        return None
-    return entry
 
 
 def find_latest_cache_entry(
@@ -374,21 +368,35 @@ def find_latest_cache_entry(
     require_files: bool = True,
 ) -> CacheEntry | None:
     conditions = [
-        investment_cache_entries.c.service_type == str(service_type),
-        investment_cache_entries.c.normalized_target == normalized_target,
-        investment_cache_entries.c.version_fingerprint == version_fingerprint,
-        investment_cache_entries.c.status == CACHE_STATUS_ACTIVE,
+        investment_products.c.business_type == str(service_type),
+        investment_products.c.target_key == normalized_target,
+        investment_products.c.version_fingerprint == version_fingerprint,
+        investment_products.c.source_type == "cache",
+        investment_products.c.status == CACHE_STATUS_ACTIVE,
     ]
     stmt = (
-        select(investment_cache_entries)
+        select(investment_products)
         .where(and_(*conditions))
-        .order_by(desc(investment_cache_entries.c.market_date), desc(investment_cache_entries.c.updated_at))
+        .order_by(desc(investment_products.c.business_date), desc(investment_products.c.updated_at))
     )
     reference_date = _today()
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()
     for row in rows:
-        entry = _row_to_entry(row)
+        item = row_to_dict(row)
+        entry = CacheEntry(
+            cache_key=str(item.get("source_cache_key") or ""),
+            service_type=ServiceType(item.get("business_type")),
+            normalized_target=str(item.get("target_key") or ""),
+            market_date=str(item.get("business_date") or ""),
+            version_fingerprint=str(item.get("version_fingerprint") or ""),
+            output_files=_load_list(item.get("output_files")),
+            artifact_owner_id=str(item.get("source_request_id") or ""),
+            status=str(item.get("status") or CACHE_STATUS_ACTIVE),
+            hit_count=int(item.get("hit_count") or 0),
+            created_at=str(item.get("created_at") or ""),
+            updated_at=str(item.get("updated_at") or ""),
+        )
         if not _market_date_in_fallback_window(
             entry.market_date,
             reference_date=reference_date,
@@ -396,22 +404,27 @@ def find_latest_cache_entry(
         ):
             continue
         if require_files and not _files_available(entry.output_files):
-            _invalidate_cache_entry_if_unchanged(entry)
+            from business.products.product_service import invalidate_product_if_unchanged
+
+            invalidate_product_if_unchanged(
+                {
+                    "product_id": item["product_id"],
+                    "output_files": entry.output_files,
+                    "updated_at": entry.updated_at,
+                    "version_fingerprint": entry.version_fingerprint,
+                }
+            )
             continue
         return entry
     return None
 
 
 def increment_cache_hit(cache_key: str) -> None:
-    with connect() as conn:
-        conn.execute(
-            update(investment_cache_entries)
-            .where(investment_cache_entries.c.cache_key == cache_key)
-            .values(
-                hit_count=investment_cache_entries.c.hit_count + 1,
-                updated_at=_now(),
-            )
-        )
+    from business.products.product_service import find_product_cache_entry_by_key, increment_product_hit
+
+    item = find_product_cache_entry_by_key(cache_key, require_files=False)
+    if item:
+        increment_product_hit(str(item.get("product_id") or ""))
 
 
 def write_cache_entry(
@@ -424,52 +437,59 @@ def write_cache_entry(
     output_files: list[str],
     artifact_owner_id: str = "",
 ) -> CacheEntry:
-    # Compatibility path for legacy cache_entries consumers; new reusable outputs live in products.
-    now = _now()
-    values = {
-        "cache_key": cache_key,
-        "service_type": str(service_type),
-        "normalized_target": normalized_target,
-        "market_date": market_date,
-        "version_fingerprint": version_fingerprint,
-        "output_files": _json_list(output_files),
-        "artifact_owner_id": artifact_owner_id,
-        "status": CACHE_STATUS_ACTIVE,
-        "updated_at": now,
-    }
-    with connect() as conn:
-        table = investment_cache_entries
-        from sqlalchemy.dialects.postgresql import insert
+    from business.products.product_service import find_product_cache_entry_by_key, replace_active_product
 
-        stmt = insert(table).values(**values, created_at=now, hit_count=0)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[table.c.cache_key],
-            set_={
-                "service_type": stmt.excluded.service_type,
-                "normalized_target": stmt.excluded.normalized_target,
-                "market_date": stmt.excluded.market_date,
-                "version_fingerprint": stmt.excluded.version_fingerprint,
-                "output_files": stmt.excluded.output_files,
-                "artifact_owner_id": stmt.excluded.artifact_owner_id,
-                "status": stmt.excluded.status,
-                "updated_at": stmt.excluded.updated_at,
-            },
+    with connect() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("select pg_advisory_xact_lock(hashtext(:cache_key))"), {"cache_key": cache_key})
+        previous = find_product_cache_entry_by_key(cache_key, require_files=False)
+        previous_hit_count = int((previous or {}).get("hit_count") or 0)
+        product = replace_active_product(
+            business_type=str(service_type),
+            target_key=normalized_target,
+            target_label=normalized_target,
+            business_date=market_date,
+            version_fingerprint=version_fingerprint,
+            status=CACHE_STATUS_ACTIVE,
+            source_request_id=artifact_owner_id,
+            source_cache_key=cache_key,
+            source_type="cache",
+            output_files=output_files,
+            conn=conn,
         )
-        conn.execute(stmt)
-        row = conn.execute(select(table).where(table.c.cache_key == cache_key)).fetchone()
-    return _row_to_entry(row)
+        if previous_hit_count:
+            conn.execute(
+                update(investment_products)
+                .where(investment_products.c.product_id == product["product_id"])
+                .values(hit_count=previous_hit_count)
+            )
+            product["hit_count"] = previous_hit_count
+    return CacheEntry(
+        cache_key=cache_key,
+        service_type=service_type,
+        normalized_target=normalized_target,
+        market_date=market_date,
+        version_fingerprint=version_fingerprint,
+        output_files=list(output_files or []),
+        artifact_owner_id=artifact_owner_id,
+        status=str(product.get("status") or CACHE_STATUS_ACTIVE),
+        hit_count=int(product.get("hit_count") or 0),
+        created_at=str(product.get("created_at") or ""),
+        updated_at=str(product.get("updated_at") or ""),
+    )
 
 
 def invalidate_cache_entry(cache_key: str) -> bool:
     with connect() as conn:
         return bool(
             conn.execute(
-                update(investment_cache_entries)
+                update(investment_products)
                 .where(
-                    investment_cache_entries.c.cache_key == cache_key,
-                    investment_cache_entries.c.status == CACHE_STATUS_ACTIVE,
+                    investment_products.c.source_cache_key == cache_key,
+                    investment_products.c.source_type == "cache",
+                    investment_products.c.status == CACHE_STATUS_ACTIVE,
                 )
-                .values(status=CACHE_STATUS_INVALIDATED, updated_at=_now())
+                .values(status=CACHE_STATUS_INVALIDATED, invalidated_at=_now(), updated_at=_now())
             ).rowcount
         )
 
@@ -478,32 +498,35 @@ def _invalidate_cache_entry_if_unchanged(entry: CacheEntry) -> bool:
     with connect() as conn:
         return bool(
             conn.execute(
-                update(investment_cache_entries)
+                update(investment_products)
                 .where(
-                    investment_cache_entries.c.cache_key == entry.cache_key,
-                    investment_cache_entries.c.status == CACHE_STATUS_ACTIVE,
-                    investment_cache_entries.c.output_files == _json_list(entry.output_files),
-                    investment_cache_entries.c.updated_at == entry.updated_at,
-                    investment_cache_entries.c.version_fingerprint == entry.version_fingerprint,
-                    investment_cache_entries.c.artifact_owner_id == entry.artifact_owner_id,
+                    investment_products.c.source_cache_key == entry.cache_key,
+                    investment_products.c.status == CACHE_STATUS_ACTIVE,
+                    investment_products.c.output_files == _json_list(entry.output_files),
+                    investment_products.c.updated_at == entry.updated_at,
+                    investment_products.c.version_fingerprint == entry.version_fingerprint,
+                    investment_products.c.source_request_id == entry.artifact_owner_id,
                 )
-                .values(status=CACHE_STATUS_INVALIDATED, updated_at=_now())
+                .values(status=CACHE_STATUS_INVALIDATED, invalidated_at=_now(), updated_at=_now())
             ).rowcount
         )
 
 
 def clear_cache_entries(*, service_type: ServiceType | None = None, market_date: str = "") -> int:
-    conditions = [investment_cache_entries.c.status == CACHE_STATUS_ACTIVE]
+    conditions = [
+        investment_products.c.source_type == "cache",
+        investment_products.c.status == CACHE_STATUS_ACTIVE,
+    ]
     if service_type is not None:
-        conditions.append(investment_cache_entries.c.service_type == str(service_type))
+        conditions.append(investment_products.c.business_type == str(service_type))
     if market_date:
-        conditions.append(investment_cache_entries.c.market_date == market_date)
+        conditions.append(investment_products.c.business_date == market_date)
     with connect() as conn:
         return int(
             conn.execute(
-                update(investment_cache_entries)
+                update(investment_products)
                 .where(and_(*conditions))
-                .values(status=CACHE_STATUS_INVALIDATED, updated_at=_now())
+                .values(status=CACHE_STATUS_INVALIDATED, invalidated_at=_now(), updated_at=_now())
             ).rowcount
             or 0
         )
@@ -540,44 +563,44 @@ def list_cache_entries_page(
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
     offset = (page - 1) * page_size
-    conditions = []
+    conditions = [investment_products.c.source_type == "cache"]
     if service_type is not None:
-        conditions.append(investment_cache_entries.c.service_type == str(service_type))
+        conditions.append(investment_products.c.business_type == str(service_type))
     if market_date:
-        conditions.append(investment_cache_entries.c.market_date == market_date)
+        conditions.append(investment_products.c.business_date == market_date)
     else:
         if start_date:
-            conditions.append(investment_cache_entries.c.market_date >= start_date)
+            conditions.append(investment_products.c.business_date >= start_date)
         if end_date:
-            conditions.append(investment_cache_entries.c.market_date <= end_date)
+            conditions.append(investment_products.c.business_date <= end_date)
     if not include_invalidated:
-        conditions.append(investment_cache_entries.c.status == CACHE_STATUS_ACTIVE)
+        conditions.append(investment_products.c.status == CACHE_STATUS_ACTIVE)
     keyword_condition = _keyword_match_condition(
         keyword,
         [
-            investment_cache_entries.c.cache_key,
-            investment_cache_entries.c.service_type,
-            investment_cache_entries.c.normalized_target,
-            investment_cache_entries.c.market_date,
-            investment_cache_entries.c.version_fingerprint,
-            investment_cache_entries.c.output_files,
-            investment_cache_entries.c.artifact_owner_id,
-            investment_cache_entries.c.status,
+            investment_products.c.source_cache_key,
+            investment_products.c.business_type,
+            investment_products.c.target_key,
+            investment_products.c.business_date,
+            investment_products.c.version_fingerprint,
+            investment_products.c.output_files,
+            investment_products.c.source_request_id,
+            investment_products.c.status,
         ],
-        investment_cache_entries.c.service_type,
+        investment_products.c.business_type,
     )
     if keyword_condition is not None:
         conditions.append(keyword_condition)
-    stmt = select(investment_cache_entries)
-    count_stmt = select(func.count()).select_from(investment_cache_entries)
+    stmt = select(investment_products)
+    count_stmt = select(func.count()).select_from(investment_products)
     if conditions:
         stmt = stmt.where(and_(*conditions))
         count_stmt = count_stmt.where(and_(*conditions))
-    stmt = stmt.order_by(desc(investment_cache_entries.c.updated_at)).limit(page_size).offset(offset)
+    stmt = stmt.order_by(desc(investment_products.c.updated_at)).limit(page_size).offset(offset)
     with connect() as conn:
         total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()
-    return [_row_to_entry(row) for row in rows], total
+    return [_product_row_to_entry(row) for row in rows], total
 
 
 def list_generated_history_page(
@@ -630,21 +653,24 @@ def list_cache_market_dates(
     service_type: ServiceType | None = None,
     include_invalidated: bool = False,
 ) -> list[str]:
-    conditions = [investment_cache_entries.c.market_date != ""]
+    conditions = [
+        investment_products.c.source_type == "cache",
+        investment_products.c.business_date != "",
+    ]
     if service_type is not None:
-        conditions.append(investment_cache_entries.c.service_type == str(service_type))
+        conditions.append(investment_products.c.business_type == str(service_type))
     if not include_invalidated:
-        conditions.append(investment_cache_entries.c.status == CACHE_STATUS_ACTIVE)
+        conditions.append(investment_products.c.status == CACHE_STATUS_ACTIVE)
     stmt = (
-        select(investment_cache_entries.c.market_date)
+        select(investment_products.c.business_date)
         .where(and_(*conditions))
         .distinct()
-        .order_by(desc(investment_cache_entries.c.market_date))
+        .order_by(desc(investment_products.c.business_date))
         .limit(limit)
     )
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()
-    return [str(row_to_dict(row).get("market_date") or "") for row in rows if row_to_dict(row).get("market_date")]
+    return [str(row_to_dict(row).get("business_date") or "") for row in rows if row_to_dict(row).get("business_date")]
 
 
 def list_generated_history_market_dates(
