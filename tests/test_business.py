@@ -11214,6 +11214,41 @@ def test_generated_history_api_reads_backfilled_products_not_legacy_sources(busi
     assert payload["entries"][0]["source_cache_key"] == cache_key
 
 
+def test_generated_history_apis_filter_component_products_by_service_type(business_env, monkeypatch):
+    from business.products.product_service import create_product
+    from channel.web.web_channel import InvestmentCacheHandler, InvestmentProductsHandler
+
+    service_type = "component:technical-analysis"
+    product = create_product(
+        business_type=service_type,
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-06-24",
+        version_fingerprint="component-v1",
+        source_type="request",
+        source_request_id="request-component",
+        output_files=["/tmp/component-card.png"],
+    )
+
+    products_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"service_type": service_type, "include_invalidated": "1"},
+    )
+    cache_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": service_type, "include_invalidated": "1", "limit": "20"},
+    )
+
+    assert products_payload["status"] == "success"
+    assert products_payload["pagination"]["total"] == 1
+    assert products_payload["entries"][0]["product_id"] == product["product_id"]
+    assert cache_payload["status"] == "success"
+    assert cache_payload["pagination"]["total"] == 1
+    assert cache_payload["entries"][0]["product_id"] == product["product_id"]
+
+
 def test_cache_key_invalidation_invalidates_backfilled_product_history(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

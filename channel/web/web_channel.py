@@ -3837,16 +3837,19 @@ def _investment_products_payload(params, *, cache_history_shape: bool = False) -
     business_type = str(getattr(params, "business_type", "") or "").strip()
     service_value = str(getattr(params, "service_type", "") or "").strip()
     if not business_type and service_value:
-        service_type = normalize_service(service_value)
-        if service_type == ServiceType.UNMATCHED:
-            return {
-                "status": "success",
-                "entries": [],
-                "business_dates": [],
-                "market_dates": [],
-                "pagination": _investment_pagination_payload(page, page_size, 0),
-            }
-        business_type = str(service_type)
+        if service_value.startswith("component:"):
+            business_type = service_value
+        else:
+            service_type = normalize_service(service_value)
+            if service_type == ServiceType.UNMATCHED:
+                return {
+                    "status": "success",
+                    "entries": [],
+                    "business_dates": [],
+                    "market_dates": [],
+                    "pagination": _investment_pagination_payload(page, page_size, 0),
+                }
+            business_type = str(service_type)
 
     business_date = str(getattr(params, "business_date", "") or "").strip()
     if not business_date:
