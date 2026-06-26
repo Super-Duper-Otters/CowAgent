@@ -5010,6 +5010,10 @@ def test_product_artifact_package_dates_use_business_date_for_folder_metadata(bu
         )
 
     packages, total = list_artifact_packages_page(service_type="technical_analysis")
+    active_packages, active_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        status_category="active",
+    )
     detail_packages, detail_total = list_artifact_packages_page(package_id=product["product_id"])
     folder_packages, folder_total = list_artifact_folder_nodes(
         level="package",
@@ -5165,6 +5169,10 @@ def test_artifact_product_packages_and_folders_default_to_active_non_expired_pro
     )
 
     packages, total = list_artifact_packages_page(service_type="technical_analysis")
+    active_packages, active_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        status_category="active",
+    )
     services, service_total = list_artifact_folder_nodes(level="service")
     dates, date_total = list_artifact_folder_nodes(level="date", service_type="technical_analysis", month="2026-06")
     folder_packages, folder_package_total = list_artifact_folder_nodes(
@@ -5173,14 +5181,16 @@ def test_artifact_product_packages_and_folders_default_to_active_non_expired_pro
         date="2026-06-24",
     )
 
-    assert total == 1
-    assert [package["package_id"] for package in packages] == [active["product_id"]]
+    assert total == 5
+    assert {package["package_id"] for package in packages} >= {active["product_id"]}
+    assert active_total == 1
+    assert [package["package_id"] for package in active_packages] == [active["product_id"]]
     assert service_total == 1
-    assert services[0]["count"] == 1
+    assert services[0]["count"] == 5
     assert date_total == 1
-    assert dates[0]["count"] == 1
-    assert folder_package_total == 1
-    assert [package["package_id"] for package in folder_packages] == [active["product_id"]]
+    assert dates[0]["count"] == 5
+    assert folder_package_total == 5
+    assert active["product_id"] in {package["package_id"] for package in folder_packages}
 
 
 def test_artifact_product_keyword_filters_escape_like_wildcards(business_env, tmp_path):
@@ -5558,6 +5568,195 @@ def test_artifact_folder_api_includes_daily_content_records(business_env, monkey
     assert package_payload["packages"][0]["source_content_id"] == rate_content_id
     assert package_payload["packages"][0]["files"][0]["file_url"].startswith("/api/file?path=")
     assert cb_content_id
+
+
+def test_artifact_history_includes_unused_daily_content_without_product_backfill(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective, update_generation_success
+    from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    active_image = tmp_path / "rate-active.png"
+    unused_image = tmp_path / "rate-unused.png"
+    active_image.write_bytes(b"active")
+    unused_image.write_bytes(b"unused")
+
+    active_id = create_content_draft(ServiceType.RATE, source_text="rate active", effective_date="2026-06-26")
+    unused_id = create_content_draft(ServiceType.RATE, source_text="rate unused", effective_date="2026-06-26")
+    set_content_effective(active_id, str(active_image), effective_date="2026-06-26", operator="ops")
+    update_generation_success(unused_id, "unused generated text", str(unused_image))
+
+    packages, total = list_artifact_packages_page(
+        page=1,
+        page_size=20,
+        service_type=ServiceType.RATE,
+        start_date="2026-06-26",
+        end_date="2026-06-26",
+    )
+    nodes, node_total = list_artifact_folder_nodes(
+        level="package",
+        service_type=ServiceType.RATE,
+        date="2026-06-26",
+        page=1,
+        page_size=20,
+    )
+
+    assert total == 2
+    assert any(item.get("source_content_id") == active_id for item in packages)
+    assert any(item.get("package_id") == unused_id for item in packages)
+    assert {item["display_status"] for item in packages} == {"active", "unused"}
+    assert {item["display_status_label"] for item in packages} == {"有效", "未使用"}
+    assert node_total == 2
+    assert any(item.get("source_content_id") == active_id for item in nodes)
+    assert any(item.get("package_id") == unused_id for item in nodes)
+
+
+def test_artifact_history_status_category_filters_all_sources(business_env, tmp_path):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, invalidate_content, update_generation_success
+    from business.products.product_service import PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED, create_product
+    from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    product_file = tmp_path / "ta-active.png"
+    unused_file = tmp_path / "rate-unused.png"
+    invalidated_file = tmp_path / "rate-invalidated.png"
+    product_file.write_bytes(b"product")
+    unused_file.write_bytes(b"unused")
+    invalidated_file.write_bytes(b"invalidated")
+
+    active_product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502 新易盛",
+        business_date="2026-06-26",
+        version_fingerprint="v1",
+        status=PRODUCT_STATUS_ACTIVE,
+        output_files=[str(product_file)],
+    )
+    invalidated_product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="600000.SH",
+        target_label="600000 浦发银行",
+        business_date="2026-06-26",
+        version_fingerprint="v1",
+        status=PRODUCT_STATUS_INVALIDATED,
+        output_files=[str(product_file)],
+    )
+    unused_id = create_content_draft(ServiceType.RATE, source_text="rate unused", effective_date="2026-06-26")
+    invalidated_id = create_content_draft(ServiceType.RATE, source_text="rate invalidated", effective_date="2026-06-26")
+    update_generation_success(unused_id, "unused generated text", str(unused_file))
+    update_generation_success(invalidated_id, "invalidated generated text", str(invalidated_file))
+    invalidate_content(invalidated_id, operator="ops")
+
+    active_packages, active_total = list_artifact_packages_page(
+        page=1,
+        page_size=20,
+        start_date="2026-06-26",
+        end_date="2026-06-26",
+        status_category="active",
+    )
+    unused_nodes, unused_total = list_artifact_folder_nodes(
+        level="package",
+        date="2026-06-26",
+        page=1,
+        page_size=20,
+        status_category="unused",
+    )
+    invalidated_packages, invalidated_total = list_artifact_packages_page(
+        page=1,
+        page_size=20,
+        start_date="2026-06-26",
+        end_date="2026-06-26",
+        status_category="invalid",
+    )
+
+    assert active_total == 1
+    assert active_packages[0]["package_id"] == active_product["product_id"]
+    assert active_packages[0]["display_status_label"] == "有效"
+    assert unused_total == 1
+    assert unused_nodes[0]["package_id"] == unused_id
+    assert unused_nodes[0]["display_status_label"] == "未使用"
+    assert invalidated_total == 2
+    assert {item["package_id"] for item in invalidated_packages} == {
+        invalidated_product["product_id"],
+        invalidated_id,
+    }
+    assert {item["display_status_label"] for item in invalidated_packages} == {"失效"}
+
+
+def test_artifact_history_marks_technical_analysis_product_invalid_after_market_update(
+    business_env,
+    tmp_path,
+    monkeypatch,
+):
+    import business.cache.cache_policy as cache_policy
+
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+    from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+
+    output = tmp_path / "ta-old.png"
+    output.write_bytes(b"old-ta")
+    product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="600519.SH",
+        target_label="600519 贵州茅台",
+        business_date="2026-06-25",
+        version_fingerprint="v1",
+        source_type="cache",
+        source_cache_key="technical_analysis:600519.SH:2026-06-25:v1",
+        output_files=[str(output)],
+    )
+    monkeypatch.setattr(cache_policy, "technical_analysis_cache_expired_after_close", lambda *_args, **_kwargs: True)
+
+    packages, total = list_artifact_packages_page(
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        package_id=product["product_id"],
+    )
+    dates, date_total = list_artifact_folder_nodes(
+        level="date",
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        month="2026-06",
+        status_category="invalid",
+    )
+
+    assert total == 1
+    assert packages[0]["display_status"] == "invalid"
+    assert packages[0]["display_status_label"] == "失效"
+    assert date_total == 1
+    assert dates[0]["key"] == "2026-06-25"
+
+
+def test_daily_content_new_effective_archives_previous_effective_across_dates(business_env, tmp_path):
+    from business.config.constants import ServiceType, Status
+    from business.content.daily_content import create_content_draft, set_content_effective
+    from business.products.product_service import PRODUCT_STATUS_ARCHIVED, PRODUCT_STATUS_ACTIVE, list_products_page
+    from business.records.business_records import list_artifact_packages_page
+    from business.records.records import get_content_record
+
+    first_image = tmp_path / "first-rate.png"
+    second_image = tmp_path / "second-rate.png"
+    first_image.write_bytes(b"first")
+    second_image.write_bytes(b"second")
+    first_id = create_content_draft(ServiceType.RATE, source_text="first", effective_date="2026-06-25")
+    second_id = create_content_draft(ServiceType.RATE, source_text="second", effective_date="2026-06-26")
+
+    set_content_effective(first_id, str(first_image), effective_date="2026-06-25", operator="ops")
+    set_content_effective(second_id, str(second_image), effective_date="2026-06-26", operator="ops")
+
+    products, total = list_products_page(include_invalidated=True, business_type=str(ServiceType.RATE))
+    by_content_id = {product["source_content_id"]: product for product in products}
+    packages, package_total = list_artifact_packages_page(service_type=ServiceType.RATE, page_size=20)
+
+    assert get_content_record(first_id).status == Status.ARCHIVED
+    assert get_content_record(second_id).status == Status.EFFECTIVE
+    assert total == 2
+    assert by_content_id[first_id]["status"] == PRODUCT_STATUS_ARCHIVED
+    assert by_content_id[second_id]["status"] == PRODUCT_STATUS_ACTIVE
+    assert package_total == 2
+    assert {item["source_content_id"]: item["display_status_label"] for item in packages} == {
+        first_id: "失效",
+        second_id: "有效",
+    }
 
 
 def test_cache_entries_api_filters_by_market_date_range(business_env, monkeypatch):
@@ -11812,6 +12011,11 @@ def test_artifact_browser_includes_invalidated_products_only_when_requested(busi
     expired = make_product("expired", PRODUCT_STATUS_ACTIVE, expires_at="2000-01-01T00:00:00+00:00")
 
     default_packages, default_total = list_artifact_packages_page(service_type="technical_analysis", page_size=20)
+    active_only_packages, active_only_total = list_artifact_packages_page(
+        service_type="technical_analysis",
+        page_size=20,
+        status_category="active",
+    )
     default_dates, default_dates_total = list_artifact_folder_nodes(
         level="date",
         service_type="technical_analysis",
@@ -11819,10 +12023,18 @@ def test_artifact_browser_includes_invalidated_products_only_when_requested(busi
         page_size=20,
     )
 
-    assert default_total == 1
-    assert [item["product_id"] for item in default_packages] == [active["product_id"]]
+    assert default_total == 5
+    assert {item["product_id"] for item in default_packages} == {
+        active["product_id"],
+        invalidated["product_id"],
+        archived["product_id"],
+        failed["product_id"],
+        expired["product_id"],
+    }
+    assert active_only_total == 1
+    assert [item["product_id"] for item in active_only_packages] == [active["product_id"]]
     assert default_dates_total == 1
-    assert default_dates[0]["count"] == 1
+    assert default_dates[0]["count"] == 5
 
     included_packages, included_total = list_artifact_packages_page(
         service_type="technical_analysis",
@@ -11865,8 +12077,7 @@ def test_artifact_browser_includes_invalidated_products_only_when_requested(busi
     )
 
     assert default_handler_payload["status"] == "success"
-    assert default_handler_payload["pagination"]["total"] == 1
-    assert default_handler_payload["packages"][0]["product_id"] == active["product_id"]
+    assert default_handler_payload["pagination"]["total"] == 5
     assert included_handler_payload["status"] == "success"
     assert included_handler_payload["pagination"]["total"] == 5
     assert included_folder_payload["status"] == "success"
@@ -13162,7 +13373,7 @@ def test_daily_content_auto_effective_after_generate_publishes_on_backend(busine
     assert record.auto_effective_after_generate is True
 
 
-def test_daily_content_versions_are_effective_per_service_and_date(business_env, tmp_path):
+def test_daily_content_keeps_only_one_effective_version_per_service(business_env, tmp_path):
     from datetime import date, timedelta
 
     from business.config.constants import ServiceType, Status
@@ -13195,7 +13406,7 @@ def test_daily_content_versions_are_effective_per_service_and_date(business_env,
     assert get_content_record(yesterday_first).archived_at
     assert get_content_record(yesterday_second).status == Status.EFFECTIVE
     assert get_content_record(yesterday_second).effective_date == yesterday
-    assert get_content_record(tomorrow_content).status == Status.EFFECTIVE
+    assert get_content_record(tomorrow_content).status == Status.ARCHIVED
     assert get_latest_effective_content(ServiceType.RATE).content_id == yesterday_second
 
 

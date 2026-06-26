@@ -369,24 +369,25 @@ def test_generated_history_category_detail_hydrates_artifact_tree_after_render()
     assert "await loadInvestmentGeneratedContent()" not in select_body
 
 
-def test_generated_history_toolbar_controls_invalidated_products_and_shows_validity_metadata():
+def test_generated_history_toolbar_controls_status_category_and_shows_validity_metadata():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
     toolbar_body = _js_function_body(js, "renderInvestmentDailyGeneratedContent")
-    toggle_body = _js_function_body(js, "toggleInvestmentGeneratedIncludeInvalidated")
+    status_body = _js_function_body(js, "changeInvestmentGeneratedStatusCategory")
     cards_body = _js_function_body(js, "renderInvestmentGeneratedCategoryCards")
     detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
     meta_body = _js_function_body(js, "investmentGeneratedEntryValidityMeta")
 
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', status_category: 'all'}" in state_body
     assert "include_invalidated: '1'" not in state_body[state_body.index("products: {"):state_body.index("cache: {")]
-    assert "investment-generated-include-invalidated" in toolbar_body
-    assert "investmentSwitch('含归档/失效'" in toolbar_body
-    assert "investmentRecordsState.filters.products.include_invalidated = checked ? '1' : '';" in toggle_body
-    assert "await loadInvestmentProducts();" in toggle_body
+    assert "investment-generated-status-category" in toolbar_body
+    assert "[['all', '全部'], ['active', '有效'], ['unused', '未使用'], ['invalid', '失效']]" in toolbar_body
+    assert "investmentRecordsState.filters.products.status_category = value || 'all';" in status_body
+    assert "await loadInvestmentProducts();" in status_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in cards_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in detail_body
-    assert "investmentProductStatusLabel(entry.status)" in meta_body
+    assert "entry.display_status || entry.status || ''" in meta_body
+    assert "entry.display_status_label || investmentProductStatusLabel(status)" in meta_body
     assert "investmentFormatBeijingTime(entry.expires_at)" in meta_body
 
 
@@ -888,7 +889,11 @@ def test_business_users_toolbar_is_grouped_and_paginated():
     assert "customers: {page: 1, page_size: 20" in js
     assert "renderInvestmentUserPagination('customers'" in js
     assert "function changeInvestmentUserPage(" in js
+    assert "function changeInvestmentUserPageSize(" in js
     assert "onclick=\"changeInvestmentUserPage('${panel}'" in js
+    assert "changeInvestmentUserPageSize('${panel}', value)" in js
+    assert "investment-user-page-size-${panel}" in js
+    assert "[20, 50, 80, 120, 200]" in js
     assert "applyInvestmentCustomerSearch()" in js
     assert "applyInvestmentAdminSearch()" in js
     assert "investment-user-toolbar-grid" in js
@@ -2067,8 +2072,8 @@ def test_business_content_page_defaults_to_history_overview():
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
 
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in js
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in js
-    assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in js
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', status_category: 'all'}" in js
+    assert "select('status_category', '状态', [['all', '全部'], ['active', '有效'], ['unused', '未使用'], ['invalid', '失效']])" in js
     assert "const dateRange = investmentNormalizeCacheDateFilters();" in cache_body
     assert "const selectedDate = dateRange.marketDate;" in cache_body
     assert "const visibleEntries = values;" in cache_body
@@ -2078,6 +2083,8 @@ def test_business_content_page_defaults_to_history_overview():
     assert "renderInvestmentRecordsPagination('cache')" not in cache_body
     assert "investmentFetchJson(`/api/investment/products?${query.toString()}`)" in load_body
     assert "investmentFetchJson(`/api/investment/cache?${query.toString()}`)" not in load_body
+    assert "investmentRecordsApplyPagination('products', data.pagination)" in load_body
+    assert "if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination('products');" in load_body
     assert "renderInvestmentDailyGeneratedContent(investmentRecordsState.data.cache)}${renderInvestmentRecordsPagination('cache')" not in load_body
     assert "investment-generated-category-strip" in home_body
     assert "investment-generated-table-panel" not in home_body
@@ -2096,7 +2103,7 @@ def test_business_content_page_defaults_to_history_overview():
     assert "query.delete('business_date')" in load_body
 
 
-def test_generated_history_defaults_to_active_products_without_invalidated_query():
+def test_generated_history_defaults_to_all_products_with_status_category_filter():
     js = CONSOLE_JS.read_text(encoding="utf-8")
 
     state_body = js[js.index("let investmentRecordsState ="):js.index("const INVEST_VIEW_PERMISSIONS")]
@@ -2104,15 +2111,14 @@ def test_generated_history_defaults_to_active_products_without_invalidated_query
     filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
     load_body = _js_function_body(js, "loadInvestmentProducts")
 
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', include_invalidated: '1'}" not in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', status_category: 'all'}" in state_body
     assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in state_body
     assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: '', include_invalidated: '1'};" not in default_body
-    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: ''};" in default_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: '', status_category: 'all'};" in default_body
     assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: '', include_invalidated: '1'};" in default_body
     assert "investmentRecordsQueryParams('products')" in load_body
     assert "query.set('include_invalidated', '1')" not in load_body
-    assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in filters_body
+    assert "select('status_category', '状态', [['all', '全部'], ['active', '有效'], ['unused', '未使用'], ['invalid', '失效']])" in filters_body
 
 
 def test_generated_history_uses_product_api_with_category_and_artifact_tree():
@@ -2130,16 +2136,14 @@ def test_generated_history_uses_product_api_with_category_and_artifact_tree():
     assert "renderInvestmentArtifactViewer()" in detail_body
 
 
-def test_generated_history_artifact_requests_include_invalidated_when_product_filter_enabled():
+def test_generated_history_artifact_requests_include_status_category():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     folder_query_body = _js_function_body(js, "investmentArtifactFolderQuery")
     package_body = _js_function_body(js, "loadInvestmentArtifactPackage")
 
-    assert "investmentRecordsState.filters.products?.include_invalidated === '1'" in folder_query_body
-    assert "query.set('include_invalidated', '1')" in folder_query_body
+    assert "query.set('status_category', investmentRecordsState.filters.products?.status_category || 'all')" in folder_query_body
     assert "const query = new URLSearchParams({package_id: packageId, page_size: '1'});" in package_body
-    assert "investmentRecordsState.filters.products?.include_invalidated === '1'" in package_body
-    assert "query.set('include_invalidated', '1')" in package_body
+    assert "query.set('status_category', investmentRecordsState.filters.products?.status_category || 'all')" in package_body
     assert "investmentFetchJson(`/api/investment/artifacts?${query.toString()}`)" in package_body
 
 
@@ -2336,7 +2340,7 @@ def test_investment_records_use_unified_products_api():
     assert "record.text_content" in product_drawer_body
     assert "record.generated_text" in product_drawer_body
     assert "filters: {" in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', status_category: 'all'}" in state_body
     assert "pagination: {" in state_body
     assert "products: {page: 1, page_size: 120, total: 0, total_pages: 1}" in state_body
     assert "data: {" in state_body
@@ -2719,6 +2723,7 @@ def test_generated_content_keyword_search_is_backend_query_not_page_filter():
 def test_business_records_pagination_controls_are_rendered():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     css = CONSOLE_CSS.read_text(encoding="utf-8")
+    generated_body = _js_function_body(js, "renderInvestmentGeneratedContent")
 
     assert "function renderInvestmentRecordsPagination(" in js
     pagination_body = _js_function_body(js, "renderInvestmentRecordsPagination")
@@ -2731,6 +2736,7 @@ def test_business_records_pagination_controls_are_rendered():
     assert "[50, 80, 120, 200]" in pagination_body
     assert "function changeInvestmentRecordsPage(" in js
     assert "function changeInvestmentRecordsPageSize(" in js
+    assert '<div id="investment-records-pagination"></div>' in generated_body
     assert ".investment-records-pagination" in css
     assert ".investment-records-page-size" in css
 
