@@ -106,6 +106,7 @@ def _row_to_product(row) -> dict:
     metadata_value = item.get("product_metadata")
     if metadata_value is None:
         metadata_value = item.get("metadata")
+    display_status, display_status_label = product_display_status(item)
     return {
         "product_id": item["product_id"],
         "business_type": item["business_type"],
@@ -115,6 +116,8 @@ def _row_to_product(row) -> dict:
         "logical_key": item["logical_key"],
         "version_fingerprint": item.get("version_fingerprint") or "",
         "status": item["status"],
+        "display_status": display_status,
+        "display_status_label": display_status_label,
         "source_request_id": item.get("source_request_id") or "",
         "source_content_id": item.get("source_content_id") or "",
         "source_cache_key": item.get("source_cache_key") or "",
@@ -140,6 +143,58 @@ def _expires_at_condition(now: str):
         investment_products.c.expires_at == "",
         investment_products.c.expires_at > canonical_now,
     )
+
+
+def _expires_at_expired(expires_at: str, *, now: str | None = None) -> bool:
+    text = _text(expires_at)
+    if not text:
+        return False
+    now_text = _canonical_utc_timestamp(now or _now())
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed_now = datetime.fromisoformat(now_text.replace("Z", "+00:00"))
+    except ValueError:
+        return text <= now_text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    if parsed_now.tzinfo is None:
+        parsed_now = parsed_now.replace(tzinfo=UTC)
+    return parsed <= parsed_now
+
+
+def product_display_status(item: dict) -> tuple[str, str]:
+    status = _text(item.get("status"))
+    if status == PRODUCT_STATUS_ACTIVE and not _expires_at_expired(item.get("expires_at") or ""):
+        if _text(item.get("business_type")) == "technical_analysis":
+            from business.cache import cache_policy
+
+            if cache_policy.technical_analysis_cache_expired_after_close(
+                _text(item.get("business_date")),
+                _text(item.get("updated_at") or item.get("created_at")),
+                normalized_target=_text(item.get("target_key")),
+            ):
+                return "invalid", "失效"
+        return "active", "有效"
+    return "invalid", "失效"
+
+
+def _status_category(value: str) -> str:
+    normalized = _text(value).lower()
+    aliases = {
+        "all": "all",
+        "": "",
+        "active": "active",
+        "valid": "active",
+        "effective": "active",
+        "unused": "unused",
+        "generated": "unused",
+        "invalid": "invalid",
+        "invalidated": "invalid",
+        "archived": "invalid",
+        "failed": "invalid",
+        "expired": "invalid",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _files_available(paths: list[str]) -> bool:
@@ -601,7 +656,6 @@ def create_product_archiving_active(*, conn=None, **kwargs) -> dict:
             product_conn,
             business_type=kwargs["business_type"],
             target_key=kwargs["target_key"],
-            business_date=kwargs.get("business_date", ""),
         )
         return _create_product_on_connection(product_conn, **kwargs)
 
@@ -1112,6 +1166,7 @@ def list_products_page(
     start_date: str = "",
     end_date: str = "",
     keyword: str = "",
+    status_category: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -1146,7 +1201,10 @@ def list_products_page(
                 func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
             )
         )
-    if not include_invalidated:
+    category = _status_category(status_category)
+    if category == "unused":
+        conditions.append(investment_products.c.product_id == "__none__")
+    elif category not in {"active", "invalid"} and not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
         conditions.append(_expires_at_condition(_now()))
     stmt = select(investment_products)
@@ -1154,7 +1212,14 @@ def list_products_page(
     if conditions:
         stmt = stmt.where(and_(*conditions))
         count_stmt = count_stmt.where(and_(*conditions))
-    stmt = stmt.order_by(desc(investment_products.c.created_at), desc(investment_products.c.product_id)).limit(page_size).offset(offset)
+    stmt = stmt.order_by(desc(investment_products.c.created_at), desc(investment_products.c.product_id))
+    if category in {"active", "invalid"}:
+        with connect() as conn:
+            products = [_row_to_product(row) for row in conn.execute(stmt).fetchall()]
+        products = [product for product in products if product.get("display_status") == category]
+        total = len(products)
+        return products[offset : offset + page_size], total
+    stmt = stmt.limit(page_size).offset(offset)
     with connect() as conn:
         total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()
@@ -1172,6 +1237,7 @@ def list_products_cache_history_page(
     start_date: str = "",
     end_date: str = "",
     keyword: str = "",
+    status_category: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -1206,7 +1272,10 @@ def list_products_cache_history_page(
                 func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
             )
         )
-    if not include_invalidated:
+    category = _status_category(status_category)
+    if category == "unused":
+        conditions.append(investment_products.c.product_id == "__none__")
+    elif category not in {"active", "invalid"} and not include_invalidated:
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
         conditions.append(_expires_at_condition(_now()))
     stmt = select(investment_products)
@@ -1221,9 +1290,14 @@ def list_products_cache_history_page(
             desc(investment_products.c.created_at),
             desc(investment_products.c.product_id),
         )
-        .limit(page_size)
-        .offset(offset)
     )
+    if category in {"active", "invalid"}:
+        with connect() as conn:
+            products = [_row_to_product(row) for row in conn.execute(stmt).fetchall()]
+        products = [product for product in products if product.get("display_status") == category]
+        total = len(products)
+        return products[offset : offset + page_size], total
+    stmt = stmt.limit(page_size).offset(offset)
     with connect() as conn:
         total = int(conn.execute(count_stmt).scalar_one() or 0)
         rows = conn.execute(stmt).fetchall()

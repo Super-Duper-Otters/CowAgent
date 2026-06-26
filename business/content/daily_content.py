@@ -739,7 +739,6 @@ def set_content_effective(
             )
         now = _now()
         archive_conditions = [
-            investment_daily_contents.c.effective_date == normalized_effective_date,
             investment_daily_contents.c.status == str(Status.EFFECTIVE),
             investment_daily_contents.c.content_id != content_id,
         ]

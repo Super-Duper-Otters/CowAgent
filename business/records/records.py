@@ -10,7 +10,14 @@ from sqlalchemy import delete, exists, func, insert, or_, select, update
 
 from business.config.config_service import sanitize_sensitive_text
 from business.config.constants import ActionType, ActorType, EntryType, ErrorCode, ServiceType, Status, normalize_service, user_message
-from business.products.product_service import PRODUCT_STATUS_ACTIVE, _expires_at_condition as _product_expires_at_condition
+from business.products.product_service import (
+    PRODUCT_STATUS_ACTIVE,
+    PRODUCT_STATUS_ARCHIVED,
+    PRODUCT_STATUS_FAILED,
+    PRODUCT_STATUS_INVALIDATED,
+    _expires_at_condition as _product_expires_at_condition,
+    product_display_status,
+)
 from business.schema.db import connect, row_to_dict
 from business.schema.tables import (
     investment_daily_contents,
@@ -1029,6 +1036,23 @@ def _date_part(value: str, length: int = 10) -> str:
     return text[:length] if len(text) >= length else ""
 
 
+def _content_expires_at_expired(expires_at: str, *, now: str | None = None) -> bool:
+    text = str(expires_at or "").strip()
+    if not text:
+        return False
+    now_text = now or _now()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed_now = datetime.fromisoformat(now_text.replace("Z", "+00:00"))
+    except ValueError:
+        return text <= now_text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    if parsed_now.tzinfo is None:
+        parsed_now = parsed_now.replace(tzinfo=UTC)
+    return parsed <= parsed_now
+
+
 def _content_generated_at_expr():
     artifact_created_at = (
         select(func.min(investment_output_files.c.created_at))
@@ -1162,6 +1186,35 @@ def _artifact_files_for_owner(owner_id: str, output_files: list[str]) -> list[di
     return fallback
 
 
+def _display_status_for_content(item: dict) -> tuple[str, str]:
+    status = str(item.get("status") or "")
+    expires_at = str(item.get("expires_at") or "")
+    if status == str(Status.EFFECTIVE) and not _content_expires_at_expired(expires_at):
+        return "active", "有效"
+    if status == str(Status.GENERATED) and not _content_expires_at_expired(expires_at):
+        return "unused", "未使用"
+    return "invalid", "失效"
+
+
+def _status_category(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "all": "",
+        "": "",
+        "active": "active",
+        "valid": "active",
+        "effective": "active",
+        "unused": "unused",
+        "generated": "unused",
+        "invalid": "invalid",
+        "invalidated": "invalid",
+        "archived": "invalid",
+        "failed": "invalid",
+        "expired": "invalid",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _row_to_content_artifact_package(content_item: dict) -> dict:
     content_id = str(content_item.get("content_id") or "")
     service_type = str(content_item.get("service_type") or "")
@@ -1177,6 +1230,7 @@ def _row_to_content_artifact_package(content_item: dict) -> dict:
     if generated_text:
         files.append(_virtual_generated_text_file(generated_text))
     display_name = _content_target_label(service_type)
+    display_status, display_status_label = _display_status_for_content(content_item)
     return {
         "package_id": content_id,
         "source_type": "content",
@@ -1199,6 +1253,8 @@ def _row_to_content_artifact_package(content_item: dict) -> dict:
         "created_at": content_item.get("created_at") or "",
         "updated_at": content_item.get("updated_at") or "",
         "status": content_item.get("status") or "",
+        "display_status": display_status,
+        "display_status_label": display_status_label,
         "files": _dedupe_files(files),
     }
 
@@ -1262,6 +1318,7 @@ def _row_to_product_artifact_package(item: dict) -> dict:
     if text_content:
         files.append(_virtual_generated_text_file(text_content))
     service_label = _service_or_component_label(service_type)
+    display_status, display_status_label = product_display_status(item)
     return {
         "level": "package",
         "key": product_id,
@@ -1292,11 +1349,19 @@ def _row_to_product_artifact_package(item: dict) -> dict:
         "created_at": str(item.get("created_at") or ""),
         "updated_at": str(item.get("updated_at") or ""),
         "status": str(item.get("status") or ""),
+        "display_status": display_status,
+        "display_status_label": display_status_label,
         "files": _dedupe_files(files),
     }
 
 
-def _content_artifact_conditions(service_type: ServiceType | str | None, start_date: str = "", end_date: str = "", keyword: str = ""):
+def _content_artifact_conditions(
+    service_type: ServiceType | str | None,
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    status_category: str = "",
+):
     conditions = []
     if _component_filter_key(service_type):
         return None
@@ -1320,13 +1385,55 @@ def _content_artifact_conditions(service_type: ServiceType | str | None, start_d
     if end_date:
         conditions.append(func.substr(generated_at, 1, 10) <= str(end_date))
     conditions.append(investment_daily_contents.c.effective_date != "")
-    conditions.append(investment_daily_contents.c.status.in_([str(Status.GENERATED), str(Status.EFFECTIVE)]))
-    now = _now()
     conditions.append(
-        investment_daily_contents.c.expires_at.is_(None)
-        | (investment_daily_contents.c.expires_at == "")
-        | (investment_daily_contents.c.expires_at > now)
+        or_(
+            investment_daily_contents.c.output_image != "",
+            investment_daily_contents.c.generated_text != "",
+        )
     )
+    category = _status_category(status_category)
+    if category == "active":
+        conditions.append(investment_daily_contents.c.status == str(Status.EFFECTIVE))
+        now = _now()
+        conditions.append(
+            investment_daily_contents.c.expires_at.is_(None)
+            | (investment_daily_contents.c.expires_at == "")
+            | (investment_daily_contents.c.expires_at > now)
+        )
+    elif category == "unused":
+        conditions.append(investment_daily_contents.c.status == str(Status.GENERATED))
+        now = _now()
+        conditions.append(
+            investment_daily_contents.c.expires_at.is_(None)
+            | (investment_daily_contents.c.expires_at == "")
+            | (investment_daily_contents.c.expires_at > now)
+        )
+    elif category == "invalid":
+        now = _now()
+        conditions.append(
+            or_(
+                investment_daily_contents.c.status.in_(
+                    [str(Status.ARCHIVED), str(Status.INVALIDATED), str(Status.GENERATE_FAILED)]
+                ),
+                (
+                    (investment_daily_contents.c.expires_at.is_not(None))
+                    & (investment_daily_contents.c.expires_at != "")
+                    & (investment_daily_contents.c.expires_at <= now)
+                ),
+            )
+        )
+    else:
+        conditions.append(
+            investment_daily_contents.c.status.in_(
+                [
+                    str(Status.GENERATED),
+                    str(Status.EFFECTIVE),
+                    str(Status.ARCHIVED),
+                    str(Status.INVALIDATED),
+                    str(Status.GENERATE_FAILED),
+                ]
+            )
+        )
     keyword_text = str(keyword or "").strip()
     if keyword_text:
         pattern = f"%{keyword_text}%"
@@ -1411,6 +1518,7 @@ def _product_artifact_conditions(
     end_date: str = "",
     keyword: str = "",
     include_invalidated: bool = False,
+    status_category: str = "",
 ):
     conditions = []
     if service_type is not None and str(service_type or "").strip():
@@ -1424,9 +1532,26 @@ def _product_artifact_conditions(
                 conditions.append(investment_products.c.business_type == "__none__")
             else:
                 conditions.append(investment_products.c.business_type == str(normalized_service))
-    if not include_invalidated:
+    category = _status_category(status_category)
+    if category == "active":
         conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
         conditions.append(_product_expires_at_condition(_now()))
+    elif category == "unused":
+        conditions.append(investment_products.c.product_id == "__none__")
+    elif category == "invalid":
+        now = _now()
+        conditions.append(
+            or_(
+                investment_products.c.status.in_(
+                    [PRODUCT_STATUS_INVALIDATED, PRODUCT_STATUS_ARCHIVED, PRODUCT_STATUS_FAILED]
+                ),
+                (
+                    (investment_products.c.expires_at.is_not(None))
+                    & (investment_products.c.expires_at != "")
+                    & (investment_products.c.expires_at <= now)
+                ),
+            )
+        )
     if start_date:
         conditions.append(investment_products.c.business_date >= str(start_date))
     if end_date:
@@ -1460,6 +1585,7 @@ def _product_source_dedupe_keys(
     end_date: str = "",
     package_id: str = "",
     include_invalidated: bool = False,
+    status_category: str = "",
 ) -> tuple[set[str], set[str], set[str]]:
     conditions = _product_artifact_conditions(
         service_type,
@@ -1467,6 +1593,7 @@ def _product_source_dedupe_keys(
         end_date,
         keyword="",
         include_invalidated=include_invalidated,
+        status_category=status_category,
     )
     if package_id:
         normalized_package_id = str(package_id)
@@ -1511,13 +1638,17 @@ def _artifact_package_sources(
     keyword: str = "",
     package_id: str = "",
     include_invalidated: bool = False,
+    status_category: str = "",
 ) -> tuple[list[dict], int]:
+    category = _status_category(status_category)
+    product_status_category = "" if category in {"active", "invalid"} else status_category
     product_conditions = _product_artifact_conditions(
         service_type,
         start_date,
         end_date,
         keyword,
         include_invalidated=include_invalidated,
+        status_category=product_status_category,
     )
     if package_id:
         normalized_package_id = str(package_id)
@@ -1536,9 +1667,37 @@ def _artifact_package_sources(
         product_count = product_count.where(*product_conditions)
     product_stmt = product_stmt.order_by(investment_products.c.created_at.desc(), investment_products.c.product_id.desc())
     with connect() as conn:
-        total = int(conn.execute(product_count).scalar_one() or 0)
         product_rows = [row_to_dict(row) for row in conn.execute(product_stmt).fetchall()]
+    if category in {"active", "invalid"}:
+        product_rows = [
+            row
+            for row in product_rows
+            if product_display_status(row)[0] == category
+        ]
+    total = len(product_rows)
+    source_cache_keys, source_content_ids, source_request_ids = _product_source_dedupe_keys_from_rows(product_rows)
+    content_conditions = _content_artifact_conditions(
+        service_type,
+        start_date,
+        end_date,
+        keyword,
+        status_category=status_category,
+    )
+    content_rows: list[dict] = []
+    if content_conditions is not None:
+        if package_id:
+            content_conditions.append(investment_daily_contents.c.content_id == str(package_id))
+        if source_content_ids:
+            content_conditions.append(~investment_daily_contents.c.content_id.in_(source_content_ids))
+        content_stmt = select(
+            investment_daily_contents,
+            _content_generated_at_expr().label("generated_at"),
+        ).where(*content_conditions)
+        with connect() as conn:
+            content_rows = [row_to_dict(row) for row in conn.execute(content_stmt).fetchall()]
+    total += len(content_rows)
     rows = [{"kind": "product", "item": row} for row in product_rows]
+    rows.extend({"kind": "content", "item": row} for row in content_rows)
     return rows, total
 
 
@@ -1552,6 +1711,7 @@ def list_artifact_packages_page(
     keyword: str = "",
     package_id: str = "",
     include_invalidated: bool = False,
+    status_category: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 50))
@@ -1562,8 +1722,14 @@ def list_artifact_packages_page(
         keyword=keyword,
         package_id=package_id,
         include_invalidated=include_invalidated,
+        status_category=status_category,
     )
-    packages = [_row_to_product_artifact_package(item["item"]) for item in source_rows]
+    packages = [
+        _row_to_product_artifact_package(item["item"])
+        if item["kind"] == "product"
+        else _row_to_content_artifact_package(item["item"])
+        for item in source_rows
+    ]
     packages.sort(key=lambda item: (str(item.get("generated_date") or item.get("market_date") or ""), str(item.get("updated_at") or "")), reverse=True)
     offset = (page - 1) * page_size
     return packages[offset : offset + page_size], total
@@ -1598,6 +1764,7 @@ def _product_artifact_package_summary(item: dict) -> dict:
     folder_date = business_date or generated_date
     display_name = str(item.get("target_label") or item.get("target_key") or "产物")
     service_label = _service_or_component_label(service_type)
+    display_status, display_status_label = product_display_status(item)
     return {
         "level": "package",
         "key": product_id,
@@ -1616,9 +1783,15 @@ def _product_artifact_package_summary(item: dict) -> dict:
         "display_path": [service_label, folder_date, display_name],
         "version_fingerprint": str(item.get("version_fingerprint") or ""),
         "product_id": product_id,
+        "source_content_id": str(item.get("source_content_id") or ""),
+        "source_request_id": str(item.get("source_request_id") or ""),
+        "source_cache_key": str(item.get("source_cache_key") or ""),
         "file_count": len(output_files),
         "hit_count": int(item.get("hit_count") or 0),
         "updated_at": str(item.get("updated_at") or ""),
+        "status": str(item.get("status") or ""),
+        "display_status": display_status,
+        "display_status_label": display_status_label,
     }
 
 
@@ -1628,6 +1801,7 @@ def _content_artifact_package_summary(item: dict) -> dict:
     label = _content_target_label(item.get("service_type") or "")
     generated_at = str(item.get("generated_at") or item.get("updated_at") or item.get("created_at") or "")
     generated_date = _date_part(generated_at)
+    display_status, display_status_label = _display_status_for_content(item)
     return {
         "level": "package",
         "key": content_id,
@@ -1643,9 +1817,13 @@ def _content_artifact_package_summary(item: dict) -> dict:
         "version_fingerprint": f"v{int(item.get('content_version') or 1)}",
         "artifact_owner_id": content_id,
         "content_id": content_id,
+        "source_content_id": content_id,
         "file_count": 1 if output_image else 0,
         "hit_count": 0,
         "updated_at": str(item.get("updated_at") or ""),
+        "status": str(item.get("status") or ""),
+        "display_status": display_status,
+        "display_status_label": display_status_label,
     }
 
 
@@ -1690,6 +1868,7 @@ def list_artifact_folder_nodes(
     end_date: str = "",
     keyword: str = "",
     include_invalidated: bool = False,
+    status_category: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page or 1))
     page_size = max(1, int(page_size or 100))
@@ -1702,8 +1881,14 @@ def list_artifact_folder_nodes(
             end_date=bounded_end,
             keyword=keyword,
             include_invalidated=include_invalidated,
+            status_category=status_category,
         )
-        nodes = [_product_artifact_package_summary(item["item"]) for item in source_rows if item["kind"] == "product"]
+        nodes = [
+            _product_artifact_package_summary(item["item"])
+            if item["kind"] == "product"
+            else _content_artifact_package_summary(item["item"])
+            for item in source_rows
+        ]
         nodes.sort(
             key=lambda item: (
                 str(item.get("generated_date") or item.get("market_date") or ""),
@@ -1714,6 +1899,52 @@ def list_artifact_folder_nodes(
         )
         offset = (page - 1) * page_size
         return nodes[offset : offset + page_size], total
+
+    category = _status_category(status_category)
+    if category in {"active", "invalid"}:
+        source_rows, _total = _artifact_package_sources(
+            service_type=service_type,
+            start_date=bounded_start,
+            end_date=bounded_end,
+            keyword=keyword,
+            include_invalidated=include_invalidated,
+            status_category=status_category,
+        )
+        grouped_by_key: dict[str, dict] = {}
+        for source in source_rows:
+            item = source["item"]
+            summary = (
+                _product_artifact_package_summary(item)
+                if source["kind"] == "product"
+                else _content_artifact_package_summary(item)
+            )
+            if normalized_level == "service":
+                key = str(summary.get("service_type") or "")
+            else:
+                slices = {"year": 4, "month": 7, "date": 10, "day": 10}
+                length = slices.get(normalized_level)
+                if not length:
+                    return [], 0
+                key = _date_part(str(summary.get("market_date") or summary.get("generated_date") or ""), length)
+            if not key:
+                continue
+            current = grouped_by_key.setdefault(key, {"key": key, "count": 0, "updated_at": ""})
+            current["count"] += 1
+            current["updated_at"] = max(str(current.get("updated_at") or ""), str(summary.get("updated_at") or ""))
+        rows = sorted(grouped_by_key.values(), key=lambda item: str(item.get("key") or ""), reverse=True)
+        total = len(rows)
+        offset = (page - 1) * page_size
+        node_level = "date" if normalized_level == "day" else normalized_level
+        return [
+            {
+                "level": node_level,
+                "key": str(row.get("key") or ""),
+                "label": _service_or_component_label(str(row.get("key") or "")) if node_level == "service" else str(row.get("key") or ""),
+                "count": int(row.get("count") or 0),
+                "updated_at": str(row.get("updated_at") or ""),
+            }
+            for row in rows[offset : offset + page_size]
+        ], total
 
     if normalized_level == "service":
         product_key_expr = investment_products.c.business_type
@@ -1729,9 +1960,17 @@ def list_artifact_folder_nodes(
         bounded_end,
         keyword,
         include_invalidated=include_invalidated,
+        status_category=status_category,
     )
     if normalized_level != "service":
         product_conditions.append(investment_products.c.business_date != "")
+    content_conditions = _content_artifact_conditions(
+        service_type,
+        bounded_start,
+        bounded_end,
+        keyword,
+        status_category=status_category,
+    )
     product_grouped = (
         select(
             product_key_expr.label("key"),
@@ -1755,6 +1994,37 @@ def list_artifact_folder_nodes(
                     "updated_at": str(item.get("updated_at") or ""),
                 }
             )
+        if content_conditions is not None:
+            if normalized_level == "service":
+                content_key_expr = investment_daily_contents.c.service_type
+            else:
+                content_key_expr = func.substr(_content_generated_at_expr(), 1, length)
+                content_conditions.append(_content_generated_at_expr() != "")
+            existing_content_ids = select(investment_products.c.source_content_id).where(
+                investment_products.c.source_content_id != ""
+            )
+            content_grouped = (
+                select(
+                    content_key_expr.label("key"),
+                    func.count().label("count"),
+                    func.max(investment_daily_contents.c.updated_at).label("updated_at"),
+                )
+                .where(*content_conditions)
+                .where(~investment_daily_contents.c.content_id.in_(existing_content_ids))
+                .group_by(content_key_expr)
+            )
+            for row in conn.execute(content_grouped).fetchall():
+                item = row_to_dict(row)
+                key = str(item.get("key") or "")
+                if not key:
+                    continue
+                grouped.append(
+                    {
+                        "key": key,
+                        "count": int(item.get("count") or 0),
+                        "updated_at": str(item.get("updated_at") or ""),
+                    }
+                )
 
     rows = sorted(grouped, key=lambda item: str(item.get("key") or ""), reverse=True)
     total = len(rows)

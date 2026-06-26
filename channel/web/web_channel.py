@@ -3691,7 +3691,7 @@ class InvestmentArtifactPackagesHandler:
             from business.records.business_records import build_artifact_package_tree, list_artifact_packages_page
             from business.config.constants import ServiceType, normalize_service
 
-            params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='', package_id='', include_invalidated='')
+            params = web.input(page='1', page_size='', service_type='', start_date='', end_date='', keyword='', package_id='', include_invalidated='', status_category='')
             service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = service_value if service_value.startswith("component:") else (normalize_service(service_value) if service_value else None)
             if service_type == ServiceType.UNMATCHED:
@@ -3712,6 +3712,7 @@ class InvestmentArtifactPackagesHandler:
                 keyword=getattr(params, "keyword", "") or "",
                 package_id=getattr(params, "package_id", "") or "",
                 include_invalidated=_investment_bool(getattr(params, "include_invalidated", "")),
+                status_category=getattr(params, "status_category", "") or "",
             )
             return _investment_json_response({
                 "status": "success",
@@ -3743,6 +3744,7 @@ class InvestmentArtifactFoldersHandler:
                 end_date='',
                 keyword='',
                 include_invalidated='',
+                status_category='',
             )
             service_value = str(getattr(params, "service_type", "") or "").strip()
             service_type = service_value if service_value.startswith("component:") else (normalize_service(service_value) if service_value else None)
@@ -3766,6 +3768,7 @@ class InvestmentArtifactFoldersHandler:
                 end_date=getattr(params, "end_date", "") or "",
                 keyword=getattr(params, "keyword", "") or "",
                 include_invalidated=_investment_bool(getattr(params, "include_invalidated", "")),
+                status_category=getattr(params, "status_category", "") or "",
             )
             return _investment_json_response({
                 "status": "success",
@@ -3857,6 +3860,7 @@ def _investment_products_payload(params, *, cache_history_shape: bool = False) -
     business_date = str(getattr(params, "business_date", "") or "").strip()
     if not business_date:
         business_date = str(getattr(params, "market_date", "") or "").strip()
+    status_category = str(getattr(params, "status_category", "") or "").strip().lower()
 
     list_page = list_products_cache_history_page if cache_history_shape else list_products_page
     products, total = list_page(
@@ -3868,11 +3872,13 @@ def _investment_products_payload(params, *, cache_history_shape: bool = False) -
         end_date=getattr(params, "end_date", "") or "",
         keyword=getattr(params, "keyword", "") or "",
         include_invalidated=include_invalidated,
+        status_category=status_category,
     )
     entries = [_investment_product_to_cache_entry(product) for product in products] if cache_history_shape else products
+    include_invalidated_dates = include_invalidated or status_category in {"all", "invalid"}
     business_dates = list_product_business_dates(
         business_type=business_type,
-        include_invalidated=include_invalidated,
+        include_invalidated=include_invalidated_dates,
     )
     return {
         "status": "success",
@@ -3899,6 +3905,7 @@ class InvestmentProductsHandler:
                 end_date='',
                 keyword='',
                 include_invalidated='',
+                status_category='',
             )
             return _investment_json_response(_investment_products_payload(params))
         except Exception as e:
