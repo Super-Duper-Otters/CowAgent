@@ -489,7 +489,7 @@ let investmentRecordsState = {
         requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
-        products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''},
+        products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', status_category: 'all'},
         cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
     },
@@ -1999,12 +1999,17 @@ function renderInvestmentUserPagination(panel, pagination = null) {
     const totalPages = Math.max(1, Number(meta.total_pages || 1));
     const total = Number(meta.total || 0);
     const pageSize = Number(meta.page_size || 20);
+    const pageSizes = [20, 50, 80, 120, 200];
     return `
         <div class="investment-user-pagination">
             <div class="investment-records-pagination-summary">共 ${total} 条，每页 ${pageSize} 条，第 ${page} / ${totalPages} 页</div>
             <div class="investment-records-pagination-actions">
                 <button class="investment-btn" type="button" ${page <= 1 ? 'disabled' : ''} onclick="changeInvestmentUserPage('${panel}', ${page - 1})"><i class="fas fa-chevron-left"></i><span>上一页</span></button>
                 <button class="investment-btn" type="button" ${page >= totalPages ? 'disabled' : ''} onclick="changeInvestmentUserPage('${panel}', ${page + 1})"><span>下一页</span><i class="fas fa-chevron-right"></i></button>
+                <label class="investment-records-page-size">
+                    <span>每页</span>
+                    ${investmentDropdown(`investment-user-page-size-${panel}`, pageSizes.map(size => [String(size), String(size)]), String(pageSize), '', `changeInvestmentUserPageSize('${panel}', value)`)}
+                </label>
             </div>
         </div>`;
 }
@@ -2013,6 +2018,16 @@ function changeInvestmentUserPage(panel, page) {
     investmentUserState.filters[panel] = {
         ...(investmentUserState.filters[panel] || {}),
         page: String(Math.max(1, Number(page || 1))),
+    };
+    if (panel === 'admins') return renderInvestmentAdminUsers();
+    return renderInvestmentCustomerUsers();
+}
+
+function changeInvestmentUserPageSize(panel, pageSize) {
+    investmentUserState.filters[panel] = {
+        ...(investmentUserState.filters[panel] || {}),
+        page: '1',
+        page_size: String(pageSize || '20'),
     };
     if (panel === 'admins') return renderInvestmentAdminUsers();
     return renderInvestmentCustomerUsers();
@@ -3454,7 +3469,7 @@ function investmentRecordsDefaultFilters(tab) {
         return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: '', include_invalidated: '1'};
     }
     if (tab === 'products') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: '', status_category: 'all'};
     }
     if (tab === 'backendRequests') {
         return {
@@ -3686,6 +3701,7 @@ async function renderInvestmentGeneratedContent() {
         <div class="investment-content-workspace">
             <section class="investment-content-shell">
                 <div class="investment-content-list" id="investment-content-list"></div>
+                <div id="investment-records-pagination"></div>
             </section>
         </div>`;
     await loadInvestmentGeneratedContent();
@@ -3723,7 +3739,7 @@ async function loadInvestmentProducts() {
             list.innerHTML = renderInvestmentDailyGeneratedContent(investmentRecordsState.data.products);
             if (investmentRecordsState.cacheCategory) await hydrateInvestmentGeneratedArtifactTree();
         }
-        if (pagination) pagination.innerHTML = "";
+        if (pagination) pagination.innerHTML = renderInvestmentRecordsPagination('products');
         syncInvestmentCachePeriodMode(investmentCachePeriodMode());
         closeInvestmentRecordDrawer();
     } catch (error) {
@@ -3938,7 +3954,7 @@ function renderInvestmentRecordsFilters(tab) {
             field('keyword', '关键字'),
             select('business_type', '业务', investmentRecordServiceOptions(false)),
             field('business_date', '业务日期', 'date'),
-            select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']]),
+            select('status_category', '状态', [['all', '全部'], ['active', '有效'], ['unused', '未使用'], ['invalid', '失效']]),
         ].join('');
     } else if (tab === 'cache') {
         controls = [
@@ -4209,6 +4225,8 @@ function renderInvestmentContentRecordsTable(records) {
 
 function investmentProductStatusLabel(status) {
     if (status === 'active') return '有效';
+    if (status === 'unused') return '未使用';
+    if (status === 'invalid') return '失效';
     if (status === 'invalidated') return '已失效';
     if (status === 'expired') return '已过期';
     return investmentStatusLabel(status) || status || '-';
@@ -4216,7 +4234,8 @@ function investmentProductStatusLabel(status) {
 
 function investmentProductStatusClass(status) {
     if (status === 'active') return 'ok';
-    if (status === 'invalidated' || status === 'expired') return 'fail';
+    if (status === 'unused') return 'warn';
+    if (status === 'invalid' || status === 'invalidated' || status === 'expired') return 'fail';
     return investmentStatusClass(status);
 }
 
@@ -4234,7 +4253,9 @@ function renderInvestmentProductsTable(entries) {
         const productId = product.product_id || '';
         const sourceType = product.source_type || '';
         const drawerType = sourceType === 'product' ? 'product' : investmentGeneratedRecordDrawerType(product);
-        const isActive = product.status === 'active';
+        const displayStatus = product.display_status || product.status || '';
+        const displayLabel = product.display_status_label || investmentProductStatusLabel(displayStatus);
+        const isActive = displayStatus === 'active';
         const action = sourceType === 'product' && isActive && productId
             ? investmentTextButtonIfCan('cache.write', '失效', `invalidateInvestmentProduct('${encodeURIComponent(productId)}')`, 'danger')
             : investmentGeneratedEntryActions(product);
@@ -4242,7 +4263,7 @@ function renderInvestmentProductsTable(entries) {
             <td>${investmentServiceLabel(investmentProductBusinessType(product))}</td>
             <td>${investmentRecordClamp(investmentProductTarget(product), 2, 42)}</td>
             <td>${escapeHtml(product.business_date || product.market_date || product.effective_date || '-')}</td>
-            <td><span class="investment-badge ${investmentProductStatusClass(product.status)}">${escapeHtml(investmentProductStatusLabel(product.status))}</span></td>
+            <td><span class="investment-badge ${investmentProductStatusClass(displayStatus)}">${escapeHtml(displayLabel)}</span></td>
             <td>${investmentRecordFileSummary(product.output_files || [], '无产物')}</td>
             <td>${escapeHtml(investmentFormatBeijingTime(product.created_at || product.updated_at || product.effective_at) || '-')}</td>
             <td class="investment-row-actions">
@@ -4264,7 +4285,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const selectedDate = dateRange.marketDate;
     const keyword = investmentCacheKeyword().trim().toLowerCase();
     const visibleEntries = values;
-    const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
+    const statusCategory = investmentRecordsState.filters.products?.status_category || 'all';
     const content = investmentRecordsState.cacheCategory
         ? renderInvestmentGeneratedContentCategoryDetail(
             investmentRecordsState.cacheCategory,
@@ -4294,9 +4315,10 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
                         <span>关键词</span>
                         <input id="investment-content-filter-keyword" type="search" value="${escapeHtml(keyword)}" placeholder="类型/标的/文件" onkeydown="if(event.key === 'Enter') applyInvestmentCacheDate()">
                     </label>
-                    <div class="investment-generated-include-invalidated">
-                        ${investmentSwitch('含归档/失效', 'investment-generated-include-invalidated', includeInvalidated, {attrs: 'onchange="toggleInvestmentGeneratedIncludeInvalidated(this.checked)"'})}
-                    </div>
+                    <label class="investment-field compact investment-generated-status-category">
+                        <span>状态</span>
+                        ${investmentDropdown('investment-generated-status-category', [['all', '全部'], ['active', '有效'], ['unused', '未使用'], ['invalid', '失效']], statusCategory, '', 'changeInvestmentGeneratedStatusCategory(value)')}
+                    </label>
                     ${investmentButton('fa-filter', '查看', 'applyInvestmentCacheDate()')}
                 </div>
             </div>
@@ -4375,8 +4397,8 @@ function investmentGeneratedEntryValidityMeta(entries = []) {
     if (!values.length) return '<span>状态 -</span><span>失效 -</span>';
     const statusCounts = new Map();
     values.forEach(entry => {
-        const status = entry.status || '';
-        const label = investmentProductStatusLabel(entry.status);
+        const status = entry.display_status || entry.status || '';
+        const label = entry.display_status_label || investmentProductStatusLabel(status);
         if (!status && !label) return;
         statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
     });
@@ -4460,15 +4482,29 @@ function investmentArtifactDepthClass(depth) {
     return `investment-artifact-depth-${safeDepth}-btn`;
 }
 
+function investmentArtifactStatusBadge(item = {}) {
+    const status = item.display_status || '';
+    const label = item.display_status_label || '';
+    if (!label) return '';
+    const cls = status === 'active'
+        ? 'active'
+        : status === 'unused'
+            ? 'unused'
+            : 'invalid';
+    return `<span class="investment-artifact-status-badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
 function renderInvestmentArtifactFolderNode(node, serviceType, open = false, depth = 0) {
     const level = node.level || 'year';
     const key = node.key || node.label || '';
-    const count = node.count === '' || node.count == null ? '' : `<span class="ml-auto text-[10px] text-slate-400">${escapeHtml(node.count)}</span>`;
+    const rightMeta = level === 'package'
+        ? investmentArtifactStatusBadge(node)
+        : (node.count === '' || node.count == null ? '' : `<span class="investment-artifact-count">${escapeHtml(node.count)}</span>`);
     const buttonClass = `${investmentArtifactDepthClass(depth)} investment-artifact-${level === 'package' ? 'package' : level === 'date' ? 'folder' : 'package'}-btn`;
     return `
         <div class="knowledge-tree-group investment-artifact-${escapeHtml(level)} ${open ? 'open' : ''}" data-artifact-level="${escapeHtml(level)}" data-artifact-key="${escapeHtml(key)}" data-artifact-depth="${escapeHtml(depth)}" data-artifact-loaded="0">
             <button class="knowledge-tree-group-btn ${buttonClass}" onclick="toggleInvestmentArtifactNode(this, '${escapeHtml(serviceType)}', '${escapeHtml(level)}', '${escapeHtml(key)}')">
-                <i class="fas fa-chevron-right chevron"></i><i class="fas ${level === 'package' ? 'fa-box-archive text-slate-400' : 'fa-folder text-amber-400'} text-[11px]"></i><span>${escapeHtml(node.label || key)}</span>${count}
+                <i class="fas fa-chevron-right chevron"></i><i class="fas ${level === 'package' ? 'fa-box-archive text-slate-400' : 'fa-folder text-amber-400'} text-[11px]"></i><span>${escapeHtml(node.label || key)}</span>${rightMeta}
             </button>
             <div class="knowledge-tree-group-items">${open ? '<div class="investment-muted-inline">加载中...</div>' : ''}</div>
         </div>`;
@@ -4482,10 +4518,11 @@ function renderInvestmentArtifactPackageTree(pkg = {}) {
         groups[group].push(file);
     });
     const encodedPackage = investmentEncodedRecord(pkg);
+    const statusBadge = investmentArtifactStatusBadge(pkg);
     return `
         <div class="knowledge-tree-group investment-artifact-package">
             <button class="knowledge-tree-group-btn investment-artifact-package-btn" onclick="this.parentElement.classList.toggle('open')">
-                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-box-archive text-[11px] text-slate-400"></i><span>${escapeHtml(pkg.display_name || pkg.package_id || '产物包')}</span><span class="ml-auto text-[10px] text-slate-400">${escapeHtml(pkg.request_count || 0)}</span>
+                <i class="fas fa-chevron-right chevron"></i><i class="fas fa-box-archive text-[11px] text-slate-400"></i><span>${escapeHtml(pkg.display_name || pkg.package_id || '产物包')}</span>${statusBadge}
             </button>
             <div class="knowledge-tree-group-items">
                 ${['input', 'output', 'intermediate'].map(group => renderInvestmentArtifactGroupTree(group, groups[group] || [], encodedPackage)).join('')}
@@ -4531,8 +4568,7 @@ function investmentArtifactFolderQuery(serviceType, level, key) {
     const query = new URLSearchParams();
     query.set('service_type', serviceType);
     query.set('page_size', '100');
-    const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
-    if (includeInvalidated) query.set('include_invalidated', '1');
+    query.set('status_category', investmentRecordsState.filters.products?.status_category || 'all');
     if (level === 'all') {
         query.set('level', 'year');
     } else if (level === 'year') {
@@ -4591,8 +4627,7 @@ async function loadInvestmentArtifactPackage(group, packageId) {
     items.innerHTML = '<div class="investment-muted-inline">加载中...</div>';
     try {
         const query = new URLSearchParams({package_id: packageId, page_size: '1'});
-        const includeInvalidated = investmentRecordsState.filters.products?.include_invalidated === '1';
-        if (includeInvalidated) query.set('include_invalidated', '1');
+        query.set('status_category', investmentRecordsState.filters.products?.status_category || 'all');
         const data = await investmentFetchJson(`/api/investment/artifacts?${query.toString()}`);
         const pkg = (data.packages || [])[0];
         if (!pkg) {
@@ -4694,8 +4729,8 @@ async function applyInvestmentCacheDate() {
     await loadInvestmentGeneratedContent();
 }
 
-async function toggleInvestmentGeneratedIncludeInvalidated(checked) {
-    investmentRecordsState.filters.products.include_invalidated = checked ? '1' : '';
+async function changeInvestmentGeneratedStatusCategory(value) {
+    investmentRecordsState.filters.products.status_category = value || 'all';
     investmentRecordsState.filters.products.page = '1';
     await loadInvestmentProducts();
 }
@@ -4921,13 +4956,15 @@ function renderInvestmentProductDrawer(record) {
     ].filter(Boolean).join('\n');
     const version = record.version_fingerprint || record.version || record.version_tag || record.product_version || record.content_version || record.program_version || '-';
     const generatedText = record.text_content || record.generated_text || '';
+    const displayStatus = record.display_status || record.status || '';
+    const displayLabel = record.display_status_label || investmentProductStatusLabel(displayStatus);
     return `
         ${investmentDrawerSection('基础信息', investmentDrawerFacts([
             ['产物 ID', escapeHtml(record.product_id || '-')],
             ['业务类型', investmentServiceLabel(investmentProductBusinessType(record))],
             ['对象', escapeHtml(investmentProductTarget(record))],
             ['业务日期', escapeHtml(record.business_date || record.market_date || record.effective_date || '-')],
-            ['有效性', `<span class="investment-badge ${investmentProductStatusClass(record.status)}">${escapeHtml(investmentProductStatusLabel(record.status))}</span>`],
+            ['有效性', `<span class="investment-badge ${investmentProductStatusClass(displayStatus)}">${escapeHtml(displayLabel)}</span>`],
             ['版本', escapeHtml(String(version))],
             ['命中次数', escapeHtml(record.hit_count ?? 0)],
             ['生成时间', escapeHtml(investmentFormatBeijingTime(record.created_at || record.updated_at || record.effective_at) || '-')],
@@ -6534,7 +6571,7 @@ window.openInvestmentRecordDrawer = openInvestmentRecordDrawer;
 window.closeInvestmentRecordDrawer = closeInvestmentRecordDrawer;
 window.selectInvestmentCacheDate = selectInvestmentCacheDate;
 window.applyInvestmentCacheDate = applyInvestmentCacheDate;
-window.toggleInvestmentGeneratedIncludeInvalidated = toggleInvestmentGeneratedIncludeInvalidated;
+window.changeInvestmentGeneratedStatusCategory = changeInvestmentGeneratedStatusCategory;
 window.selectInvestmentCacheCategory = selectInvestmentCacheCategory;
 window.backInvestmentCacheCategoryMenu = backInvestmentCacheCategoryMenu;
 window.showInvestmentContentDetail = showInvestmentContentDetail;

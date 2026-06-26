@@ -1293,6 +1293,52 @@
     transition: background 0.15s, color 0.15s;
     text-transform: capitalize;
 }
+.investment-artifact-count {
+    margin-left: auto;
+    color: #94a3b8;
+    font-size: 10px;
+    line-height: 1;
+}
+.investment-artifact-status-badge {
+    margin-left: auto;
+    flex: 0 0 auto;
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 11px;
+    line-height: 16px;
+    border: 1px solid transparent;
+    font-weight: 600;
+}
+.investment-artifact-status-badge.active {
+    color: #166534;
+    background: #dcfce7;
+    border-color: #bbf7d0;
+}
+.investment-artifact-status-badge.unused {
+    color: #92400e;
+    background: #fef3c7;
+    border-color: #fde68a;
+}
+.investment-artifact-status-badge.invalid {
+    color: #64748b;
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+.dark .investment-artifact-status-badge.active {
+    color: #bbf7d0;
+    background: rgba(22, 101, 52, 0.32);
+    border-color: rgba(34, 197, 94, 0.32);
+}
+.dark .investment-artifact-status-badge.unused {
+    color: #fde68a;
+    background: rgba(146, 64, 14, 0.35);
+    border-color: rgba(245, 158, 11, 0.32);
+}
+.dark .investment-artifact-status-badge.invalid {
+    color: #cbd5e1;
+    background: rgba(71, 85, 105, 0.35);
+    border-color: rgba(148, 163, 184, 0.26);
+}
 .knowledge-tree-group-btn:hover {
     background: rgba(0,0,0,0.04);
     color: #334155;
