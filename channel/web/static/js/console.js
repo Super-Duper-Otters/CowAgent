@@ -489,8 +489,8 @@ let investmentRecordsState = {
         requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
         contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
-        products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''},
-        cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'},
+        products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''},
+        cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'},
         audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)},
     },
     pagination: {
@@ -971,6 +971,7 @@ function positionInvestmentDropdownMenu(dropdown) {
 function handleInvestmentDropdownClick(event) {
     const selected = event.target.closest('.cfg-dropdown[data-investment-dropdown] .cfg-dropdown-selected');
     if (selected) {
+        investmentMarkModalSurfaceInteraction();
         event.stopPropagation();
         event.stopImmediatePropagation();
         const dropdown = selected.closest('.cfg-dropdown[data-investment-dropdown]');
@@ -990,6 +991,7 @@ function handleInvestmentDropdownClick(event) {
     }
     const option = event.target.closest('.cfg-dropdown[data-investment-dropdown] .cfg-dropdown-item');
     if (!option) return;
+    investmentMarkModalSurfaceInteraction();
     event.stopPropagation();
     event.stopImmediatePropagation();
     const dropdown = option.closest('.cfg-dropdown[data-investment-dropdown]');
@@ -1011,6 +1013,33 @@ function handleInvestmentDropdownClick(event) {
 }
 
 document.addEventListener('click', handleInvestmentDropdownClick);
+
+let investmentModalSurfaceInteractionUntil = 0;
+
+function investmentMarkModalSurfaceInteraction(event = null) {
+    investmentModalSurfaceInteractionUntil = Date.now() + 350;
+    if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+}
+
+function investmentEventHitsModalFloatingSurface(event) {
+    if (!event || typeof event.clientX !== 'number' || typeof event.clientY !== 'number') return false;
+    const selectors = [
+        '.investment-date-popover:not(.hidden)',
+        '.investment-time-popover:not(.hidden)',
+        '.cfg-dropdown.open .cfg-dropdown-menu',
+    ];
+    return selectors.some(selector => Array.from(document.querySelectorAll(selector)).some(element => {
+        const rect = element.getBoundingClientRect();
+        return event.clientX >= rect.left
+            && event.clientX <= rect.right
+            && event.clientY >= rect.top
+            && event.clientY <= rect.bottom;
+    }));
+}
+
+function investmentShouldIgnoreBackdropClose(event = null) {
+    return Date.now() < investmentModalSurfaceInteractionUntil || investmentEventHitsModalFloatingSurface(event);
+}
 
 function initInvestmentDropdowns(root = document) {
     if (!root || !root.querySelectorAll) return;
@@ -1280,7 +1309,7 @@ function investmentRenderDatePickerPanel(id, year, month) {
         const isToday = today && today.year === currentYear && today.month === currentMonth && today.day === currentDay;
         dayCells.push(`<button class="investment-date-day ${outside ? 'outside' : ''} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''}" type="button" onclick="investmentSelectDate('${id}', '${value}')">${currentDay}</button>`);
     }
-    return `<div class="investment-date-picker" data-year="${year}" data-month="${month}">
+    return `<div class="investment-date-picker" data-year="${year}" data-month="${month}" onpointerdown="investmentMarkModalSurfaceInteraction(event)" onclick="investmentMarkModalSurfaceInteraction(event)">
         <div class="investment-date-picker-head">
             <button type="button" class="investment-date-nav" onclick="investmentMoveDatePickerMonth('${id}', -1)" aria-label="上个月"><i class="fas fa-chevron-left"></i></button>
             <strong>${escapeHtml(investmentMonthLabel(year, month))}</strong>
@@ -1318,6 +1347,7 @@ function investmentToggleDatePicker(id) {
 }
 
 function investmentMoveDatePickerMonth(id, delta) {
+    investmentMarkModalSurfaceInteraction();
     const panel = investmentDatePickerPanel(id);
     if (!panel) return;
     const picker = panel.querySelector('.investment-date-picker');
@@ -1393,7 +1423,7 @@ function investmentRenderTimeControl(id, value = '00:00', options = {}) {
 
 function investmentRenderTimePickerPanel(id) {
     const [hour, minute] = investmentNormalizeTimeValue(investmentTimePickerInput(id)?.value || '00:00').split(':');
-    return `<div class="investment-time-picker">
+    return `<div class="investment-time-picker" onpointerdown="investmentMarkModalSurfaceInteraction(event)" onclick="investmentMarkModalSurfaceInteraction(event)">
         <div class="investment-time-picker-head"><strong>选择时间</strong><span>北京时间</span></div>
         <div class="investment-time-select-row">
             <label><span>时</span><select id="${id}-hour-select" class="investment-time-select">${investmentRenderTimeOptions(23, hour)}</select></label>
@@ -1681,6 +1711,10 @@ function showInvestmentModal(title, bodyHtml) {
             overlayPointerStartedOnBackdrop = event.target === overlay;
         });
         overlay.addEventListener('pointerup', event => {
+            if (investmentShouldIgnoreBackdropClose(event)) {
+                overlayPointerStartedOnBackdrop = false;
+                return;
+            }
             if (event.target === overlay && overlayPointerStartedOnBackdrop) hideInvestmentModal();
             overlayPointerStartedOnBackdrop = false;
         });
@@ -3417,10 +3451,10 @@ function investmentRecordsDefaultFilters(tab) {
         };
     }
     if (tab === 'cache') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', market_date: '', include_invalidated: '1'};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: '', include_invalidated: '1'};
     }
     if (tab === 'products') {
-        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};
+        return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: ''};
     }
     if (tab === 'backendRequests') {
         return {

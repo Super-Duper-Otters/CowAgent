@@ -378,7 +378,7 @@ def test_generated_history_toolbar_controls_invalidated_products_and_shows_valid
     detail_body = _js_function_body(js, "renderInvestmentGeneratedContentCategoryDetail")
     meta_body = _js_function_body(js, "investmentGeneratedEntryValidityMeta")
 
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
     assert "include_invalidated: '1'" not in state_body[state_body.index("products: {"):state_body.index("cache: {")]
     assert "investment-generated-include-invalidated" in toolbar_body
     assert "investmentSwitch('含归档/失效'" in toolbar_body
@@ -502,6 +502,17 @@ def test_business_user_edit_and_record_details_use_modal_dialogs():
     assert "overlay.addEventListener('pointerup'" in show_body
     assert "event.target === overlay && overlayPointerStartedOnBackdrop" in show_body
     assert "overlayPointerStartedOnBackdrop = false;" in show_body
+    assert "function investmentMarkModalSurfaceInteraction(" in js
+    assert "investmentShouldIgnoreBackdropClose(event)" in show_body
+
+
+def test_business_modal_date_picker_month_navigation_does_not_close_modal():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    panel_body = _js_function_body(js, "investmentRenderDatePickerPanel")
+    move_body = _js_function_body(js, "investmentMoveDatePickerMonth")
+
+    assert 'onpointerdown="investmentMarkModalSurfaceInteraction(event)"' in panel_body
+    assert "investmentMarkModalSurfaceInteraction();" in move_body
 
 
 def test_business_config_fields_save_individually_after_change():
@@ -1856,7 +1867,7 @@ def test_business_records_default_to_unbounded_history_filters():
     load_body = _js_function_body(js, "loadInvestmentRecordsTab")
 
     assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'}" in state_body
+    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in state_body
     assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "start_date: ''" in default_body
     assert "end_date: ''" in default_body
@@ -2055,8 +2066,8 @@ def test_business_content_page_defaults_to_history_overview():
     load_body = _js_function_body(js, "loadInvestmentProducts")
     apply_body = _js_function_body(js, "applyInvestmentCacheDate")
 
-    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'}" in js
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in js
+    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in js
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in js
     assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in js
     assert "const dateRange = investmentNormalizeCacheDateFilters();" in cache_body
     assert "const selectedDate = dateRange.marketDate;" in cache_body
@@ -2093,10 +2104,12 @@ def test_generated_history_defaults_to_active_products_without_invalidated_query
     filters_body = _js_function_body(js, "renderInvestmentRecordsFilters")
     load_body = _js_function_body(js, "loadInvestmentProducts")
 
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'}" not in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
-    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: '', include_invalidated: '1'};" not in default_body
-    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'all', business_date: '', keyword: ''};" in default_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: '', include_invalidated: '1'}" not in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
+    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in state_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: '', include_invalidated: '1'};" not in default_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', business_date: '', keyword: ''};" in default_body
+    assert "return {page: '1', page_size: investmentRecordsDefaultPageSize(tab), period_mode: 'day', market_date: '', include_invalidated: '1'};" in default_body
     assert "investmentRecordsQueryParams('products')" in load_body
     assert "query.set('include_invalidated', '1')" not in load_body
     assert "select('include_invalidated', '状态范围', [['', '仅有效'], ['1', '含已失效']])" in filters_body
@@ -2323,7 +2336,7 @@ def test_investment_records_use_unified_products_api():
     assert "record.text_content" in product_drawer_body
     assert "record.generated_text" in product_drawer_body
     assert "filters: {" in state_body
-    assert "products: {page: '1', page_size: '120', period_mode: 'all', business_date: '', keyword: ''}" in state_body
+    assert "products: {page: '1', page_size: '120', period_mode: 'day', business_date: '', keyword: ''}" in state_body
     assert "pagination: {" in state_body
     assert "products: {page: 1, page_size: 120, total: 0, total_pages: 1}" in state_body
     assert "data: {" in state_body
@@ -2660,7 +2673,7 @@ def test_business_records_tabs_keep_independent_pagination_state():
     assert "requests: {page: '1', page_size: '80', entry_type: 'external_request', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "backendRequests: {page: '1', page_size: '80', entry_type: 'internal_call', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
     assert "contents: {page: '1', page_size: '80', keyword: '', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
-    assert "cache: {page: '1', page_size: '120', period_mode: 'all', market_date: '', include_invalidated: '1'}" in state_body
+    assert "cache: {page: '1', page_size: '120', period_mode: 'day', market_date: '', include_invalidated: '1'}" in state_body
     assert "audits: {page: '1', page_size: '80', date_mode: 'day', start_date: '', end_date: '', record_month: investmentTodayDate().slice(0, 7)}" in state_body
 
     switch_body = _js_function_body(js, "switchInvestmentRecordsTab")
