@@ -2806,6 +2806,54 @@ def _investment_stock_stats():
     return stock_dictionary_stats_with_latest_source()
 
 
+def _investment_stock_refresh_count(result) -> int:
+    if isinstance(result, dict):
+        direct = result.get("count")
+        if direct is not None:
+            try:
+                return max(0, int(direct or 0))
+            except (TypeError, ValueError):
+                return 0
+        return sum(_investment_stock_refresh_count(value) for value in result.values())
+    return 0
+
+
+def _investment_stock_refresh_errors(result, prefix: str = "") -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    errors = []
+    if result.get("error"):
+        errors.append(f"{prefix}: {result.get('error')}" if prefix else str(result.get("error")))
+    for key, value in result.items():
+        if key in {"count", "error"}:
+            continue
+        next_prefix = f"{prefix}.{key}" if prefix else str(key)
+        errors.extend(_investment_stock_refresh_errors(value, next_prefix))
+    return errors
+
+
+def _investment_stock_refresh_details(result, prefix: str = "") -> list[dict]:
+    if not isinstance(result, dict):
+        return []
+    if "count" in result or "error" in result:
+        error = str(result.get("error") or "")
+        try:
+            count = max(0, int(result.get("count") or 0)) if not error else 0
+        except (TypeError, ValueError):
+            count = 0
+        return [{
+            "scope": prefix or "refresh",
+            "status": "failed" if error else "success",
+            "count": count,
+            "error": error,
+        }]
+    details = []
+    for key, value in result.items():
+        next_prefix = f"{prefix}.{key}" if prefix else str(key)
+        details.extend(_investment_stock_refresh_details(value, next_prefix))
+    return details
+
+
 class InvestmentAuthMeHandler:
     def GET(self):
         try:
@@ -4427,21 +4475,56 @@ class InvestmentStocksRefreshHandler:
             from business.content import stock_resolver as stock_resolver
             body = _investment_json_body()
             source = str(body.get("source") or "all").strip().lower()
-            if source == "all":
-                result = stock_resolver.refresh_all_symbols_from_tushare()
-            elif source == "a_share":
-                result = {"a_share": {"count": stock_resolver.refresh_a_share_symbols_from_tushare()}}
-            elif source == "hk":
-                result = {"hk": {"count": stock_resolver.refresh_hk_symbols_from_tushare()}}
-            elif source == "us":
-                result = {"us": {"count": stock_resolver.refresh_us_symbols_from_tushare()}}
-            else:
+            before_stats = _investment_stock_stats()
+            refreshers = {
+                "all": stock_resolver.refresh_all_symbol_sources,
+                "tushare": stock_resolver.refresh_all_symbols_from_tushare,
+                "akshare": stock_resolver.refresh_all_symbols_from_akshare,
+                "baostock": stock_resolver.refresh_all_symbols_from_baostock,
+                "a_share": stock_resolver.refresh_a_share_symbols_from_tushare,
+                "hk": stock_resolver.refresh_hk_symbols_from_tushare,
+                "us": stock_resolver.refresh_us_symbols_from_tushare,
+                "akshare_a_share": stock_resolver.refresh_a_share_symbols_from_akshare,
+                "akshare_hk": stock_resolver.refresh_hk_symbols_from_akshare,
+                "akshare_us": stock_resolver.refresh_us_symbols_from_akshare,
+                "etf": stock_resolver.refresh_etf_symbols_from_akshare,
+                "convertible_bond": stock_resolver.refresh_convertible_bond_symbols_from_akshare,
+                "gold": stock_resolver.refresh_gold_symbols_from_akshare,
+                "futures": stock_resolver.refresh_bond_futures_symbols_from_akshare,
+            }
+            refresher = refreshers.get(source)
+            if refresher is None:
                 return _investment_json_response({"status": "error", "message": f"unsupported source: {source}"})
+            try:
+                refreshed = refresher()
+            except Exception as exc:  # noqa: BLE001 - source-level failures should be rendered as refresh log rows.
+                refreshed = {source: {"error": str(exc)}}
+            result = refreshed if isinstance(refreshed, dict) else {source: {"count": refreshed}}
+            after_stats = _investment_stock_stats()
+            total_before = int(before_stats.get("total") or 0)
+            total_after = int(after_stats.get("total") or 0)
+            details = _investment_stock_refresh_details(result)
+            failed_count = sum(1 for item in details if item.get("status") == "failed")
+            success_count = sum(1 for item in details if item.get("status") == "success")
+            refresh_status = "failed" if details and failed_count == len(details) else "partial" if failed_count else "success"
+            summary = {
+                "status": refresh_status,
+                "updated_count": _investment_stock_refresh_count(result),
+                "total_before": total_before,
+                "total_after": total_after,
+                "existing_count": total_after,
+                "net_new_count": max(0, total_after - total_before),
+                "errors": _investment_stock_refresh_errors(result),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "details": details,
+            }
             _record_investment_operation("stock.refresh", "investment_stock_symbol", admin=admin, detail={"source": source, "result": result})
             return _investment_json_response({
                 "status": "success",
                 "result": result,
-                "stats": _investment_stock_stats(),
+                "summary": summary,
+                "stats": after_stats,
             })
         except Exception as e:
             logger.error(f"[Investment] stocks refresh error: {e}")

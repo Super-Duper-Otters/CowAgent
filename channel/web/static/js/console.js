@@ -1839,6 +1839,71 @@ function investmentStockStats(stats = {}) {
         </div>`;
 }
 
+const INVESTMENT_STOCK_REFRESH_OPTIONS = [
+    ['all', '一键刷新全部数据源'],
+    ['tushare', 'Tushare 全部'],
+    ['akshare', 'AkShare 全部'],
+    ['baostock', 'BaoStock 全部'],
+    ['a_share', 'A股（Tushare）'],
+    ['hk', '港股（Tushare）'],
+    ['us', '美股（Tushare）'],
+    ['etf', 'ETF（AkShare）'],
+    ['convertible_bond', '可转债（AkShare）'],
+    ['gold', '黄金（AkShare）'],
+    ['futures', '国债期货（AkShare）'],
+];
+
+const INVESTMENT_STOCK_REFRESH_PROVIDERS = [
+    ['all', '全部数据源'],
+    ['tushare', 'Tushare'],
+    ['akshare', 'AkShare'],
+    ['baostock', 'BaoStock'],
+];
+
+const INVESTMENT_STOCK_REFRESH_MARKETS = {
+    all: [['all', '全部市场/品类']],
+    tushare: [['all', '全部 Tushare 市场'], ['a_share', 'A股'], ['hk', '港股'], ['us', '美股']],
+    akshare: [
+        ['all', '全部 AkShare 品类'],
+        ['a_share', 'A股'],
+        ['hk', '港股'],
+        ['us', '美股'],
+        ['etf', 'ETF'],
+        ['convertible_bond', '可转债'],
+        ['gold', '黄金'],
+        ['futures', '国债期货'],
+    ],
+    baostock: [['all', '全部 BaoStock 市场'], ['a_share', 'A股']],
+};
+
+const INVESTMENT_STOCK_REFRESH_SOURCE_MAP = {
+    all: {all: 'all'},
+    tushare: {all: 'tushare', a_share: 'a_share', hk: 'hk', us: 'us'},
+    akshare: {all: 'akshare', a_share: 'akshare_a_share', hk: 'akshare_hk', us: 'akshare_us', etf: 'etf', convertible_bond: 'convertible_bond', gold: 'gold', futures: 'futures'},
+    baostock: {all: 'baostock', a_share: 'baostock'},
+};
+
+function investmentStockRefreshMarkets(provider = 'all') {
+    return INVESTMENT_STOCK_REFRESH_MARKETS[String(provider || 'all')] || INVESTMENT_STOCK_REFRESH_MARKETS.all;
+}
+
+function investmentSelectedStockRefreshSource() {
+    const provider = document.getElementById('invest-stock-refresh-provider')?.value || 'all';
+    const market = document.getElementById('invest-stock-refresh-market')?.value || 'all';
+    return INVESTMENT_STOCK_REFRESH_SOURCE_MAP[provider]?.[market] || provider || 'all';
+}
+
+function updateInvestmentStockRefreshMarkets() {
+    const provider = document.getElementById('invest-stock-refresh-provider')?.value || 'all';
+    const mount = document.getElementById('invest-stock-refresh-market-wrap');
+    if (!mount) return;
+    mount.innerHTML = investmentDropdown('invest-stock-refresh-market', investmentStockRefreshMarkets(provider), 'all');
+}
+
+function investmentStockRefreshNeedsTushareToken(source) {
+    return ['tushare', 'a_share', 'hk', 'us'].includes(String(source || '').toLowerCase());
+}
+
 function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, canReadStocks = true) {
     return `
         <section class="investment-panel investment-config-section investment-workbench-full investment-stock-data-card">
@@ -1846,48 +1911,76 @@ function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, c
                 <div class="investment-stock-title-block">
                     <div class="investment-panel-title"><i class="fas fa-chart-line"></i><span>股票数据</span></div>
                 </div>
-                <div class="investment-stock-source-badge"><i class="fas fa-database"></i><span>Tushare</span></div>
-            </div>
-            <div class="investment-stock-layout">
-                <div class="investment-stock-token-panel">
-                    <div class="investment-stock-section-title">
-                        <i class="fas fa-key"></i><span>数据源凭证</span>
-                    </div>
-                    ${canReadConfig ? `
-                        <div class="investment-stock-source-config">
-                            ${renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])}
-                        </div>` : '<div class="investment-muted">当前账号无权查看 Tushare Token 配置。</div>'}
-                </div>
-                <div class="investment-stock-stats-panel">
-                    <div class="investment-stock-section-title">
-                        <i class="fas fa-chart-column"></i><span>字典状态</span>
-                    </div>
-                    ${investmentStockStats(stats)}
+                <div class="investment-stock-source-badges">
+                    <div class="investment-stock-source-badge"><i class="fas fa-database"></i><span>Tushare</span></div>
+                    <div class="investment-stock-source-badge"><i class="fas fa-bolt"></i><span>AkShare</span></div>
+                    <div class="investment-stock-source-badge"><i class="fas fa-leaf"></i><span>BaoStock</span></div>
                 </div>
             </div>
-            ${canReadStocks ? `
-                <div class="investment-stock-action-grid">
-                    <div class="investment-stock-action-card investment-stock-refresh-tool">
-                        <label class="investment-field investment-source-field">
-                            <span>刷新市场</span>
-                            ${investmentDropdown('invest-stock-refresh-market', [['a_share', 'A股'], ['hk', '港股'], ['us', '美股']], 'a_share')}
-                        </label>
-                        <div class="investment-stock-action-control">
-                            ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+            <div class="investment-stock-workspace">
+                <div class="investment-stock-overview">
+                    <div class="investment-stock-token-panel">
+                        <div class="investment-stock-section-title">
+                            <i class="fas fa-key"></i><span>数据源凭证</span>
                         </div>
+                        ${canReadConfig ? `
+                            <div class="investment-stock-source-config">
+                                ${renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])}
+                            </div>` : '<div class="investment-muted">当前账号无权查看 Tushare Token 配置。</div>'}
                     </div>
-                    <div class="investment-stock-action-card investment-stock-query-tool">
-                        <label class="investment-field investment-stock-query-field">
-                            <span>股票名查询测试</span>
-                            <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛">
-                        </label>
-                        <div class="investment-stock-action-control">
-                            ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+                    <div class="investment-stock-stats-panel">
+                        <div class="investment-stock-section-title">
+                            <i class="fas fa-chart-column"></i><span>字典状态</span>
                         </div>
+                        ${investmentStockStats(stats)}
                     </div>
                 </div>
-                <div id="invest-stock-action-result" class="investment-muted"></div>
-                <div id="invest-stock-query-result" class="investment-table-wrap"></div>` : ''}
+                ${canReadStocks ? `
+                    <div class="investment-stock-module-panel investment-stock-refresh-module">
+                        <div class="investment-stock-module-head">
+                            <div class="investment-stock-section-title">
+                                <i class="fas fa-arrows-rotate"></i><span>字典刷新</span>
+                            </div>
+                            <div class="investment-stock-module-actions investment-stock-refresh-tool">
+                                <label class="investment-field investment-source-field investment-inline-field">
+                                    <span>源</span>
+                                    ${investmentDropdown('invest-stock-refresh-provider', INVESTMENT_STOCK_REFRESH_PROVIDERS, 'all', '', 'updateInvestmentStockRefreshMarkets()')}
+                                </label>
+                                <label class="investment-field investment-source-field investment-inline-field">
+                                    <span>市场</span>
+                                    <span id="invest-stock-refresh-market-wrap">${investmentDropdown('invest-stock-refresh-market', investmentStockRefreshMarkets('all'), 'all')}</span>
+                                </label>
+                                <div class="investment-stock-action-control">
+                                    ${investmentButtonIfCan('stocks.write', 'fa-arrows-rotate', '刷新股票字典', 'refreshInvestmentStocks()', 'primary')}
+                                </div>
+                            </div>
+                        </div>
+                        <div id="invest-stock-action-result" class="investment-stock-refresh-log investment-muted">
+                            <div class="investment-stock-log-placeholder">刷新后显示各数据源和市场的更新结果。</div>
+                        </div>
+                    </div>
+                    <div class="investment-stock-module-panel investment-stock-query-module">
+                        <div class="investment-stock-module-head">
+                            <div class="investment-stock-section-title">
+                                <i class="fas fa-magnifying-glass-chart"></i><span>字典查询</span>
+                            </div>
+                            <div class="investment-stock-module-actions investment-stock-query-tool">
+                                <label class="investment-field investment-stock-query-field investment-inline-field">
+                                    <span>标的</span>
+                                    <input id="invest-stock-query-name" type="text" placeholder="例如：新易盛 / TL0 / 510300">
+                                </label>
+                                <div class="investment-stock-action-control">
+                                    ${investmentButton('fa-magnifying-glass', '查询', 'queryInvestmentStocks()', 'primary')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="investment-stock-query-result-shell">
+                            <div id="invest-stock-query-result" class="investment-table-wrap investment-stock-query-result">
+                                <div class="investment-stock-log-placeholder">查询后显示匹配标的。</div>
+                            </div>
+                        </div>
+                    </div>` : ''}
+            </div>
         </section>`;
 }
 
@@ -6325,23 +6418,118 @@ function investmentHasConfiguredTushareToken() {
     return true;
 }
 
+function flattenInvestmentStockRefreshResult(result = {}, prefix = '') {
+    if (!result || typeof result !== 'object') return [];
+    if (Object.prototype.hasOwnProperty.call(result, 'count') || Object.prototype.hasOwnProperty.call(result, 'error')) {
+        return [{
+            label: prefix || 'refresh',
+            count: result.count ?? 0,
+            error: result.error || '',
+        }];
+    }
+    return Object.entries(result).flatMap(([key, value]) => {
+        const nextPrefix = prefix ? `${prefix}.${key}` : key;
+        return flattenInvestmentStockRefreshResult(value, nextPrefix);
+    });
+}
+
+function investmentStockRefreshScopeLabel(scope = '') {
+    const labels = {
+        tushare: 'Tushare',
+        akshare: 'AkShare',
+        baostock: 'BaoStock',
+        akshare_a_share: 'AkShare A股',
+        akshare_hk: 'AkShare 港股',
+        akshare_us: 'AkShare 美股',
+        a_share: 'A股',
+        hk: '港股',
+        us: '美股',
+        etf: 'ETF',
+        convertible_bond: '可转债',
+        gold: '黄金',
+        futures: '国债期货',
+    };
+    return String(scope || '').split('.').map(part => labels[part] || part).join(' / ');
+}
+
+function renderInvestmentStockRefreshProgress(source = '') {
+    return `
+        <div class="investment-stock-refresh-progress">
+            <div class="investment-stock-refresh-progress-head">
+                <strong>正在刷新股票字典</strong>
+                <span>${escapeHtml(investmentStockRefreshScopeLabel(source || 'all'))}</span>
+            </div>
+            <div class="investment-progress-bar" aria-label="刷新进度">
+                <span></span>
+            </div>
+            <div class="investment-muted">正在依次调用数据源，完成后会列出每个市场的成功、失败和更新数量。</div>
+        </div>`;
+}
+
+function renderInvestmentStockRefreshLog(data = {}) {
+    const summary = data.summary || {};
+    const rows = (summary.details && summary.details.length)
+        ? summary.details
+        : flattenInvestmentStockRefreshResult(data.result || {}).map(row => ({
+            scope: row.label,
+            status: row.error ? 'failed' : 'success',
+            count: row.count,
+            error: row.error,
+        }));
+    const errors = summary.errors || rows.filter(row => row.error).map(row => `${row.scope}: ${row.error}`);
+    const status = summary.status || (errors.length ? 'partial' : 'success');
+    const statusClass = status === 'failed' ? 'error' : status === 'partial' ? 'warning' : 'success';
+    const statusText = status === 'failed' ? '全部失败' : status === 'partial' ? '部分成功' : '全部成功';
+    const rowCount = row => Math.max(0, Number(row.count || 0));
+    const rowStatusText = row => (row.status === 'failed' || row.error)
+        ? '<span class="investment-badge danger">失败</span>'
+        : rowCount(row) > 0
+            ? '<span class="investment-badge success">成功</span>'
+            : '<span class="investment-badge">无变化</span>';
+    const rowMessage = row => row.error || (rowCount(row) > 0 ? '已完成' : '无新增，重复数据已去重或已有记录保持不变');
+    const rowHtml = rows.length ? rows.map(row => `
+        <tr>
+            <td>${escapeHtml(investmentStockRefreshScopeLabel(row.scope || row.label || ''))}</td>
+            <td class="investment-mono">${escapeHtml(rowCount(row))}</td>
+            <td>${rowStatusText(row)}</td>
+            <td>${escapeHtml(rowMessage(row))}</td>
+        </tr>`).join('') : '<tr><td colspan="4">暂无刷新明细</td></tr>';
+    const errorHtml = errors.length ? `<div class="investment-alert error">失败明细：${escapeHtml(errors.join('；'))}</div>` : '';
+    return `
+        <div class="investment-alert ${statusClass}">刷新结果：${statusText}。成功 ${escapeHtml(summary.success_count ?? 0)} 项，失败 ${escapeHtml(summary.failed_count ?? 0)} 项。</div>
+        <div class="investment-stock-refresh-summary">
+            <span>去重后更新 ${escapeHtml(summary.updated_count ?? 0)} 条</span>
+            <span>已有 ${escapeHtml(summary.existing_count ?? summary.total_after ?? 0)} 条</span>
+            <span>净新增 ${escapeHtml(summary.net_new_count ?? 0)} 条</span>
+        </div>
+        ${errorHtml}
+        ${investmentTableWrap(`<table class="investment-table">
+            <thead><tr><th>数据源 / 市场</th><th>去重后更新</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>${rowHtml}</tbody>
+        </table>`, false, '股票字典刷新日志')}`;
+}
+
 async function refreshInvestmentStocks() {
     const resultEl = document.getElementById('invest-stock-action-result');
-    const market = document.getElementById('invest-stock-refresh-market')?.value || 'a_share';
-    if (!investmentHasConfiguredTushareToken()) return;
-    if (resultEl) resultEl.textContent = '刷新中...';
+    const source = investmentSelectedStockRefreshSource();
+    if (investmentStockRefreshNeedsTushareToken(source) && !investmentHasConfiguredTushareToken()) return;
+    const button = document.querySelector('.investment-stock-refresh-tool .investment-btn');
+    if (button) button.disabled = true;
+    if (resultEl) resultEl.innerHTML = renderInvestmentStockRefreshProgress(source);
     try {
         const data = await investmentFetchJson('/api/investment/stocks/refresh', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({source: market}),
+            body: JSON.stringify({source}),
         });
-        const message = `刷新完成：${JSON.stringify(data.result || {})}`;
         await renderInvestmentConfig();
         const nextResultEl = document.getElementById('invest-stock-action-result');
-        if (nextResultEl) nextResultEl.textContent = message;
+        if (nextResultEl) nextResultEl.innerHTML = renderInvestmentStockRefreshLog(data);
     } catch (error) {
-        if (resultEl) resultEl.textContent = String(error.message || error);
+        if (resultEl) resultEl.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error.message || error))}</div>`;
+    } finally {
+        const nextButton = document.querySelector('.investment-stock-refresh-tool .investment-btn');
+        if (nextButton) nextButton.disabled = false;
     }
 }
 
@@ -6609,6 +6797,7 @@ window.activateInvestmentSkillVersion = activateInvestmentSkillVersion;
 window.deleteInvestmentSkillVersion = deleteInvestmentSkillVersion;
 window.deleteInvestmentRuntimeComponent = deleteInvestmentRuntimeComponent;
 window.selectedInvestmentSkillVersion = selectedInvestmentSkillVersion;
+window.updateInvestmentStockRefreshMarkets = updateInvestmentStockRefreshMarkets;
 window.refreshInvestmentStocks = refreshInvestmentStocks;
 window.queryInvestmentStocks = queryInvestmentStocks;
 
