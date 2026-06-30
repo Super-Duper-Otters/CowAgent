@@ -1850,6 +1850,7 @@ const INVESTMENT_STOCK_REFRESH_OPTIONS = [
     ['etf', 'ETF（AkShare）'],
     ['convertible_bond', '可转债（AkShare）'],
     ['gold', '黄金（AkShare）'],
+    ['index', '指数（AkShare）'],
     ['futures', '国债期货（AkShare）'],
 ];
 
@@ -1862,7 +1863,7 @@ const INVESTMENT_STOCK_REFRESH_PROVIDERS = [
 
 const INVESTMENT_STOCK_REFRESH_MARKETS = {
     all: [['all', '全部市场/品类']],
-    tushare: [['all', '全部 Tushare 市场'], ['a_share', 'A股'], ['hk', '港股'], ['us', '美股']],
+    tushare: [['all', '全部 Tushare 市场'], ['a_share', 'A股'], ['hk', '港股'], ['us', '美股'], ['index', '指数']],
     akshare: [
         ['all', '全部 AkShare 品类'],
         ['a_share', 'A股'],
@@ -1871,6 +1872,7 @@ const INVESTMENT_STOCK_REFRESH_MARKETS = {
         ['etf', 'ETF'],
         ['convertible_bond', '可转债'],
         ['gold', '黄金'],
+        ['index', '指数'],
         ['futures', '国债期货'],
     ],
     baostock: [['all', '全部 BaoStock 市场'], ['a_share', 'A股']],
@@ -1878,8 +1880,8 @@ const INVESTMENT_STOCK_REFRESH_MARKETS = {
 
 const INVESTMENT_STOCK_REFRESH_SOURCE_MAP = {
     all: {all: 'all'},
-    tushare: {all: 'tushare', a_share: 'a_share', hk: 'hk', us: 'us'},
-    akshare: {all: 'akshare', a_share: 'akshare_a_share', hk: 'akshare_hk', us: 'akshare_us', etf: 'etf', convertible_bond: 'convertible_bond', gold: 'gold', futures: 'futures'},
+    tushare: {all: 'tushare', a_share: 'a_share', hk: 'hk', us: 'us', index: 'tushare_index'},
+    akshare: {all: 'akshare', a_share: 'akshare_a_share', hk: 'akshare_hk', us: 'akshare_us', etf: 'etf', convertible_bond: 'convertible_bond', gold: 'gold', index: 'index', futures: 'futures'},
     baostock: {all: 'baostock', a_share: 'baostock'},
 };
 
@@ -1901,7 +1903,7 @@ function updateInvestmentStockRefreshMarkets() {
 }
 
 function investmentStockRefreshNeedsTushareToken(source) {
-    return ['tushare', 'a_share', 'hk', 'us'].includes(String(source || '').toLowerCase());
+    return ['tushare', 'a_share', 'hk', 'us', 'tushare_index'].includes(String(source || '').toLowerCase());
 }
 
 function investmentStockTools(stats = {}, configs = {}, canReadConfig = false, canReadStocks = true) {
@@ -6444,9 +6446,11 @@ function investmentStockRefreshScopeLabel(scope = '') {
         a_share: 'A股',
         hk: '港股',
         us: '美股',
+        tushare_index: 'Tushare 指数',
         etf: 'ETF',
         convertible_bond: '可转债',
         gold: '黄金',
+        index: '指数',
         futures: '国债期货',
     };
     return String(scope || '').split('.').map(part => labels[part] || part).join(' / ');

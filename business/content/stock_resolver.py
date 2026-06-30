@@ -21,12 +21,23 @@ _HK_CODE_RE = re.compile(r"\d{5}\.HK", re.IGNORECASE)
 _HK_PREFIX_RE = re.compile(r"HK(\d{5})", re.IGNORECASE)
 _US_CODE_RE = re.compile(r"[A-Z0-9_.-]+\.US", re.IGNORECASE)
 _US_PREFIX_RE = re.compile(r"US:([A-Z0-9_.-]+)", re.IGNORECASE)
+_INDEX_PREFIX_RE = re.compile(r"(sh|sz|bj)(\d{6})", re.IGNORECASE)
 _MARKET_ALIASES = {
     "SSE": "SH",
     "SHSE": "SH",
     "SZSE": "SZ",
     "BSE": "BJ",
 }
+
+_CORE_INDEX_SYMBOLS = [
+    {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "akshare_index_core", "ts_code": "000001.SH"},
+    {"code": "sz399001", "name": "深证成指", "market": "SZ", "asset_type": "index", "source": "akshare_index_core", "ts_code": "399001.SZ"},
+    {"code": "sz399006", "name": "创业板指", "market": "SZ", "asset_type": "index", "source": "akshare_index_core", "ts_code": "399006.SZ"},
+    {"code": "sh000300", "name": "沪深300", "market": "CSI", "asset_type": "index", "source": "akshare_index_core", "ts_code": "000300.SH"},
+    {"code": "sh000905", "name": "中证500", "market": "CSI", "asset_type": "index", "source": "akshare_index_core", "ts_code": "000905.SH"},
+    {"code": "sh000852", "name": "中证1000", "market": "CSI", "asset_type": "index", "source": "akshare_index_core", "ts_code": "000852.SH"},
+    {"code": "sh000016", "name": "上证50", "market": "SH", "asset_type": "index", "source": "akshare_index_core", "ts_code": "000016.SH"},
+]
 
 
 def _canonical_market(value: str) -> str:
@@ -49,10 +60,23 @@ def _infer_market_for_bare_code(code: str, asset_type: str = "") -> str:
 
 
 def _standardize_code(value: str, market: str = "", asset_type: str = "") -> str:
-    code = str(value or "").strip().upper()
+    raw_code = str(value or "").strip()
+    raw_asset_type = str(asset_type or "").strip().lower()
+    index_prefix_match = _INDEX_PREFIX_RE.fullmatch(raw_code)
+    if raw_asset_type == "index" and index_prefix_match:
+        return f"{index_prefix_match.group(1).lower()}{index_prefix_match.group(2)}"
+    code = raw_code.upper()
     market_value = _canonical_market(market)
     if not code:
         return ""
+    if raw_asset_type == "index":
+        if _A_SHARE_CODE_RE.fullmatch(code):
+            bare, suffix = code.split(".", 1)
+            return f"{suffix.lower()}{bare}"
+        if _BARE_CODE_RE.fullmatch(code):
+            market_prefix = "sh" if market_value in {"SH", "SSE", "CSI"} else "sz" if market_value in {"SZ", "SZSE"} else ""
+            if market_prefix:
+                return f"{market_prefix}{code}"
     baostock_match = _BAOSTOCK_CODE_RE.fullmatch(code)
     if baostock_match:
         exchange = baostock_match.group(1).upper()
@@ -86,6 +110,13 @@ def _standardize_code(value: str, market: str = "", asset_type: str = "") -> str
 
 
 def _infer_market(code: str, row_market: str = "", asset_type: str = "") -> str:
+    if str(asset_type or "").strip().lower() == "index":
+        market = _canonical_market(row_market)
+        if market:
+            return market
+        index_match = _INDEX_PREFIX_RE.fullmatch(code)
+        if index_match:
+            return index_match.group(1).upper()
     if "." in code:
         suffix = code.rsplit(".", 1)[1].upper()
         if suffix in {"SH", "SZ", "BJ", "HK", "US"}:
@@ -103,6 +134,8 @@ def _infer_asset_type(code: str, market: str = "", row_asset_type: str = "") -> 
     if asset_type:
         return asset_type
     market_value = str(market or "").strip().upper()
+    if _INDEX_PREFIX_RE.fullmatch(str(code or "")):
+        return "index"
     if market_value == "HK":
         return "hk_stock"
     if market_value == "US":
@@ -250,13 +283,18 @@ def list_exact_stock_name_matches(value: str, limit: int = 10) -> list[dict[str,
 
 
 def get_stock_symbol_by_code(value: str) -> dict[str, str]:
-    code = _standardize_code(value)
-    if not code:
+    raw_value = str(value or "").strip()
+    code = _standardize_code(raw_value)
+    candidates = [code] if code else []
+    index_match = _INDEX_PREFIX_RE.fullmatch(raw_value)
+    if index_match:
+        candidates.insert(0, f"{index_match.group(1).lower()}{index_match.group(2)}")
+    if not candidates:
         return {}
     table = investment_stock_symbols
     stmt = (
         select(table.c.code, table.c.name, table.c.market, table.c.ts_code, table.c.asset_type, table.c.source)
-        .where(table.c.code == code, _trusted_dictionary_source_condition(table))
+        .where(table.c.code.in_(dict.fromkeys(candidates)), _trusted_dictionary_source_condition(table))
         .order_by(table.c.source)
         .limit(1)
     )
@@ -342,12 +380,36 @@ def refresh_us_symbols_from_tushare() -> int:
     return refresh_stock_symbols(rows, source="tushare_us")
 
 
+def refresh_index_symbols_from_tushare() -> int:
+    pro = _tushare_client()
+    rows = []
+    for market in ("SSE", "SZSE", "CSI"):
+        frame = pro.index_basic(market=market, fields="ts_code,name,market,publisher,category")
+        for row in _records_from_frame(frame):
+            ts_code = _first_text(row, ("ts_code", "code"))
+            name = _first_text(row, ("name", "名称"))
+            if not ts_code or not name:
+                continue
+            rows.append(
+                {
+                    "code": _standardize_code(ts_code, market, "index"),
+                    "market": market,
+                    "asset_type": "index",
+                    "name": name,
+                    "ts_code": ts_code,
+                    "source": "tushare_index",
+                }
+            )
+    return refresh_stock_symbols(rows, source="tushare_index")
+
+
 def refresh_all_symbols_from_tushare() -> dict[str, object]:
     result: dict[str, object] = {}
     for market_key, refresher in (
         ("a_share", refresh_a_share_symbols_from_tushare),
         ("hk", refresh_hk_symbols_from_tushare),
         ("us", refresh_us_symbols_from_tushare),
+        ("index", refresh_index_symbols_from_tushare),
     ):
         try:
             result[market_key] = {"count": refresher()}
@@ -402,6 +464,47 @@ def refresh_gold_symbols_from_akshare() -> int:
     return _refresh_akshare_frame(akshare.spot_quotations_sge(), "akshare_gold", "SGE", "gold")
 
 
+def _index_market_from_akshare_code(code: str) -> str:
+    match = _INDEX_PREFIX_RE.fullmatch(str(code or "").strip())
+    if not match:
+        return ""
+    prefix = match.group(1).lower()
+    if prefix == "sh":
+        return "SH"
+    if prefix == "sz":
+        return "SZ"
+    if prefix == "bj":
+        return "BJ"
+    return ""
+
+
+def refresh_index_symbols_from_akshare() -> int:
+    rows = [dict(row) for row in _CORE_INDEX_SYMBOLS]
+    akshare = _akshare_client()
+    for category, market in (("上证系列指数", "SH"), ("深证系列指数", "SZ"), ("中证系列指数", "CSI")):
+        try:
+            frame = akshare.stock_zh_index_spot_em(symbol=category)
+        except Exception:  # noqa: BLE001 - core index fallback keeps common names available.
+            continue
+        for row in _records_from_frame(frame):
+            raw_code = _first_text(row, ("代码", "code", "symbol"))
+            name = _first_text(row, ("名称", "name", "指数名称"))
+            if not raw_code or not name:
+                continue
+            code = _standardize_code(raw_code, market, "index")
+            rows.append(
+                {
+                    "code": code,
+                    "market": market or _index_market_from_akshare_code(code),
+                    "asset_type": "index",
+                    "name": name,
+                    "ts_code": code,
+                    "source": "akshare_index",
+                }
+            )
+    return refresh_stock_symbols(merge_symbol_records(rows), source="akshare_index")
+
+
 def refresh_bond_futures_symbols_from_akshare() -> int:
     rows = [
         {"code": "T0", "name": "10年期国债期货主力连续", "market": "CFFEX", "asset_type": "futures", "source": "akshare_futures", "ts_code": "T0"},
@@ -421,6 +524,7 @@ def refresh_all_symbols_from_akshare() -> dict[str, object]:
         ("etf", refresh_etf_symbols_from_akshare),
         ("convertible_bond", refresh_convertible_bond_symbols_from_akshare),
         ("gold", refresh_gold_symbols_from_akshare),
+        ("index", refresh_index_symbols_from_akshare),
         ("futures", refresh_bond_futures_symbols_from_akshare),
     ):
         try:
@@ -491,6 +595,9 @@ def refresh_all_symbol_sources() -> dict[str, object]:
 
 def resolve_stock(target: str, auto_refresh_on_miss: bool = True) -> tuple[str | None, ErrorCode | None]:
     value = str(target or "").strip()
+    index_match = _INDEX_PREFIX_RE.fullmatch(value)
+    if index_match:
+        return f"{index_match.group(1).lower()}{index_match.group(2)}", None
     code = _standardize_code(value)
     if (
         _A_SHARE_CODE_RE.fullmatch(code)

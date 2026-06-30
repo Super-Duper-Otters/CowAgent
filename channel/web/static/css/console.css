@@ -3662,7 +3662,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 .investment-stock-log-placeholder {
     display: grid;
     min-height: 172px;
-    width: calc(100% - 20px);
+    width: auto;
+    min-width: 0;
     place-items: center;
     border: 1px dashed #cbd5e1;
     border-radius: 8px;
@@ -3673,7 +3674,23 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 .investment-stock-refresh-progress {
     display: grid;
+    width: auto;
+    min-width: 0;
+    min-height: 172px;
+    margin: 10px;
+    padding: 34px min(48px, 8vw);
+    place-content: center;
+    align-content: center;
+    justify-items: stretch;
     gap: 12px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.investment-stock-refresh-progress > * {
+    width: min(560px, 100%);
+    justify-self: center;
 }
 
 .investment-stock-refresh-progress-head {

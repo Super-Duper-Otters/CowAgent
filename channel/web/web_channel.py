@@ -4490,6 +4490,8 @@ class InvestmentStocksRefreshHandler:
                 "etf": stock_resolver.refresh_etf_symbols_from_akshare,
                 "convertible_bond": stock_resolver.refresh_convertible_bond_symbols_from_akshare,
                 "gold": stock_resolver.refresh_gold_symbols_from_akshare,
+                "index": stock_resolver.refresh_index_symbols_from_akshare,
+                "tushare_index": stock_resolver.refresh_index_symbols_from_tushare,
                 "futures": stock_resolver.refresh_bond_futures_symbols_from_akshare,
             }
             refresher = refreshers.get(source)

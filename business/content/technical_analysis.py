@@ -93,6 +93,7 @@ _US_PREFIX_RE = re.compile(r"^US:([A-Z0-9_.-]+)$", re.IGNORECASE)
 _HK_SUFFIX_RE = re.compile(r"^(\d{5})\.HK$", re.IGNORECASE)
 _HK_PREFIX_RE = re.compile(r"^HK(\d{5})$", re.IGNORECASE)
 _GOLD_ALIASES = {"GC", "COMEX_GOLD", "GOLD_COMEX"}
+_INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)(\d{6})$", re.IGNORECASE)
 _ASCII_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]+$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -112,6 +113,11 @@ def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
     value = str(target or "").strip()
     if not value:
         return TechnicalAnalysisTarget()
+
+    index_match = _INDEX_PREFIX_RE.fullmatch(value)
+    if index_match:
+        normalized = f"{index_match.group(1).lower()}{index_match.group(2)}"
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
 
     suffix_match = _A_SHARE_SUFFIX_RE.fullmatch(value)
     if suffix_match:
