@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, text
 
 from business.config.constants import ErrorCode
 from business.config.config_service import get_config, mask_sensitive_value
@@ -61,6 +61,8 @@ def _standardize_code(value: str, market: str = "", asset_type: str = "") -> str
         return f"{code.zfill(5)}.HK"
     if market_value == "US" and "." not in code:
         return f"{code}.US"
+    if str(asset_type or "").strip().lower() == "futures" and market_value in {"SHFE", "DCE", "CZCE", "CFFEX", "GFEX", "INE"}:
+        return code
     if market_value and "." not in code and market_value not in {"SH", "SZ", "BJ"}:
         return f"{code}.{market_value}"
     if _A_SHARE_CODE_RE.fullmatch(code):
@@ -400,6 +402,16 @@ def refresh_gold_symbols_from_akshare() -> int:
     return _refresh_akshare_frame(akshare.spot_quotations_sge(), "akshare_gold", "SGE", "gold")
 
 
+def refresh_bond_futures_symbols_from_akshare() -> int:
+    rows = [
+        {"code": "T0", "name": "10年期国债期货主力连续", "market": "CFFEX", "asset_type": "futures", "source": "akshare_futures", "ts_code": "T0"},
+        {"code": "TF0", "name": "5年期国债期货主力连续", "market": "CFFEX", "asset_type": "futures", "source": "akshare_futures", "ts_code": "TF0"},
+        {"code": "TS0", "name": "2年期国债期货主力连续", "market": "CFFEX", "asset_type": "futures", "source": "akshare_futures", "ts_code": "TS0"},
+        {"code": "TL0", "name": "30年期国债期货主力连续", "market": "CFFEX", "asset_type": "futures", "source": "akshare_futures", "ts_code": "TL0"},
+    ]
+    return refresh_stock_symbols(rows, source="akshare_futures")
+
+
 def refresh_all_symbols_from_akshare() -> dict[str, object]:
     result: dict[str, object] = {}
     for market_key, refresher in (
@@ -409,6 +421,7 @@ def refresh_all_symbols_from_akshare() -> dict[str, object]:
         ("etf", refresh_etf_symbols_from_akshare),
         ("convertible_bond", refresh_convertible_bond_symbols_from_akshare),
         ("gold", refresh_gold_symbols_from_akshare),
+        ("futures", refresh_bond_futures_symbols_from_akshare),
     ):
         try:
             result[market_key] = {"count": refresher()}
@@ -498,6 +511,38 @@ def resolve_stock(target: str, auto_refresh_on_miss: bool = True) -> tuple[str |
     return None, ErrorCode.STOCK_NOT_FOUND
 
 
+def deduplicate_stock_symbol_codes(conn) -> int:
+    result = conn.execute(
+        text(
+            """
+            delete from stock_symbols target
+            using (
+                select
+                    ctid,
+                    row_number() over (
+                        partition by code
+                        order by
+                            case
+                                when source like 'tushare%' then 100
+                                when source like 'baostock%' then 80
+                                when source like 'akshare%' then 60
+                                else 10
+                            end desc,
+                            updated_at desc,
+                            name asc,
+                            market asc
+                    ) as duplicate_rank
+                from stock_symbols
+                where code is not null and btrim(code) <> ''
+            ) ranked
+            where target.ctid = ranked.ctid
+              and ranked.duplicate_rank > 1
+            """
+        )
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def refresh_stock_symbols(rows: list[dict[str, str]], source: str = "") -> int:
     updated_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
     normalized_rows = []
@@ -526,6 +571,7 @@ def refresh_stock_symbols(rows: list[dict[str, str]], source: str = "") -> int:
         return 0
 
     with connect() as conn:
+        deduplicate_stock_symbol_codes(conn)
         return upsert_stock_symbols(conn, normalized_rows)
 
 
@@ -539,7 +585,8 @@ def list_stock_symbols(name: str = "", limit: int = 20) -> list[dict[str, str]]:
     )
     value = str(name or "").strip()
     if value:
-        stmt = stmt.where(table.c.name.like(f"%{value}%"))
+        pattern = f"%{value}%"
+        stmt = stmt.where(or_(table.c.name.like(pattern), table.c.code.like(pattern), table.c.ts_code.like(pattern)))
 
     with connect() as conn:
         rows = conn.execute(stmt).fetchall()

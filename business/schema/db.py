@@ -158,7 +158,8 @@ def upsert_stock_symbols(conn, rows: list[dict]) -> int:
             >= _stock_source_priority_expression(table.c.source),
         )
         result = conn.execute(stmt)
-        affected += int(getattr(result, "rowcount", 0) or 0)
+        rowcount = int(getattr(result, "rowcount", 0) or 0)
+        affected += len(batch) if rowcount < 0 else rowcount
     return affected
 
 

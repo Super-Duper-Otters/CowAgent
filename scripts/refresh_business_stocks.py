@@ -74,9 +74,13 @@ def _build_single_source_payload(source: str) -> dict[str, Any]:
         "a_share": stock_resolver.refresh_a_share_symbols_from_tushare,
         "hk": stock_resolver.refresh_hk_symbols_from_tushare,
         "us": stock_resolver.refresh_us_symbols_from_tushare,
+        "akshare_a_share": stock_resolver.refresh_a_share_symbols_from_akshare,
+        "akshare_hk": stock_resolver.refresh_hk_symbols_from_akshare,
+        "akshare_us": stock_resolver.refresh_us_symbols_from_akshare,
         "etf": stock_resolver.refresh_etf_symbols_from_akshare,
         "convertible_bond": stock_resolver.refresh_convertible_bond_symbols_from_akshare,
         "gold": stock_resolver.refresh_gold_symbols_from_akshare,
+        "futures": stock_resolver.refresh_bond_futures_symbols_from_akshare,
     }
     refresher = refreshers[source]
     try:
@@ -127,7 +131,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Refresh the business stock dictionary.")
     parser.add_argument(
         "--source",
-        choices=("all", "tushare", "akshare", "baostock", "a_share", "hk", "us", "etf", "convertible_bond", "gold"),
+        choices=(
+            "all",
+            "tushare",
+            "akshare",
+            "baostock",
+            "a_share",
+            "hk",
+            "us",
+            "akshare_a_share",
+            "akshare_hk",
+            "akshare_us",
+            "etf",
+            "convertible_bond",
+            "gold",
+            "futures",
+        ),
         default="all",
     )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
