@@ -8186,6 +8186,13 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "标的字段必须输出",
         "图片主标题由“📈 标的：”字段渲染而来",
         "股票字典中文名",
+        "RSI(6)从92%大幅回落至55%",
+        "超买风险化解=健康的回调整理",
+        "均线多头维持+MACD金叉不破=中期趋势未改",
+        "不得改变“信号方向”",
+        "- 📈 反弹收复109.335（前收盘）：震荡偏强延续",
+        "- 🔄 109.06~109.40区间震荡：缩量整固，等待方向",
+        "- 📉 跌破MA20（109.064）：短线走弱，关注108.80（MA60）",
     ):
         assert required in request.prompt
     assert "禁止输出 Markdown 表格" in request.prompt
