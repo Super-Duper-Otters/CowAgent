@@ -12214,6 +12214,54 @@ def test_cache_key_invalidation_preserves_terminal_product_history(business_env)
     assert PRODUCT_STATUS_ACTIVE not in {product["status"] for product in products}
 
 
+def test_technical_analysis_product_cache_hit_uses_product_id_as_product_source_id(business_env, tmp_path, monkeypatch):
+    from business.content import technical_analysis
+    from business.content.market_date_resolver import MarketDateResolution
+    from business.content.technical_analysis import TechnicalAnalysisTarget
+    from business.config.constants import ServiceType
+    from business.products.product_service import create_product
+
+    signal = tmp_path / "signal.png"
+    chart = tmp_path / "chart.png"
+    report = tmp_path / "report.md"
+    signal.write_bytes(b"signal")
+    chart.write_bytes(b"chart")
+    report.write_text("report", encoding="utf-8")
+    product = create_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key="300502.SZ",
+        target_label="300502.SZ 新易盛",
+        business_date="2026-06-30",
+        version_fingerprint="vf-product-hit",
+        source_type="cache",
+        source_cache_key="technical_analysis:300502.SZ:2026-06-30:vf-product-hit",
+        output_files=[str(signal), str(chart), str(report)],
+    )
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(technical_analysis, "_cache_version_fingerprint", lambda *_args: "vf-product-hit")
+    monkeypatch.setattr(
+        technical_analysis,
+        "_technical_analysis_target_from_input",
+        lambda _target: (
+            TechnicalAnalysisTarget(normalized_target="300502.SZ", skill_symbol="300502.SZ", stock_name="新易盛"),
+            None,
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: MarketDateResolution("2026-06-30", True, "test"),
+    )
+
+    result = technical_analysis.run_technical_analysis("openid", "300502.SZ 技术分析")
+
+    assert result.success is True
+    assert result.cache_hit is True
+    assert result.source_type == "product"
+    assert result.source_id == product["product_id"]
+
+
 def test_web_business_cache_handler_sanitizes_limit_and_rejects_unmatched_service_type(business_env, monkeypatch):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

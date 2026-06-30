@@ -690,7 +690,6 @@ def run_technical_analysis(
         if product is not None:
             increment_product_hit(product["product_id"])
             product_cache_key = str(product.get("source_cache_key") or "")
-            product_source_id = product_cache_key or str(product.get("product_id") or "")
             output_files = list(product.get("output_files") or [])
             signal_card_path = output_files[0] if output_files else ""
             main_chart_path = output_files[1] if len(output_files) > 1 else ""
@@ -713,7 +712,7 @@ def run_technical_analysis(
                 cache_key=product_cache_key,
                 cache_hit=True,
                 source_type="product",
-                source_id=product_source_id,
+                source_id=str(product.get("product_id") or ""),
             )
     if use_cache_context and cache_context.cache_key:
         cached = _find_cache_context_entry(
