@@ -228,9 +228,11 @@ investment_stock_symbols = Table(
     Column("name", Text, nullable=False),
     Column("market", Text, nullable=False),
     Column("ts_code", Text),
+    Column("asset_type", Text, nullable=False, server_default="a_share"),
     Column("source", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     Index("idx_stock_symbols_name", "name"),
+    Index("idx_stock_symbols_asset_type", "asset_type"),
     Index("idx_stock_symbols_updated", "updated_at"),
 )
 

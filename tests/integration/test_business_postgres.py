@@ -142,6 +142,10 @@ def test_postgres_runs_critical_business_flows(business_postgres_env, tmp_path):
         if index.get("unique")
     )
     assert stock_pk == ["code"] or ("code",) in stock_unique_columns
+    stock_columns = {column["name"] for column in inspector.get_columns("stock_symbols")}
+    assert "asset_type" in stock_columns
+    stock_indexes = {index.get("name") for index in inspector.get_indexes("stock_symbols")}
+    assert "idx_stock_symbols_asset_type" in stock_indexes
 
     secret_key = f"integration.secret.{suffix}"
     secret_value = f"sk-pg-{suffix}"

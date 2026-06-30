@@ -135,6 +135,8 @@ def test_business_schema_declares_all_tables():
         "idx_products_source_cache_key",
         "idx_products_source_content_id",
     }.issubset({index.name for index in metadata.tables["products"].indexes})
+    assert "asset_type" in metadata.tables["stock_symbols"].columns
+    assert "idx_stock_symbols_asset_type" in {index.name for index in metadata.tables["stock_symbols"].indexes}
 
 
 def test_business_schema_no_longer_defines_cache_entries_table():
@@ -12344,16 +12346,273 @@ def test_stock_resolver_resolves_codes_names_and_business_prompts(business_env, 
     assert user_message(ambiguous_error) == "股票名称匹配到多个标的，请改用股票代码。"
 
 
-def test_stock_resolver_ignores_non_tushare_rows_for_name_resolution(business_env):
+def test_stock_resolver_resolves_names_from_dictionary_sources(business_env):
     from business.content import stock_resolver as stock_resolver
-    from business.config.constants import ErrorCode
 
     stock_resolver.refresh_stock_symbols(
-        [{"code": "AAPL.US", "name": "苹果", "market": "US", "source": "akshare"}],
-        source="akshare",
+        [{"code": "510300.SH", "name": "沪深300ETF", "market": "SH", "asset_type": "etf", "source": "akshare_etf"}],
+        source="akshare_etf",
+    )
+    stock_resolver.refresh_stock_symbols(
+        [{"code": "600519.SH", "name": "贵州茅台", "market": "SH", "asset_type": "a_share", "source": "baostock_a"}],
+        source="baostock_a",
     )
 
-    assert stock_resolver.resolve_stock("苹果") == (None, ErrorCode.STOCK_NOT_FOUND)
+    assert stock_resolver.resolve_stock("沪深300ETF") == ("510300.SH", None)
+    assert stock_resolver.resolve_stock("贵州茅台") == ("600519.SH", None)
+
+
+def test_stock_resolver_persists_asset_type(business_env):
+    from business.content import stock_resolver as stock_resolver
+
+    assert stock_resolver.refresh_stock_symbols(
+        [
+            {"code": "510300", "name": "沪深300ETF", "market": "SH", "asset_type": "etf", "source": "akshare_etf"},
+            {"code": "600519.SH", "name": "贵州茅台", "market": "SH", "source": "tushare_a"},
+            {"code": "00700", "name": "腾讯控股", "market": "HK", "source": "akshare_hk"},
+        ],
+        source="mixed-test",
+    ) == 3
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=10)}
+
+    assert rows["510300.SH"]["asset_type"] == "etf"
+    assert rows["600519.SH"]["asset_type"] == "a_share"
+    assert rows["00700.HK"]["name"] == "腾讯控股"
+
+
+def test_stock_resolver_normalizes_provider_records():
+    from business.content import stock_resolver as stock_resolver
+
+    rows = stock_resolver.normalize_symbol_records(
+        [
+            {"code": "sh.600519", "name": "贵州茅台", "source": "baostock", "asset_type": "a_share"},
+            {"code": "sh.600519", "code_name": "贵州茅台Baostock", "source": "baostock_a", "asset_type": "a_share"},
+            {"code": "00700", "name": "腾讯控股", "market": "HK", "source": "akshare", "asset_type": "hk_stock"},
+            {"code": "AAPL", "name": "苹果", "market": "US", "source": "tushare", "asset_type": "us_stock"},
+            {"code": "AU9999", "name": "Au99.99", "market": "SGE", "source": "akshare", "asset_type": "gold"},
+            {"code": "510300", "name": "沪深300ETF", "market": "SH", "source": "akshare", "asset_type": "etf"},
+            {"code": "159915", "name": "创业板ETF", "source": "akshare", "asset_type": "etf"},
+            {
+                "code": "113000",
+                "name": "可转债样例",
+                "market": "SH",
+                "source": "akshare",
+                "asset_type": "convertible_bond",
+            },
+            {
+                "code": "123001",
+                "name": "转债深市样例",
+                "source": "akshare",
+                "asset_type": "convertible_bond",
+            },
+            {"code": "835185", "name": "北交所样例", "source": "akshare", "asset_type": "a_share"},
+            {"ts_code": "600519.SH", "name": "茅台Tushare", "exchange": "SSE", "source": "tushare", "asset_type": "a_share"},
+            {"code": "000001.SZ", "market": "SZ", "source": "tushare_a", "asset_type": "a_share"},
+        ]
+    )
+
+    by_name = {row["name"]: row for row in rows}
+    by_code = {row["code"]: row for row in rows}
+    assert (by_name["贵州茅台"]["code"], by_name["贵州茅台"]["market"], by_name["贵州茅台"]["asset_type"]) == (
+        "600519.SH",
+        "SH",
+        "a_share",
+    )
+    assert (
+        by_name["贵州茅台Baostock"]["code"],
+        by_name["贵州茅台Baostock"]["market"],
+        by_name["贵州茅台Baostock"]["asset_type"],
+    ) == (
+        "600519.SH",
+        "SH",
+        "a_share",
+    )
+    assert (by_name["腾讯控股"]["code"], by_name["腾讯控股"]["market"], by_name["腾讯控股"]["asset_type"]) == (
+        "00700.HK",
+        "HK",
+        "hk_stock",
+    )
+    assert (by_name["苹果"]["code"], by_name["苹果"]["market"], by_name["苹果"]["asset_type"]) == (
+        "AAPL.US",
+        "US",
+        "us_stock",
+    )
+    assert (by_name["Au99.99"]["code"], by_name["Au99.99"]["market"], by_name["Au99.99"]["asset_type"]) == (
+        "AU9999.SGE",
+        "SGE",
+        "gold",
+    )
+    assert (by_name["沪深300ETF"]["code"], by_name["沪深300ETF"]["market"], by_name["沪深300ETF"]["asset_type"]) == (
+        "510300.SH",
+        "SH",
+        "etf",
+    )
+    assert (by_name["创业板ETF"]["code"], by_name["创业板ETF"]["market"], by_name["创业板ETF"]["asset_type"]) == (
+        "159915.SZ",
+        "SZ",
+        "etf",
+    )
+    assert (by_name["可转债样例"]["code"], by_name["可转债样例"]["market"], by_name["可转债样例"]["asset_type"]) == (
+        "113000.SH",
+        "SH",
+        "convertible_bond",
+    )
+    assert (by_name["转债深市样例"]["code"], by_name["转债深市样例"]["market"], by_name["转债深市样例"]["asset_type"]) == (
+        "123001.SZ",
+        "SZ",
+        "convertible_bond",
+    )
+    assert (by_name["北交所样例"]["code"], by_name["北交所样例"]["market"], by_name["北交所样例"]["asset_type"]) == (
+        "835185.BJ",
+        "BJ",
+        "a_share",
+    )
+    assert (by_name["茅台Tushare"]["code"], by_name["茅台Tushare"]["market"], by_name["茅台Tushare"]["asset_type"]) == (
+        "600519.SH",
+        "SH",
+        "a_share",
+    )
+    assert "000001.SZ" not in by_code
+
+
+def test_stock_resolver_merges_sources_by_priority_and_code():
+    from business.content import stock_resolver as stock_resolver
+
+    rows = stock_resolver.merge_symbol_records(
+        [
+            {
+                "code": "600519.SH",
+                "name": "贵州茅台-AK",
+                "market": "SH",
+                "asset_type": "a_share",
+                "source": "akshare_a",
+                "ts_code": "600519.SH",
+            },
+            {
+                "code": "600519.SH",
+                "name": "贵州茅台",
+                "market": "SH",
+                "asset_type": "a_share",
+                "source": "tushare_a",
+                "ts_code": "600519.SH",
+            },
+            {
+                "code": "113000.SH",
+                "name": "可转债样例",
+                "market": "SH",
+                "asset_type": "convertible_bond",
+                "source": "akshare_convertible_bond",
+                "ts_code": "113000.SH",
+            },
+            {
+                "code": "sh.300502",
+                "name": "新易盛-BS",
+                "market": "SH",
+                "asset_type": "a_share",
+                "source": "baostock_a",
+                "ts_code": "300502.SH",
+            },
+            {
+                "code": "300502.SH",
+                "name": "新易盛-AK",
+                "market": "SH",
+                "asset_type": "a_share",
+                "source": "akshare_a",
+                "ts_code": "300502.SH",
+            },
+            {
+                "code": "000001.SZ",
+                "name": "平安银行-AK",
+                "market": "SZ",
+                "asset_type": "a_share",
+                "source": "akshare_a",
+                "ts_code": "000001.SZ",
+            },
+            {
+                "code": "000001.SZ",
+                "name": "",
+                "market": "SZ",
+                "asset_type": "a_share",
+                "source": "tushare_a",
+                "ts_code": "000001.SZ",
+            },
+        ]
+    )
+
+    by_code = {row["code"]: row for row in rows}
+
+    assert len(rows) == 4
+    assert by_code["600519.SH"]["name"] == "贵州茅台"
+    assert by_code["600519.SH"]["source"] == "tushare_a"
+    assert by_code["113000.SH"]["asset_type"] == "convertible_bond"
+    assert by_code["300502.SH"]["name"] == "新易盛-BS"
+    assert by_code["300502.SH"]["source"] == "baostock_a"
+    assert by_code["000001.SZ"]["name"] == "平安银行-AK"
+    assert by_code["000001.SZ"]["source"] == "tushare_a"
+
+
+def test_stock_symbol_source_priority_expression_compiles_prefixes():
+    from sqlalchemy.dialects import postgresql
+    from business.schema.db import _stock_source_priority_expression
+    from business.schema.tables import investment_stock_symbols
+
+    sql = str(
+        _stock_source_priority_expression(investment_stock_symbols.c.source).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "tushare%" in sql
+    assert "baostock%" in sql
+    assert "akshare%" in sql
+    assert "100" in sql
+    assert "80" in sql
+    assert "60" in sql
+    assert "10" in sql
+
+
+def test_upsert_stock_symbols_returns_database_rowcount(monkeypatch):
+    from business.schema import db as schema_db
+
+    class FakeResult:
+        def __init__(self, rowcount):
+            self.rowcount = rowcount
+
+    class FakeConnection:
+        def __init__(self):
+            self.calls = 0
+            self.rowcounts = iter([1, 0])
+
+        def execute(self, _statement):
+            self.calls += 1
+            return FakeResult(next(self.rowcounts))
+
+    conn = FakeConnection()
+    monkeypatch.setattr(schema_db, "_STOCK_SYMBOL_UPSERT_BATCH_SIZE", 1)
+    rows = [
+        {
+            "code": "600519.SH",
+            "name": "贵州茅台",
+            "market": "SH",
+            "asset_type": "a_share",
+            "ts_code": "600519.SH",
+            "source": "tushare_a",
+            "updated_at": "now",
+        },
+        {
+            "code": "510300.SH",
+            "name": "沪深300ETF",
+            "market": "SH",
+            "asset_type": "etf",
+            "ts_code": "510300.SH",
+            "source": "akshare_etf",
+            "updated_at": "now",
+        },
+    ]
+
+    assert schema_db.upsert_stock_symbols(conn, rows) == 1
+    assert conn.calls == 2
 
 
 def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functions(business_env, monkeypatch):
@@ -12396,12 +12655,15 @@ def test_stock_resolver_refreshes_all_markets_from_tushare_with_explicit_functio
     rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=20)}
     assert rows["300502.SZ"]["name"] == "新易盛"
     assert rows["300502.SZ"]["market"] == "SZ"
+    assert rows["300502.SZ"]["asset_type"] == "a_share"
     assert rows["300502.SZ"]["source"] == "tushare_a"
     assert rows["00700.HK"]["name"] == "腾讯控股"
     assert rows["00700.HK"]["market"] == "HK"
+    assert rows["00700.HK"]["asset_type"] == "hk_stock"
     assert rows["00700.HK"]["source"] == "tushare_hk"
     assert rows["AAPL.US"]["name"] == "苹果"
     assert rows["AAPL.US"]["market"] == "US"
+    assert rows["AAPL.US"]["asset_type"] == "us_stock"
     assert rows["AAPL.US"]["source"] == "tushare_us"
     assert "NOZH.US" not in rows
 
@@ -12446,6 +12708,153 @@ class _FakeDataFrame:
     def to_dict(self, orient):
         assert orient == "records"
         return self._rows
+
+
+def test_stock_resolver_refreshes_from_akshare_adapter(business_env, monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+
+    fake_akshare = SimpleNamespace(
+        stock_zh_a_spot_em=lambda: _FakeDataFrame([{"代码": "600519", "名称": "贵州茅台"}]),
+        stock_hk_spot_em=lambda: _FakeDataFrame([{"代码": "00700", "名称": "腾讯控股"}]),
+        stock_us_spot_em=lambda: _FakeDataFrame([{"代码": "AAPL", "名称": "苹果"}]),
+        fund_etf_spot_em=lambda: _FakeDataFrame([{"代码": "510300", "名称": "沪深300ETF"}, {"代码": "159915", "名称": "创业板ETF"}]),
+        bond_zh_hs_cov_spot=lambda: _FakeDataFrame([{"代码": "113000", "名称": "可转债样例"}, {"代码": "123001", "名称": "转债深市样例"}]),
+        spot_quotations_sge=lambda: _FakeDataFrame([{"代码": "AU9999", "名称": "Au99.99"}]),
+    )
+    monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
+
+    result = stock_resolver.refresh_all_symbols_from_akshare()
+
+    assert result["a_share"]["count"] == 1
+    assert result["hk"]["count"] == 1
+    assert result["us"]["count"] == 1
+    assert result["etf"]["count"] == 2
+    assert result["convertible_bond"]["count"] == 2
+    assert result["gold"]["count"] == 1
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=20)}
+    assert rows["510300.SH"]["asset_type"] == "etf"
+    assert rows["159915.SZ"]["asset_type"] == "etf"
+    assert rows["113000.SH"]["asset_type"] == "convertible_bond"
+    assert rows["123001.SZ"]["asset_type"] == "convertible_bond"
+    assert rows["AU9999.SGE"]["asset_type"] == "gold"
+
+
+def test_stock_resolver_akshare_adapter_normalizes_asset_markets_without_db(monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+
+    captured = {}
+    fake_akshare = SimpleNamespace(
+        fund_etf_spot_em=lambda: _FakeDataFrame([{"代码": "510300", "名称": "沪深300ETF"}, {"代码": "159915", "名称": "创业板ETF"}]),
+        bond_zh_hs_cov_spot=lambda: _FakeDataFrame([{"代码": "113000", "名称": "可转债样例"}, {"代码": "123001", "名称": "转债深市样例"}]),
+    )
+    monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
+
+    def fake_refresh(rows, source=""):
+        captured[source] = rows
+        return len(rows)
+
+    monkeypatch.setattr(stock_resolver, "refresh_stock_symbols", fake_refresh)
+
+    assert stock_resolver.refresh_etf_symbols_from_akshare() == 2
+    assert stock_resolver.refresh_convertible_bond_symbols_from_akshare() == 2
+
+    etf_by_code = {row["code"]: row for row in captured["akshare_etf"]}
+    bond_by_code = {row["code"]: row for row in captured["akshare_convertible_bond"]}
+    assert etf_by_code["510300.SH"]["asset_type"] == "etf"
+    assert etf_by_code["159915.SZ"]["asset_type"] == "etf"
+    assert bond_by_code["113000.SH"]["asset_type"] == "convertible_bond"
+    assert bond_by_code["123001.SZ"]["asset_type"] == "convertible_bond"
+
+
+class _FakeBaoResult:
+    error_code = "0"
+    error_msg = ""
+    fields = ["code", "code_name", "type", "status"]
+
+    def __init__(self):
+        self._rows = iter(
+            [
+                ["sh.600519", "贵州茅台", "1", "1"],
+                ["sz.000001", "平安退市", "1", "0"],
+                ["sh.000300", "沪深300指数", "2", "1"],
+                ["sz.300502", "新易盛", "", ""],
+            ]
+        )
+
+    def next(self):
+        try:
+            self._current = next(self._rows)
+            return True
+        except StopIteration:
+            return False
+
+    def get_row_data(self):
+        return self._current
+
+
+def test_stock_resolver_refreshes_from_baostock_adapter(business_env, monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+
+    calls = []
+    fake_baostock = SimpleNamespace(
+        login=lambda: SimpleNamespace(error_code="0", error_msg=""),
+        logout=lambda: calls.append("logout"),
+        query_stock_basic=lambda: _FakeBaoResult(),
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake_baostock)
+
+    assert stock_resolver.refresh_a_share_symbols_from_baostock() == 2
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=10)}
+    assert rows["600519.SH"]["name"] == "贵州茅台"
+    assert rows["600519.SH"]["asset_type"] == "a_share"
+    assert rows["600519.SH"]["source"] == "baostock_a"
+    assert rows["300502.SZ"]["name"] == "新易盛"
+    assert "000001.SZ" not in rows
+    assert "000300.SH" not in rows
+    assert calls == ["logout"]
+
+
+def test_stock_resolver_baostock_adapter_filters_inactive_and_non_stock_without_db(monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+
+    calls = []
+    captured = {}
+    fake_baostock = SimpleNamespace(
+        login=lambda: SimpleNamespace(error_code="0", error_msg=""),
+        logout=lambda: calls.append("logout"),
+        query_stock_basic=lambda: _FakeBaoResult(),
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake_baostock)
+
+    def fake_refresh(rows, source=""):
+        captured["rows"] = rows
+        captured["source"] = source
+        return len(rows)
+
+    monkeypatch.setattr(stock_resolver, "refresh_stock_symbols", fake_refresh)
+
+    assert stock_resolver.refresh_a_share_symbols_from_baostock() == 2
+
+    rows = {row["code"]: row for row in captured["rows"]}
+    assert captured["source"] == "baostock_a"
+    assert set(rows) == {"600519.SH", "300502.SZ"}
+    assert rows["600519.SH"]["source"] == "baostock_a"
+    assert rows["300502.SZ"]["source"] == "baostock_a"
+    assert calls == ["logout"]
+
+
+def test_stock_resolver_refreshes_all_dictionary_sources(business_env, monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_tushare", lambda: {"a_share": {"count": 2}})
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_akshare", lambda: {"etf": {"count": 3}})
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_baostock", lambda: {"a_share": {"count": 1}})
+
+    assert stock_resolver.refresh_all_symbol_sources() == {
+        "tushare": {"a_share": {"count": 2}},
+        "akshare": {"etf": {"count": 3}},
+        "baostock": {"a_share": {"count": 1}},
+    }
 
 
 def test_stock_resolver_refreshes_large_symbol_batch(business_env):
@@ -12552,25 +12961,89 @@ def test_stock_resolver_all_tushare_reports_market_counts_and_errors(business_en
     }
 
 
+def test_refresh_business_stocks_count_successes_uses_direct_count_as_leaf():
+    from scripts import refresh_business_stocks
+
+    assert refresh_business_stocks._count_successes(
+        {"provider": {"count": 6, "a": {"count": 2}, "b": {"count": 4}}}
+    ) == (6, [])
+    assert refresh_business_stocks._count_successes(
+        {"provider": {"a": {"count": 2}, "b": {"count": 4}}}
+    ) == (6, [])
+
+
 def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeypatch, capsys):
     from scripts import refresh_business_stocks
 
     calls = []
     monkeypatch.setattr(refresh_business_stocks.storage, "initialize_storage", lambda: calls.append("init"))
-    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_all_symbols_from_tushare", lambda: calls.append("all") or {"a_share": {"count": 2}, "hk": {"count": 3}, "us": {"count": 4}})
+    monkeypatch.setattr(
+        refresh_business_stocks.stock_resolver,
+        "refresh_all_symbol_sources",
+        lambda: calls.append("all")
+        or {
+            "tushare": {"a_share": {"count": 2}},
+            "akshare": {"etf": {"count": 3}},
+            "baostock": {"a_share": {"count": 1}},
+        },
+    )
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_all_symbols_from_tushare", lambda: calls.append("tushare") or {"a_share": {"count": 2}})
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_all_symbols_from_akshare", lambda: calls.append("akshare") or {"etf": {"count": 3}})
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_all_symbols_from_baostock", lambda: calls.append("baostock") or {"a_share": {"count": 1}})
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: calls.append("a_share") or 3)
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_hk_symbols_from_tushare", lambda: calls.append("hk") or 4)
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_us_symbols_from_tushare", lambda: calls.append("us") or 5)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_etf_symbols_from_akshare", lambda: calls.append("etf") or 6)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_convertible_bond_symbols_from_akshare", lambda: calls.append("convertible_bond") or 7)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_gold_symbols_from_akshare", lambda: calls.append("gold") or 8)
 
     assert refresh_business_stocks.main(["--source", "all", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "tushare", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "akshare", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "baostock", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "a_share", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "hk", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "us", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "etf", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "convertible_bond", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "gold", "--json"]) == 0
 
-    assert calls == ["init", "all", "init", "a_share", "init", "hk", "init", "us"]
+    assert calls == [
+        "init",
+        "all",
+        "init",
+        "tushare",
+        "init",
+        "akshare",
+        "init",
+        "baostock",
+        "init",
+        "a_share",
+        "init",
+        "hk",
+        "init",
+        "us",
+        "init",
+        "etf",
+        "init",
+        "convertible_bond",
+        "init",
+        "gold",
+    ]
     payloads = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
-    assert [payload["source"] for payload in payloads] == ["all", "a_share", "hk", "us"]
-    assert [payload["count"] for payload in payloads] == [9, 3, 4, 5]
+    assert [payload["source"] for payload in payloads] == [
+        "all",
+        "tushare",
+        "akshare",
+        "baostock",
+        "a_share",
+        "hk",
+        "us",
+        "etf",
+        "convertible_bond",
+        "gold",
+    ]
+    assert [payload["count"] for payload in payloads] == [6, 2, 3, 1, 3, 4, 5, 6, 7, 8]
     assert all(payload["success"] is True for payload in payloads)
     assert all(payload["database"] == "postgresql" for payload in payloads)
 
@@ -12581,8 +13054,8 @@ def test_refresh_business_stocks_script_exits_one_when_all_sources_fail(business
     monkeypatch.setattr(refresh_business_stocks.storage, "initialize_storage", lambda: None)
     monkeypatch.setattr(
         refresh_business_stocks.stock_resolver,
-        "refresh_all_symbols_from_tushare",
-        lambda: {"a_share": {"error": "a failed"}, "hk": {"error": "hk failed"}, "us": {"error": "us failed"}},
+        "refresh_all_symbol_sources",
+        lambda: {"tushare": {"a_share": {"error": "a failed"}, "hk": {"error": "hk failed"}, "us": {"error": "us failed"}}},
     )
 
     assert refresh_business_stocks.main(["--source", "all", "--json"]) == 1
@@ -12591,9 +13064,9 @@ def test_refresh_business_stocks_script_exits_one_when_all_sources_fail(business
     assert payload["source"] == "all"
     assert payload["success"] is False
     assert payload["count"] == 0
-    assert "a_share: a failed" in payload["error"]
-    assert "hk: hk failed" in payload["error"]
-    assert "us: us failed" in payload["error"]
+    assert "tushare.a_share: a failed" in payload["error"]
+    assert "tushare.hk: hk failed" in payload["error"]
+    assert "tushare.us: us failed" in payload["error"]
 
 
 def test_refresh_business_stocks_script_reports_single_source_exceptions(business_env, monkeypatch, capsys):

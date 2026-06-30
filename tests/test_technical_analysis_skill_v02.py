@@ -53,3 +53,35 @@ def test_v02_tushare_fallback_infers_a_share_suffix_from_code_prefix(monkeypatch
     module._fetch_tushare_stock("600519", "token")
 
     assert requested == ["300502.SZ", "600519.SH"]
+
+
+def test_v02_tl0_uses_bond_futures_akshare_preset(monkeypatch):
+    module = _load_v02_skill_module()
+    requested = []
+
+    def fake_futures_zh_daily_sina(**kwargs):
+        requested.append(kwargs)
+        return pd.DataFrame(
+            {
+                "date": pd.date_range("2026-01-01", periods=60, freq="D"),
+                "open": range(60),
+                "high": range(1, 61),
+                "low": range(60),
+                "close": range(1, 61),
+                "volume": range(100, 160),
+            }
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "akshare",
+        SimpleNamespace(futures_zh_daily_sina=fake_futures_zh_daily_sina),
+    )
+
+    config = module.PRESET_CONFIGS["TL0"]
+    df = module.fetch_data(config, symbol_code="TL0")
+
+    assert config["asset_type"] == "futures"
+    assert config["data_func"] == "futures_zh_daily_sina"
+    assert requested == [{"symbol": "TL0"}]
+    assert len(df) == 60

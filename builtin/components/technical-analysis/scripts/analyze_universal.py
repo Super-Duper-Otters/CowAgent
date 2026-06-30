@@ -60,6 +60,16 @@ PRESET_CONFIGS = {
         'volume_unit': '手',
         'color_theme': '#1E88E5',  # 蓝色系（债市偏多）
     },
+    'TL0': {
+        'name': '三十年国债期货（TL主力）',
+        'name_short': 'TL0',
+        'asset_type': 'futures',
+        'data_func': 'futures_zh_daily_sina',
+        'data_args': {'symbol': 'TL0'},
+        'price_decimal': 3,
+        'volume_unit': '手',
+        'color_theme': '#1565C0',
+    },
     'TF0': {
         'name': '五年国债期货（TF主力）',
         'name_short': 'TF0',
@@ -1220,8 +1230,8 @@ def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookb
 
     def build_usage_boundary(symbol_code_, name_):
         """根据标的类型生成使用边界文案。"""
-        bond_codes = {'T0', 'TF0', 'TS0', 'T', 'TF', 'TS'}
-        is_bond = symbol_code_ in bond_codes or any(symbol_code_.startswith(c) for c in ('T0', 'TF0', 'TS0'))
+        bond_codes = {'TL0', 'T0', 'TF0', 'TS0', 'TL', 'T', 'TF', 'TS'}
+        is_bond = symbol_code_ in bond_codes or any(symbol_code_.startswith(c) for c in ('TL0', 'T0', 'TF0', 'TS0'))
         if is_bond:
             return (
                 f"本报告主要用于辅助判断 **{name_}** 短期技术状态，适用观察周期以 1—10 个交易日为主。"

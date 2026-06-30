@@ -120,15 +120,27 @@ def upsert_config(
     conn.execute(stmt)
 
 
-def upsert_stock_symbols(conn, rows: list[dict]) -> None:
+def _stock_source_priority_expression(source_column):
+    from sqlalchemy import case
+
+    return case(
+        (source_column.like("tushare%"), 100),
+        (source_column.like("baostock%"), 80),
+        (source_column.like("akshare%"), 60),
+        else_=10,
+    )
+
+
+def upsert_stock_symbols(conn, rows: list[dict]) -> int:
     from business.schema.tables import investment_stock_symbols
 
     if not rows:
-        return
+        return 0
 
     table = investment_stock_symbols
     from sqlalchemy.dialects.postgresql import insert
 
+    affected = 0
     for start in range(0, len(rows), _STOCK_SYMBOL_UPSERT_BATCH_SIZE):
         batch = rows[start : start + _STOCK_SYMBOL_UPSERT_BATCH_SIZE]
         stmt = insert(table).values(batch)
@@ -138,11 +150,16 @@ def upsert_stock_symbols(conn, rows: list[dict]) -> None:
                 "name": stmt.excluded.name,
                 "market": stmt.excluded.market,
                 "ts_code": stmt.excluded.ts_code,
+                "asset_type": stmt.excluded.asset_type,
                 "source": stmt.excluded.source,
                 "updated_at": stmt.excluded.updated_at,
             },
+            where=_stock_source_priority_expression(stmt.excluded.source)
+            >= _stock_source_priority_expression(table.c.source),
         )
-        conn.execute(stmt)
+        result = conn.execute(stmt)
+        affected += int(getattr(result, "rowcount", 0) or 0)
+    return affected
 
 
 def reset_engine_for_tests() -> None:
