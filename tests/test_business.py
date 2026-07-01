@@ -7068,7 +7068,7 @@ def test_activation_code_redeem_creates_customer_and_marks_code_used(business_en
 
     result = redeem_activation_code("openid-activation-new", batch.codes[0])
 
-    assert result.success is True
+    assert result.success is True, result.detail
     assert result.status == "activated"
     user = get_user_by_openid("openid-activation-new")
     assert user is not None
@@ -7169,7 +7169,7 @@ def test_activation_code_redeem_merges_services_and_extends_active_subscription_
 
     result = redeem_activation_code("openid-existing-active", batch.codes[0])
 
-    assert result.success is True
+    assert result.success is True, result.detail
     user = get_user_by_openid("openid-existing-active")
     assert user is not None
     assert user.auth_end_at == old_end + timedelta(days=5)
@@ -7198,7 +7198,7 @@ def test_activation_code_redeem_canonicalizes_merged_services_to_all(business_en
 
     result = redeem_activation_code("openid-merge-all", batch.codes[0])
 
-    assert result.success is True
+    assert result.success is True, result.detail
     user = get_user_by_openid("openid-merge-all")
     assert user is not None
     assert user.allowed_services == [ServiceType.ALL]
@@ -9244,6 +9244,45 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         assert required in request.prompt
     assert "禁止输出 Markdown 表格" in request.prompt
     assert "只输出卡片正文" in request.prompt
+
+
+def test_ai_generation_normalizes_technical_analysis_intraday_change_from_report_table(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return (
+                "【浙商固收 | 智能投研辅助系统】\n"
+                "📈 标的：十年国债期货（T主力）（T0）\n"
+                "[庆祝] 信号方向：看涨观察\n"
+                "💰 最新收盘：109.220 元\n"
+                "📅 行情日期：2026-06-30\n"
+                "🔧 分析模型：技术分析体系\n\n"
+                "📊 趋势研判\n"
+                "均线多头+MACD金叉=趋势偏多。\n\n"
+                "🎯 核心关键位\n"
+                "▪️ 强压力：109.395（BOLL上轨）\n"
+                "▪️ 强支撑：109.162（MA5）\n\n"
+                "💡 实操指引\n"
+                "区间内观察。\n"
+                "⚠️ 本内容仅供研究参考，不构成任何投资建议\n"
+                "⏱️ 授权剩余时间：——\n"
+                "📚 数据来源：AKShare / Tushare / BaoStock\n"
+                "🤝 业务对接：——"
+            )
+
+    report_text = (
+        "# 十年国债期货（T主力） (T0) 技术形态分析报告\n\n"
+        "| 项目 | 数值 |\n"
+        "|------|------|\n"
+        "| 最新收盘价 | **109.220** |\n"
+        "| 日涨跌幅 | -0.11% |\n"
+    )
+
+    result = generate_technical_analysis_text(report_text, adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "📅 行情日期：2026-06-30  日内跌幅：-0.11%" in result.text
 
 
 @pytest.mark.parametrize(

@@ -295,7 +295,47 @@ def _normalize_rate_text(text: str) -> str:
     )
 
 
-def normalize_generated_text(service_type: ServiceType, text: str) -> str:
+def _extract_technical_analysis_intraday_change(source_text: str) -> tuple[str, str]:
+    match = re.search(
+        r"\|\s*日涨跌幅\s*\|\s*\*{0,2}\s*([+-]?\d+(?:\.\d+)?%)\s*\*{0,2}\s*\|",
+        source_text or "",
+    )
+    if not match:
+        match = re.search(r"日涨跌幅\s*[:：]\s*\*{0,2}\s*([+-]?\d+(?:\.\d+)?%)", source_text or "")
+    if not match:
+        return "", ""
+    change = match.group(1).strip()
+    try:
+        numeric = float(change.rstrip("%"))
+    except ValueError:
+        return "", ""
+    return ("涨幅" if numeric >= 0 else "跌幅"), change
+
+
+def _normalize_technical_analysis_text(text: str, source_text: str) -> str:
+    if re.search(r"日内(?:涨幅|跌幅)\s*[:：]\s*[+-]?\d+(?:\.\d+)?%", text or ""):
+        return text
+    direction, change = _extract_technical_analysis_intraday_change(source_text)
+    if not direction:
+        return text
+
+    def replace_market_line(match: re.Match[str]) -> str:
+        prefix = match.group(1).rstrip()
+        normalized_prefix = re.sub(r"\s+日涨跌幅\s*[:：]\s*[+-]?\d+(?:\.\d+)?%", "", prefix)
+        return f"{normalized_prefix}  日内{direction}：{change}"
+
+    return re.sub(
+        r"^([^\n]*行情日期\s*[:：]\s*\d{4}-\d{2}-\d{2}[^\n]*)$",
+        replace_market_line,
+        text,
+        count=1,
+        flags=re.M,
+    )
+
+
+def normalize_generated_text(service_type: ServiceType, text: str, source_text: str = "") -> str:
+    if service_type == ServiceType.TECHNICAL_ANALYSIS:
+        return _normalize_technical_analysis_text(text, source_text)
     if service_type == ServiceType.RATE:
         return _normalize_rate_text(text)
     return text
@@ -618,7 +658,11 @@ def generate_standard_text(
 ) -> AIGenerationResult:
     request = build_generation_request(service_type, source_text, source_files=source_files)
     try:
-        text = normalize_generated_text(request.service_type, (adapter or ExistingModelAdapter()).generate(request))
+        text = normalize_generated_text(
+            request.service_type,
+            (adapter or ExistingModelAdapter()).generate(request),
+            request.source_text,
+        )
         return AIGenerationResult(
             True,
             text=text,
