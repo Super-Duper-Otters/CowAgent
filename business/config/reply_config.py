@@ -24,7 +24,15 @@ INVESTMENT_REPLY_DEFINITIONS = [
     ReplyTextDefinition("reply.investment.activation_expired", "激活码过期提示", "客户输入已超过激活码有效期的激活码时返回。", "激活失败：该激活码已过期。"),
     ReplyTextDefinition("reply.investment.activation_disabled", "激活码停用提示", "客户输入后台已停用的激活码时返回。", "激活失败：该激活码已停用。"),
     ReplyTextDefinition("reply.investment.activation_already_bound", "激活码已绑定提示", "预登记客户已绑定其他微信时返回。", "激活失败：该客户已绑定其他微信，请联系管理员处理。"),
-    ReplyTextDefinition("reply.investment.input_error", "输入格式错误提示", "客户输入无法匹配服务格式时返回。", "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。"),
+    ReplyTextDefinition(
+        "reply.investment.input_error",
+        "输入格式错误提示",
+        "客户输入无法匹配服务格式时返回。",
+        "请输入以下格式之一：\n"
+        "1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析\n"
+        "2. 利率\n"
+        "3. 转债",
+    ),
     ReplyTextDefinition("reply.investment.running", "业务运行中提示", "业务请求已在运行中时返回。", "正在运行，请稍候。"),
     ReplyTextDefinition("reply.investment.stock_not_found", "未找到股票提示", "股票代码或名称没有匹配结果时返回。", "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ"),
     ReplyTextDefinition("reply.investment.stock_ambiguous", "股票名称重复提示", "股票名称匹配多个标的时返回。", "股票名称匹配到多个标的，请改用股票代码。"),

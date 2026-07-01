@@ -91,7 +91,12 @@ USER_MESSAGES = {
     ErrorCode.UNAUTHORIZED: "您暂未开通该服务，如需开通请联系服务人员。",
     ErrorCode.USER_DISABLED: "您的服务已停用，如需恢复请联系服务人员。",
     ErrorCode.AUTH_EXPIRED: "您的授权已过期，如需续期请联系服务人员。",
-    ErrorCode.INPUT_ERROR: "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。",
+    ErrorCode.INPUT_ERROR: (
+        "请输入以下格式之一：\n"
+        "1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析\n"
+        "2. 利率\n"
+        "3. 转债"
+    ),
     ErrorCode.RUNNING: "正在运行，请稍候。",
     ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ、00700.HK、AAPL.US。",
     ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",

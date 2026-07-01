@@ -1384,6 +1384,7 @@ def test_wechatmp_passive_pending_video_returns_only_after_user_confirms(monkeyp
 
 
 def test_wechatmp_passive_zero_no_longer_discards_pending_result(monkeypatch):
+    from business.config.constants import ErrorCode, user_message
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -1395,7 +1396,7 @@ def test_wechatmp_passive_zero_no_longer_discards_pending_result(monkeypatch):
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
 
     response = passive_reply.Query().POST()
-    assert response.startswith("请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。")
+    assert response.startswith(user_message(ErrorCode.INPUT_ERROR))
     assert channel.cache_dict.peek_result("openid") is not None
     assert produced_contexts == []
 

@@ -1048,4 +1048,8 @@ class Query:
         return verify_server(web.input())
 
     def POST(self):
-        return handle_wechatmp_post(web.input(), web.data(), env=getattr(web.ctx, "env", {}) or {})
+        try:
+            return handle_wechatmp_post(web.input(), web.data(), env=getattr(web.ctx, "env", {}) or {})
+        except Exception as exc:
+            logger.exception(exc)
+            return _system_error_text()

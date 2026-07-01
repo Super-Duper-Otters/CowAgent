@@ -1493,8 +1493,12 @@ def test_config_masks_sensitive_values_and_checks_permissions(business_env, monk
 
 def test_business_user_message_uses_reply_config_defaults(business_env):
     from business.config.constants import ErrorCode, user_message
+    from business.config.reply_config import default_reply_text
 
+    input_error = "请输入以下格式之一：\n1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析\n2. 利率\n3. 转债"
     assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert default_reply_text("reply.investment.input_error") == input_error
+    assert user_message(ErrorCode.INPUT_ERROR) == input_error
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
 
 
