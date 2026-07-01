@@ -29,6 +29,7 @@ INVESTMENT_API_URLS = (
     '/api/investment/artifact-folders', 'InvestmentArtifactFoldersHandler',
     '/api/investment/artifacts', 'InvestmentArtifactPackagesHandler',
     '/api/investment/cache', 'InvestmentCacheHandler',
+    '/api/investment/cache-update', 'InvestmentCacheUpdateHandler',
     '/api/investment/cache/clear', 'InvestmentCacheClearHandler',
     '/api/investment/cache/(.*)/invalidate', 'InvestmentCacheEntryInvalidateHandler',
     '/api/investment/components', 'InvestmentComponentsHandler',

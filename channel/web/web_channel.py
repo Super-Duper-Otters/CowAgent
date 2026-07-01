@@ -1400,9 +1400,15 @@ class ChatHandler:
         file_path = os.path.join(os.path.dirname(__file__), 'chat.html')
         with open(file_path, 'r', encoding='utf-8') as f:
             html = f.read()
-        cache_bust = str(int(time.time()))
-        html = html.replace('assets/js/console.js', f'assets/js/console.js?v={cache_bust}')
-        html = html.replace('assets/css/console.css', f'assets/css/console.css?v={cache_bust}')
+        static_dir = os.path.join(os.path.dirname(__file__), 'static')
+        js_path = os.path.join(static_dir, 'js', 'console.js')
+        css_path = os.path.join(static_dir, 'css', 'console.css')
+        with open(js_path, 'rb') as f:
+            js_cache_bust = hashlib.sha256(f.read()).hexdigest()[:12]
+        with open(css_path, 'rb') as f:
+            css_cache_bust = hashlib.sha256(f.read()).hexdigest()[:12]
+        html = html.replace('assets/js/console.js', f'assets/js/console.js?v={js_cache_bust}')
+        html = html.replace('assets/css/console.css', f'assets/css/console.css?v={css_cache_bust}')
         return html
 
 
@@ -4523,6 +4529,98 @@ class InvestmentCacheClearHandler:
             })
         except Exception as e:
             logger.error(f"[Investment] cache clear error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentCacheUpdateHandler:
+    CONFIG_KEYS = {
+        "probe_start": "investment.technical_analysis.cache_update_probe_start",
+        "probe_end": "investment.technical_analysis.cache_update_probe_end",
+        "probe_interval_minutes": "investment.technical_analysis.cache_update_probe_interval_minutes",
+    }
+
+    def GET(self):
+        _require_investment_permission("cache.read")
+        try:
+            from business.cache.cache_policy import cached_market_update_dates
+
+            payload = cached_market_update_dates()
+            return _investment_json_response({"status": "success", **payload})
+        except Exception as e:
+            logger.error(f"[Investment] cache update GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        admin = _require_investment_permission("cache.write")
+        try:
+            from business.cache.cache_policy import cached_market_update_dates, probe_market_update_dates, reset_market_update_probe_cache
+            from business.config.config_service import get_configs, save_configs
+            from business.config.constants import ServiceType
+            from business.products.product_service import invalidate_products_by_scope
+
+            body = _investment_json_body()
+            action = str(body.get("action") or "probe").strip()
+            if action == "probe":
+                previous = cached_market_update_dates()
+                previous_latest = str(previous.get("latest_market_date") or "")
+                payload = probe_market_update_dates(force=True)
+                latest = str(payload.get("latest_market_date") or "")
+                products_invalidated = 0
+                if previous_latest and latest and latest > previous_latest:
+                    products_invalidated = invalidate_products_by_scope(
+                        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+                        business_date="",
+                    )
+                _record_investment_operation(
+                    "cache_update.probe",
+                    "technical_analysis_cache_update",
+                    admin=admin,
+                    detail={
+                        "previous_latest_market_date": previous_latest,
+                        "latest_market_date": latest,
+                        "products_invalidated": products_invalidated,
+                    },
+                )
+                return _investment_json_response({
+                    "status": "success",
+                    **payload,
+                    "previous_latest_market_date": previous_latest,
+                    "products_invalidated": products_invalidated,
+                })
+            if action == "save_config":
+                configs = {
+                    self.CONFIG_KEYS["probe_start"]: str(body.get("probe_start") or "").strip(),
+                    self.CONFIG_KEYS["probe_end"]: str(body.get("probe_end") or "").strip(),
+                    self.CONFIG_KEYS["probe_interval_minutes"]: int(body.get("probe_interval_minutes") or 15),
+                }
+                before_state = get_configs(list(configs.keys()), masked=True)
+                save_configs(configs, operator_role=admin.role, operator=admin.username, actor=admin)
+                reset_market_update_probe_cache()
+                after_state = get_configs(list(configs.keys()), masked=True)
+                _record_investment_operation(
+                    "cache_update.config",
+                    "technical_analysis_cache_update",
+                    admin=admin,
+                    detail={"keys": sorted(configs.keys())},
+                    before_state=before_state,
+                    after_state=after_state,
+                )
+                return _investment_json_response({"status": "success", "config": after_state})
+            if action == "clear_technical_analysis":
+                products_invalidated = invalidate_products_by_scope(
+                    business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+                    business_date="",
+                )
+                _record_investment_operation(
+                    "cache_update.clear_technical_analysis",
+                    "technical_analysis_cache_update",
+                    admin=admin,
+                    detail={"products_invalidated": products_invalidated},
+                )
+                return _investment_json_response({"status": "success", "products_invalidated": products_invalidated})
+            return _investment_json_response({"status": "error", "message": f"unsupported action: {action}"})
+        except Exception as e:
+            logger.error(f"[Investment] cache update POST error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

@@ -1308,7 +1308,7 @@ def _row_to_product_artifact_package(item: dict) -> dict:
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
     business_date = str(item.get("business_date") or "")
-    folder_date = business_date or generated_date
+    folder_date = generated_date or business_date
     target = str(item.get("target_key") or "")
     display_name = str(item.get("target_label") or target or "产物")
     source_request_id = str(item.get("source_request_id") or "")
@@ -1512,6 +1512,19 @@ def _artifact_keyword_like_pattern(keyword: str) -> str:
     return f"%{text}%"
 
 
+def _product_artifact_date_expr():
+    return func.substr(
+        func.coalesce(
+            func.nullif(investment_products.c.created_at, ""),
+            func.nullif(investment_products.c.effective_at, ""),
+            func.nullif(investment_products.c.updated_at, ""),
+            investment_products.c.business_date,
+        ),
+        1,
+        10,
+    )
+
+
 def _product_artifact_conditions(
     service_type: ServiceType | str | None,
     start_date: str = "",
@@ -1552,10 +1565,11 @@ def _product_artifact_conditions(
                 ),
             )
         )
+    product_artifact_date = _product_artifact_date_expr()
     if start_date:
-        conditions.append(investment_products.c.business_date >= str(start_date))
+        conditions.append(product_artifact_date >= str(start_date))
     if end_date:
-        conditions.append(investment_products.c.business_date <= str(end_date))
+        conditions.append(product_artifact_date <= str(end_date))
     keyword_text = str(keyword or "").strip().lower()
     if keyword_text:
         pattern = _artifact_keyword_like_pattern(keyword_text)
@@ -1761,7 +1775,7 @@ def _product_artifact_package_summary(item: dict) -> dict:
     generated_at = str(item.get("created_at") or item.get("effective_at") or item.get("updated_at") or "")
     generated_date = _date_part(generated_at)
     business_date = str(item.get("business_date") or "")
-    folder_date = business_date or generated_date
+    folder_date = generated_date or business_date
     display_name = str(item.get("target_label") or item.get("target_key") or "产物")
     service_label = _service_or_component_label(service_type)
     display_status, display_status_label = product_display_status(item)
@@ -1953,7 +1967,7 @@ def list_artifact_folder_nodes(
         length = slices.get(normalized_level)
         if not length:
             return [], 0
-        product_key_expr = func.substr(investment_products.c.business_date, 1, length)
+        product_key_expr = func.substr(_product_artifact_date_expr(), 1, length)
     product_conditions = _product_artifact_conditions(
         service_type,
         bounded_start,
@@ -1963,7 +1977,7 @@ def list_artifact_folder_nodes(
         status_category=status_category,
     )
     if normalized_level != "service":
-        product_conditions.append(investment_products.c.business_date != "")
+        product_conditions.append(_product_artifact_date_expr() != "")
     content_conditions = _content_artifact_conditions(
         service_type,
         bounded_start,

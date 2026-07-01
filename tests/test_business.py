@@ -3867,6 +3867,165 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env,
     assert payload["summary"]["details"][0]["count"] == 0
 
 
+def test_web_cache_update_status_and_manual_probe_returns_probe_rows(business_env, monkeypatch):
+    import business.cache.cache_policy as cache_policy
+    from channel.web.web_channel import InvestmentCacheHandler, InvestmentCacheUpdateHandler
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date=f"2026-06-{10 + len(calls):02d}", known=True, source="pytest")
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    payload = _call_investment_json_handler(monkeypatch, InvestmentCacheUpdateHandler().GET)
+
+    assert payload["status"] == "success"
+    assert payload["config"]["probe_start"] == "15:30"
+    assert payload["config"]["probe_end"] == "18:00"
+    assert payload["config"]["probe_interval_minutes"] == 15
+    assert [item["asset_type"] for item in payload["targets"]] == [
+        "a_share",
+        "hk",
+        "us",
+        "index",
+        "etf",
+        "convertible_bond",
+        "futures",
+    ]
+    assert payload["targets"][0]["symbol"] == "600519.SH"
+    assert payload["targets"][0]["market_date"] == ""
+    assert payload["targets"][0]["error"] == ""
+    assert calls == []
+
+    calls.clear()
+    manual = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheUpdateHandler().POST,
+        body={"action": "probe"},
+    )
+
+    assert manual["status"] == "success"
+    assert manual["latest_market_date"] == "2026-06-17"
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+
+
+def test_web_cache_update_config_save_and_clear_technical_cache(business_env, monkeypatch, tmp_path):
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.config_service import get_config
+    from business.config.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler, InvestmentCacheUpdateHandler
+
+    technical_card = tmp_path / "ta-card.png"
+    rate_card = tmp_path / "rate-card.png"
+    technical_card.write_bytes(b"ta")
+    rate_card.write_bytes(b"rate")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-15", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-15",
+        version_fingerprint="v1",
+        output_files=[str(technical_card)],
+    )
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.RATE, "RATE", "2026-06-15", "v1"),
+        service_type=ServiceType.RATE,
+        normalized_target="RATE",
+        market_date="2026-06-15",
+        version_fingerprint="v1",
+        output_files=[str(rate_card)],
+    )
+
+    saved = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheUpdateHandler().POST,
+        body={
+            "action": "save_config",
+            "probe_start": "15:35",
+            "probe_end": "17:55",
+            "probe_interval_minutes": 9,
+        },
+    )
+    assert saved["status"] == "success"
+    assert get_config("investment.technical_analysis.cache_update_probe_start") == "15:35"
+    assert get_config("investment.technical_analysis.cache_update_probe_end") == "17:55"
+    assert get_config("investment.technical_analysis.cache_update_probe_interval_minutes") == 9
+
+    cleared = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheUpdateHandler().POST,
+        body={"action": "clear_technical_analysis"},
+    )
+
+    assert cleared["status"] == "success"
+    assert cleared["products_invalidated"] == 1
+    active = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": "rate", "include_invalidated": ""},
+    )
+    assert active["pagination"]["total"] == 1
+
+
+def test_web_cache_update_manual_probe_invalidates_technical_cache_when_latest_date_advances(
+    business_env, monkeypatch, tmp_path
+):
+    import business.cache.cache_policy as cache_policy
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.config.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler, InvestmentCacheUpdateHandler
+
+    cache_policy.reset_market_update_probe_cache()
+    latest_date = {"value": "2026-06-14"}
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            return SimpleNamespace(market_date=latest_date["value"], known=True, source="pytest")
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    baseline = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheUpdateHandler().POST,
+        body={"action": "probe"},
+    )
+    assert baseline["status"] == "success"
+    assert baseline["products_invalidated"] == 0
+
+    technical_card = tmp_path / "ta-card.png"
+    technical_card.write_bytes(b"ta")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-14", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-14",
+        version_fingerprint="v1",
+        output_files=[str(technical_card)],
+    )
+
+    latest_date["value"] = "2026-06-15"
+    advanced = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheUpdateHandler().POST,
+        body={"action": "probe"},
+    )
+
+    assert advanced["status"] == "success"
+    assert advanced["previous_latest_market_date"] == "2026-06-14"
+    assert advanced["latest_market_date"] == "2026-06-15"
+    assert advanced["products_invalidated"] == 1
+    active = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": "technical_analysis", "include_invalidated": ""},
+    )
+    assert active["pagination"]["total"] == 0
+
+
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(business_env):
     from business.schema.db import connect
     from business.records.cleanup import cleanup_useless_business_records
@@ -5255,7 +5414,7 @@ def test_artifact_packages_normalize_service_aliases_for_product_sources(busines
     assert folder_packages[0]["package_id"] == packages[0]["package_id"]
 
 
-def test_product_artifact_package_dates_use_business_date_for_folder_metadata(business_env, tmp_path):
+def test_product_artifact_package_dates_use_analysis_date_for_folder_metadata(business_env, tmp_path):
     from business.products.product_service import create_product
     from business.records.records import list_artifact_folder_nodes, list_artifact_packages_page
     from business.schema.db import connect
@@ -5289,6 +5448,11 @@ def test_product_artifact_package_dates_use_business_date_for_folder_metadata(bu
     folder_packages, folder_total = list_artifact_folder_nodes(
         level="package",
         service_type="technical_analysis",
+        date="2026-06-25",
+    )
+    business_date_packages, business_date_total = list_artifact_folder_nodes(
+        level="package",
+        service_type="technical_analysis",
         date="2026-06-24",
     )
 
@@ -5297,11 +5461,13 @@ def test_product_artifact_package_dates_use_business_date_for_folder_metadata(bu
     assert folder_total == 1
     for package in (packages[0], detail_packages[0], folder_packages[0]):
         assert package["package_id"] == product["product_id"]
-        assert package["market_date"] == "2026-06-24"
+        assert package["market_date"] == "2026-06-25"
         assert package["generated_at"] == "2026-06-25T08:00:00+00:00"
         assert package["generated_date"] == "2026-06-25"
         assert package["business_date"] == "2026-06-24"
-        assert package["display_path"][1] == "2026-06-24"
+        assert package["display_path"][1] == "2026-06-25"
+    assert business_date_total == 0
+    assert business_date_packages == []
 
 
 def test_artifact_browser_lists_only_product_packages_after_backfill(business_env, tmp_path):
@@ -9764,6 +9930,88 @@ def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
     assert result.stock_name == ""
 
 
+def test_technical_analysis_etf_uses_market_data_date_over_system_analysis_date(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [{
+            "code": "510300.SH",
+            "name": "沪深300ETF华泰柏瑞",
+            "market": "SH",
+            "source": "akshare_etf",
+            "asset_type": "etf",
+            "ts_code": "510300.SH",
+        }],
+        source="akshare_etf",
+    )
+    report = tmp_path / "510300_技术分析报告.md"
+    chart = tmp_path / "510300_TA.png"
+    report.write_text(
+        "# 沪深300ETF华泰柏瑞 (510300) 技术形态分析报告\n\n"
+        "**标的:** 沪深300ETF华泰柏瑞（510300） | **分析日期:** 2026-07-01  \n"
+        "**数据范围:** 2025-12-26 ~ 2026-06-30（120 交易日）\n",
+        encoding="utf-8",
+    )
+    chart.write_bytes(b"chart")
+
+    def fake_skill(symbol, _output_dir):
+        assert symbol == "510300"
+        return report, chart
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            assert symbol == "510300.SH"
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-06-30", known=True, source="fake_etf")
+
+    rendered = []
+
+    def fake_render(standard_text, output_path):
+        rendered.append((standard_text, Path(output_path).name))
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(
+            success=True,
+            text="📈 标的：510300.SH\n📅 行情日期：2026-07-01\nstandard",
+        ),
+    )
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", "沪深300ETF华泰柏瑞 技术分析")
+
+    assert result.success is True, result.detail
+    assert result.market_date == "2026-06-30"
+    assert Path(result.signal_card_path).name.startswith("510300_SH_signal_card_2026-06-30_")
+    assert "行情日期：2026-06-30" in rendered[0][0]
+    assert "行情日期：2026-07-01" not in rendered[0][0]
+
+
+def test_technical_analysis_market_date_prefers_data_range_end_over_analysis_date(tmp_path):
+    from business.content.technical_analysis import _market_date
+
+    report = tmp_path / "report.md"
+    report.write_text(
+        "**分析日期:** 2026-07-01\n"
+        "**数据范围:** 2025-12-26 ~ 2026-06-30（120 交易日）\n",
+        encoding="utf-8",
+    )
+
+    market_date, warning = _market_date("", report)
+
+    assert market_date == "2026-06-30"
+    assert warning == ""
+
+
 @pytest.mark.parametrize(
     ("raw_input", "dictionary_code", "expected_normalized", "expected_skill_symbol"),
     [
@@ -12273,6 +12521,46 @@ def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
     assert market_from_symbol("UNKNOWN") == ""
 
 
+def test_market_date_resolver_uses_asset_specific_akshare_interfaces(monkeypatch):
+    from business.content.market_date_resolver import MarketDateResolver
+
+    calls = []
+
+    def frame(name):
+        def _inner(**kwargs):
+            calls.append((name, kwargs))
+            return _FakeDataFrame([{"date": "2026-06-14"}, {"date": "2026-06-15"}])
+
+        return _inner
+
+    fake_akshare = SimpleNamespace(
+        stock_zh_index_daily=frame("stock_zh_index_daily"),
+        fund_etf_hist_sina=frame("fund_etf_hist_sina"),
+        bond_zh_hs_cov_daily=frame("bond_zh_hs_cov_daily"),
+        futures_zh_daily_sina=frame("futures_zh_daily_sina"),
+        stock_hk_daily=frame("stock_hk_daily"),
+        stock_us_daily=frame("stock_us_daily"),
+    )
+    monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
+
+    resolver = MarketDateResolver()
+
+    assert resolver.resolve("sh000300").market_date == "2026-06-15"
+    assert resolver.resolve("510300.SH").market_date == "2026-06-15"
+    assert resolver.resolve("113000.SH").market_date == "2026-06-15"
+    assert resolver.resolve("T0").market_date == "2026-06-15"
+    assert resolver.resolve("00700.HK").market_date == "2026-06-15"
+    assert resolver.resolve("AAPL.US").market_date == "2026-06-15"
+    assert calls == [
+        ("stock_zh_index_daily", {"symbol": "sh000300"}),
+        ("fund_etf_hist_sina", {"symbol": "sh510300"}),
+        ("bond_zh_hs_cov_daily", {"symbol": "sh113000"}),
+        ("futures_zh_daily_sina", {"symbol": "T0"}),
+        ("stock_hk_daily", {"symbol": "00700"}),
+        ("stock_us_daily", {"symbol": "AAPL"}),
+    ]
+
+
 def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
     import business.cache.cache_policy as cache_policy
 
@@ -12295,7 +12583,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
         )
         is True
     )
-    assert calls == ["600519.SH"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
@@ -12343,7 +12631,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
             )
             is True
         )
-    assert calls == ["600519.SH"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
@@ -12362,7 +12650,75 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
     assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("00700.HK", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("AAPL.US", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US"]
+    assert cache_policy.latest_market_date_for_symbol("sh000300", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("510300.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("113000.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("T0", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+
+
+def test_technical_analysis_cache_policy_stops_probe_after_non_trading_refresh_window(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T18:01:00+08:00") == ""
+    assert calls == []
+
+
+def test_technical_analysis_cache_policy_expires_all_markets_when_any_probe_date_updates(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T15:31:00+08:00",
+            normalized_target="00700.HK",
+        )
+        is True
+    )
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+
+
+def test_technical_analysis_cache_policy_expires_index_cache_from_global_probe(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T15:31:00+08:00",
+            normalized_target="sh000300",
+        )
+        is True
+    )
 
 
 def test_product_service_appends_and_invalidates_active_product(business_env, tmp_path):

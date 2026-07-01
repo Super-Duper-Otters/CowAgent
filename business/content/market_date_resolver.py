@@ -26,7 +26,10 @@ class MarketDateResolver:
         return self._latest_market_date(symbol)
 
     def _latest_market_date(self, symbol: str) -> MarketDateResolution:
-        for source_name, loader in (("tushare", self._latest_from_tushare), ("akshare", self._latest_from_akshare)):
+        source_loaders = [("akshare", self._latest_from_akshare)]
+        if _asset_type_from_symbol(symbol) == "a_share":
+            source_loaders.append(("tushare", self._latest_from_tushare))
+        for source_name, loader in source_loaders:
             try:
                 market_date = loader(symbol)
             except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
@@ -36,6 +39,8 @@ class MarketDateResolver:
         return MarketDateResolution()
 
     def _latest_from_tushare(self, symbol: str) -> str:
+        if _asset_type_from_symbol(symbol) != "a_share":
+            return ""
         token = get_tushare_token()
         if not token:
             return ""
@@ -47,9 +52,62 @@ class MarketDateResolver:
 
     def _latest_from_akshare(self, symbol: str) -> str:
         akshare = importlib.import_module("akshare")
-        bare_symbol = symbol.split(".", 1)[0]
-        frame = akshare.stock_zh_a_hist(symbol=bare_symbol, period="daily", adjust="")
+        asset_type = _asset_type_from_symbol(symbol)
+        if asset_type == "index":
+            frame = akshare.stock_zh_index_daily(symbol=_prefixed_cn_symbol(symbol).lower())
+        elif asset_type == "etf":
+            frame = akshare.fund_etf_hist_sina(symbol=_prefixed_cn_symbol(symbol).lower())
+        elif asset_type == "convertible_bond":
+            frame = akshare.bond_zh_hs_cov_daily(symbol=_prefixed_cn_symbol(symbol).lower())
+        elif asset_type == "futures":
+            frame = akshare.futures_zh_daily_sina(symbol=str(symbol or "").strip().upper())
+        elif asset_type == "hk_stock":
+            frame = akshare.stock_hk_daily(symbol=_bare_symbol(symbol).zfill(5))
+        elif asset_type == "us_stock":
+            frame = akshare.stock_us_daily(symbol=_bare_symbol(symbol).upper())
+        else:
+            frame = akshare.stock_zh_a_hist(symbol=_bare_symbol(symbol), period="daily", adjust="")
         return _latest_date_from_records(_records_from_frame(frame), ("日期", "date", "trade_date"))
+
+
+def _bare_symbol(symbol: str) -> str:
+    text = str(symbol or "").strip()
+    if text.upper().startswith("HK") and text[2:].isdigit():
+        return text[2:]
+    if "." in text:
+        return text.split(".", 1)[0]
+    return re.sub(r"^(sh|sz|bj)", "", text, flags=re.IGNORECASE)
+
+
+def _prefixed_cn_symbol(symbol: str) -> str:
+    text = str(symbol or "").strip()
+    if re.fullmatch(r"(sh|sz|bj)\d{6}", text, flags=re.IGNORECASE):
+        return text
+    bare = _bare_symbol(text)
+    upper = text.upper()
+    if upper.endswith(".SZ") or bare.startswith(("12", "15")):
+        return f"sz{bare}"
+    return f"sh{bare}"
+
+
+def _asset_type_from_symbol(symbol: str) -> str:
+    text = str(symbol or "").strip()
+    upper = text.upper()
+    lower = text.lower()
+    bare = _bare_symbol(text)
+    if re.fullmatch(r"(sh|sz|bj)\d{6}", lower):
+        return "index"
+    if upper.endswith(".HK") or re.fullmatch(r"HK\d{5}", upper):
+        return "hk_stock"
+    if upper.endswith(".US"):
+        return "us_stock"
+    if upper in {"T0", "TL0", "TF0", "TS0", "T", "TL", "TF", "TS"}:
+        return "futures"
+    if bare.startswith(("11", "12")) and len(bare) == 6:
+        return "convertible_bond"
+    if bare.startswith(("51", "15")) and len(bare) == 6:
+        return "etf"
+    return "a_share" if len(bare) == 6 and bare.isdigit() else ""
 
 
 def _records_from_frame(frame: Any) -> list[dict[str, Any]]:

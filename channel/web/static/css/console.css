@@ -1299,8 +1299,14 @@
     font-size: 10px;
     line-height: 1;
 }
-.investment-artifact-status-badge {
+.investment-artifact-package-meta {
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.investment-artifact-status-badge {
     flex: 0 0 auto;
     border-radius: 6px;
     padding: 2px 7px;
@@ -1323,6 +1329,28 @@
     color: #64748b;
     background: #f1f5f9;
     border-color: #e2e8f0;
+}
+.investment-artifact-package-action {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 700;
+    text-transform: none;
+}
+.investment-artifact-package-action.danger {
+    color: #dc2626;
+    background: transparent;
+    border: 1px solid transparent;
+}
+.investment-artifact-package-action:hover {
+    color: #991b1b;
+    background: #fee2e2;
+    border-color: #fecaca;
 }
 .dark .investment-artifact-status-badge.active {
     color: #bbf7d0;
@@ -3314,6 +3342,54 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     min-width: 0;
 }
 
+.investment-cache-update-layout {
+    display: grid;
+    gap: 14px;
+}
+
+.investment-cache-update-settings .investment-grid.cols-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.investment-cache-update-table th:nth-child(1),
+.investment-cache-update-table td:nth-child(1) {
+    width: 110px;
+}
+
+.investment-cache-update-table th:nth-child(2),
+.investment-cache-update-table td:nth-child(2),
+.investment-cache-update-table th:nth-child(3),
+.investment-cache-update-table td:nth-child(3) {
+    width: 130px;
+}
+
+.investment-cache-update-probing {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 58px;
+    color: #2563eb;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.investment-cache-update-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #bfdbfe;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: investment-cache-update-spin 0.8s linear infinite;
+}
+
+@keyframes investment-cache-update-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 #invest-config-content {
     width: 100%;
     min-width: 0;
@@ -5285,6 +5361,10 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 }
 
 @media (max-width: 640px) {
+    .investment-cache-update-settings .investment-grid.cols-3 {
+        grid-template-columns: 1fr;
+    }
+
     .investment-health-header {
         align-items: stretch;
     }

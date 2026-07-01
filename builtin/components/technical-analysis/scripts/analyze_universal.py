@@ -1580,9 +1580,10 @@ def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookb
     # ---------- 7.5 报告章节组装（结论前置式买方研究报告版式） ----------
 
     # ===== Header =====
+    latest_data_date = df['date'].iloc[-1].date()
     header_md = (
         f"# {name} ({symbol_code}) 技术形态分析报告\n\n"
-        f"**标的:** {name}（{symbol_code}） | **分析日期:** {TODAY}  \n"
+        f"**标的:** {name}（{symbol_code}） | **分析日期:** {latest_data_date}  \n"
         f"**数据范围:** {df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}（{len(df)} 交易日）"
     )
 

@@ -170,3 +170,19 @@ def test_v02_explicit_asset_metadata_selects_daily_interface(
     assert captured["config"]["asset_type"] == asset_type
     assert captured["config"]["data_func"] == expected_func
     assert captured["config"]["data_args"] == expected_args
+
+
+def test_v02_report_header_uses_latest_data_date_not_system_date():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "builtin"
+        / "components"
+        / "technical-analysis"
+        / "scripts"
+        / "analyze_universal.py"
+    )
+    source = script.read_text(encoding="utf-8")
+
+    assert "latest_data_date = df['date'].iloc[-1].date()" in source
+    assert '"**分析日期:** {TODAY}' not in source
+    assert "**分析日期:** {latest_data_date}" in source

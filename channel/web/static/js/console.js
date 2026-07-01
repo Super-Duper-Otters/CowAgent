@@ -3803,6 +3803,13 @@ async function invalidateInvestmentCache(encodedKey) {
 }
 
 async function invalidateInvestmentProduct(encodedProductId) {
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '手动设置失效',
+        message: '确认将该产物手动设置为失效？失效后不会再作为历史有效图片被复用。',
+        confirmText: '确认失效',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
     try {
         await investmentFetchJson(`/api/investment/products/${encodedProductId}/invalidate`, {method: 'POST'});
         if (currentView === 'invest-content') {
@@ -4847,7 +4854,7 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
 
 function investmentGeneratedEntryValidityMeta(entries = []) {
     const values = Array.isArray(entries) ? entries : [];
-    if (!values.length) return '<span>状态 -</span><span>失效 -</span>';
+    if (!values.length) return '<span>状态 -</span>';
     const statusCounts = new Map();
     values.forEach(entry => {
         const status = entry.display_status || entry.status || '';
@@ -4856,12 +4863,7 @@ function investmentGeneratedEntryValidityMeta(entries = []) {
         statusCounts.set(label, (statusCounts.get(label) || 0) + 1);
     });
     const statusText = Array.from(statusCounts.entries()).map(([label, count]) => `${label} ${count}`).join(' / ') || '-';
-    const expiresValues = values
-        .map(entry => investmentFormatBeijingTime(entry.expires_at))
-        .filter(Boolean)
-        .sort();
-    const expiresText = expiresValues[0] || '长期有效';
-    return `<span>状态 ${escapeHtml(statusText)}</span><span>失效 ${escapeHtml(expiresText)}</span>`;
+    return `<span>状态 ${escapeHtml(statusText)}</span>`;
 }
 
 function investmentGeneratedEntryIsActive(entry) {
@@ -4947,11 +4949,18 @@ function investmentArtifactStatusBadge(item = {}) {
     return `<span class="investment-artifact-status-badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
+function investmentArtifactPackageInvalidateAction(node = {}) {
+    const product_id = node.product_id || node.package_id || node.key || '';
+    const status = node.display_status || node.status || '';
+    if (!product_id || !investmentCan('cache.write') || ['invalidated', 'invalid'].includes(status)) return '';
+    return `<span class="investment-artifact-package-action danger" role="button" tabindex="0" title="手动设置失效" aria-label="手动设置失效" onclick="event.stopPropagation(); invalidateInvestmentProduct('${encodeURIComponent(product_id)}')"><i class="fas fa-xmark"></i></span>`;
+}
+
 function renderInvestmentArtifactFolderNode(node, serviceType, open = false, depth = 0) {
     const level = node.level || 'year';
     const key = node.key || node.label || '';
     const rightMeta = level === 'package'
-        ? investmentArtifactStatusBadge(node)
+        ? `<span class="investment-artifact-package-meta">${investmentArtifactStatusBadge(node)}${investmentArtifactPackageInvalidateAction(node)}</span>`
         : (node.count === '' || node.count == null ? '' : `<span class="investment-artifact-count">${escapeHtml(node.count)}</span>`);
     const buttonClass = `${investmentArtifactDepthClass(depth)} investment-artifact-${level === 'package' ? 'package' : level === 'date' ? 'folder' : 'package'}-btn`;
     return `
@@ -5123,11 +5132,11 @@ function renderInvestmentArtifactViewer(pkg = null, file = null) {
         return `<div class="investment-artifact-viewer-empty"><i class="fas fa-file-lines"></i><span>选择文件查看内容</span></div>`;
     }
     const title = file.file_name || file.virtual_path || 'artifact';
+    const generatedAt = investmentFormatBeijingTime(pkg.generated_at || pkg.updated_at || pkg.created_at || '') || pkg.market_date || '';
     const meta = `
         <div class="investment-artifact-viewer-meta">
             <span>${escapeHtml(pkg.display_name || '')}</span>
-            <span>${escapeHtml(pkg.market_date || '')}</span>
-            <span>${escapeHtml(file.virtual_path || '')}</span>
+            <span>${escapeHtml(generatedAt)}</span>
         </div>`;
     const actions = file.file_url
         ? `<a class="investment-btn secondary" href="${investmentFileUrl(file)}" target="_blank" rel="noopener noreferrer" download><i class="fas fa-download"></i><span>下载</span></a>`
@@ -5478,15 +5487,20 @@ async function renderInvestmentConfig() {
         if (currentInvestmentConfigPanel === 'channels') {
             loadChannelsView();
         }
+        if (currentInvestmentConfigPanel === 'cache-update') {
+            loadInvestmentCacheUpdate();
+        }
     } catch (error) {
         investmentError(element, error);
     }
 }
 
 function investmentConfigTabDefinitions(canReadConfig, canReadStocks) {
+    const canReadCache = investmentCan('cache.read');
     return [
         {key: 'ai-model', label: 'AI模型配置', icon: 'fa-microchip', visible: canReadConfig},
         {key: 'stock-data', label: '股票数据', icon: 'fa-chart-line', visible: canReadConfig || canReadStocks},
+        {key: 'cache-update', label: '缓存更新', icon: 'fa-clock-rotate-left', visible: canReadConfig || canReadCache},
         {key: 'reply-texts', label: '公众号回复词', icon: 'fa-comments', visible: canReadConfig},
         {key: 'web-chat', label: '后台 Web 对话', icon: 'fa-message', visible: canReadConfig},
         {key: 'channels', label: '通道管理', icon: 'fa-tower-broadcast', visible: canReadConfig},
@@ -5527,6 +5541,9 @@ function renderInvestmentConfigPanel(panel, data, stockData, configs, canReadCon
     }
     if (panel === 'channels') {
         return canReadConfig ? renderInvestmentConfigChannelsPanel() : '<div class="investment-empty">暂无配置权限</div>';
+    }
+    if (panel === 'cache-update') {
+        return (canReadConfig || investmentCan('cache.read')) ? renderInvestmentConfigCacheUpdatePanel() : '<div class="investment-empty">暂无缓存权限</div>';
     }
     return renderInvestmentConfigStockDataPanel(configs, stockData, canReadConfig, canReadStocks);
 }
@@ -5655,7 +5672,7 @@ function renderInvestmentConfigChannelsPanel() {
 }
 
 function switchInvestmentConfigPanel(panel) {
-    currentInvestmentConfigPanel = ['ai-model', 'stock-data', 'reply-texts', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
+    currentInvestmentConfigPanel = ['ai-model', 'stock-data', 'cache-update', 'reply-texts', 'web-chat', 'channels'].includes(panel) ? panel : 'stock-data';
     renderInvestmentConfig();
 }
 
@@ -6939,6 +6956,173 @@ async function queryInvestmentStocks() {
     }
 }
 
+function renderInvestmentConfigCacheUpdatePanel() {
+    return `
+        <div class="investment-config-grid investment-config-panel investment-settings-panel investment-cache-update-panel">
+            <section class="investment-panel investment-workbench-full">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-clock-rotate-left"></i><span>缓存更新</span></div>
+                    <div class="investment-panel-actions">
+                        <button class="investment-btn" type="button" onclick="runInvestmentCacheUpdateProbe()"><i class="fas fa-vial"></i><span>手动探测</span></button>
+                        <button class="investment-btn danger" type="button" onclick="clearInvestmentAllTechnicalAnalysisCache()"><i class="fas fa-ban"></i><span>全部技术分析缓存失效</span></button>
+                    </div>
+                </div>
+                <div id="investment-cache-update-content" class="investment-cache-update-content">
+                    ${renderInvestmentCacheUpdateContent()}
+                </div>
+            </section>
+        </div>`;
+}
+
+function investmentCacheUpdateStatusBadge(target = {}) {
+    if (target.probing) {
+        return '<span class="investment-cache-update-probing"><span class="investment-cache-update-spinner" aria-hidden="true"></span><span>检测中</span></span>';
+    }
+    if (target.error) return '<span class="investment-badge danger">失败</span>';
+    if (target.known || target.market_date) return '<span class="investment-badge success">有效</span>';
+    return '<span class="investment-badge warning">未知</span>';
+}
+
+const INVESTMENT_CACHE_UPDATE_DEFAULT_TARGETS = [
+    {asset_type: 'a_share', label: 'A股', symbol: '600519.SH'},
+    {asset_type: 'hk', label: '港股', symbol: '00700.HK'},
+    {asset_type: 'us', label: '美股', symbol: 'AAPL.US'},
+    {asset_type: 'index', label: '指数', symbol: 'sh000300'},
+    {asset_type: 'etf', label: 'ETF', symbol: '510300.SH'},
+    {asset_type: 'convertible_bond', label: '可转债', symbol: '113000.SH'},
+    {asset_type: 'futures', label: '国债期货', symbol: 'T0'},
+];
+
+let currentInvestmentCacheUpdateData = null;
+
+function renderInvestmentCacheUpdateContent(data = {}) {
+    const config = data.config || {};
+    const probing = Boolean(data.probing);
+    const targets = (Array.isArray(data.targets) && data.targets.length ? data.targets : INVESTMENT_CACHE_UPDATE_DEFAULT_TARGETS)
+        .map(target => ({...target, probing}));
+    const rows = targets.map(target => `
+        <tr>
+            <td>${escapeHtml(target.label || target.asset_type || '')}</td>
+            <td class="investment-mono">${escapeHtml(target.symbol || '')}</td>
+            <td class="investment-mono">${escapeHtml(target.market_date || '-')}</td>
+            <td>${investmentCacheUpdateStatusBadge(target)}</td>
+            <td>${escapeHtml(target.source || '-')}</td>
+            <td class="investment-wide">${escapeHtml(probing ? '正在检测数据源' : (target.error || (target.cached ? '使用间隔缓存' : '已探测')))}</td>
+        </tr>`).join('');
+    return `
+        <div class="investment-cache-update-layout">
+            ${data.error ? `<div class="investment-alert error">${escapeHtml(data.error)}</div>` : ''}
+            <section class="investment-panel investment-cache-update-settings">
+                <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>探测设置</span></div>
+                <div class="investment-grid cols-3">
+                    <label class="investment-field"><span>开始时间</span><input id="invest-cache-update-probe-start" type="time" value="${escapeHtml(config.probe_start || '15:30')}"></label>
+                    <label class="investment-field"><span>结束时间</span><input id="invest-cache-update-probe-end" type="time" value="${escapeHtml(config.probe_end || '18:00')}"></label>
+                    <label class="investment-field"><span>时间间隔（分钟）</span><input id="invest-cache-update-probe-interval" type="number" min="1" max="240" step="1" value="${escapeHtml(config.probe_interval_minutes ?? 15)}"></label>
+                </div>
+                <div class="investment-actions">
+                    <button class="investment-btn primary" type="button" onclick="saveInvestmentCacheUpdateConfig()"><i class="fas fa-floppy-disk"></i><span>保存设置</span></button>
+                    <span id="investment-cache-update-config-status" class="investment-config-status"></span>
+                </div>
+            </section>
+            <section class="investment-panel investment-workbench-full">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-list-check"></i><span>标的类型列表</span></div>
+                    <div class="investment-subtitle">最新数据日期：${escapeHtml(data.latest_market_date || '-')}</div>
+                </div>
+                ${investmentTableWrap(`<table class="investment-table investment-cache-update-table">
+                    <thead><tr><th>标的类型</th><th>探测标的</th><th>当前数据日期</th><th>状态</th><th>数据源</th><th>说明</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>`, true, '缓存更新探测标的列表')}
+            </section>
+        </div>`;
+}
+
+async function loadInvestmentCacheUpdate() {
+    const target = document.getElementById('investment-cache-update-content');
+    if (!target) return;
+    try {
+        const data = await investmentFetchJson('/api/investment/cache-update');
+        currentInvestmentCacheUpdateData = data;
+        target.innerHTML = renderInvestmentCacheUpdateContent(data);
+    } catch (error) {
+        target.innerHTML = renderInvestmentCacheUpdateContent({
+            ...(currentInvestmentCacheUpdateData || {}),
+            error: `缓存更新状态加载失败：${String(error.message || error)}`,
+        });
+    }
+}
+
+async function runInvestmentCacheUpdateProbe() {
+    const target = document.getElementById('investment-cache-update-content');
+    if (target) {
+        target.innerHTML = renderInvestmentCacheUpdateContent({
+            ...(currentInvestmentCacheUpdateData || {}),
+            probing: true,
+        });
+    }
+    try {
+        const data = await investmentFetchJson('/api/investment/cache-update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'probe'}),
+        });
+        currentInvestmentCacheUpdateData = data;
+        if (target) target.innerHTML = renderInvestmentCacheUpdateContent(data);
+        const invalidated = Number(data.products_invalidated || 0);
+        showInvestmentToast(invalidated > 0 ? `缓存更新探测完成，已自动失效 ${invalidated} 条技术分析缓存` : '缓存更新探测完成，未发现新的数据日期');
+    } catch (error) {
+        if (target) target.innerHTML = renderInvestmentCacheUpdateContent({
+            ...(currentInvestmentCacheUpdateData || {}),
+            error: `手动探测失败：${String(error.message || error)}`,
+        });
+        showInvestmentToast('手动探测失败', 'error');
+    }
+}
+
+async function saveInvestmentCacheUpdateConfig() {
+    const status = document.getElementById('investment-cache-update-config-status');
+    if (status) status.textContent = '保存中...';
+    try {
+        await investmentFetchJson('/api/investment/cache-update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'save_config',
+                probe_start: document.getElementById('invest-cache-update-probe-start')?.value || '15:30',
+                probe_end: document.getElementById('invest-cache-update-probe-end')?.value || '18:00',
+                probe_interval_minutes: Number(document.getElementById('invest-cache-update-probe-interval')?.value || 15),
+            }),
+        });
+        if (status) status.textContent = '已保存';
+        showInvestmentToast('缓存更新设置已保存');
+        await loadInvestmentCacheUpdate();
+    } catch (error) {
+        if (status) status.textContent = String(error.message || error);
+        showInvestmentToast('缓存更新设置保存失败', 'error');
+    }
+}
+
+async function clearInvestmentAllTechnicalAnalysisCache() {
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '全部技术分析缓存失效',
+        message: '确认将所有技术分析缓存标记为失效？利率、转债和其他内容不会受影响。',
+        confirmText: '全部失效',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+        const data = await investmentFetchJson('/api/investment/cache-update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'clear_technical_analysis'}),
+        });
+        showInvestmentToast(`已失效 ${Number(data.products_invalidated || 0)} 条技术分析缓存`);
+        await loadInvestmentCacheUpdate();
+    } catch (error) {
+        showInvestmentToast(`缓存失效失败：${String(error.message || error)}`, 'error');
+    }
+}
+
 function investmentHealthLevelLabel(level) {
     if (level === 'error') return '错误';
     if (level === 'warning') return '警告';
@@ -7205,6 +7389,10 @@ window.selectedInvestmentSkillVersion = selectedInvestmentSkillVersion;
 window.updateInvestmentStockRefreshMarkets = updateInvestmentStockRefreshMarkets;
 window.refreshInvestmentStocks = refreshInvestmentStocks;
 window.queryInvestmentStocks = queryInvestmentStocks;
+window.loadInvestmentCacheUpdate = loadInvestmentCacheUpdate;
+window.runInvestmentCacheUpdateProbe = runInvestmentCacheUpdateProbe;
+window.saveInvestmentCacheUpdateConfig = saveInvestmentCacheUpdateConfig;
+window.clearInvestmentAllTechnicalAnalysisCache = clearInvestmentAllTechnicalAnalysisCache;
 
 document.querySelectorAll('.menu-group > button').forEach(btn => {
     btn.addEventListener('click', () => {

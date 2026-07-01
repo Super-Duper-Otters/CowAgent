@@ -215,6 +215,9 @@ available_setting = {
     "web_password": "",  # Web console password; empty means no authentication required
     "web_session_expire_days": 30,  # Auth session expiry in days
     "investment.technical_analysis.cache_close_invalidate_time": "15:30",  # 技术分析缓存收盘后软失效检查时间（北京时间，HH:MM）
+    "investment_ta_cache_update_probe_start": "15:30",  # 技术分析缓存数据源探测开始时间（北京时间，HH:MM）
+    "investment_ta_cache_update_probe_end": "18:00",  # 技术分析缓存数据源探测结束时间（北京时间，HH:MM）
+    "investment_ta_cache_update_probe_interval_minutes": 15,  # 技术分析缓存数据源探测间隔（分钟）
     "investment_ta_allow_unresolved_bare_code_analysis": False,  # 技术分析：裸6位代码未命中字典时是否仍允许进入耗时行情查询
     "investment_web_wechatmp_chain_verification": False,  # Web对话是否允许接入公众号链路验证
     "agent": True,  # 是否开启Agent模式

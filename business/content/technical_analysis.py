@@ -437,7 +437,21 @@ def _configured_renderer_path() -> Path:
 
 
 def _extract_market_date_from_text(text: str) -> str:
-    match = re.search(r"\d{4}-\d{2}-\d{2}", text or "")
+    value = text or ""
+    for line in value.splitlines():
+        if "数据范围" in line:
+            line_dates = re.findall(r"\d{4}-\d{2}-\d{2}", line)
+            if line_dates:
+                return normalize_market_date(line_dates[-1])
+    for pattern in (
+        r"行情日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})",
+        r"数据日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})",
+        r"数据范围\s*[:：]\s*\d{4}-\d{2}-\d{2}\s*[~～至-]+\s*(\d{4}-\d{2}-\d{2})",
+    ):
+        match = re.search(pattern, value)
+        if match:
+            return normalize_market_date(match.group(1))
+    match = re.search(r"\d{4}-\d{2}-\d{2}", value)
     return normalize_market_date(match.group(0)) if match else ""
 
 
@@ -454,9 +468,21 @@ def _resolve_market_date(target: TechnicalAnalysisTarget, requested_market_date:
     explicit_date = normalize_market_date(requested_market_date)
     if explicit_date:
         return MarketDateResolution(market_date=explicit_date, known=True, source="explicit")
-    if target.is_a_share:
+    if target.normalized_target and target.asset_type not in {"", "gold"}:
         return MarketDateResolver().resolve(target.normalized_target, requested_market_date)
     return MarketDateResolution()
+
+
+def _force_technical_analysis_market_date(standard_text: str, market_date: str) -> str:
+    normalized = normalize_market_date(market_date)
+    if not normalized:
+        return standard_text
+    text = standard_text or ""
+    replacement = f"📅 行情日期：{normalized}"
+    pattern = r"(?m)^([^\n]*行情日期\s*[:：]\s*)\d{4}-\d{2}-\d{2}([^\n]*)$"
+    if re.search(pattern, text):
+        return re.sub(pattern, lambda match: f"{match.group(1)}{normalized}{match.group(2)}", text, count=1)
+    return f"{replacement}\n{text}"
 
 
 def _target_path_part(symbol: str) -> str:
@@ -974,6 +1000,7 @@ def run_technical_analysis(
                 if market_date
                 else ""
             )
+        standard_text = _force_technical_analysis_market_date(standard_text, market_date)
         version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
         card_market_date = market_date or "unknown"
         card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"

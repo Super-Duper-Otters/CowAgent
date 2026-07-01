@@ -27,6 +27,14 @@ def _js_function_body(js: str, name: str) -> str:
     return js[match.end():index - 1]
 
 
+def _python_class_body(source: str, name: str) -> str:
+    match = re.search(rf"^class\s+{re.escape(name)}\b.*?:\n", source, re.MULTILINE)
+    assert match, f"{name} class not found"
+    next_class = re.search(r"^class\s+\w+\b.*?:\n", source[match.end():], re.MULTILINE)
+    end = match.end() + next_class.start() if next_class else len(source)
+    return source[match.end():end]
+
+
 def test_web_console_uses_business_assistant_branding():
     html = CHAT_HTML.read_text(encoding="utf-8")
     login_html = LOGIN_HTML.read_text(encoding="utf-8")
@@ -43,6 +51,16 @@ def test_web_console_uses_business_assistant_branding():
     assert '"CowAgent" if use_agent else "AI Assistant"' not in web_channel
     assert "sidebar-version" not in html
     assert "chatgpt-on-wechat/releases" not in html
+
+
+def test_chat_handler_static_assets_are_busted_by_file_hash():
+    web_channel = WEB_CHANNEL.read_text(encoding="utf-8")
+    chat_handler = _python_class_body(web_channel, "ChatHandler")
+
+    assert "hashlib.sha256(f.read()).hexdigest()[:12]" in chat_handler
+    assert "js_cache_bust" in chat_handler
+    assert "css_cache_bust" in chat_handler
+    assert "int(time.time())" not in chat_handler
 
 
 def test_non_business_management_pages_are_removed_from_frontend_navigation():
@@ -179,6 +197,49 @@ def test_ai_model_config_is_system_config_subpage():
     assert "cfg-password" not in ai_panel_body
     assert "config_security" not in ai_panel_body
     assert 'id="cfg-provider"' not in html
+
+
+def test_cache_update_management_is_system_config_subpage():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    tabs_body = _js_function_body(js, "investmentConfigTabDefinitions")
+    panel_body = _js_function_body(js, "renderInvestmentConfigPanel")
+    switch_body = _js_function_body(js, "switchInvestmentConfigPanel")
+    cache_panel_body = _js_function_body(js, "renderInvestmentConfigCacheUpdatePanel")
+    cache_content_body = _js_function_body(js, "renderInvestmentCacheUpdateContent")
+    status_body = _js_function_body(js, "investmentCacheUpdateStatusBadge")
+    load_body = _js_function_body(js, "loadInvestmentCacheUpdate")
+    probe_body = _js_function_body(js, "runInvestmentCacheUpdateProbe")
+
+    assert "key: 'cache-update'" in tabs_body
+    assert "label: '缓存更新'" in tabs_body
+    assert "renderInvestmentConfigCacheUpdatePanel()" in panel_body
+    assert "'cache-update'" in switch_body
+    assert "/api/investment/cache-update" in js
+    assert "function loadInvestmentCacheUpdate(" in js
+    assert "function runInvestmentCacheUpdateProbe(" in js
+    assert "function saveInvestmentCacheUpdateConfig(" in js
+    assert "function clearInvestmentAllTechnicalAnalysisCache(" in js
+    assert "标的类型" in cache_content_body
+    assert "当前数据日期" in cache_content_body
+    assert "手动探测" in cache_panel_body
+    assert "全部技术分析缓存失效" in cache_panel_body
+    assert "管理技术分析缓存更新探测标的" not in cache_panel_body
+    assert "probe_start" in cache_content_body
+    assert "probe_end" in cache_content_body
+    assert "probe_interval_minutes" in cache_content_body
+    assert "probing" in cache_content_body
+    assert "investment-cache-update-spinner" in status_body
+    assert "检测中" in status_body
+    assert "renderInvestmentCacheUpdateContent()" in cache_panel_body
+    assert "renderInvestmentCacheUpdateContent({probing: true})" not in load_body
+    assert "renderInvestmentCacheUpdateContent({" in probe_body
+    assert "probing: true" in probe_body
+    assert "products_invalidated" in probe_body
+    assert "已自动失效" in probe_body
+    assert "未发现新的数据日期" in probe_body
+    assert ".investment-cache-update-spinner" in css
+    assert "@keyframes investment-cache-update-spin" in css
 
 
 def test_business_tables_are_bounded_and_have_sticky_headers():
@@ -388,7 +449,8 @@ def test_generated_history_toolbar_controls_status_category_and_shows_validity_m
     assert "investmentGeneratedEntryValidityMeta(entries)" in detail_body
     assert "entry.display_status || entry.status || ''" in meta_body
     assert "entry.display_status_label || investmentProductStatusLabel(status)" in meta_body
-    assert "investmentFormatBeijingTime(entry.expires_at)" in meta_body
+    assert "investmentFormatBeijingTime(entry.expires_at)" not in meta_body
+    assert "<span>失效" not in meta_body
 
 
 def test_daily_content_tabs_are_built_from_content_components():
@@ -2302,6 +2364,32 @@ def test_generated_history_artifact_requests_include_status_category():
     assert "const query = new URLSearchParams({package_id: packageId, page_size: '1'});" in package_body
     assert "query.set('status_category', investmentRecordsState.filters.products?.status_category || 'all')" in package_body
     assert "investmentFetchJson(`/api/investment/artifacts?${query.toString()}`)" in package_body
+
+
+def test_generated_history_artifact_viewer_meta_uses_generated_time_without_repeating_file_path():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    viewer_body = _js_function_body(js, "renderInvestmentArtifactViewer")
+
+    assert "investmentFormatBeijingTime(pkg.generated_at || pkg.updated_at || pkg.created_at || '')" in viewer_body
+    assert "file.virtual_path || '')</span>" not in viewer_body
+
+
+def test_generated_history_artifact_package_nodes_can_be_invalidated():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    folder_body = _js_function_body(js, "renderInvestmentArtifactFolderNode")
+    action_body = _js_function_body(js, "investmentArtifactPackageInvalidateAction")
+    invalidate_body = _js_function_body(js, "invalidateInvestmentProduct")
+
+    assert "investmentArtifactPackageInvalidateAction(node)" in folder_body
+    assert "investmentCan('cache.write')" in action_body
+    assert "event.stopPropagation()" in action_body
+    assert "invalidateInvestmentProduct" in action_body
+    assert "fa-xmark" in action_body
+    assert "手动设置失效" in action_body
+    assert ">失效<" not in action_body
+    assert "product_id || node.package_id || node.key" in action_body
+    assert "showInvestmentConfirmDialog" in invalidate_body
+    assert "确认将该产物手动设置为失效？" in invalidate_body
 
 
 def test_generated_history_ui_has_no_legacy_cache_loader():
