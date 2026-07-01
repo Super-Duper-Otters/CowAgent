@@ -32,8 +32,20 @@ def _component_settings(definition) -> dict:
     if definition.uses_triggers:
         settings["triggers"] = list(resolve_triggers(definition))
     if definition.prompt_key:
+        from business.audit.ai_generation import default_prompt_for_service
+
+        configured_prompt = get_config(definition.prompt_key, None)
+        default_prompt = ""
+        try:
+            default_prompt = default_prompt_for_service(definition.service_type)
+        except (KeyError, ValueError):
+            default_prompt = ""
+        effective_prompt = configured_prompt if isinstance(configured_prompt, str) and configured_prompt.strip() else default_prompt
         settings["prompt_key"] = definition.prompt_key
-        settings["prompt"] = get_config(definition.prompt_key, "")
+        settings["prompt"] = effective_prompt if isinstance(effective_prompt, str) else str(effective_prompt or "")
+        settings["prompt_configured"] = bool(isinstance(configured_prompt, str) and configured_prompt.strip())
+        if default_prompt:
+            settings["default_prompt"] = default_prompt
     return settings
 
 

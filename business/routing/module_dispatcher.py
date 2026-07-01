@@ -12,10 +12,8 @@ def _with_module_key(reply, module_key: str):
 
 
 def _failure_reply_with_detail(prompt: str, detail: str) -> str:
-    safe_detail = sanitize_sensitive_text(detail or "").strip()
-    if not safe_detail:
-        return prompt
-    return f"{prompt}\n原因：{safe_detail}"
+    # Component details are backend diagnostics such as stderr, tracebacks, or file paths.
+    return prompt
 
 
 def dispatch_module(

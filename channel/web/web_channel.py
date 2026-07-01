@@ -10,6 +10,7 @@ import uuid
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from queue import Queue, Empty
+from types import SimpleNamespace
 from typing import Tuple
 from urllib.parse import quote
 
@@ -83,8 +84,9 @@ def _investment_admin_login_enabled():
         from business.accounts.auth_service import count_admin_users
 
         return count_admin_users() > 0
-    except Exception:
-        return False
+    except Exception as e:
+        logger.warning(f"[WebChannel] admin login availability check failed; requiring login: {e}")
+        return True
 
 
 def _is_console_login_required():
@@ -93,7 +95,11 @@ def _is_console_login_required():
 
 def _check_console_auth():
     if _investment_admin_login_enabled():
-        return _current_investment_admin() is not None
+        try:
+            return _current_investment_admin() is not None
+        except Exception as e:
+            logger.warning(f"[WebChannel] investment admin auth check failed: {e}")
+            return False
     return _check_auth()
 
 
@@ -188,6 +194,7 @@ def _investment_customer_snapshot(user):
     if user is None:
         return {}
     return {
+        "id": getattr(user, "id", None),
         "openid": user.openid,
         "name": user.name,
         "institution": user.institution,
@@ -196,6 +203,9 @@ def _investment_customer_snapshot(user):
         "allowed_services": [str(item) for item in (user.allowed_services or [])],
         "auth_start_at": user.auth_start_at.isoformat() if user.auth_start_at else "",
         "auth_end_at": user.auth_end_at.isoformat() if user.auth_end_at else "",
+        "bind_status": getattr(user, "bind_status", ""),
+        "bound_at": user.bound_at.isoformat() if getattr(user, "bound_at", None) else "",
+        "unbound_at": user.unbound_at.isoformat() if getattr(user, "unbound_at", None) else "",
         "remark": user.remark,
     }
 
@@ -2766,6 +2776,96 @@ def _investment_xlsx_response(data: bytes, filename: str):
     return data
 
 
+def _investment_import_result_dir() -> str:
+    result_dir = os.path.join(_get_upload_dir(), "investment_user_import_results")
+    os.makedirs(result_dir, exist_ok=True)
+    return result_dir
+
+
+def _cleanup_investment_import_results(max_age_seconds: int = 86400) -> None:
+    result_dir = _investment_import_result_dir()
+    cutoff = time.time() - max_age_seconds
+    for name in os.listdir(result_dir):
+        path = os.path.join(result_dir, name)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            logger.debug(f"[Investment] failed to cleanup import result file: {path}")
+
+
+def _investment_import_result_safe_id(value: str) -> str:
+    safe = "".join(ch for ch in str(value or "") if ch.isalnum() or ch in ("-", "_"))
+    if not safe:
+        raise ValueError("result_id or batch_id required")
+    return safe[:96]
+
+
+def _investment_import_result_row_payload(row) -> dict:
+    def _date_text(value):
+        return value.isoformat(timespec="seconds") if hasattr(value, "isoformat") else (value or "")
+
+    return {
+        "customer_id": getattr(row, "customer_id", 0) or 0,
+        "openid": getattr(row, "openid", "") or "",
+        "name": getattr(row, "name", "") or "",
+        "institution": getattr(row, "institution", "") or "",
+        "mobile": getattr(row, "mobile", "") or "",
+        "allowed_services": getattr(row, "allowed_services", "") or "",
+        "auth_start_at": _date_text(getattr(row, "auth_start_at", None)),
+        "auth_end_at": _date_text(getattr(row, "auth_end_at", None)),
+        "activation_code": getattr(row, "activation_code", "") or "",
+        "batch_id": getattr(row, "batch_id", "") or "",
+        "action": getattr(row, "action", "") or "",
+        "error": getattr(row, "error", "") or "",
+    }
+
+
+def _save_investment_import_result(rows) -> str:
+    _cleanup_investment_import_results()
+    result_id = uuid.uuid4().hex
+    payload = {
+        "result_id": result_id,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "rows": [_investment_import_result_row_payload(row) for row in rows],
+    }
+    result_dir = _investment_import_result_dir()
+    result_path = os.path.join(result_dir, f"{result_id}.json")
+    with open(result_path, "w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False)
+    batch_ids = {row.get("batch_id") for row in payload["rows"] if row.get("batch_id")}
+    for batch_id in batch_ids:
+        index_path = os.path.join(result_dir, f"batch-{_investment_import_result_safe_id(batch_id)}.idx")
+        with open(index_path, "w", encoding="utf-8") as file:
+            file.write(result_id)
+    return result_id
+
+
+def _load_investment_import_result_rows(*, result_id: str = "", batch_id: str = ""):
+    result_dir = _investment_import_result_dir()
+    _cleanup_investment_import_results()
+    if batch_id:
+        index_path = os.path.join(result_dir, f"batch-{_investment_import_result_safe_id(batch_id)}.idx")
+        if not os.path.exists(index_path):
+            raise FileNotFoundError("import result not found")
+        with open(index_path, "r", encoding="utf-8") as file:
+            result_id = file.read().strip()
+    result_id = _investment_import_result_safe_id(result_id)
+    result_path = os.path.join(result_dir, f"{result_id}.json")
+    if not os.path.exists(result_path):
+        raise FileNotFoundError("import result not found")
+    if time.time() - os.path.getmtime(result_path) > 86400:
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+        raise FileNotFoundError("import result expired")
+    with open(result_path, "r", encoding="utf-8") as file:
+        payload = json.load(file)
+    rows = payload.get("rows") or []
+    return [SimpleNamespace(**row) for row in rows]
+
+
 def _investment_date_bound(value: str, end: bool = False) -> str:
     text = str(value or "").strip()
     if not text:
@@ -2863,6 +2963,9 @@ class InvestmentAuthMeHandler:
             return _investment_json_response({"status": "success", "admin": _investment_admin_payload(admin)})
         except web.HTTPError as error:
             return error.data
+        except Exception as e:
+            logger.warning(f"[Investment] auth/me failed: {e}")
+            return _investment_json_response({"status": "error", "code": "unauthorized", "message": "未登录或登录已过期"})
 
 
 def _investment_admin_user_payload(admin):
@@ -3050,6 +3153,125 @@ class InvestmentUsersExportHandler:
             return _investment_json_response({"status": "error", "message": str(e)})
 
 
+def _activation_code_payload(row):
+    return {
+        "id": row.id,
+        "batch_id": row.batch_id,
+        "code": row.code,
+        "code_prefix": row.code_prefix,
+        "activation_mode": row.activation_mode,
+        "customer_id": row.customer_id,
+        "allowed_services": [str(item) for item in (row.allowed_services or [])],
+        "subscription_days": row.subscription_days,
+        "subscription_start_at": row.subscription_start_at,
+        "subscription_end_at": row.subscription_end_at,
+        "code_expires_at": row.code_expires_at,
+        "status": row.status,
+        "used_by_openid": row.used_by_openid,
+        "used_at": row.used_at,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "remark": row.remark,
+    }
+
+
+class InvestmentActivationCodesExportHandler:
+    def GET(self):
+        admin = _require_investment_permission("activation_codes.export")
+        try:
+            from business.records.export_service import export_activation_codes_xlsx
+
+            params = web.input(status='', batch_id='')
+            status = getattr(params, "status", "") or None
+            batch_id = getattr(params, "batch_id", "") or None
+            data = export_activation_codes_xlsx(status=status, batch_id=batch_id)
+            _record_investment_operation(
+                "activation_code.export",
+                "activation_code",
+                admin=admin,
+                detail={"status": status or "", "batch_id": batch_id or ""},
+            )
+            return _investment_xlsx_response(data, "investment-activation-codes.xlsx")
+        except Exception as e:
+            logger.error(f"[Investment] activation codes export error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentActivationCodesHandler:
+    def GET(self):
+        _require_investment_permission("activation_codes.read")
+        try:
+            from business.accounts.activation_service import count_activation_codes, list_activation_codes
+
+            params = web.input(status='', batch_id='', page='1', page_size='20')
+            page, page_size = _investment_safe_pagination(params, 20)
+            status = getattr(params, "status", "") or None
+            batch_id = getattr(params, "batch_id", "") or None
+            total = count_activation_codes(status=status, batch_id=batch_id)
+            rows = list_activation_codes(status=status, batch_id=batch_id, page=page, page_size=page_size)
+            return _investment_json_response({
+                "status": "success",
+                "codes": [_activation_code_payload(row) for row in rows],
+                "pagination": _investment_pagination_payload(page, page_size, total),
+            })
+        except Exception as e:
+            logger.error(f"[Investment] activation codes GET error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+    def POST(self):
+        admin = _require_investment_permission("activation_codes.write")
+        try:
+            from business.accounts.activation_service import generate_activation_codes
+
+            body = _investment_json_body()
+            count = int(body.get("count", 1) or 1)
+            subscription_days = int(body.get("subscription_days", 30) or 30)
+            code_expires_at = str(body.get("code_expires_at", "") or "").strip()
+            if not code_expires_at:
+                return _investment_json_response({"status": "error", "message": "code_expires_at required"})
+            validation_value = f"{code_expires_at[:-1]}+00:00" if code_expires_at.endswith("Z") else code_expires_at
+            datetime.fromisoformat(validation_value)
+            result = generate_activation_codes(
+                count=count,
+                allowed_services=body.get("allowed_services", ["all"]),
+                subscription_days=subscription_days,
+                code_expires_at=code_expires_at,
+                remark=str(body.get("remark", "") or ""),
+                actor=admin,
+            )
+            _record_investment_operation(
+                "activation_code.generate",
+                "activation_code",
+                result.batch_id,
+                admin=admin,
+                detail={
+                    "count": len(result.codes),
+                    "subscription_days": subscription_days,
+                    "code_expires_at": code_expires_at,
+                    "allowed_services": body.get("allowed_services", ["all"]),
+                },
+            )
+            return _investment_json_response({"status": "success", "batch_id": result.batch_id, "codes": result.codes})
+        except Exception as e:
+            logger.error(f"[Investment] activation codes POST error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentActivationCodeDisableHandler:
+    def POST(self, code_id):
+        admin = _require_investment_permission("activation_codes.write")
+        try:
+            from business.accounts.activation_service import disable_activation_code
+
+            if not disable_activation_code(int(code_id), actor=admin):
+                return _investment_json_response({"status": "error", "message": "activation code cannot be disabled"})
+            _record_investment_operation("activation_code.disable", "activation_code", str(code_id), admin=admin)
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] activation code disable error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
 class InvestmentUsersHandler:
     def GET(self):
         _require_investment_permission("customers.read")
@@ -3087,6 +3309,9 @@ class InvestmentUsersHandler:
                         "allowed_services": [str(item) for item in (user.allowed_services or [])],
                         "auth_start_at": user.auth_start_at.isoformat() if user.auth_start_at else "",
                         "auth_end_at": user.auth_end_at.isoformat() if user.auth_end_at else "",
+                        "bind_status": user.bind_status,
+                        "bound_at": user.bound_at.isoformat() if user.bound_at else "",
+                        "unbound_at": user.unbound_at.isoformat() if user.unbound_at else "",
                         "remark": user.remark,
                     }
                     for user in users
@@ -3100,18 +3325,17 @@ class InvestmentUsersHandler:
     def POST(self):
         admin = _require_investment_permission("customers.write")
         try:
-            from business.accounts.user_service import create_user, update_user, get_user_by_openid
+            from business.accounts.activation_service import generate_customer_activation_code
+            from business.accounts.user_service import create_user, get_user_by_id, get_user_by_openid, update_user
 
             body = _investment_json_body()
-            openid = body.get("openid", "").strip()
-            if not openid:
-                return _investment_json_response({"status": "error", "message": "openid required"})
+            openid = str(body.get("openid", "") or "").strip()
             if not body.get("allowed_services"):
                 return _investment_json_response({"status": "error", "message": "allowed_services required"})
-            if not body.get("auth_start_at"):
-                return _investment_json_response({"status": "error", "message": "auth_start_at required"})
             if not body.get("auth_end_at"):
                 return _investment_json_response({"status": "error", "message": "auth_end_at required"})
+            if not str(body.get("mobile", "") or "").strip():
+                return _investment_json_response({"status": "error", "message": "mobile required"})
             values = {
                 "name": body.get("name", ""),
                 "institution": body.get("institution", ""),
@@ -3122,25 +3346,75 @@ class InvestmentUsersHandler:
                 "auth_end_at": body.get("auth_end_at") or None,
                 "remark": body.get("remark", ""),
             }
-            before_user = get_user_by_openid(openid)
+            activation_code = ""
+            activation_batch_id = ""
+            customer_id = None
+            before_user = get_user_by_openid(openid) if openid else None
             before_state = _investment_customer_snapshot(before_user)
-            if before_user:
+            if openid and before_user:
                 update_user(openid, actor=admin, **values)
                 action = "updated"
-            else:
-                create_user(openid, actor=admin, **values)
+                after_user = get_user_by_openid(openid)
+            elif openid:
+                customer_id = create_user(openid, actor=admin, **values)
                 action = "created"
-            after_state = _investment_customer_snapshot(get_user_by_openid(openid))
+                after_user = get_user_by_openid(openid)
+            else:
+                customer_id = create_user("", actor=admin, **values)
+                action = "created"
+                try:
+                    batch = generate_customer_activation_code(customer_id=int(customer_id), code_expires_at=values["auth_end_at"], actor=admin)
+                except Exception:
+                    from sqlalchemy import delete
+                    from business.schema.db import connect
+                    from business.schema.tables import investment_users
+
+                    with connect() as conn:
+                        conn.execute(delete(investment_users).where(investment_users.c.id == int(customer_id)))
+                    _record_investment_operation(
+                        "customer.create_preregistered",
+                        "customer",
+                        str(customer_id),
+                        admin=admin,
+                        result_status="error",
+                        error_message="activation code generation failed",
+                        detail={key: value for key, value in values.items() if key != "allowed_services"} | {
+                            "allowed_services": values["allowed_services"],
+                        },
+                    )
+                    raise
+                activation_code = batch.codes[0] if batch.codes else ""
+                activation_batch_id = batch.batch_id
+                _record_investment_operation(
+                    "activation_code.generate_preregistered",
+                    "activation_code",
+                    activation_batch_id,
+                    admin=admin,
+                    detail={"customer_id": int(customer_id), "count": len(batch.codes), "code_expires_at": values["auth_end_at"]},
+                )
+                after_user = get_user_by_id(int(customer_id))
+            after_state = _investment_customer_snapshot(after_user)
+            if after_user is not None:
+                customer_id = getattr(after_user, "id", customer_id)
             _record_investment_operation(
                 f"customer.{action[:-1] if action.endswith('d') else action}",
                 "customer",
-                openid,
+                str(customer_id or openid),
                 admin=admin,
                 before_state=before_state,
                 after_state=after_state,
-                detail={key: value for key, value in values.items() if key != "allowed_services"} | {"allowed_services": values["allowed_services"]},
+                detail={key: value for key, value in values.items() if key != "allowed_services"} | {
+                    "allowed_services": values["allowed_services"],
+                    "activation_batch_id": activation_batch_id,
+                },
             )
-            return _investment_json_response({"status": "success", "action": action})
+            return _investment_json_response({
+                "status": "success",
+                "action": action,
+                "customer_id": customer_id,
+                "activation_code": activation_code,
+                "activation_batch_id": activation_batch_id,
+            })
         except Exception as e:
             logger.error(f"[Investment] users POST error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
@@ -3184,7 +3458,12 @@ class InvestmentUsersImportHandler:
     def POST(self):
         admin = _require_investment_permission("customers.import")
         try:
-            from business.accounts.user_service import get_user_by_openid, import_users, parse_users_excel
+            from business.accounts.user_service import (
+                get_unbound_user_by_mobile,
+                get_user_by_openid,
+                import_users_with_activation_codes,
+                parse_users_excel,
+            )
 
             params = _raw_web_input()
             file_obj = params.get("file")
@@ -3192,28 +3471,132 @@ class InvestmentUsersImportHandler:
                 return _investment_json_response({"status": "error", "message": "file required"})
             rows = parse_users_excel(_read_uploaded_file_bytes(file_obj))
             commit = str(params.get("commit", "")).strip().lower() in {"1", "true", "yes", "commit"}
-            new_users = sum(1 for row in rows if row.openid_generated or get_user_by_openid(row.openid) is None)
-            result = import_users(rows) if commit else None
+            new_users = sum(
+                1
+                for row in rows
+                if (get_user_by_openid(row.openid) is None if row.openid else get_unbound_user_by_mobile(row.mobile) is None)
+            )
+            result = import_users_with_activation_codes(rows, actor=admin) if commit else None
             created = result.created if result else 0
             updated = result.updated if result else 0
+            activation_created = result.activation_created if result else 0
+            failed = sum(1 for row in result.rows if row.error) if result else 0
+            result_id = _save_investment_import_result(result.rows) if result else ""
+            result_download_url = f"/api/investment/users/import-result.xlsx?result_id={quote(result_id)}" if result_id else ""
             if commit:
                 _record_investment_operation(
                     "customer.import",
                     "customer",
                     admin=admin,
-                    detail={"parsed": len(rows), "new_users": new_users, "created": created, "updated": updated},
+                    detail={
+                        "parsed": len(rows),
+                        "new_users": new_users,
+                        "created": created,
+                        "updated": updated,
+                        "activation_created": activation_created,
+                        "failed": failed,
+                        "result_id": result_id,
+                    },
                 )
             return _investment_json_response({
                 "status": "success",
                 "committed": commit,
                 "parsed": len(rows),
-                "new_users": new_users,
+                "new_users": created if commit else new_users,
                 "created": created,
                 "updated": updated,
+                "activation_created": activation_created,
+                "failed": failed,
+                "result_id": result_id,
+                "result_download_url": result_download_url,
                 "preview": [_investment_import_user_preview(row) for row in rows[:10]],
+                "rows": [_investment_import_result_row_payload(row) for row in result.rows[:50]] if result else [],
             })
         except Exception as e:
             logger.error(f"[Investment] users import error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUsersImportResultHandler:
+    def GET(self):
+        admin = _require_investment_permission("customers.import")
+        try:
+            from business.records.export_service import export_users_import_result_xlsx
+
+            params = web.input(result_id='', batch_id='')
+            result_id = str(getattr(params, "result_id", "") or "").strip()
+            batch_id = str(getattr(params, "batch_id", "") or "").strip()
+            rows = _load_investment_import_result_rows(result_id=result_id, batch_id=batch_id)
+            _record_investment_operation(
+                "customer.import_result.download",
+                "customer_import_result",
+                result_id or batch_id,
+                admin=admin,
+                detail={"result_id": result_id, "batch_id": batch_id, "rows": len(rows)},
+            )
+            return _investment_xlsx_response(export_users_import_result_xlsx(rows), "investment-users-import-result.xlsx")
+        except Exception as e:
+            logger.error(f"[Investment] users import result error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUserUnbindOpenidHandler:
+    def POST(self, customer_id):
+        admin = _require_investment_permission("customers.write")
+        try:
+            from business.accounts.user_service import get_user_by_id, unbind_customer_openid
+
+            body = _investment_json_body()
+            reason = str(body.get("reason", "") or "").strip()
+            customer_id_int = int(customer_id)
+            before_user = get_user_by_id(customer_id_int)
+            if before_user is None:
+                return _investment_json_response({"status": "error", "message": "user not found"})
+            before_state = _investment_customer_snapshot(before_user)
+            unbind_customer_openid(customer_id_int, actor=admin, reason=reason)
+            after_state = _investment_customer_snapshot(get_user_by_id(customer_id_int))
+            _record_investment_operation(
+                "customer.unbind_openid",
+                "customer",
+                str(customer_id_int),
+                admin=admin,
+                before_state=before_state,
+                after_state=after_state,
+                detail={"reason": reason},
+            )
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] user unbind openid error: {e}")
+            return _investment_json_response({"status": "error", "message": str(e)})
+
+
+class InvestmentUserDeleteHandler:
+    def POST(self, customer_id):
+        admin = _require_investment_permission("customers.write")
+        try:
+            from business.accounts.user_service import delete_user_by_id, get_user_by_id
+
+            body = _investment_json_body()
+            reason = str(body.get("reason", "") or "").strip()
+            customer_id_int = int(customer_id)
+            before_user = get_user_by_id(customer_id_int)
+            if before_user is None:
+                return _investment_json_response({"status": "error", "message": "user not found"})
+            before_state = _investment_customer_snapshot(before_user)
+            delete_user_by_id(customer_id_int, actor=admin, reason=reason)
+            after_state = _investment_customer_snapshot(get_user_by_id(customer_id_int))
+            _record_investment_operation(
+                "customer.delete",
+                "customer",
+                str(customer_id_int),
+                admin=admin,
+                before_state=before_state,
+                after_state=after_state,
+                detail={"reason": reason},
+            )
+            return _investment_json_response({"status": "success"})
+        except Exception as e:
+            logger.error(f"[Investment] user delete error: {e}")
             return _investment_json_response({"status": "error", "message": str(e)})
 
 

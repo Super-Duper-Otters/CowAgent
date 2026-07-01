@@ -485,6 +485,17 @@ def _module_definition(module_key: str):
         return None
 
 
+def _template_key_for_service(service_type: ServiceType) -> str:
+    service = str(service_type)
+    if service == str(ServiceType.TECHNICAL_ANALYSIS):
+        return "technical_analysis"
+    if service == str(ServiceType.RATE):
+        return "rate"
+    if service == str(ServiceType.CONVERTIBLE_BOND):
+        return "convertible_bond"
+    return ""
+
+
 def _default_ai_generator(
     service_type: ServiceType,
     source_text: str,
@@ -492,6 +503,7 @@ def _default_ai_generator(
     *,
     module_key: str = "",
     prompt_key: str = "",
+    template_key: str = "",
 ):
     if module_key or prompt_key:
         from business.content.prompt_to_image_handler import generate_standard_text_for_module
@@ -502,6 +514,7 @@ def _default_ai_generator(
             source_files=source_files,
             prompt_key=prompt_key,
             module_key=module_key,
+            template_key=template_key,
         )
     from business.audit.ai_generation import generate_standard_text
 
@@ -548,7 +561,7 @@ def generate_content(
     module_key = _normalize_module_key(item.get("module_key"))
     definition = _module_definition(module_key)
     prompt_key = str(getattr(definition, "prompt_key", "") or "")
-    template_key = str(getattr(definition, "template_key", "") or "")
+    template_key = str(getattr(definition, "template_key", "") or _template_key_for_service(service_type))
     source_files = _load_source_files(item.get("source_files"))
     operator, audit_actor = _actor_identity(actor, item.get("operator") or "")
     actor_id = str(getattr(audit_actor, "admin_id", "") or "")
@@ -593,6 +606,7 @@ def generate_content(
             source_files,
             module_key=module_key,
             prompt_key=prompt_key,
+            template_key=template_key,
         )
     else:
         try:

@@ -789,7 +789,45 @@ def test_wechatmp_passive_send_closes_local_image_file_after_upload_failure(monk
     channel.send(Reply(ReplyType.IMAGE_URL, [str(image_path)]), _context())
 
     assert channel.client.media.uploaded_file.closed
-    assert channel.cache_dict.peek_result("openid") is None
+    assert channel.cache_dict["openid"] == [("text", "媒体上传失败，请稍后重试或联系服务人员。")]
+
+
+def test_wechatmp_passive_send_caches_configured_text_when_image_read_fails(monkeypatch, tmp_path):
+    from bridge.reply import Reply, ReplyType
+
+    channel = _wechatmp_channel(monkeypatch)
+    monkeypatch.setattr(
+        "business.config.reply_config.get_reply_text",
+        lambda key, default="": "图片读取失败，请联系客户经理。" if key == "reply.wechatmp.media_read_failed" else default,
+    )
+
+    missing_path = tmp_path / "missing.png"
+    channel.send(Reply(ReplyType.IMAGE_URL, [str(missing_path)]), _context())
+
+    assert channel.cache_dict["openid"] == [("text", "图片读取失败，请联系客户经理。")]
+
+
+def test_wechatmp_passive_send_caches_configured_text_when_image_upload_fails(monkeypatch, tmp_path):
+    from bridge.reply import Reply, ReplyType
+    from wechatpy.exceptions import WeChatClientException
+
+    channel = _wechatmp_channel(monkeypatch)
+    image_path = tmp_path / "upload-failure.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(
+        "business.config.reply_config.get_reply_text",
+        lambda key, default="": "图片上传失败，请稍后重试。" if key == "reply.wechatmp.media_upload_failed" else default,
+    )
+
+    class FakeMedia:
+        def upload(self, media_type, media):
+            raise WeChatClientException(40001, "upload failed")
+
+    channel.client.media = FakeMedia()
+
+    channel.send(Reply(ReplyType.IMAGE_URL, [str(image_path)]), _context())
+
+    assert channel.cache_dict["openid"] == [("text", "图片上传失败，请稍后重试。")]
 
 
 def test_wechatmp_passive_send_reuses_uploaded_local_image_media_across_users(monkeypatch, tmp_path):
@@ -909,7 +947,7 @@ def test_wechatmp_passive_send_discards_partial_images_when_later_upload_fails(m
     channel.send(Reply(ReplyType.IMAGE_URL, images), _context())
     channel._success_callback("openid", _context())
 
-    assert channel.cache_dict.peek_result("openid") is None
+    assert channel.cache_dict["openid"] == [("text", "媒体上传失败，请稍后重试或联系服务人员。")]
     assert "openid" not in channel.running
     assert "openid" not in channel.technical_analysis_titles
 
@@ -940,7 +978,7 @@ def test_wechatmp_passive_send_records_image_upload_failure(monkeypatch, tmp_pat
             "图片上传失败：Error code: 40164, message: invalid ip 14.153.6.203 ipv6 ::ffff:14.153.6.203, not in whitelist",
         )
     ]
-    assert channel.cache_dict.peek_result("openid") is None
+    assert channel.cache_dict["openid"] == [("text", "媒体上传失败，请稍后重试或联系服务人员。")]
 
 
 def test_wechatmp_passive_image_reply_does_not_delete_temporary_media(monkeypatch):
@@ -1373,6 +1411,192 @@ def test_wechatmp_passive_pending_and_running_prompts_use_configured_reply_text(
     assert passive_reply._pending_result_prompt("农业银行 技术分析") == "农业银行 已完成，回1取，回0弃。"
 
 
+def test_wechatmp_passive_continue_prompt_uses_configured_reply_text(business_env, monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from business.config.config_service import save_config
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    save_config("reply.wechatmp.continue_prompt", "\n还有后续，回复任意内容继续。", operator_role="admin")
+    cache = PassiveReplyCache()
+    channel = SimpleNamespace(cache_dict=cache)
+    msg = SimpleNamespace()
+    rendered = []
+
+    def fake_create_reply(text, _msg):
+        rendered.append(text)
+        return SimpleNamespace(render=lambda: text)
+
+    monkeypatch.setattr(passive_reply, "create_reply", fake_create_reply)
+    long_text = "测" * 2000
+
+    result = passive_reply._render_cached_reply(
+        channel,
+        msg,
+        lambda text: text,
+        "openid",
+        "msg-1",
+        "内容",
+        1,
+        ("text", long_text),
+    )
+
+    assert result.endswith("还有后续，回复任意内容继续。")
+    assert rendered[0].endswith("还有后续，回复任意内容继续。")
+
+
+def test_wechatmp_passive_target_placeholder_reply_texts_use_configured_value(business_env):
+    from business.config.config_service import save_config
+    from channel.wechatmp import passive_reply
+
+    save_config("reply.wechatmp.running_technical_analysis", "{target} 还在跑。", operator_role="admin")
+    save_config("reply.wechatmp.pending_technical_analysis", "{target} 已完成，回1取。", operator_role="admin")
+
+    assert passive_reply._running_technical_analysis_text("农业银行") == "农业银行 还在跑。"
+    assert passive_reply._pending_result_prompt("农业银行 技术分析") == "农业银行 已完成，回1取。"
+
+
+def test_wechatmp_passive_post_returns_configured_system_error_on_exception(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+
+    monkeypatch.setattr(passive_reply.web, "input", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        "business.config.reply_config.get_reply_text",
+        lambda key, default="": "公众号暂时不可用，请稍后重试。" if key == "reply.wechatmp.system_error" else default,
+    )
+
+    assert passive_reply.Query().POST() == "公众号暂时不可用，请稍后重试。"
+
+
+def test_wechatmp_passive_post_returns_configured_unsupported_message(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+
+    class FakeReply:
+        def __init__(self, text, _msg):
+            self.text = text
+
+        def render(self):
+            return self.text
+
+    monkeypatch.setattr(passive_reply.web, "input", lambda: {})
+    monkeypatch.setattr(passive_reply.web, "data", lambda: b"<xml/>")
+    monkeypatch.setattr(passive_reply, "is_encrypted_message", lambda _args: False)
+    monkeypatch.setattr(passive_reply, "decrypt_message_if_needed", lambda _args, message, _crypto: message)
+    monkeypatch.setattr(passive_reply, "parse_message", lambda _message: SimpleNamespace(type="location"))
+    monkeypatch.setattr(passive_reply, "create_reply", FakeReply)
+    monkeypatch.setattr(passive_reply, "WechatMPChannel", lambda: SimpleNamespace(crypto=None, cache_dict=SimpleNamespace(cleanup_expired=lambda: None)))
+    monkeypatch.setattr(
+        "business.config.reply_config.get_reply_text",
+        lambda key, default="": "暂不支持该消息类型，请发送文字。" if key == "reply.wechatmp.unsupported_message" else default,
+    )
+
+    assert passive_reply.Query().POST() == "暂不支持该消息类型，请发送文字。"
+
+
+def test_wechatmp_passive_activation_result_uses_configured_reply_text(business_env):
+    from datetime import datetime
+    from business.config.config_service import save_config
+    from channel.wechatmp import passive_reply
+
+    save_config("reply.investment.activation_success", "授权到 {auth_end_at}", operator_role="admin")
+
+    text = passive_reply._activation_reply_for_result(
+        SimpleNamespace(status="activated", message="fallback", auth_end_at=datetime(2099, 1, 2, 3, 4, 5))
+    )
+
+    assert text == "授权到 2099-01-02"
+
+
+def test_passive_reply_redeems_anal_activation_code(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+
+    produced_contexts = []
+    channel = SimpleNamespace(cache_dict={}, running=set(), request_cnt={})
+    current_message = {"content": "anal-abcd-efgh-jklm-npqr", "msg_id": "msg-activation"}
+    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+
+    calls = []
+    monkeypatch.setattr(passive_reply, "_is_activation_code_text", lambda text: str(text).upper().startswith("ANAL-"))
+    monkeypatch.setattr(
+        passive_reply,
+        "_redeem_activation_code_text",
+        lambda openid, text: calls.append((openid, text)) or "激活成功，服务有效期至 2099-01-01。",
+    )
+
+    response = passive_reply.Query().POST()
+
+    assert response == "激活成功，服务有效期至 2099-01-01。"
+    assert calls == [("openid", "anal-abcd-efgh-jklm-npqr")]
+    assert produced_contexts == []
+
+
+def test_wechatmp_passive_preregistered_activation_binds_sender(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import generate_customer_activation_code
+    from business.accounts.user_service import create_user, get_user_by_openid
+    import channel.wechatmp.passive_reply as passive_reply
+
+    customer_id = create_user("", name="张三", mobile="13800000000", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    text = passive_reply._redeem_activation_code_text("openid-from-wechat", batch.codes[0])
+
+    assert "激活成功" in text
+    assert get_user_by_openid("openid-from-wechat").id == customer_id
+
+
+def test_passive_reply_non_anal_unauthorized_keeps_default_prompt(monkeypatch):
+    from business.config.constants import ErrorCode
+    import channel.wechatmp.passive_reply as passive_reply
+
+    produced_contexts = []
+    channel = SimpleNamespace(cache_dict={}, running=set(), request_cnt={})
+    current_message = {"content": "利率", "msg_id": "msg-denied"}
+    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "_is_activation_code_text", lambda _text: False)
+    monkeypatch.setattr(
+        passive_reply,
+        "_verify_wechatmp_text_access",
+        lambda _openid, _content: SimpleNamespace(
+            allowed=False,
+            user_prompt="您暂未开通该服务，如需开通请联系服务人员。",
+            error_code=ErrorCode.UNAUTHORIZED,
+        ),
+    )
+
+    response = passive_reply.Query().POST()
+
+    assert response == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert produced_contexts == []
+
+
+def test_passive_reply_permission_denial_blocks_cached_result_claim(monkeypatch):
+    from business.config.constants import ErrorCode
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    produced_contexts = []
+    channel = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
+    channel.cache_dict.append_result("openid", "利率", [("text", "cached private result")], service_type=ServiceType.RATE)
+    current_message = {"content": "1", "msg_id": "msg-denied-cache"}
+    _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "_is_activation_code_text", lambda _text: False)
+    monkeypatch.setattr(
+        passive_reply,
+        "_verify_wechatmp_text_access",
+        lambda _openid, _content: SimpleNamespace(
+            allowed=False,
+            user_prompt="您的授权已过期，如需续期请联系服务人员。",
+            error_code=ErrorCode.AUTH_EXPIRED,
+        ),
+    )
+
+    response = passive_reply.Query().POST()
+
+    assert response == "您的授权已过期，如需续期请联系服务人员。"
+    assert channel.cache_dict.peek_result("openid").replies == [("text", "cached private result")]
+    assert produced_contexts == []
+
+
 def test_wechatmp_passive_running_technical_analysis_confirm_prompts_retry(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
@@ -1382,6 +1606,11 @@ def test_wechatmp_passive_running_technical_analysis_confirm_prompts_retry(monke
     current_message = {"content": "1", "msg_id": "msg-tech-running-confirm"}
 
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
+    monkeypatch.setattr(
+        passive_reply,
+        "_reply_format",
+        lambda _key, *args, default="", **kwargs: default.format(*args, **kwargs) if (args or kwargs) else default,
+    )
     channel.technical_analysis_titles = {"openid": "天娱数科"}
 
     assert passive_reply.Query().POST() == "「天娱数科」技术分析仍在运行中，请稍后再回复 1 尝试获取。"

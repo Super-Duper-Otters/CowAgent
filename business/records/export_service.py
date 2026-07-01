@@ -1,5 +1,6 @@
 # encoding:utf-8
 from calendar import monthrange
+from datetime import timedelta
 from io import BytesIO
 from typing import Iterable
 
@@ -33,9 +34,39 @@ REQUEST_HEADERS = [
 ]
 
 USER_HEADERS = ["OpenID", "姓名", "机构", "手机号", "状态", "服务权限", "授权开始", "授权结束", "备注"]
+ACTIVATION_CODE_HEADERS = [
+    "batch_id",
+    "code",
+    "activation_mode",
+    "customer_id",
+    "allowed_services",
+    "subscription_days",
+    "subscription_start_at",
+    "subscription_end_at",
+    "code_expires_at",
+    "status",
+    "used_by_openid",
+    "used_at",
+    "created_at",
+    "remark",
+]
 USER_IMPORT_HEADERS = ["手机号", "服务权限", "授权结束日期", "OpenID", "姓名", "机构", "状态", "授权开始日期", "备注"]
 USER_IMPORT_TEMPLATE_ROWS = [
     ["13800000000", "全部", "2026-12-31", "", "张三", "示例机构", "启用", "", "示例客户"],
+]
+USER_IMPORT_RESULT_HEADERS = [
+    "处理结果",
+    "客户ID",
+    "OpenID",
+    "姓名",
+    "机构",
+    "手机号",
+    "服务权限",
+    "授权开始",
+    "授权结束",
+    "激活码",
+    "激活码批次",
+    "错误信息",
 ]
 
 
@@ -148,8 +179,64 @@ def export_users_xlsx(enabled: bool | None = None) -> bytes:
     return _workbook_bytes(USER_HEADERS, export_rows, "Users")
 
 
+def export_activation_codes_xlsx(status: str | None = None, batch_id: str | None = None) -> bytes:
+    from business.accounts.activation_service import list_activation_codes
+
+    rows = list_activation_codes(status=status, batch_id=batch_id)
+
+    export_rows = [
+        [
+            row.batch_id,
+            row.code,
+            row.activation_mode,
+            row.customer_id or "",
+            ",".join(str(service) for service in (row.allowed_services or [])),
+            row.subscription_days,
+            row.subscription_start_at or "",
+            row.subscription_end_at or "",
+            row.code_expires_at or "",
+            row.status or "",
+            row.used_by_openid or "",
+            row.used_at or "",
+            row.created_at or "",
+            row.remark or "",
+        ]
+        for row in reversed(rows)
+    ]
+    return _workbook_bytes(ACTIVATION_CODE_HEADERS, export_rows, "ActivationCodes")
+
+
 def export_users_import_template_xlsx() -> bytes:
     return _workbook_bytes(USER_IMPORT_HEADERS, USER_IMPORT_TEMPLATE_ROWS, "ImportTemplate")
+
+
+def _date_display(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return (value + timedelta(hours=8)).date().isoformat()
+    return str(value)
+
+
+def export_users_import_result_xlsx(rows) -> bytes:
+    export_rows = [
+        [
+            getattr(row, "action", "") or "",
+            getattr(row, "customer_id", "") or "",
+            getattr(row, "openid", "") or "",
+            getattr(row, "name", "") or "",
+            getattr(row, "institution", "") or "",
+            getattr(row, "mobile", "") or "",
+            getattr(row, "allowed_services", "") or "",
+            _date_display(getattr(row, "auth_start_at", None)),
+            _date_display(getattr(row, "auth_end_at", None)),
+            getattr(row, "activation_code", "") or "",
+            getattr(row, "batch_id", "") or "",
+            getattr(row, "error", "") or "",
+        ]
+        for row in rows
+    ]
+    return _workbook_bytes(USER_IMPORT_RESULT_HEADERS, export_rows, "ImportResult")
 
 
 def _load_output_files(value: str | None) -> list[str]:

@@ -469,10 +469,12 @@ let investmentUserState = {
     filters: {
         customers: {keyword: '', keyword_field: 'all', page: '1', page_size: '20'},
         admins: {keyword: '', page: '1', page_size: '20'},
+        activation_codes: {status: '', batch_id: '', page: '1', page_size: '20'},
     },
     pagination: {
         customers: {page: 1, page_size: 20, total: 0, total_pages: 1},
         admins: {page: 1, page_size: 20, total: 0, total_pages: 1},
+        activation_codes: {page: 1, page_size: 20, total: 0, total_pages: 1},
     },
 };
 let investmentPendingUserImportFile = null;
@@ -512,7 +514,7 @@ let investmentRecordsState = {
 };
 
 const INVEST_VIEW_PERMISSIONS = {
-    'invest-users': ['customers.read', 'admin_users.read'],
+    'invest-users': ['customers.read', 'admin_users.read', 'activation_codes.read'],
     'invest-daily-content': 'content.read',
     'invest-content': 'content.read',
     'invest-records': 'records.read',
@@ -540,15 +542,19 @@ function investmentCurrentAdminUsername() {
 }
 
 async function loadInvestmentAdminSession({redirectOnMissing = false} = {}) {
+    const previousInvestmentAdmin = currentInvestmentAdmin;
     try {
         const data = await investmentFetchJson('/api/investment/auth/me');
         currentInvestmentAdmin = data.admin || null;
     } catch (error) {
-        currentInvestmentAdmin = null;
         if (redirectOnMissing) {
+            currentInvestmentAdmin = null;
             redirectToLogin();
             return null;
         }
+        currentInvestmentAdmin = previousInvestmentAdmin;
+        updateAuthUserSummary(currentInvestmentAdmin);
+        return currentInvestmentAdmin;
     }
     if (!currentInvestmentAdmin && redirectOnMissing) {
         redirectToLogin();
@@ -1402,7 +1408,7 @@ function investmentRenderTimeOptions(max, selected) {
     const values = [];
     for (let value = 0; value <= max; value += 1) {
         const text = investmentPadDatePart(value);
-        values.push(`<option value="${text}" ${text === selected ? 'selected' : ''}>${text}</option>`);
+        values.push(`<button type="button" class="investment-time-option-button ${text === selected ? 'active' : ''}" data-value="${text}" aria-pressed="${text === selected ? 'true' : 'false'}" onclick="investmentChooseTimeOption(this)">${text}</button>`);
     }
     return values.join('');
 }
@@ -1426,9 +1432,9 @@ function investmentRenderTimePickerPanel(id) {
     return `<div class="investment-time-picker" onpointerdown="investmentMarkModalSurfaceInteraction(event)" onclick="investmentMarkModalSurfaceInteraction(event)">
         <div class="investment-time-picker-head"><strong>选择时间</strong><span>北京时间</span></div>
         <div class="investment-time-select-row">
-            <label><span>时</span><select id="${id}-hour-select" class="investment-time-select">${investmentRenderTimeOptions(23, hour)}</select></label>
+            <label><span>时</span><div class="investment-time-options" data-time-part="hour">${investmentRenderTimeOptions(23, hour)}</div></label>
             <span class="investment-time-separator">:</span>
-            <label><span>分</span><select id="${id}-minute-select" class="investment-time-select">${investmentRenderTimeOptions(59, minute)}</select></label>
+            <label><span>分</span><div class="investment-time-options" data-time-part="minute">${investmentRenderTimeOptions(59, minute)}</div></label>
         </div>
         <div class="investment-time-picker-foot">
             <button type="button" onclick="investmentSetTimePickerValue('${id}', '00:00')">00:00</button>
@@ -1457,6 +1463,7 @@ function investmentToggleTimePicker(id) {
     }
     panel.innerHTML = investmentRenderTimePickerPanel(id);
     panel.classList.remove('hidden');
+    panel.querySelectorAll('.investment-time-option-button.active').forEach(button => button.scrollIntoView({block: 'nearest'}));
 }
 
 function investmentSetTimePickerValue(id, value) {
@@ -1470,9 +1477,26 @@ function investmentSetTimePickerValue(id, value) {
     investmentCloseTimePickers();
 }
 
+function investmentChooseTimeOption(button) {
+    const group = button?.closest('.investment-time-options');
+    if (!group) return;
+    group.querySelectorAll('.investment-time-option-button').forEach(option => {
+        const active = option === button;
+        option.classList.toggle('active', active);
+        option.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
+function investmentSelectedTimePart(id, part, fallback) {
+    const panel = investmentTimePickerPanel(id);
+    const selected = panel?.querySelector(`.investment-time-options[data-time-part="${part}"] .investment-time-option-button.active`);
+    return selected?.dataset?.value || fallback || '00';
+}
+
 function investmentSelectTime(id) {
-    const hour = document.getElementById(`${id}-hour-select`)?.value || '00';
-    const minute = document.getElementById(`${id}-minute-select`)?.value || '00';
+    const [fallbackHour, fallbackMinute] = investmentNormalizeTimeValue(investmentTimePickerInput(id)?.value || '00:00').split(':');
+    const hour = investmentSelectedTimePart(id, 'hour', fallbackHour);
+    const minute = investmentSelectedTimePart(id, 'minute', fallbackMinute);
     investmentSetTimePickerValue(id, `${hour}:${minute}`);
 }
 
@@ -2005,21 +2029,33 @@ function renderInvestmentStockRows(stocks = []) {
 
 async function renderInvestmentUsers() {
     const element = investmentContentEl('invest-users-content');
+    const canSeeCustomers = investmentCan('customers.read');
     const canSeeAdminUsers = investmentCan('admin_users.read');
-    if (currentInvestmentUserPanel === 'admins' && !canSeeAdminUsers) {
-        currentInvestmentUserPanel = 'customers';
+    const canSeeActivationCodes = investmentCan('activation_codes.read');
+    const availablePanel = canSeeCustomers ? 'customers' : (canSeeActivationCodes ? 'activation-codes' : 'admins');
+    if (currentInvestmentUserPanel === 'customers' && !canSeeCustomers) {
+        currentInvestmentUserPanel = availablePanel;
+    } else if (currentInvestmentUserPanel === 'admins' && !canSeeAdminUsers) {
+        currentInvestmentUserPanel = availablePanel;
+    } else if (currentInvestmentUserPanel === 'activation-codes' && !canSeeActivationCodes) {
+        currentInvestmentUserPanel = availablePanel;
     }
     element.innerHTML = `
         <div class="investment-tabs">
-            <button class="investment-tab ${currentInvestmentUserPanel === 'customers' ? 'active' : ''}" onclick="switchInvestmentUserPanel('customers')">
+            ${canSeeCustomers ? `<button class="investment-tab ${currentInvestmentUserPanel === 'customers' ? 'active' : ''}" onclick="switchInvestmentUserPanel('customers')">
                 <i class="fas fa-user-check"></i><span>客户</span>
-            </button>
+            </button>` : ''}
             ${canSeeAdminUsers ? `<button class="investment-tab ${currentInvestmentUserPanel === 'admins' ? 'active' : ''}" onclick="switchInvestmentUserPanel('admins')">
                 <i class="fas fa-user-shield"></i><span>后台人员</span>
             </button>` : ''}
+            ${canSeeActivationCodes ? `<button class="investment-tab ${currentInvestmentUserPanel === 'activation-codes' ? 'active' : ''}" onclick="switchInvestmentUserPanel('activation-codes')">
+                <i class="fas fa-ticket"></i><span>激活码</span>
+            </button>` : ''}
         </div>
         <div id="investment-users-panel-content"></div>`;
-    if (currentInvestmentUserPanel === 'admins') {
+    if (currentInvestmentUserPanel === 'activation-codes') {
+        await renderInvestmentActivationCodes();
+    } else if (currentInvestmentUserPanel === 'admins') {
         await renderInvestmentAdminUsers();
     } else {
         await renderInvestmentCustomerUsers();
@@ -2027,7 +2063,7 @@ async function renderInvestmentUsers() {
 }
 
 function switchInvestmentUserPanel(panel) {
-    currentInvestmentUserPanel = panel === 'admins' ? 'admins' : 'customers';
+    currentInvestmentUserPanel = ['customers', 'admins', 'activation-codes'].includes(panel) ? panel : 'customers';
     renderInvestmentUsers();
 }
 
@@ -2114,6 +2150,7 @@ function changeInvestmentUserPage(panel, page) {
         ...(investmentUserState.filters[panel] || {}),
         page: String(Math.max(1, Number(page || 1))),
     };
+    if (panel === 'activation_codes') return renderInvestmentActivationCodes();
     if (panel === 'admins') return renderInvestmentAdminUsers();
     return renderInvestmentCustomerUsers();
 }
@@ -2124,6 +2161,7 @@ function changeInvestmentUserPageSize(panel, pageSize) {
         page: '1',
         page_size: String(pageSize || '20'),
     };
+    if (panel === 'activation_codes') return renderInvestmentActivationCodes();
     if (panel === 'admins') return renderInvestmentAdminUsers();
     return renderInvestmentCustomerUsers();
 }
@@ -2145,7 +2183,7 @@ async function renderInvestmentCustomerUsers() {
                             <div class="investment-subtitle">客户仅用于微信公众号端授权，不可登录后台 Web。</div>
                         </div>
                     </div>
-                    <div class="investment-user-actionbar investment-user-toolbar-grid">
+                    <div class="investment-user-actionbar investment-user-toolbar-grid investment-customer-toolbar">
                         <div class="investment-toolbar-section search investment-toolbar-group primary">
                             <label class="investment-field investment-search-type-field">
                                 <span>分类</span>
@@ -2155,7 +2193,7 @@ async function renderInvestmentCustomerUsers() {
                             ${investmentButton('fa-magnifying-glass', '查询', 'applyInvestmentCustomerSearch()', 'primary')}
                             ${investmentButton('fa-rotate-left', '清除搜索', 'clearInvestmentCustomerSearch()')}
                         </div>
-                        <div class="investment-toolbar-section actions investment-toolbar-group">
+                        <div class="investment-toolbar-section actions investment-toolbar-group investment-customer-toolbar-actions">
                             ${investmentButtonIfCan('customers.write', 'fa-user-plus', '新增客户', 'openInvestmentUserDialog()', 'primary')}
                             ${investmentButtonIfCan('customers.import', 'fa-file-import', '批量导入客户', 'openInvestmentUsersImportDialog()', 'primary')}
                             ${investmentButtonIfCan('customers.export', 'fa-download', '导出', 'openInvestmentCustomerExportDialog()', 'primary')}
@@ -2172,22 +2210,42 @@ async function renderInvestmentCustomerUsers() {
 
 function renderInvestmentUsersTable(users) {
     if (!users.length) return '<div class="investment-empty">暂无用户</div>';
-    const rows = users.map(user => `
+    const rows = users.map(user => {
+        const isUnbound = user.bind_status === 'unbound' || !user.openid;
+        const bindingLabel = isUnbound ? '待绑定' : '已绑定';
+        return `
         <tr>
-            <td title="${escapeHtml(user.openid)}">${escapeHtml(investmentMiddleEllipsis(user.openid, 10, 8))}</td>
+            <td class="investment-customer-openid" title="${escapeHtml(user.openid || bindingLabel)}">${isUnbound ? '<span class="investment-muted">待绑定</span>' : escapeHtml(investmentMiddleEllipsis(user.openid, 6, 4))}</td>
             <td>${escapeHtml(user.name || '')}</td>
             <td>${escapeHtml(user.institution || '')}</td>
             <td>${escapeHtml(user.mobile || '')}</td>
             <td>${escapeHtml(investmentCustomerServicesDisplay(user.allowed_services || []))}</td>
+            <td><span class="investment-badge ${isUnbound ? 'warning' : 'ok'}">${bindingLabel}</span></td>
             <td><span class="investment-badge ${user.enabled ? 'ok' : 'fail'}">${user.enabled ? '启用' : '停用'}</span></td>
             <td>${escapeHtml(investmentFormatBeijingDate(user.auth_end_at || '') || '-')}</td>
-            <td class="investment-row-actions">
-                ${investmentButtonIfCan('customers.write', 'fa-pen', '编辑', `openInvestmentUserDialog('${encodeURIComponent(JSON.stringify(user))}')`)}
-                ${investmentButtonIfCan('customers.enable', user.enabled ? 'fa-ban' : 'fa-check', user.enabled ? '停用' : '启用', `setInvestmentUserStatus('${encodeURIComponent(user.openid)}', '${user.enabled ? 'disable' : 'enable'}')`, user.enabled ? 'danger' : 'secondary')}
+            <td class="investment-row-actions investment-customer-actions-cell">
+                <div class="investment-row-action-list">
+                    ${investmentButtonIfCan('customers.write', 'fa-pen', '编辑', `openInvestmentUserDialog('${encodeURIComponent(JSON.stringify(user))}')`)}
+                    ${user.openid ? investmentButtonIfCan('customers.enable', user.enabled ? 'fa-ban' : 'fa-check', user.enabled ? '停用' : '启用', `setInvestmentUserStatus('${encodeURIComponent(user.openid)}', '${user.enabled ? 'disable' : 'enable'}')`, user.enabled ? 'danger' : 'secondary') : ''}
+                    ${!isUnbound ? investmentButtonIfCan('customers.write', 'fa-link-slash', '解除绑定', `unbindInvestmentUserOpenid(${Number(user.id || 0)})`, 'danger') : ''}
+                    ${investmentButtonIfCan('customers.write', 'fa-trash', '删除', `deleteInvestmentUser(${Number(user.id || 0)})`, 'danger')}
+                </div>
             </td>
-        </tr>`).join('');
-    return investmentTableWrap(`<table class="investment-table">
-        <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>服务</th><th>状态</th><th>授权结束</th><th>动作</th></tr></thead>
+        </tr>`;
+    }).join('');
+    return investmentTableWrap(`<table class="investment-table investment-customer-table">
+        <colgroup>
+            <col class="investment-customer-col-openid">
+            <col class="investment-customer-col-name">
+            <col class="investment-customer-col-institution">
+            <col class="investment-customer-col-mobile">
+            <col class="investment-customer-col-service">
+            <col class="investment-customer-col-bind">
+            <col class="investment-customer-col-status">
+            <col class="investment-customer-col-auth">
+            <col class="investment-customer-col-actions">
+        </colgroup>
+        <thead><tr><th class="investment-customer-openid">OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>服务</th><th>绑定状态</th><th>状态</th><th>授权结束</th><th class="investment-customer-actions-head">动作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
 }
@@ -2251,6 +2309,209 @@ function renderInvestmentAdminUsersTable(users) {
         <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>最近登录</th><th>动作</th></tr></thead>
         <tbody>${rows}</tbody>
     </table>`);
+}
+
+function investmentActivationCodeStatusLabel(status) {
+    return {
+        unused: '未使用',
+        used: '已使用',
+        disabled: '已停用',
+        expired: '已过期',
+    }[status] || status || '-';
+}
+
+function investmentActivationCodeStatusClass(status) {
+    if (status === 'unused') return 'ok';
+    if (status === 'used') return 'warning';
+    return 'fail';
+}
+
+async function renderInvestmentActivationCodes() {
+    const element = document.getElementById('investment-users-panel-content') || investmentContentEl('invest-users-content');
+    investmentLoading(element);
+    try {
+        const filters = investmentUserState.filters.activation_codes;
+        const data = await investmentFetchJson(`/api/investment/activation-codes?${investmentUserQuery('activation_codes')}`);
+        const rows = data.codes || [];
+        investmentUserApplyPagination('activation_codes', data.pagination);
+        element.innerHTML = `
+            <div class="investment-user-page">
+                <section class="investment-table-panel full">
+                    <div class="investment-user-toolbar">
+                        <div class="investment-user-toolbar-heading">
+                            <div class="investment-panel-title"><i class="fas fa-ticket"></i><span>激活码列表</span></div>
+                        </div>
+                    </div>
+                    <div class="investment-user-actionbar investment-user-toolbar-grid">
+                        <div class="investment-toolbar-section search investment-toolbar-group primary">
+                            <label class="investment-field investment-search-type-field">
+                                <span>状态</span>
+                                ${investmentDropdown('invest-activation-status', [['', '全部状态'], ['unused', '未使用'], ['used', '已使用'], ['disabled', '已停用'], ['expired', '已过期']], filters.status || '', '', "investmentUserState.filters.activation_codes.status = value; investmentUserState.filters.activation_codes.page = '1'; renderInvestmentActivationCodes();")}
+                            </label>
+                            <label class="investment-field investment-search-field"><span>批次</span><input id="invest-activation-batch" type="text" value="${escapeHtml(filters.batch_id || '')}" placeholder="batch_id"></label>
+                            ${investmentButton('fa-magnifying-glass', '查询', 'applyInvestmentActivationCodeSearch()', 'primary')}
+                            ${investmentButton('fa-rotate-left', '清除搜索', 'clearInvestmentActivationCodeSearch()')}
+                        </div>
+                        <div class="investment-toolbar-section actions investment-toolbar-group">
+                            ${investmentButtonIfCan('activation_codes.write', 'fa-plus', '生成激活码', 'openInvestmentActivationCodeDialog(1)', 'primary')}
+                            ${investmentButtonIfCan('activation_codes.write', 'fa-layer-group', '批量生成', 'openInvestmentActivationCodeDialog(10)')}
+                            ${investmentButtonIfCan('activation_codes.export', 'fa-download', '导出', 'exportInvestmentActivationCodes()', 'primary')}
+                        </div>
+                    </div>
+                    ${renderInvestmentActivationCodesTable(rows)}
+                    ${renderInvestmentUserPagination('activation_codes', data.pagination)}
+                </section>
+            </div>`;
+    } catch (error) {
+        investmentError(element, error);
+    }
+}
+
+function renderInvestmentActivationCodesTable(rows = []) {
+    if (!rows.length) return '<div class="investment-empty">暂无激活码</div>';
+    const tableRows = rows.map(row => {
+        const isPreregistered = row.activation_mode === 'preregistered';
+        const typeLabel = isPreregistered ? '客户码' : '通用码';
+        const subscriptionText = isPreregistered
+            ? (investmentFormatBeijingDate(row.subscription_end_at || '') || '-')
+            : `${escapeHtml(row.subscription_days || '')} 天`;
+        return `
+        <tr>
+            <td class="investment-activation-batch" title="${escapeHtml(row.batch_id || '')}">${escapeHtml(investmentMiddleEllipsis(row.batch_id || '', 10, 8))}</td>
+            <td class="investment-activation-code"><code>${escapeHtml(row.code || row.code_prefix || 'ANAL-')}</code></td>
+            <td><span class="investment-badge ${isPreregistered ? 'warning' : 'ok'}">${typeLabel}</span></td>
+            <td>${isPreregistered ? escapeHtml(row.customer_id || '') : '-'}</td>
+            <td class="investment-activation-service">${escapeHtml(investmentCustomerServicesDisplay(row.allowed_services || []))}</td>
+            <td class="investment-activation-days">${subscriptionText}</td>
+            <td class="investment-activation-date">${escapeHtml(investmentFormatBeijingDate(row.code_expires_at || '') || '-')}</td>
+            <td class="investment-activation-status"><span class="investment-badge ${investmentActivationCodeStatusClass(row.status)}">${escapeHtml(investmentActivationCodeStatusLabel(row.status))}</span></td>
+            <td class="investment-activation-user" title="${escapeHtml(row.used_by_openid || '')}">${escapeHtml(investmentMiddleEllipsis(row.used_by_openid || '', 10, 8) || '-')}</td>
+            <td class="investment-activation-created">${escapeHtml(investmentFormatBeijingDate(row.created_at || '') || '-')}</td>
+            <td class="investment-row-actions">
+                ${row.status === 'unused' ? investmentButtonIfCan('activation_codes.write', 'fa-ban', '停用', `disableInvestmentActivationCode(${Number(row.id)})`, 'danger') : ''}
+            </td>
+        </tr>`;
+    }).join('');
+    return investmentTableWrap(`<table class="investment-table investment-activation-table">
+        <colgroup>
+            <col class="investment-activation-col-batch">
+            <col class="investment-activation-col-code">
+            <col>
+            <col>
+            <col class="investment-activation-col-service">
+            <col class="investment-activation-col-days">
+            <col class="investment-activation-col-date">
+            <col class="investment-activation-col-status">
+            <col class="investment-activation-col-user">
+            <col class="investment-activation-col-created">
+            <col class="investment-activation-col-action">
+        </colgroup>
+        <thead><tr><th>批次</th><th>激活码</th><th>类型</th><th>客户ID</th><th>权限</th><th>订阅/结束</th><th>有效期</th><th>状态</th><th>使用用户</th><th>创建时间</th><th>操作</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+    </table>`, true, '激活码表格');
+}
+
+function openInvestmentActivationCodeDialog(defaultCount = 1) {
+    const defaultExpiresAt = `${investmentAddDays(investmentTodayDate(), 30)}T23:59`;
+    const count = Math.max(1, Number(defaultCount || 1));
+    const body = `
+        <div class="investment-grid cols-2">
+            <label class="investment-field"><span>生成数量</span><input id="invest-activation-count" type="number" min="1" max="1000" value="${count}"></label>
+            <label class="investment-field"><span>激活码有效期</span><input id="invest-activation-expires" type="datetime-local" value="${escapeHtml(defaultExpiresAt)}"></label>
+            <label class="investment-field"><span>订阅天数</span><input id="invest-activation-days" type="number" min="1" value="30"></label>
+            <label class="investment-field"><span>备注</span><input id="invest-activation-remark" type="text" placeholder="批次说明"></label>
+        </div>
+        <div class="investment-service-row">
+            ${investmentUserServiceChecks('invest-activation', {allowed_services: ['all']})}
+        </div>
+        <label id="invest-activation-generated" class="investment-field textarea hidden">
+            <span>生成结果（仅本次显示，请立即复制）</span>
+            <textarea id="invest-activation-generated-codes" rows="10" readonly></textarea>
+        </label>
+        <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('activation_codes.write', 'fa-ticket', '生成 ANAL- 激活码', 'generateInvestmentActivationCodes()', 'primary')}
+            ${investmentButton('fa-xmark', '关闭', 'hideInvestmentModal()')}
+        </div>`;
+    showInvestmentModal('生成 ANAL- 激活码', body);
+}
+
+async function generateInvestmentActivationCodes() {
+    const selectedServices = Array.from(document.querySelectorAll('.invest-activation-service:checked'))
+        .map(item => item.dataset.serviceValue || item.value);
+    const services = investmentNormalizeCustomerServices(selectedServices);
+    if (!services.length) {
+        showInvestmentToast('请选择服务权限', 'error');
+        return;
+    }
+    const payload = {
+        count: Number(document.getElementById('invest-activation-count')?.value || 1),
+        code_expires_at: investmentBeijingDatetimeLocalToUtc(document.getElementById('invest-activation-expires')?.value || ''),
+        subscription_days: Number(document.getElementById('invest-activation-days')?.value || 30),
+        allowed_services: services,
+        remark: document.getElementById('invest-activation-remark')?.value || '',
+    };
+    if (!payload.code_expires_at) {
+        showInvestmentToast('请填写激活码有效期', 'error');
+        return;
+    }
+    try {
+        const data = await investmentFetchJson('/api/investment/activation-codes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const generated = document.getElementById('invest-activation-generated');
+        const textarea = document.getElementById('invest-activation-generated-codes');
+        if (generated && textarea) {
+            generated.classList.remove('hidden');
+            textarea.value = (data.codes || []).join('\n');
+            textarea.focus();
+            textarea.select();
+        }
+        showInvestmentToast('激活码已生成');
+        await renderInvestmentActivationCodes();
+    } catch (error) {
+        showInvestmentToast(`生成激活码失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function disableInvestmentActivationCode(id) {
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '停用激活码',
+        message: '停用后该激活码不能再被使用。',
+        confirmText: '停用',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+        await investmentFetchJson(`/api/investment/activation-codes/${encodeURIComponent(id)}/disable`, {method: 'POST'});
+        showInvestmentToast('激活码已停用');
+        await renderInvestmentActivationCodes();
+    } catch (error) {
+        showInvestmentToast(`停用激活码失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+function applyInvestmentActivationCodeSearch() {
+    investmentUserState.filters.activation_codes = {
+        ...investmentUserState.filters.activation_codes,
+        batch_id: document.getElementById('invest-activation-batch')?.value || '',
+        page: '1',
+    };
+    renderInvestmentActivationCodes();
+}
+
+function clearInvestmentActivationCodeSearch() {
+    investmentUserState.filters.activation_codes = {status: '', batch_id: '', page: '1', page_size: '20'};
+    renderInvestmentActivationCodes();
+}
+
+function exportInvestmentActivationCodes() {
+    const filters = investmentUserState.filters.activation_codes || {};
+    investmentDownload('/api/investment/export/activation-codes.xlsx', {
+        status: filters.status || '',
+        batch_id: filters.batch_id || '',
+    });
 }
 
 function openInvestmentAdminUserDialog(encoded = '') {
@@ -2385,7 +2646,7 @@ function renderInvestmentUserImportSection() {
             <section class="investment-import-template">
                 <div>
                     <div class="investment-panel-title"><i class="fas fa-table"></i><span>存在用户名单示例模板</span></div>
-                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权开始日期、授权结束日期。OpenID 可空，系统会生成待绑定用户。</div>
+                    <div class="investment-subtitle">必填字段：手机号、服务权限、授权开始日期、授权结束日期。OpenID 可空，空值会生成客户专属激活码。</div>
                 </div>
                 <a class="investment-btn" href="/api/investment/users/import-template.xlsx" target="_blank" download>
                     <i class="fas fa-download"></i><span>下载模板</span>
@@ -2412,18 +2673,20 @@ function openInvestmentUserDialog(encoded = '') {
     const user = encoded ? JSON.parse(decodeURIComponent(encoded)) : {};
     const body = `
         <div class="investment-grid cols-2">
-            ${investmentField('OpenID', 'invest-user-modal-openid', user.openid || '')}
+            ${investmentField('OpenID 可空', 'invest-user-modal-openid', user.openid || '')}
             ${investmentField('姓名', 'invest-user-modal-name', user.name || '')}
             ${investmentField('机构', 'invest-user-modal-institution', user.institution || '')}
             ${investmentField('手机号', 'invest-user-modal-mobile', user.mobile || '')}
             <label class="investment-field"><span>授权开始日期</span>${investmentRenderDateControl('invest-user-modal-auth-start-date', investmentFormatBeijingDate(user.auth_start_at || ''), {placeholder: '选择授权开始日期'})}</label>
             <label class="investment-field"><span>授权结束日期</span>${investmentRenderDateControl('invest-user-modal-auth-end-date', investmentFormatBeijingDate(user.auth_end_at || ''), {placeholder: '选择授权结束日期'})}</label>
         </div>
+        <div class="investment-subtitle">OpenID 留空时会创建预注册客户，并返回可分发的客户专属激活码。</div>
         <div class="investment-service-row">
             ${investmentUserServiceChecks('invest-user-modal', user)}
             ${investmentSwitch('启用', 'invest-user-modal-enabled', user.enabled !== false)}
         </div>
         ${investmentField('备注', 'invest-user-modal-remark', user.remark || '', 'textarea')}
+        <div id="invest-user-modal-activation-result" class="investment-activation-result"></div>
         <div class="investment-actions investment-modal-actions">
             ${investmentButtonIfCan('customers.write', 'fa-floppy-disk', '保存用户', "saveInvestmentUser('invest-user-modal')", 'primary')}
             ${investmentButton('fa-xmark', '取消', 'hideInvestmentModal()')}
@@ -2433,6 +2696,47 @@ function openInvestmentUserDialog(encoded = '') {
 
 function editInvestmentUser(encoded) {
     openInvestmentUserDialog(encoded);
+}
+
+function showInvestmentActivationCodeResultDialog(data = {}) {
+    const code = data.activation_code || '';
+    const batchId = data.activation_batch_id || '';
+    const customerId = data.customer_id || '';
+    const body = `
+        <section class="investment-modal-section">
+            <div class="investment-subtitle">客户已创建。请复制以下客户专属激活码用于销售分发，客户在公众号发送后会绑定当前微信 OpenID。</div>
+            <label class="investment-field">
+                <span>激活码</span>
+                <textarea id="invest-user-created-activation-code" readonly>${escapeHtml(code)}</textarea>
+            </label>
+            <div class="investment-grid cols-2">
+                ${customerId ? `<div class="investment-meta-item"><span>客户ID</span><strong>${escapeHtml(String(customerId))}</strong></div>` : ''}
+                ${batchId ? `<div class="investment-meta-item"><span>批次ID</span><strong>${escapeHtml(String(batchId))}</strong></div>` : ''}
+            </div>
+            <div class="investment-actions investment-modal-actions">
+                ${investmentButton('fa-copy', '复制激活码', 'copyInvestmentActivationCodeFromDialog()', 'primary')}
+                ${investmentButton('fa-check', '完成', 'hideInvestmentModal()')}
+            </div>
+        </section>`;
+    showInvestmentModal('客户专属激活码', body);
+}
+
+async function copyInvestmentActivationCodeFromDialog() {
+    const textarea = document.getElementById('invest-user-created-activation-code');
+    const code = textarea?.value || '';
+    if (!code) return;
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(code);
+        } else {
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+        }
+        showInvestmentToast('激活码已复制');
+    } catch (error) {
+        showInvestmentToast('复制失败，请手动复制', 'error');
+    }
 }
 
 function fillInvestmentUserForm(encoded) {
@@ -2469,11 +2773,16 @@ async function saveInvestmentUser(prefix = 'invest-user') {
         showInvestmentToast('请填写授权结束日期', 'error');
         return;
     }
+    const mobile = document.getElementById(`${prefix}-mobile`).value.trim();
+    if (!mobile) {
+        showInvestmentToast('请填写手机号', 'error');
+        return;
+    }
     const body = {
         openid: document.getElementById(`${prefix}-openid`).value.trim(),
         name: document.getElementById(`${prefix}-name`).value.trim(),
         institution: document.getElementById(`${prefix}-institution`).value.trim(),
-        mobile: document.getElementById(`${prefix}-mobile`).value.trim(),
+        mobile,
         enabled: document.getElementById(`${prefix}-enabled`).checked,
         allowed_services: services,
         auth_start_at: investmentBeijingDateTimeToUtc(authStartDate, '00:00'),
@@ -2481,13 +2790,17 @@ async function saveInvestmentUser(prefix = 'invest-user') {
         remark: document.getElementById(`${prefix}-remark`).value.trim(),
     };
     try {
-        await investmentFetchJson('/api/investment/users', {
+        const data = await investmentFetchJson('/api/investment/users', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
         });
         showInvestmentToast('用户已保存');
-        if (prefix === 'invest-user-modal') hideInvestmentModal();
+        if (prefix === 'invest-user-modal' && data.activation_code) {
+            showInvestmentActivationCodeResultDialog(data);
+        } else if (prefix === 'invest-user-modal') {
+            hideInvestmentModal();
+        }
         await renderInvestmentUsers();
     } catch (error) {
         showInvestmentToast(`保存用户失败：${String(error.message || error)}`, 'error');
@@ -2509,6 +2822,44 @@ async function disableInvestmentUser(encodedOpenid) {
     return setInvestmentUserStatus(encodedOpenid, 'disable');
 }
 
+async function unbindInvestmentUserOpenid(customerId) {
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '解除 OpenID 绑定',
+        message: '解除后该微信用户将立即失去客户权限，客户资料和订阅日期会保留。',
+        confirmText: '解除绑定',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+        await investmentFetchJson(`/api/investment/users/${encodeURIComponent(customerId)}/unbind-openid`, {method: 'POST'});
+        showInvestmentToast('OpenID 绑定已解除');
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`解除绑定失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function deleteInvestmentUser(customerId) {
+    const confirmed = await showInvestmentConfirmDialog({
+        title: '删除客户',
+        message: '删除后该客户将从列表移除，未绑定激活码无法再用于绑定此客户。',
+        confirmText: '删除',
+        variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+        await investmentFetchJson(`/api/investment/users/${encodeURIComponent(customerId)}/delete`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reason: 'delete from customer list'}),
+        });
+        showInvestmentToast('客户已删除');
+        await renderInvestmentUsers();
+    } catch (error) {
+        showInvestmentToast(`删除客户失败：${String(error.message || error)}`, 'error');
+    }
+}
+
 function openInvestmentUsersImportDialog() {
     investmentPendingUserImportFile = null;
     investmentPendingUserImportParsed = false;
@@ -2516,10 +2867,10 @@ function openInvestmentUsersImportDialog() {
 }
 
 function renderInvestmentImportResult(data, committed = false) {
-    const preview = data.preview || [];
+    const preview = committed && data.rows?.length ? data.rows : (data.preview || []);
     const rows = preview.map(row => `
         <tr>
-            <td>${escapeHtml(row.openid_generated ? '待绑定' : (row.openid || ''))}</td>
+            <td>${escapeHtml(row.openid_generated || !row.openid ? '待绑定' : (row.openid || ''))}</td>
             <td>${escapeHtml(row.name || '')}</td>
             <td>${escapeHtml(row.institution || '')}</td>
             <td>${escapeHtml(row.mobile || '')}</td>
@@ -2527,7 +2878,9 @@ function renderInvestmentImportResult(data, committed = false) {
             <td>${escapeHtml(row.allowed_services || '')}</td>
             <td>${escapeHtml(String(investmentFormatBeijingTime(row.auth_start_at || '') || '').slice(0, 10) || '-')}</td>
             <td>${escapeHtml(String(investmentFormatBeijingTime(row.auth_end_at || '') || '').slice(0, 10) || '-')}</td>
+            ${committed ? `<td>${escapeHtml(row.activation_code || '')}</td><td>${escapeHtml(row.error || '')}</td>` : '<td>激活码待生成</td>'}
         </tr>`).join('');
+    const downloadUrl = data.result_download_url || (data.result_id ? `/api/investment/users/import-result.xlsx?result_id=${encodeURIComponent(data.result_id)}` : '');
     return `
         <div class="investment-import-summary">
             <span class="investment-badge ok">${committed ? '已导入' : '解析完成'}</span>
@@ -2535,9 +2888,12 @@ function renderInvestmentImportResult(data, committed = false) {
             <span>新用户 ${Number(data.new_users || 0)}</span>
             <span>新增 ${Number(data.created || 0)}</span>
             <span>更新 ${Number(data.updated || 0)}</span>
+            <span>生成激活码 ${Number(data.activation_created || 0)}</span>
+            <span>失败 ${Number(data.failed || 0)}</span>
         </div>
+        ${committed && downloadUrl ? `<div class="investment-actions"><a class="investment-btn primary" href="${escapeHtml(downloadUrl)}" target="_blank" download><i class="fas fa-download"></i><span>下载含激活码 Excel</span></a></div>` : ''}
         ${rows ? `<div class="investment-import-preview">${investmentTableWrap(`<table class="investment-table compact">
-            <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>状态</th><th>服务权限</th><th>授权开始</th><th>授权结束</th></tr></thead>
+            <thead><tr><th>OpenID</th><th>姓名</th><th>机构</th><th>手机号</th><th>状态</th><th>服务权限</th><th>授权开始</th><th>授权结束</th>${committed ? '<th>激活码</th><th>错误</th>' : '<th>激活码处理</th>'}</tr></thead>
             <tbody>${rows}</tbody>
         </table>`)}</div>` : ''}
         ${!committed ? `<div class="investment-actions investment-modal-actions">
@@ -5427,7 +5783,7 @@ function renderInvestmentComponentConfigDialogBody(component) {
         </label>` : '';
     const promptEditor = settings.prompt_key ? `
         <label class="investment-field textarea">
-            <span>提示词</span>
+            <span>提示词${settings.prompt_configured === false ? '（当前显示默认提示词）' : ''}</span>
             <textarea id="invest-component-modal-prompt-${escapeHtml(componentKey)}" rows="8">${escapeHtml(settings.prompt || '')}</textarea>
         </label>` : '';
     const commandConfigEditor = component.handler_type === 'command_script' ? renderInvestmentCommandComponentConfigFields(component) : '';
@@ -6443,10 +6799,10 @@ function investmentStockRefreshScopeLabel(scope = '') {
         akshare_a_share: 'AkShare A股',
         akshare_hk: 'AkShare 港股',
         akshare_us: 'AkShare 美股',
+        tushare_index: 'Tushare 指数',
         a_share: 'A股',
         hk: '港股',
         us: '美股',
-        tushare_index: 'Tushare 指数',
         etf: 'ETF',
         convertible_bond: '可转债',
         gold: '黄金',
@@ -6454,6 +6810,25 @@ function investmentStockRefreshScopeLabel(scope = '') {
         futures: '国债期货',
     };
     return String(scope || '').split('.').map(part => labels[part] || part).join(' / ');
+}
+
+function investmentStockRefreshFriendlyError(error = '') {
+    const message = String(error || '').trim();
+    const lower = message.toLowerCase();
+    if (!message) return '刷新失败，请检查数据源配置或稍后重试。';
+    if (lower.includes('unsupported source') || message.includes('不支持')) {
+        return '不支持的数据源，请重新选择源和市场。';
+    }
+    if (lower.includes('token') || lower.includes('permission') || lower.includes('unauthorized') || lower.includes('forbidden') || message.includes('权限') || message.includes('未配置')) {
+        return 'Tushare Token 未配置或无权限，请检查并保存数据源凭证。';
+    }
+    if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('connection') || lower.includes('max retries') || message.includes('超时') || message.includes('连接')) {
+        return '数据源连接超时，请稍后重试或切换数据源。';
+    }
+    if (lower.includes('database') || lower.includes('sqlalchemy') || lower.includes('psycopg') || lower.includes('duplicate') || lower.includes('unique') || lower.includes('relation') || message.includes('数据库')) {
+        return '数据库写入失败，请检查股票字典表或迁移状态。';
+    }
+    return '刷新失败，请检查数据源配置或稍后重试。';
 }
 
 function renderInvestmentStockRefreshProgress(source = '') {
@@ -6490,7 +6865,7 @@ function renderInvestmentStockRefreshLog(data = {}) {
         : rowCount(row) > 0
             ? '<span class="investment-badge success">成功</span>'
             : '<span class="investment-badge">无变化</span>';
-    const rowMessage = row => row.error || (rowCount(row) > 0 ? '已完成' : '无新增，重复数据已去重或已有记录保持不变');
+    const rowMessage = row => row.error ? investmentStockRefreshFriendlyError(row.error) : (rowCount(row) > 0 ? '已完成' : '无新增，重复数据已去重或已有记录保持不变');
     const rowHtml = rows.length ? rows.map(row => `
         <tr>
             <td>${escapeHtml(investmentStockRefreshScopeLabel(row.scope || row.label || ''))}</td>
@@ -6498,7 +6873,8 @@ function renderInvestmentStockRefreshLog(data = {}) {
             <td>${rowStatusText(row)}</td>
             <td>${escapeHtml(rowMessage(row))}</td>
         </tr>`).join('') : '<tr><td colspan="4">暂无刷新明细</td></tr>';
-    const errorHtml = errors.length ? `<div class="investment-alert error">失败明细：${escapeHtml(errors.join('；'))}</div>` : '';
+    const friendlyErrors = Array.from(new Set(errors.map(item => investmentStockRefreshFriendlyError(item))));
+    const errorHtml = friendlyErrors.length ? `<div class="investment-alert error">失败原因：${escapeHtml(friendlyErrors.join('；'))}</div>` : '';
     return `
         <div class="investment-alert ${statusClass}">刷新结果：${statusText}。成功 ${escapeHtml(summary.success_count ?? 0)} 项，失败 ${escapeHtml(summary.failed_count ?? 0)} 项。</div>
         <div class="investment-stock-refresh-summary">
@@ -6530,7 +6906,7 @@ async function refreshInvestmentStocks() {
         const nextResultEl = document.getElementById('invest-stock-action-result');
         if (nextResultEl) nextResultEl.innerHTML = renderInvestmentStockRefreshLog(data);
     } catch (error) {
-        if (resultEl) resultEl.innerHTML = `<div class="investment-alert error">${escapeHtml(String(error.message || error))}</div>`;
+        if (resultEl) resultEl.innerHTML = `<div class="investment-alert error">刷新失败：${escapeHtml(investmentStockRefreshFriendlyError(error.message || error))}</div>`;
     } finally {
         const nextButton = document.querySelector('.investment-stock-refresh-tool .investment-btn');
         if (nextButton) nextButton.disabled = false;
@@ -6709,6 +7085,13 @@ window.openInvestmentUsersImportDialog = openInvestmentUsersImportDialog;
 window.openInvestmentCustomerExportDialog = openInvestmentCustomerExportDialog;
 window.downloadInvestmentUsersExport = downloadInvestmentUsersExport;
 window.exportInvestmentUsers = exportInvestmentUsers;
+window.renderInvestmentActivationCodes = renderInvestmentActivationCodes;
+window.openInvestmentActivationCodeDialog = openInvestmentActivationCodeDialog;
+window.generateInvestmentActivationCodes = generateInvestmentActivationCodes;
+window.disableInvestmentActivationCode = disableInvestmentActivationCode;
+window.applyInvestmentActivationCodeSearch = applyInvestmentActivationCodeSearch;
+window.clearInvestmentActivationCodeSearch = clearInvestmentActivationCodeSearch;
+window.exportInvestmentActivationCodes = exportInvestmentActivationCodes;
 window.parseInvestmentUsersImport = parseInvestmentUsersImport;
 window.confirmInvestmentUsersImport = confirmInvestmentUsersImport;
 window.applyInvestmentCustomerSearch = applyInvestmentCustomerSearch;
@@ -6717,8 +7100,11 @@ window.applyInvestmentAdminSearch = applyInvestmentAdminSearch;
 window.changeInvestmentUserPage = changeInvestmentUserPage;
 window.handleInvestmentUserServiceToggle = handleInvestmentUserServiceToggle;
 window.saveInvestmentUser = saveInvestmentUser;
+window.copyInvestmentActivationCodeFromDialog = copyInvestmentActivationCodeFromDialog;
 window.setInvestmentUserStatus = setInvestmentUserStatus;
 window.disableInvestmentUser = disableInvestmentUser;
+window.unbindInvestmentUserOpenid = unbindInvestmentUserOpenid;
+window.deleteInvestmentUser = deleteInvestmentUser;
 window.importInvestmentUsers = importInvestmentUsers;
 window.createInvestmentContent = createInvestmentContent;
 window.switchInvestmentUploadMode = switchInvestmentUploadMode;
@@ -6730,6 +7116,7 @@ window.toggleInvestmentExpiresAt = toggleInvestmentExpiresAt;
 window.investmentToggleTimePicker = investmentToggleTimePicker;
 window.investmentSetTimePickerValue = investmentSetTimePickerValue;
 window.investmentSelectTime = investmentSelectTime;
+window.investmentChooseTimeOption = investmentChooseTimeOption;
 window.generateInvestmentContent = generateInvestmentContent;
 window.effectiveInvestmentContent = effectiveInvestmentContent;
 window.openInvestmentContentEffectiveDialog = openInvestmentContentEffectiveDialog;

@@ -1,7 +1,7 @@
 # encoding:utf-8
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -28,6 +28,10 @@ class User:
     auth_start_at: datetime | None = None
     auth_end_at: datetime | None = None
     remark: str = ""
+    bind_status: str = "bound"
+    bound_at: datetime | None = None
+    unbound_at: datetime | None = None
+    last_unbound_reason: str = ""
 
 
 @dataclass
@@ -56,6 +60,30 @@ class ImportUserRow:
 class ImportResult:
     created: int = 0
     updated: int = 0
+
+
+@dataclass
+class ImportUserActivationRow:
+    customer_id: int
+    openid: str
+    name: str
+    institution: str
+    mobile: str
+    allowed_services: str
+    auth_start_at: datetime | None
+    auth_end_at: datetime | None
+    activation_code: str = ""
+    batch_id: str = ""
+    action: str = ""
+    error: str = ""
+
+
+@dataclass
+class ImportWithActivationResult:
+    created: int = 0
+    updated: int = 0
+    activation_created: int = 0
+    rows: list[ImportUserActivationRow] = field(default_factory=list)
 
 
 def _now() -> str:
@@ -319,19 +347,15 @@ def _cell(row: list[str], indexes: dict[str, int], key: str) -> str:
     return row[index].strip()
 
 
-def _generated_pending_openid(mobile: str, row_number: int) -> str:
-    digits = "".join(char for char in str(mobile) if char.isdigit()) or "unknown"
-    return f"pending-mobile-{digits}-{row_number}"
-
-
-
 def _row_to_user(row) -> User | None:
     if row is None:
         return None
     item = row_to_dict(row)
+    openid = item["openid"] or ""
+    bind_status = item.get("bind_status") or ("bound" if openid else "unbound")
     return User(
         id=item["id"],
-        openid=item["openid"],
+        openid=openid,
         name=item["name"] or "",
         institution=item["institution"] or "",
         mobile=item["mobile"] or "",
@@ -340,6 +364,10 @@ def _row_to_user(row) -> User | None:
         auth_start_at=_from_iso(item["auth_start_at"]),
         auth_end_at=_from_iso(item["auth_end_at"]),
         remark=item["remark"] or "",
+        bind_status=bind_status,
+        bound_at=_from_iso(item.get("bound_at")),
+        unbound_at=_from_iso(item.get("unbound_at")),
+        last_unbound_reason=item.get("last_unbound_reason") or "",
     )
 
 
@@ -357,8 +385,11 @@ def create_user(
     actor: Any | None = None,
 ) -> int:
     now = _now()
+    normalized_openid = str(openid or "").strip()
     values = {
-        "openid": openid,
+        "openid": normalized_openid or None,
+        "bind_status": "bound" if normalized_openid else "unbound",
+        "bound_at": now if normalized_openid else None,
         "name": name,
         "institution": institution,
         "mobile": mobile,
@@ -378,19 +409,92 @@ def create_user(
             user_id = result.inserted_primary_key[0]
             if user_id is not None:
                 return int(user_id)
+        if not normalized_openid:
+            raise RuntimeError("created preregistered customer without returned primary key")
         row = conn.execute(
-            select(investment_users.c.id).where(investment_users.c.openid == openid),
+            select(investment_users.c.id).where(investment_users.c.openid == normalized_openid),
         )
         return int(row.scalar_one())
 
 
 def get_user_by_openid(openid: str) -> User | None:
+    openid = str(openid or "").strip()
+    if not openid:
+        return None
     with connect() as conn:
         row = conn.execute(select(investment_users).where(investment_users.c.openid == openid)).fetchone()
     return _row_to_user(row)
 
 
-def update_user(openid: str, actor: Any | None = None, **fields) -> None:
+def get_user_by_id(user_id: int) -> User | None:
+    with connect() as conn:
+        row = conn.execute(select(investment_users).where(investment_users.c.id == user_id)).fetchone()
+    return _row_to_user(row)
+
+
+def get_unbound_user_by_mobile(mobile: str) -> User | None:
+    mobile = str(mobile or "").strip()
+    if not mobile:
+        return None
+    with connect() as conn:
+        rows = (
+            conn.execute(
+                select(investment_users)
+                .where(
+                    investment_users.c.mobile == mobile,
+                    investment_users.c.bind_status == "unbound",
+                    or_(investment_users.c.openid.is_(None), investment_users.c.openid == ""),
+                )
+                .order_by(investment_users.c.id.asc())
+                .limit(2)
+            )
+            .fetchall()
+        )
+    if len(rows) != 1:
+        return None
+    return _row_to_user(rows[0])
+
+
+def bind_customer_openid(customer_id: int, openid: str, *, actor: Any | None = None) -> None:
+    openid = str(openid or "").strip()
+    if not openid:
+        raise ValueError("openid is required")
+    existing = get_user_by_openid(openid)
+    if existing is not None and existing.id != customer_id:
+        raise ValueError("openid is already bound to another customer")
+    if get_user_by_id(customer_id) is None:
+        raise ValueError("customer not found")
+    now = _now()
+    values = {
+        "openid": openid,
+        "bind_status": "bound",
+        "bound_at": now,
+        "unbound_at": None,
+        "updated_at": now,
+    }
+    values.update(_admin_actor_values(actor, prefix="updated"))
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.id == customer_id).values(**values))
+
+
+def unbind_customer_openid(customer_id: int, *, actor: Any | None = None, reason: str = "") -> None:
+    if get_user_by_id(customer_id) is None:
+        raise ValueError("customer not found")
+    now = _now()
+    values = {
+        "openid": None,
+        "bind_status": "unbound",
+        "unbound_at": now,
+        "last_unbound_reason": reason,
+        "updated_at": now,
+    }
+    values.update(_admin_actor_values(actor, prefix="updated"))
+    values.update(_admin_actor_values(actor, prefix="last_unbound"))
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.id == customer_id).values(**values))
+
+
+def _user_update_values(actor: Any | None = None, **fields) -> dict[str, Any]:
     allowed = {"name", "institution", "mobile", "enabled", "allowed_services", "auth_start_at", "auth_end_at", "remark"}
     values = {}
     for key, value in fields.items():
@@ -404,11 +508,29 @@ def update_user(openid: str, actor: Any | None = None, **fields) -> None:
             value = 1 if value else 0
         values[key] = value
     if not values:
-        return
+        return {}
     values["updated_at"] = _now()
     values.update(_admin_actor_values(actor, prefix="updated"))
+    return values
+
+
+def update_user(openid: str, actor: Any | None = None, **fields) -> None:
+    openid = str(openid or "").strip()
+    if not openid:
+        raise ValueError("openid is required")
+    values = _user_update_values(actor, **fields)
+    if not values:
+        return
     with connect() as conn:
         conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
+
+
+def update_user_by_id(user_id: int, actor: Any | None = None, **fields) -> None:
+    values = _user_update_values(actor, **fields)
+    if not values:
+        return
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.id == user_id).values(**values))
 
 
 def disable_user(openid: str, *, actor: Any | None = None) -> None:
@@ -433,6 +555,22 @@ def delete_user(openid: str, *, actor: Any | None = None, reason: str = "") -> N
         conn.execute(update(investment_users).where(investment_users.c.openid == openid).values(**values))
 
 
+def delete_user_by_id(user_id: int, *, actor: Any | None = None, reason: str = "") -> None:
+    if get_user_by_id(user_id) is None:
+        raise ValueError("customer not found")
+    now = _now()
+    values = {
+        "enabled": 0,
+        "deleted_at": now,
+        "delete_reason": reason,
+        "updated_at": now,
+    }
+    values.update(_admin_actor_values(actor, prefix="deleted"))
+    values.update(_admin_actor_values(actor, prefix="updated"))
+    with connect() as conn:
+        conn.execute(update(investment_users).where(investment_users.c.id == user_id).values(**values))
+
+
 def _service_keyword_conditions(keyword: str):
     keyword_text = str(keyword or "").strip()
     if not keyword_text:
@@ -447,7 +585,7 @@ def _service_keyword_conditions(keyword: str):
 
 
 def _user_conditions(enabled: bool | None = None, openid: str | None = None, keyword: str | None = None, keyword_field: str | None = None) -> list:
-    conditions = []
+    conditions = [investment_users.c.deleted_at.is_(None)]
     if enabled is not None:
         conditions.append(investment_users.c.enabled == (1 if enabled else 0))
     if openid:
@@ -542,23 +680,27 @@ def _verify_existing_user(user: User | None) -> PermissionResult:
 def import_users(rows: Iterable[ImportUserRow]) -> ImportResult:
     result = ImportResult()
     for row in rows:
-        existing = get_user_by_openid(row.openid)
-        if existing:
-            update_user(
-                row.openid,
-                name=row.name,
-                institution=row.institution,
-                mobile=row.mobile,
-                enabled=row.enabled,
-                allowed_services=row.allowed_services,
-                auth_start_at=row.auth_start_at,
-                auth_end_at=row.auth_end_at,
-                remark=row.remark,
-            )
+        openid = str(row.openid or "").strip()
+        existing = get_user_by_openid(openid) if openid else get_unbound_user_by_mobile(row.mobile)
+        if existing and existing.id is not None:
+            update_fields = {
+                "name": row.name,
+                "institution": row.institution,
+                "mobile": row.mobile,
+                "enabled": row.enabled,
+                "allowed_services": row.allowed_services,
+                "auth_start_at": row.auth_start_at,
+                "auth_end_at": row.auth_end_at,
+                "remark": row.remark,
+            }
+            if openid:
+                update_user(openid, **update_fields)
+            else:
+                update_user_by_id(existing.id, **update_fields)
             result.updated += 1
         else:
             create_user(
-                row.openid,
+                openid,
                 name=row.name,
                 institution=row.institution,
                 mobile=row.mobile,
@@ -572,6 +714,86 @@ def import_users(rows: Iterable[ImportUserRow]) -> ImportResult:
     return result
 
 
+def _apply_import_user_row(row: ImportUserRow, *, actor: Any | None = None) -> tuple[int, User | None, str]:
+    openid = str(row.openid or "").strip()
+    existing = get_user_by_openid(openid) if openid else get_unbound_user_by_mobile(row.mobile)
+    update_fields = {
+        "name": row.name,
+        "institution": row.institution,
+        "mobile": row.mobile,
+        "enabled": row.enabled,
+        "allowed_services": row.allowed_services,
+        "auth_start_at": row.auth_start_at,
+        "auth_end_at": row.auth_end_at,
+        "remark": row.remark,
+    }
+    if existing and existing.id is not None:
+        if openid:
+            update_user(openid, actor=actor, **update_fields)
+        else:
+            update_user_by_id(existing.id, actor=actor, **update_fields)
+        return int(existing.id), existing, "updated"
+
+    customer_id = create_user(
+        openid,
+        name=row.name,
+        institution=row.institution,
+        mobile=row.mobile,
+        enabled=row.enabled,
+        allowed_services=row.allowed_services,
+        auth_start_at=row.auth_start_at,
+        auth_end_at=row.auth_end_at,
+        remark=row.remark,
+        actor=actor,
+    )
+    return int(customer_id), None, "created"
+
+
+def import_users_with_activation_codes(rows: Iterable[ImportUserRow], actor: Any | None = None) -> ImportWithActivationResult:
+    from business.accounts.activation_service import generate_customer_activation_code, get_unused_customer_activation_code
+
+    result = ImportWithActivationResult()
+    for row in rows:
+        openid = str(row.openid or "").strip()
+        result_row = ImportUserActivationRow(
+            customer_id=0,
+            openid=openid,
+            name=row.name,
+            institution=row.institution,
+            mobile=row.mobile,
+            allowed_services=row.allowed_services,
+            auth_start_at=row.auth_start_at,
+            auth_end_at=row.auth_end_at,
+        )
+        try:
+            customer_id, existing, action = _apply_import_user_row(row, actor=actor)
+            result_row.customer_id = customer_id
+            result_row.action = action
+            if action == "created":
+                result.created += 1
+            else:
+                result.updated += 1
+
+            if not openid:
+                existing_code = get_unused_customer_activation_code(customer_id)
+                if existing_code:
+                    result_row.activation_code = existing_code.code
+                    result_row.batch_id = existing_code.batch_id
+                else:
+                    try:
+                        batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=row.auth_end_at, actor=actor)
+                        result_row.activation_code = batch.codes[0] if batch.codes else ""
+                        result_row.batch_id = batch.batch_id
+                        result.activation_created += 1
+                    except Exception as exc:
+                        result_row.error = f"activation code generation failed: {exc}"
+        except Exception as exc:
+            result_row.action = "error"
+            result_row.error = str(exc)
+        result.rows.append(result_row)
+    return result
+
+
 def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
     rows = _xlsx_rows(_read_excel_source(source))
     if not rows:
@@ -579,7 +801,7 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
 
     headers = [_normalize_header(value) for value in rows[0]]
     indexes = {header: index for index, header in enumerate(headers) if header}
-    missing_headers = [key for key in ("mobile", "allowed_services", "auth_start_at", "auth_end_at") if key not in indexes]
+    missing_headers = [key for key in ("mobile", "allowed_services", "auth_end_at") if key not in indexes]
     if missing_headers:
         raise ValueError(f"Excel missing required field: {', '.join(missing_headers)}")
 
@@ -596,9 +818,6 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
             raise ValueError(f"Excel row {row_number} missing required field: allowed_services")
         if not auth_end_at:
             raise ValueError(f"Excel row {row_number} missing required field: auth_end_at")
-        openid_generated = not bool(openid)
-        if openid_generated:
-            openid = _generated_pending_openid(mobile, row_number)
         parsed_rows.append(
             ImportUserRow(
                 openid=openid,
@@ -610,7 +829,7 @@ def parse_users_excel(source: bytes | str | Path) -> list[ImportUserRow]:
                 auth_start_at=_parse_required_import_date(auth_start_at, row_number, "auth_start_at") if auth_start_at else None,
                 auth_end_at=_parse_required_import_date(auth_end_at, row_number, "auth_end_at"),
                 remark=_cell(row, indexes, "remark"),
-                openid_generated=openid_generated,
+                openid_generated=False,
             )
         )
     return parsed_rows

@@ -27,6 +27,9 @@ ROLE_PERMISSIONS = {
         "admin_users.read",
         "admin_users.write",
         "admin_users.reset_password",
+        "activation_codes.read",
+        "activation_codes.write",
+        "activation_codes.export",
         "content.read",
         "content.upload",
         "content.write",
@@ -61,6 +64,7 @@ ROLE_PERMISSIONS = {
     },
     "readonly": {
         "customers.read",
+        "activation_codes.read",
         "content.read",
         "records.read",
         "audits.read",

@@ -101,6 +101,88 @@ DEFAULT_TECHNICAL_ANALYSIS_PROMPT = (
     "7. 不要输出原报告的大段表格、附录、形态胜率明细或情景推演表，只保留可渲染卡片需要的信息。"
 )
 
+DEFAULT_RATE_PROMPT = (
+    "你是利率择时图片卡片整理助手。请把用户提供的文字、图片识别结果或投研资料整理成 "
+    "signal-card-renderer 可直接渲染的利率择时卡片标准文本。\n\n"
+    "必须只输出卡片正文，禁止输出解释、模板说明、补充问题、Markdown 表格、Markdown 代码块或额外标题。\n"
+    "字段缺失时填“——”；不要编造资料中没有的数据。\n"
+    "所有章节标题、字段名必须严格保留。每条 bullet 控制在 35 字以内，每个章节最多 3 条 bullet，避免图片过长。\n\n"
+    "输出必须严格使用下面结构：\n\n"
+    "【浙商固收 | 智能投研辅助系统】\n"
+    "——————————————\n"
+    "📉 标的：<如十债主连；无法识别填——>\n"
+    "💰 最新收盘：<价格> 元\n"
+    "📅 行情日期：<YYYY-MM-DD>\n"
+    "🔧 分析模型：利率交易性择时体系\n\n"
+    "📊 当日核心信号\n"
+    "复合策略信号：<入场/持续入场/观望/出场/规避等，括号内可保留信号数量，如 入场（4/7）>\n"
+    "多头：<多头信号名称，用顿号分隔；没有填——>；空头：<空头信号名称，用顿号分隔；没有填——>\n\n"
+    "▪️ <当日核心判断 1，35 字以内>\n"
+    "▪️ <当日核心判断 2，35 字以内>\n"
+    "▪️ <当日风险或边际变化，35 字以内>\n\n"
+    "💡日度主线：<一句话概括，不超过 25 字>\n\n"
+    "📊 周度全景复盘\n"
+    "近一周整体信号：<持续入场/震荡偏多/转弱/观望等>\n\n"
+    "▪️ <周度判断 1，35 字以内>\n"
+    "▪️ <周度判断 2，35 字以内>\n"
+    "▪️ <周度风险或变化，35 字以内>\n\n"
+    "💡周度主线：<一句话概括，不超过 25 字>\n\n"
+    "——————————————\n"
+    "⚠️ 本内容仅供研究参考，不构成任何投资建议\n"
+    "⏱️ 授权剩余时间：——\n"
+    "📚 数据来源：<资料来源；无法识别填——>\n"
+    "🤝 业务对接：<联系人；无法识别填——>\n\n"
+    "转换规则：\n"
+    "1. 必须包含“当日核心信号”“周度全景复盘”“复合策略信号”。\n"
+    "2. “多头”和“空头”必须写在同一行，格式必须是“多头：...；空头：...”。\n"
+    "3. 当日和周度 bullet 必须以“▪️”开头。\n"
+    "4. 不要输出长篇分析、表格、编号列表或原始材料摘录。\n"
+    "5. 如果资料只有日度内容，周度部分仍保留，缺失字段填“——”。"
+)
+
+DEFAULT_CONVERTIBLE_BOND_PROMPT = (
+    "你是可转债多因子图片卡片整理助手。请把用户提供的文字、图片识别结果或投研资料整理成 "
+    "signal-card-renderer 可直接渲染的可转债多因子卡片标准文本。\n\n"
+    "必须只输出卡片正文，禁止输出解释、模板说明、补充问题、Markdown 表格、Markdown 代码块或额外标题。\n"
+    "字段缺失时填“——”；不要编造资料中没有的数据。\n"
+    "所有章节标题、字段名必须严格保留。每条 bullet 控制在 40 字以内，每个章节最多 3 条 bullet，避免图片过长。\n\n"
+    "输出必须严格使用下面结构：\n\n"
+    "【浙商固收 | 智能投研辅助系统】\n\n"
+    "——————————————\n"
+    "📅 跟踪日期：<YYYY-MM-DD>\n"
+    "🔧 分析模型：可转债多因子择券体系\n"
+    "📊 跟踪维度：流动性 / 波动率 / 动量 / 量价相关性 / 估值\n\n"
+    "📊 市场与风格表现\n\n"
+    "<一句市场总览，不超过 45 字>\n"
+    "▪️ 最新截面：<当前市场/风格表现，40 字以内>\n"
+    "▪️ 近一周变化：<近一周边际变化，40 字以内>\n"
+    "▪️ 整体判断：<总体判断，40 字以内>\n\n"
+    "🧭 行业结构\n\n"
+    "<一句行业结构总览，不超过 45 字>\n"
+    "▪️ 最新截面：<行业分布或强弱，40 字以内>\n"
+    "▪️ 近一周变化：<行业边际变化，40 字以内>\n"
+    "▪️ 结构判断：<行业层面判断，40 字以内>\n\n"
+    "🎯 错定价跟踪\n\n"
+    "<一句错定价结构总览，不超过 45 字>\n"
+    "▪️ 最新截面：<必须包含“xxx、xxx、xxx等处于相对高偏离区间”；以及“xxx、xxx、xxx等处于显著负偏离区间”>\n"
+    "▪️ 近一周变化：<高低偏离品种变化，40 字以内>\n"
+    "▪️ 跟踪重点：<高偏离/负偏离操作关注点，40 字以内>\n\n"
+    "💡 实操指引\n"
+    "<一句到两句话，合计不超过 45 字>\n\n"
+    "——————————————\n"
+    "⚠️ 本内容仅供研究参考，不构成任何投资建议\n"
+    "⏱️ 授权剩余时间：——\n"
+    "📚 数据来源：<资料来源；无法识别填——>\n"
+    "🤝 业务对接：<联系人；无法识别填——>\n\n"
+    "转换规则：\n"
+    "1. 必须包含“市场与风格表现”“行业结构”“错定价跟踪”“实操指引”四个章节。\n"
+    "2. 三个主体章节内，第一段为摘要，后面 bullet 必须以“▪️”开头。\n"
+    "3. “整体判断”“结构判断”“跟踪重点”必须作为 bullet 标签出现。\n"
+    "4. 错定价跟踪的“最新截面”必须尽量使用句式："
+    "“A、B、C等处于相对高偏离区间，需关注估值溢价风险；D、E、F等处于显著负偏离区间，具备低估修复线索。”\n"
+    "5. 不要输出长篇分析、表格、编号列表或原始材料摘录。"
+)
+
 
 class ModelResponseError(RuntimeError):
     def __init__(self, message: str, status_code: int = 500):
@@ -484,34 +566,27 @@ def _global_model_config() -> dict[str, str | float]:
     }
 
 
+def default_prompt_for_service(service_type: ServiceType) -> str:
+    defaults = {
+        ServiceType.TECHNICAL_ANALYSIS: DEFAULT_TECHNICAL_ANALYSIS_PROMPT,
+        ServiceType.RATE: DEFAULT_RATE_PROMPT,
+        ServiceType.CONVERTIBLE_BOND: DEFAULT_CONVERTIBLE_BOND_PROMPT,
+    }
+    return defaults[service_type]
+
+
 def _prompt_for_service(service_type: ServiceType) -> str:
     key = {
         ServiceType.TECHNICAL_ANALYSIS: "prompt.technical_analysis",
         ServiceType.RATE: "prompt.rate",
         ServiceType.CONVERTIBLE_BOND: "prompt.convertible_bond",
     }.get(service_type)
-    defaults = {
-        ServiceType.TECHNICAL_ANALYSIS: DEFAULT_TECHNICAL_ANALYSIS_PROMPT,
-        ServiceType.RATE: (
-            "请将用户提供的文字或图片资料整理为可直接渲染的利率择时卡片标准文本。"
-            "必须只输出卡片正文，不要输出解释、模板说明、补充问题或 Markdown 代码块。"
-            "必须包含：标的、最新收盘、行情日期、分析模型、当日核心信号、复合策略信号、"
-            "多头：...；空头：...、日度主线、周度全景复盘、近一周整体信号、周度主线、"
-            "授权剩余时间、业务对接；无法从资料识别的字段填“——”。"
-        ),
-        ServiceType.CONVERTIBLE_BOND: (
-            "请将用户提供的文字或图片资料整理为可直接渲染的可转债多因子卡片标准文本。"
-            "必须只输出卡片正文，不要输出解释、模板说明、补充问题或 Markdown 代码块。"
-            "必须包含：跟踪日期、分析模型、跟踪维度、市场与风格表现、行业结构、错定价跟踪、"
-            "实操指引、授权剩余时间、数据来源、业务对接；无法从资料识别的字段填“——”。"
-        ),
-    }
     configured = get_config(key, None) if key else None
     if isinstance(configured, str) and configured.strip():
         return configured
     if configured is not None and not isinstance(configured, str):
         return str(configured)
-    return defaults[service_type]
+    return default_prompt_for_service(service_type)
 
 
 def build_generation_request(

@@ -37,6 +37,7 @@ def test_business_schema_declares_all_tables():
         "operation_audits",
         "ai_generation_audits",
         "products",
+        "activation_codes",
     }.issubset(metadata.tables)
     assert "internal_call_records" not in metadata.tables
 
@@ -414,6 +415,17 @@ def test_business_auth_service_hashes_passwords_and_checks_role_permissions(busi
         create_admin_user("legacy-tech-a", "tech-pass", role="technical_admin")
 
 
+def test_activation_code_permissions_are_available_to_admin_and_readonly(business_env):
+    from business.accounts.auth_service import permissions_for_role
+
+    assert "activation_codes.read" in permissions_for_role("admin")
+    assert "activation_codes.write" in permissions_for_role("admin")
+    assert "activation_codes.export" in permissions_for_role("admin")
+    assert "activation_codes.read" in permissions_for_role("readonly")
+    assert "activation_codes.write" not in permissions_for_role("readonly")
+    assert "activation_codes.export" not in permissions_for_role("readonly")
+
+
 def test_technical_operator_only_has_config_permissions(business_env):
     from business.accounts.auth_service import authenticate_admin, create_admin_user, require_permission
 
@@ -738,6 +750,56 @@ def test_chat_page_redirects_to_login_when_console_session_missing(monkeypatch):
         ChatHandler().GET()
 
     assert redirects == ["/login?next=%2Fchat%3Fview%3Dinvest-records"]
+
+
+def test_chat_page_redirects_when_admin_auth_check_errors(monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import AuthCheckHandler, ChatHandler
+
+    redirects = []
+
+    def fake_seeother(target):
+        redirects.append(target)
+        raise RuntimeError(target)
+
+    monkeypatch.setattr(web_channel, "_is_password_enabled", lambda: False)
+    monkeypatch.setattr(web_channel, "_investment_admin_login_enabled", lambda: True)
+    monkeypatch.setattr(web_channel, "_current_investment_admin", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "seeother", fake_seeother)
+    monkeypatch.setattr(web_channel.web.ctx, "fullpath", "/chat", raising=False)
+
+    check_payload = json.loads(AuthCheckHandler().GET())
+    assert check_payload["auth_required"] is True
+    assert check_payload["authenticated"] is False
+
+    with pytest.raises(RuntimeError):
+        ChatHandler().GET()
+
+    assert redirects == ["/login?next=%2Fchat"]
+
+
+def test_console_login_required_when_admin_count_check_errors(monkeypatch):
+    import business.accounts.auth_service as auth_service
+    from channel.web import web_channel
+
+    monkeypatch.setattr(web_channel, "_is_password_enabled", lambda: False)
+    monkeypatch.setattr(auth_service, "count_admin_users", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+
+    assert web_channel._investment_admin_login_enabled() is True
+    assert web_channel._is_console_login_required() is True
+
+
+def test_investment_auth_me_returns_unauthorized_when_admin_check_errors(monkeypatch):
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentAuthMeHandler
+
+    monkeypatch.setattr(web_channel, "_current_investment_admin", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+
+    payload = json.loads(InvestmentAuthMeHandler().GET())
+
+    assert payload == {"status": "error", "code": "unauthorized", "message": "未登录或登录已过期"}
 
 
 def test_web_message_api_requires_console_admin_login(monkeypatch):
@@ -1444,6 +1506,35 @@ def test_business_user_message_can_be_overridden_from_database(business_env):
 
     assert user_message(ErrorCode.UNAUTHORIZED) == "请联系客户经理开通权限。"
     assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+
+
+def test_activation_reply_texts_are_configurable(business_env):
+    from business.config.reply_config import reply_text_config_metadata
+
+    definitions = reply_text_config_metadata()["definitions"]
+
+    assert "reply.investment.activation_success" in definitions
+    assert definitions["reply.investment.activation_success"]["placeholders"] == ["auth_end_at"]
+    assert "reply.investment.activation_invalid" in definitions
+    assert "reply.investment.activation_used" in definitions
+    assert "reply.investment.activation_expired" in definitions
+    assert "reply.investment.activation_disabled" in definitions
+
+
+def test_wechatmp_non_friendly_error_texts_are_configurable(business_env):
+    from business.config.reply_config import reply_text_config_metadata
+
+    definitions = reply_text_config_metadata()["definitions"]
+
+    assert definitions["reply.wechatmp.system_error"]["label"] == "公众号系统异常提示"
+    assert definitions["reply.wechatmp.unsupported_message"]["label"] == "不支持消息类型提示"
+    assert definitions["reply.wechatmp.continue_prompt"]["placeholders"] == []
+    assert definitions["reply.wechatmp.media_read_failed"]["placeholders"] == []
+    assert definitions["reply.wechatmp.media_upload_failed"]["placeholders"] == []
+    assert definitions["reply.wechatmp.active_immediate_ack"]["label"] == "主动模式收到请求提示"
+    assert definitions["reply.wechatmp.active_waiting"]["label"] == "主动模式运行中提示"
+    assert definitions["reply.investment.running"]["label"] == "业务运行中提示"
+    assert definitions["reply.investment.activation_already_bound"]["label"] == "激活码已绑定提示"
 
 
 def test_business_user_message_uses_config_service_before_reply_defaults(business_env):
@@ -2878,6 +2969,34 @@ def test_web_customer_search_enable_and_audits_use_customer_permissions(business
     assert audits[0].operator == "audit-admin"
 
 
+def test_web_delete_unbound_customer_uses_customer_id_and_audit(business_env, monkeypatch):
+    from datetime import datetime
+    from business.audit.audit_service import list_operation_audits
+    from business.accounts.user_service import create_user, get_user_by_id, list_users
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentUserDeleteHandler
+
+    _login_default_investment_admin(monkeypatch, username="delete-admin")
+    customer_id = create_user(
+        "",
+        name="待删除未绑定客户",
+        mobile="13800000011",
+        allowed_services="全部",
+        auth_end_at=datetime(2026, 12, 31),
+    )
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_channel.web, "data", lambda: json.dumps({"reason": "录入错误"}).encode("utf-8"))
+
+    payload = json.loads(InvestmentUserDeleteHandler().POST(str(customer_id)))
+
+    assert payload["status"] == "success"
+    assert get_user_by_id(customer_id).enabled is False
+    assert list_users() == []
+    audits = list_operation_audits(limit=10, target_type="customer", target_id=str(customer_id))
+    assert audits[0].action == "customer.delete"
+    assert audits[0].operator == "delete-admin"
+
+
 def test_web_customer_create_audit_binds_session_admin_not_body_operator(business_env, monkeypatch):
     from business.audit.audit_service import list_operation_audits
     from business.accounts.auth_service import authenticate_admin
@@ -3057,9 +3176,9 @@ def test_web_customer_keyword_search_supports_field_categories(business_env, mon
 def test_router_authenticates_before_parsing_unmatched_input(business_env, monkeypatch):
     import pytest
 
-    from business.config.constants import ErrorCode, ServiceType
+    from business.config.constants import ErrorCode, ServiceType, user_message
     import business.routing.router as router
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.routing.router import handle_text_message
     from business.accounts.user_service import create_user
 
     monkeypatch.setattr(router, "parse_route", lambda _raw_input: pytest.fail("unauthorized input must not be parsed"))
@@ -3081,7 +3200,7 @@ def test_router_authenticates_before_parsing_unmatched_input(business_env, monke
 
     assert miss.success is False
     assert miss.error_code == ErrorCode.INPUT_ERROR
-    assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
+    assert miss.reply_text == user_message(ErrorCode.INPUT_ERROR)
 
 
 def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypatch):
@@ -3102,6 +3221,7 @@ def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypat
                 "openid": "edit-button-openid",
                 "name": "Edited",
                 "institution": "Edited Inst",
+                "mobile": "13800000000",
                 "enabled": True,
                 "allowed_services": ["利率"],
                 "auth_start_at": "2026-01-01T00:00:00",
@@ -3119,6 +3239,63 @@ def test_web_user_edit_updates_existing_user_permissions(business_env, monkeypat
     technical = verify_permission("edit-button-openid", ServiceType.TECHNICAL_ANALYSIS)
     assert technical.allowed is False
     assert technical.error_code == ErrorCode.UNAUTHORIZED
+
+
+def test_web_preregistered_user_create_rolls_back_when_activation_generation_fails(business_env, monkeypatch):
+    import business.accounts.activation_service as activation_service
+    from business.accounts.user_service import list_users
+    from channel.web.web_channel import InvestmentUsersHandler
+
+    def fail_generation(**_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(activation_service, "generate_customer_activation_code", fail_generation)
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentUsersHandler().POST,
+        body={
+            "openid": "",
+            "name": "预注册失败",
+            "mobile": "13800009999",
+            "enabled": True,
+            "allowed_services": ["all"],
+            "auth_end_at": "2026-12-31T00:00:00",
+        },
+    )
+
+    assert payload["status"] == "error"
+    assert list_users(keyword="13800009999", keyword_field="mobile") == []
+
+
+def test_investment_import_result_download_rejects_expired_result(tmp_path, monkeypatch):
+    import time
+    from channel.web import web_channel
+
+    monkeypatch.setattr(web_channel, "_get_upload_dir", lambda: str(tmp_path))
+    result_id = web_channel._save_investment_import_result([
+        SimpleNamespace(
+            customer_id=1,
+            openid="",
+            name="张三",
+            institution="",
+            mobile="13800000000",
+            allowed_services="全部",
+            auth_start_at=None,
+            auth_end_at=None,
+            activation_code="ANAL-AAAA-BBBB-CCCC-DDDD",
+            batch_id="batch-expired",
+            action="created",
+            error="",
+        )
+    ])
+    result_path = tmp_path / "investment_user_import_results" / f"{result_id}.json"
+    old_timestamp = time.time() - 90000
+    os.utime(result_path, (old_timestamp, old_timestamp))
+
+    with pytest.raises(FileNotFoundError, match="expired|not found"):
+        web_channel._load_investment_import_result_rows(result_id=result_id)
+    assert not result_path.exists()
 
 
 def test_business_skill_settings_post_updates_triggers_and_enabled(business_env, monkeypatch):
@@ -3176,6 +3353,20 @@ def test_component_settings_save_updates_active_prompt_component(business_env, m
     assert get_config("skill.rate.enabled") is False
     assert resolve_triggers(get_business_definition("rate")) == ("今日利率", "利率观察")
     assert get_config("prompt.rate") == "updated rate prompt"
+
+
+def test_component_settings_show_default_prompt_when_blank(business_env):
+    from business.audit.ai_generation import DEFAULT_RATE_PROMPT
+    from business.components.service import list_components
+    from business.config.config_service import save_config
+
+    save_config("prompt.rate", "", operator_role="admin")
+
+    rate = next(item for item in list_components() if item["component_key"] == "rate")
+
+    assert rate["settings"]["prompt"] == DEFAULT_RATE_PROMPT
+    assert rate["settings"]["default_prompt"] == DEFAULT_RATE_PROMPT
+    assert rate["settings"]["prompt_configured"] is False
 
 
 def test_component_settings_rejects_triggers_for_passive_component(business_env, monkeypatch):
@@ -3573,29 +3764,79 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env,
     import business.content.stock_resolver as stock_resolver
     from channel.web.web_channel import InvestmentStocksRefreshHandler
 
-    monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_tushare", lambda: 3)
-    payload = _call_investment_json_handler(
-        monkeypatch,
-        InvestmentStocksRefreshHandler().POST,
-        body={"source": "a_share"},
-    )
-    assert payload["status"] == "success"
-    assert payload["result"] == {"a_share": {"count": 3}}
-    assert "stats" in payload
-
-    monkeypatch.setattr(stock_resolver, "refresh_hk_symbols_from_tushare", lambda: (_ for _ in ()).throw(RuntimeError("hk failed")))
-    payload = _call_investment_json_handler(
-        monkeypatch,
-        InvestmentStocksRefreshHandler().POST,
-        body={"source": "hk"},
-    )
-    assert payload["status"] == "error"
-    assert payload["message"] == "hk failed"
-
-    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_tushare", lambda: {"a_share": {"error": "a failed"}, "hk": {"count": 4}, "us": {"count": 5}})
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbol_sources", lambda: {"tushare": {"a_share": {"count": 2}}, "akshare": {"etf": {"count": 3}}})
     payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={})
     assert payload["status"] == "success"
-    assert payload["result"] == {"a_share": {"error": "a failed"}, "hk": {"count": 4}, "us": {"count": 5}}
+    assert payload["result"] == {"tushare": {"a_share": {"count": 2}}, "akshare": {"etf": {"count": 3}}}
+    assert payload["summary"]["status"] == "success"
+    assert payload["summary"]["updated_count"] == 5
+    assert payload["summary"]["success_count"] == 2
+    assert payload["summary"]["failed_count"] == 0
+    assert payload["summary"]["details"] == [
+        {"scope": "tushare.a_share", "status": "success", "count": 2, "error": ""},
+        {"scope": "akshare.etf", "status": "success", "count": 3, "error": ""},
+    ]
+    assert "existing_count" in payload["summary"]
+
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_akshare", lambda: {"etf": {"count": 7}, "gold": {"count": 1}})
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentStocksRefreshHandler().POST,
+        body={"source": "akshare"},
+    )
+    assert payload["status"] == "success"
+    assert payload["result"] == {"etf": {"count": 7}, "gold": {"count": 1}}
+    assert payload["summary"]["updated_count"] == 8
+    assert "stats" in payload
+
+    monkeypatch.setattr(stock_resolver, "refresh_index_symbols_from_akshare", lambda: 6)
+    payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={"source": "index"})
+    assert payload["status"] == "success"
+    assert payload["result"] == {"index": {"count": 6}}
+    assert payload["summary"]["updated_count"] == 6
+
+    monkeypatch.setattr(stock_resolver, "refresh_index_symbols_from_tushare", lambda: 9)
+    payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={"source": "tushare_index"})
+    assert payload["status"] == "success"
+    assert payload["result"] == {"tushare_index": {"count": 9}}
+    assert payload["summary"]["updated_count"] == 9
+
+    monkeypatch.setattr(stock_resolver, "refresh_a_share_symbols_from_baostock", lambda: (_ for _ in ()).throw(RuntimeError("baostock failed")))
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentStocksRefreshHandler().POST,
+        body={"source": "baostock"},
+    )
+    assert payload["status"] == "success"
+    assert payload["result"] == {"a_share": {"error": "baostock failed"}}
+    assert payload["summary"]["status"] == "failed"
+    assert payload["summary"]["success_count"] == 0
+    assert payload["summary"]["failed_count"] == 1
+    assert payload["summary"]["errors"] == ["a_share: baostock failed"]
+
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbol_sources", lambda: {"tushare": {"a_share": {"error": "token missing"}}, "akshare": {"etf": {"count": 3}}})
+    payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={"source": "all"})
+    assert payload["status"] == "success"
+    assert payload["summary"]["status"] == "partial"
+    assert payload["summary"]["success_count"] == 1
+    assert payload["summary"]["failed_count"] == 1
+    assert payload["summary"]["errors"] == ["tushare.a_share: token missing"]
+
+    monkeypatch.setattr(stock_resolver, "refresh_convertible_bond_symbols_from_akshare", lambda: 11)
+    payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={"source": "convertible_bond"})
+    assert payload["status"] == "success"
+    assert payload["result"] == {"convertible_bond": {"count": 11}}
+    assert payload["summary"]["status"] == "success"
+    assert payload["summary"]["updated_count"] == 11
+
+    monkeypatch.setattr(stock_resolver, "refresh_convertible_bond_symbols_from_akshare", lambda: -1)
+    payload = _call_investment_json_handler(monkeypatch, InvestmentStocksRefreshHandler().POST, body={"source": "convertible_bond"})
+    assert payload["status"] == "success"
+    assert payload["summary"]["status"] == "success"
+    assert payload["summary"]["failed_count"] == 0
+    assert payload["summary"]["updated_count"] == 0
+    assert payload["summary"]["details"][0]["status"] == "success"
+    assert payload["summary"]["details"][0]["count"] == 0
 
 
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(business_env):
@@ -6583,6 +6824,437 @@ def test_user_services_normalize_all_when_all_or_every_business_service_selected
     assert partial.allowed_services == [ServiceType.TECHNICAL_ANALYSIS, ServiceType.RATE]
 
 
+def test_activation_code_generation_uses_anal_prefix_hash_and_encrypted_code_storage(business_env):
+    from business.accounts.activation_service import (
+        generate_activation_codes,
+        is_activation_code_text,
+        list_activation_codes,
+        normalize_activation_code,
+    )
+    from business.config.constants import ServiceType
+
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7)
+    result = generate_activation_codes(
+        count=3,
+        allowed_services=[ServiceType.TECHNICAL_ANALYSIS],
+        subscription_days=30,
+        code_expires_at=expires_at,
+        remark="unit batch",
+    )
+
+    assert len(result.codes) == 3
+    assert all(code.startswith("ANAL-") for code in result.codes)
+    assert all(len(code.split("-")) == 5 for code in result.codes)
+    assert normalize_activation_code(" anal－abcd–efgh—ijkl-mnop ") == "ANAL-ABCD-EFGH-IJKL-MNOP"
+    assert is_activation_code_text(" anal-abcd-efgh-ijkl-mnop ") is True
+    assert is_activation_code_text("COW-ABCD-EFGH-IJKL-MNOP") is False
+
+    rows = list_activation_codes()
+    assert len(rows) == 3
+    assert sorted(row.code for row in rows) == sorted(result.codes)
+    assert all(row.code_prefix.startswith("ANAL-") for row in rows)
+    assert all(row.code_cipher for row in rows)
+    assert all(row.code_hash for row in rows)
+    assert all(row.code_hash not in result.codes for row in rows)
+    assert all(row.code_cipher not in result.codes for row in rows)
+    assert all(row.status == "unused" for row in rows)
+
+
+def test_activation_code_redeem_creates_customer_and_marks_code_used(business_env):
+    from business.accounts.activation_service import generate_activation_codes, list_activation_codes, redeem_activation_code
+    from business.accounts.user_service import get_user_by_openid, verify_permission
+    from business.config.constants import ServiceType
+
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.TECHNICAL_ANALYSIS],
+        subscription_days=30,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+
+    result = redeem_activation_code("openid-activation-new", batch.codes[0])
+
+    assert result.success is True
+    assert result.status == "activated"
+    user = get_user_by_openid("openid-activation-new")
+    assert user is not None
+    assert verify_permission("openid-activation-new", ServiceType.TECHNICAL_ANALYSIS).allowed is True
+    assert verify_permission("openid-activation-new", ServiceType.RATE).allowed is False
+    row = list_activation_codes()[0]
+    assert row.status == "used"
+    assert row.used_by_openid == "openid-activation-new"
+
+
+def test_activation_code_redeem_rejects_used_and_expired_codes(business_env):
+    from business.accounts.activation_service import generate_activation_codes, redeem_activation_code
+    from business.config.constants import ServiceType
+
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.ALL],
+        subscription_days=30,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+    assert redeem_activation_code("openid-first", batch.codes[0]).success is True
+    used = redeem_activation_code("openid-second", batch.codes[0])
+    assert used.success is False
+    assert used.status == "used"
+
+    expired_batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.ALL],
+        subscription_days=30,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
+    )
+    expired = redeem_activation_code("openid-expired-code", expired_batch.codes[0])
+    assert expired.success is False
+    assert expired.status == "expired"
+
+
+def test_activation_code_redeem_rejects_non_anal_and_unknown_anal_codes(business_env):
+    from business.accounts.activation_service import redeem_activation_code
+    from business.accounts.user_service import get_user_by_openid
+
+    non_anal = redeem_activation_code("openid-non-anal", "COW-ABCD-EFGH-IJKL-MNOP")
+    unknown_anal = redeem_activation_code("openid-unknown-anal", "ANAL-ABCD-EFGH-IJKL-MNOP")
+
+    assert non_anal.success is False
+    assert non_anal.status == "invalid"
+    assert unknown_anal.success is False
+    assert unknown_anal.status == "invalid"
+    assert get_user_by_openid("openid-non-anal") is None
+    assert get_user_by_openid("openid-unknown-anal") is None
+
+
+def test_activation_code_disable_makes_unused_code_redeem_as_disabled(business_env):
+    from business.accounts.activation_service import (
+        disable_activation_code,
+        generate_activation_codes,
+        list_activation_codes,
+        redeem_activation_code,
+    )
+    from business.accounts.user_service import get_user_by_openid
+    from business.config.constants import ServiceType
+
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.ALL],
+        subscription_days=30,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+    row = list_activation_codes()[0]
+
+    assert disable_activation_code(row.id) is True
+    disabled = redeem_activation_code("openid-disabled-code", batch.codes[0])
+
+    assert disabled.success is False
+    assert disabled.status == "disabled"
+    assert list_activation_codes()[0].status == "disabled"
+    assert get_user_by_openid("openid-disabled-code") is None
+
+
+def test_activation_code_redeem_merges_services_and_extends_active_subscription_from_old_end(business_env):
+    from business.accounts.activation_service import generate_activation_codes, redeem_activation_code
+    from business.accounts.user_service import create_user, get_user_by_openid, verify_permission
+    from business.config.constants import ServiceType
+
+    old_end = (datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10)).replace(microsecond=0)
+    create_user(
+        "openid-existing-active",
+        enabled=True,
+        allowed_services=[ServiceType.RATE],
+        auth_start_at=old_end - timedelta(days=30),
+        auth_end_at=old_end,
+    )
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.TECHNICAL_ANALYSIS],
+        subscription_days=5,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+
+    result = redeem_activation_code("openid-existing-active", batch.codes[0])
+
+    assert result.success is True
+    user = get_user_by_openid("openid-existing-active")
+    assert user is not None
+    assert user.auth_end_at == old_end + timedelta(days=5)
+    assert verify_permission("openid-existing-active", ServiceType.RATE).allowed is True
+    assert verify_permission("openid-existing-active", ServiceType.TECHNICAL_ANALYSIS).allowed is True
+    assert verify_permission("openid-existing-active", ServiceType.CONVERTIBLE_BOND).allowed is False
+
+
+def test_activation_code_redeem_canonicalizes_merged_services_to_all(business_env):
+    from business.accounts.activation_service import generate_activation_codes, redeem_activation_code
+    from business.accounts.user_service import create_user, get_user_by_openid, verify_permission
+    from business.config.constants import ServiceType
+
+    create_user(
+        "openid-merge-all",
+        enabled=True,
+        allowed_services=[ServiceType.RATE, ServiceType.TECHNICAL_ANALYSIS],
+        auth_end_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+    )
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.CONVERTIBLE_BOND],
+        subscription_days=10,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+
+    result = redeem_activation_code("openid-merge-all", batch.codes[0])
+
+    assert result.success is True
+    user = get_user_by_openid("openid-merge-all")
+    assert user is not None
+    assert user.allowed_services == [ServiceType.ALL]
+    assert verify_permission("openid-merge-all", ServiceType.RATE).allowed is True
+    assert verify_permission("openid-merge-all", ServiceType.TECHNICAL_ANALYSIS).allowed is True
+    assert verify_permission("openid-merge-all", ServiceType.CONVERTIBLE_BOND).allowed is True
+
+
+def test_activation_code_redeem_conditional_update_rowcount_zero_does_not_create_customer(business_env, monkeypatch):
+    from contextlib import contextmanager
+
+    from sqlalchemy.sql.dml import Update
+
+    import business.accounts.activation_service as activation_service
+    from business.accounts.activation_service import generate_activation_codes, redeem_activation_code
+    from business.accounts.user_service import get_user_by_openid
+    from business.config.constants import ServiceType
+    from business.schema.tables import activation_codes
+
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.ALL],
+        subscription_days=30,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+    )
+    real_connect = activation_service.connect
+    intercepted_updates = []
+
+    class ZeroRowcount:
+        rowcount = 0
+
+    class ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, statement, *args, **kwargs):
+            if isinstance(statement, Update) and statement.table is activation_codes:
+                intercepted_updates.append(statement)
+                return ZeroRowcount()
+            return self._conn.execute(statement, *args, **kwargs)
+
+    @contextmanager
+    def rowcount_zero_connect():
+        with real_connect() as conn:
+            yield ConnectionProxy(conn)
+
+    monkeypatch.setattr(activation_service, "connect", rowcount_zero_connect)
+
+    result = redeem_activation_code("openid-race-loser", batch.codes[0])
+
+    assert intercepted_updates
+    assert result.success is False
+    assert get_user_by_openid("openid-race-loser") is None
+
+
+def test_redeem_preregistered_code_binds_openid_and_uses_imported_end_date(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import generate_customer_activation_code, redeem_activation_code
+    from business.accounts.user_service import create_user, get_user_by_openid
+    from business.config.constants import ServiceType
+
+    customer_id = create_user(
+        "",
+        name="张三",
+        mobile="13800000000",
+        allowed_services=[ServiceType.ALL],
+        auth_start_at=datetime(2026, 1, 1),
+        auth_end_at=datetime(2026, 12, 31),
+    )
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    result = redeem_activation_code("openid-real", batch.codes[0])
+
+    user = get_user_by_openid("openid-real")
+    assert result.success is True
+    assert user.id == customer_id
+    assert user.auth_end_at.date().isoformat() == "2026-12-31"
+
+
+def test_redeem_preregistered_code_rejects_second_openid_after_binding(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import generate_customer_activation_code, redeem_activation_code
+    from business.accounts.user_service import create_user
+
+    customer_id = create_user("", name="张三", mobile="13800000000", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    assert redeem_activation_code("openid-a", batch.codes[0]).success is True
+    second = redeem_activation_code("openid-b", batch.codes[0])
+
+    assert second.success is False
+    assert second.status in {"used", "already_bound"}
+
+
+def test_redeem_preregistered_code_bound_elsewhere_does_not_consume_code(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import (
+        generate_customer_activation_code,
+        get_unused_customer_activation_code,
+        redeem_activation_code,
+    )
+    from business.accounts.user_service import create_user
+
+    customer_id = create_user("openid-existing", name="张三", mobile="13800000000", auth_end_at=datetime(2026, 12, 31))
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    result = redeem_activation_code("openid-other", batch.codes[0])
+
+    assert result.success is False
+    assert result.status == "already_bound"
+    assert get_unused_customer_activation_code(customer_id).code == batch.codes[0]
+
+
+def test_redeem_preregistered_code_rejects_openid_bound_to_other_customer(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import (
+        generate_customer_activation_code,
+        get_unused_customer_activation_code,
+        redeem_activation_code,
+    )
+    from business.accounts.user_service import create_user, get_user_by_id
+
+    create_user("openid-existing", name="李四", mobile="13900000000", auth_end_at=datetime(2026, 12, 31))
+    customer_id = create_user("", name="张三", mobile="13800000000", auth_end_at=datetime(2026, 12, 31))
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    result = redeem_activation_code("openid-existing", batch.codes[0])
+
+    target = get_user_by_id(customer_id)
+    assert result.success is False
+    assert result.status == "already_bound"
+    assert target.openid == ""
+    assert get_unused_customer_activation_code(customer_id).code == batch.codes[0]
+
+
+def test_redeem_preregistered_code_consume_race_does_not_bind_customer(business_env, monkeypatch):
+    from contextlib import contextmanager
+    from datetime import datetime
+
+    from sqlalchemy.sql.dml import Update
+
+    import business.accounts.activation_service as activation_service
+    from business.accounts.activation_service import (
+        generate_customer_activation_code,
+        get_unused_customer_activation_code,
+        redeem_activation_code,
+    )
+    from business.accounts.user_service import create_user, get_user_by_openid
+    from business.schema.tables import activation_codes
+
+    customer_id = create_user("", name="张三", mobile="13800000000", auth_end_at=datetime(2026, 12, 31))
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+    real_connect = activation_service.connect
+    intercepted_updates = []
+
+    class ZeroRowcount:
+        rowcount = 0
+
+    class ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, statement, *args, **kwargs):
+            if isinstance(statement, Update) and statement.table is activation_codes:
+                intercepted_updates.append(statement)
+                return ZeroRowcount()
+            return self._conn.execute(statement, *args, **kwargs)
+
+    @contextmanager
+    def rowcount_zero_connect():
+        with real_connect() as conn:
+            yield ConnectionProxy(conn)
+
+    monkeypatch.setattr(activation_service, "connect", rowcount_zero_connect)
+
+    result = redeem_activation_code("openid-race-loser", batch.codes[0])
+
+    assert intercepted_updates
+    assert result.success is False
+    assert get_user_by_openid("openid-race-loser") is None
+    assert get_unused_customer_activation_code(customer_id).code == batch.codes[0]
+
+
+def test_activation_code_handler_generates_plain_codes_and_lists_full_code_without_hash(business_env, monkeypatch):
+    from channel.web.web_channel import InvestmentActivationCodesHandler
+
+    generated = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentActivationCodesHandler().POST,
+        body={
+            "count": 2,
+            "allowed_services": ["technical_analysis"],
+            "subscription_days": 30,
+            "code_expires_at": (datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7)).isoformat(timespec="seconds"),
+            "remark": "handler batch",
+        },
+    )
+
+    assert generated["status"] == "success"
+    assert generated["batch_id"]
+    assert len(generated["codes"]) == 2
+    assert all(code.startswith("ANAL-") for code in generated["codes"])
+
+    listed = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentActivationCodesHandler().GET,
+        params={"batch_id": generated["batch_id"], "page": "1", "page_size": "10"},
+    )
+
+    assert listed["status"] == "success"
+    assert listed["pagination"]["total"] == 2
+    assert len(listed["codes"]) == 2
+    assert {row["batch_id"] for row in listed["codes"]} == {generated["batch_id"]}
+    assert sorted(row["code"] for row in listed["codes"]) == sorted(generated["codes"])
+    assert all(row["code_prefix"].startswith("ANAL-") for row in listed["codes"])
+    assert all("code_hash" not in row for row in listed["codes"])
+    assert all("code_cipher" not in row for row in listed["codes"])
+
+
+def test_activation_code_handler_lists_preregistered_code_metadata(business_env, monkeypatch):
+    from business.accounts.activation_service import generate_customer_activation_code
+    from business.accounts.user_service import create_user
+    from channel.web.web_channel import InvestmentActivationCodesHandler
+
+    customer_id = create_user(
+        "",
+        name="张三",
+        mobile="13800000000",
+        allowed_services="全部",
+        auth_start_at=datetime(2026, 1, 1),
+        auth_end_at=datetime(2026, 12, 31),
+    )
+    batch = generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    listed = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentActivationCodesHandler().GET,
+        params={"batch_id": batch.batch_id, "page": "1", "page_size": "10"},
+    )
+
+    row = listed["codes"][0]
+    assert listed["status"] == "success"
+    assert row["activation_mode"] == "preregistered"
+    assert row["customer_id"] == customer_id
+    assert row["subscription_start_at"] == "2026-01-01T00:00:00"
+    assert row["subscription_end_at"] == "2026-12-31T00:00:00"
+    assert row["code"] == batch.codes[0]
+    assert "code_hash" not in row
+
+
 def test_user_service_excel_import_maps_fields_and_permissions_take_effect(business_env):
     from business.config.constants import ServiceType
     from business.accounts.user_service import create_user, get_user_by_openid, import_users_from_excel, parse_users_excel, verify_permission
@@ -6653,7 +7325,7 @@ def test_user_service_excel_import_maps_fields_and_permissions_take_effect(busin
 
 def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_dates(business_env):
     from datetime import datetime
-    from business.accounts.user_service import import_users_from_excel, parse_users_excel, get_user_by_openid
+    from business.accounts.user_service import import_users_from_excel, list_users, parse_users_excel
 
     payload = _xlsx_bytes(
         ["手机号", "服务权限", "授权开始日期", "授权结束日期"],
@@ -6663,7 +7335,8 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
     rows = parse_users_excel(payload)
 
     assert len(rows) == 1
-    assert rows[0].openid.startswith("pending-mobile-13800138000-")
+    assert rows[0].openid == ""
+    assert rows[0].openid_generated is False
     assert rows[0].mobile == "13800138000"
     assert rows[0].allowed_services == "利率"
     assert rows[0].auth_start_at == datetime(2026, 5, 31, 16, 0)
@@ -6671,7 +7344,121 @@ def test_user_service_excel_import_accepts_minimal_mobile_template_with_beijing_
 
     result = import_users_from_excel(payload)
     assert result.created == 1
-    assert get_user_by_openid(rows[0].openid) is not None
+    users = list_users(keyword="13800138000", keyword_field="mobile")
+    assert users[0].openid == ""
+    assert users[0].bind_status == "unbound"
+
+
+def test_parse_users_excel_does_not_generate_pending_openid_for_blank_openid(tmp_path):
+    from openpyxl import Workbook
+    from business.accounts.user_service import parse_users_excel
+
+    path = tmp_path / "users.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["手机号", "服务权限", "授权结束日期", "OpenID", "姓名"])
+    sheet.append(["13800000000", "全部", "2026-12-31", "", "张三"])
+    workbook.save(path)
+
+    rows = parse_users_excel(path)
+
+    assert rows[0].openid == ""
+    assert rows[0].openid_generated is False
+
+
+def test_import_users_creates_preregistered_customer_for_blank_openid(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, import_users, list_users
+
+    result = import_users([
+        ImportUserRow(
+            openid="",
+            name="张三",
+            mobile="13800000000",
+            allowed_services="全部",
+            auth_start_at=datetime(2026, 1, 1),
+            auth_end_at=datetime(2026, 12, 31),
+        )
+    ])
+
+    users = list_users(keyword="13800000000", keyword_field="mobile")
+    assert result.created == 1
+    assert users[0].openid == ""
+    assert users[0].bind_status == "unbound"
+
+
+def test_import_users_blank_openid_updates_single_unbound_mobile_match(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, create_user, get_user_by_id, import_users
+
+    customer_id = create_user("", name="旧姓名", mobile="13800000003", allowed_services="全部", auth_end_at=datetime(2026, 6, 30))
+
+    result = import_users([
+        ImportUserRow(openid="", name="新姓名", mobile="13800000003", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    ])
+
+    user = get_user_by_id(customer_id)
+    assert result.created == 0
+    assert result.updated == 1
+    assert user.name == "新姓名"
+    assert user.openid == ""
+    assert user.auth_end_at.date().isoformat() == "2026-12-31"
+
+
+def test_import_users_blank_openid_does_not_guess_duplicate_unbound_mobile(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, create_user, import_users, list_users
+
+    create_user("", name="客户A", mobile="13800000004", allowed_services="全部", auth_end_at=datetime(2026, 6, 30))
+    create_user("", name="客户B", mobile="13800000004", allowed_services="全部", auth_end_at=datetime(2026, 6, 30))
+
+    result = import_users([
+        ImportUserRow(openid="", name="客户C", mobile="13800000004", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    ])
+
+    users = list_users(keyword="13800000004", keyword_field="mobile")
+    assert result.created == 1
+    assert result.updated == 0
+    assert sorted(user.name for user in users) == ["客户A", "客户B", "客户C"]
+
+
+def test_import_users_blank_openid_does_not_update_bound_user_with_same_mobile(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, create_user, get_user_by_openid, import_users, list_users
+
+    create_user("openid-bound-mobile", name="已绑定", mobile="13800000005", allowed_services="全部", auth_end_at=datetime(2026, 6, 30))
+
+    result = import_users([
+        ImportUserRow(openid="", name="待绑定", mobile="13800000005", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    ])
+
+    assert result.created == 1
+    assert result.updated == 0
+    assert get_user_by_openid("openid-bound-mobile").name == "已绑定"
+    assert len(list_users(keyword="13800000005", keyword_field="mobile")) == 2
+
+
+def test_import_users_explicit_openid_updates_by_openid_even_when_mobile_changes(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, create_user, get_user_by_openid, import_users
+
+    create_user("openid-import-update", name="旧姓名", mobile="13800000006", allowed_services="全部", auth_end_at=datetime(2026, 6, 30))
+
+    result = import_users([
+        ImportUserRow(
+            openid="openid-import-update",
+            name="新姓名",
+            mobile="13900000006",
+            allowed_services="全部",
+            auth_end_at=datetime(2026, 12, 31),
+        )
+    ])
+
+    user = get_user_by_openid("openid-import-update")
+    assert result.created == 0
+    assert result.updated == 1
+    assert user.name == "新姓名"
+    assert user.mobile == "13900000006"
 
 
 def test_user_service_excel_import_accepts_excel_date_cells_as_beijing_dates(business_env):
@@ -6730,16 +7517,8 @@ def test_user_service_excel_import_reports_invalid_date_with_row_and_field(busin
     assert "Excel row 2 invalid date field: auth_end_at" in str(number_error.value)
 
 
-def test_user_service_excel_import_requires_authorization_start_end_and_services(business_env):
+def test_user_service_excel_import_requires_authorization_end_and_services(business_env):
     from business.accounts.user_service import parse_users_excel
-
-    missing_start = _xlsx_bytes(
-        ["手机号", "服务权限", "授权结束日期"],
-        [["13800138000", "利率", "2026-12-31"]],
-    )
-    with pytest.raises(ValueError) as start_error:
-        parse_users_excel(missing_start)
-    assert "auth_start_at" in str(start_error.value)
 
     missing_service = _xlsx_bytes(
         ["手机号", "授权开始日期", "授权结束日期"],
@@ -6766,7 +7545,8 @@ def test_user_import_template_headers_are_parseable(business_env):
     rows = parse_users_excel(export_users_import_template_xlsx())
 
     assert len(rows) == 1
-    assert rows[0].openid.startswith("pending-mobile-13800000000-")
+    assert rows[0].openid == ""
+    assert rows[0].openid_generated is False
     assert rows[0].allowed_services == "全部"
 
 
@@ -7921,6 +8701,74 @@ def test_export_users_xlsx_filters_enabled_users(business_env):
     ]
 
 
+def test_export_activation_codes_xlsx_contains_metadata_and_plain_codes(business_env):
+    from business.accounts.activation_service import generate_activation_codes
+    from business.config.constants import ServiceType
+    from business.records.export_service import export_activation_codes_xlsx
+
+    batch = generate_activation_codes(
+        count=1,
+        allowed_services=[ServiceType.ALL],
+        subscription_days=365,
+        code_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
+        remark="export",
+    )
+
+    content = export_activation_codes_xlsx(batch_id=batch.batch_id)
+    rows = _xlsx_sheet_rows(content)
+
+    assert isinstance(content, bytes)
+    assert rows[0] == [
+        "batch_id",
+        "code",
+        "activation_mode",
+        "customer_id",
+        "allowed_services",
+        "subscription_days",
+        "subscription_start_at",
+        "subscription_end_at",
+        "code_expires_at",
+        "status",
+        "used_by_openid",
+        "used_at",
+        "created_at",
+        "remark",
+    ]
+    assert len(rows) == 2
+    assert rows[1][0] == batch.batch_id
+    assert rows[1][1] == batch.codes[0]
+    assert rows[1][2] == "generic"
+    assert rows[1][9] == "unused"
+    assert rows[1][13] == "export"
+    assert batch.codes[0] in json.dumps(rows, ensure_ascii=False)
+
+
+def test_activation_code_export_marks_preregistered_customer_codes(business_env):
+    from business.accounts.activation_service import generate_customer_activation_code
+    from business.accounts.user_service import create_user
+    from business.records.export_service import export_activation_codes_xlsx
+
+    customer_id = create_user(
+        "",
+        name="张三",
+        mobile="13800000000",
+        allowed_services="全部",
+        auth_end_at=datetime(2026, 12, 31),
+    )
+    generate_customer_activation_code(customer_id=customer_id, code_expires_at=datetime(2026, 12, 31))
+
+    rows = _xlsx_sheet_rows(export_activation_codes_xlsx())
+    headers = rows[0]
+
+    assert "activation_mode" in headers
+    assert "customer_id" in headers
+    assert "subscription_start_at" in headers
+    assert "subscription_end_at" in headers
+    assert rows[1][headers.index("activation_mode")] == "preregistered"
+    assert rows[1][headers.index("customer_id")] == customer_id
+    assert rows[1][headers.index("subscription_end_at")] == "2026-12-31T00:00:00"
+
+
 def test_web_export_handlers_return_xlsx_downloads(business_env, monkeypatch):
     from channel.web import web_channel
     from channel.web.web_channel import InvestmentRequestRecordsExportHandler, InvestmentUsersExportHandler
@@ -8593,7 +9441,7 @@ def test_ai_generation_default_adapter_uses_bridge_bot_call_with_tools(business_
     ]
 
 
-def test_technical_analysis_failure_records_sanitized_backend_detail(business_env, monkeypatch):
+def test_technical_analysis_failure_hides_backend_detail_from_customer_reply(business_env, monkeypatch):
     from business.config import config_service as config_service
     from business.config.constants import ErrorCode, ServiceType
     from business.records.records import list_request_records
@@ -8617,11 +9465,138 @@ def test_technical_analysis_failure_records_sanitized_backend_detail(business_en
 
     record = list_request_records(limit=1)[0]
     assert reply.success is False
-    assert "skill crashed" in reply.reply_text
+    assert "skill crashed" not in reply.reply_text
+    assert "原因：" not in reply.reply_text
     assert api_key not in reply.reply_text
     assert record.error_code == ErrorCode.TECHNICAL_ANALYSIS_FAILED
     assert "skill crashed" in record.error_message
     assert api_key not in record.error_message
+
+
+def test_technical_analysis_subprocess_failure_is_recorded_but_not_sent_to_customer(business_env, tmp_path, monkeypatch):
+    import subprocess
+
+    from business.config.constants import ErrorCode, ServiceType, user_message
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import TechnicalAnalysisResult
+    from business.records.records import list_request_records
+    from business.routing.router import handle_text_message
+    from business.accounts.user_service import create_user
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    command = [
+        "/usr/local/bin/python",
+        "/app/builtin/components/technical-analysis/scripts/analyze_universal.py",
+        "--symbol",
+        "00300.SH",
+        "--output",
+        "/app/businessstorage/tmp/technical-analysis/00300_SH/run",
+    ]
+
+    def fake_run(_command, **_kwargs):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: SimpleNamespace(known=False, market_date="", source=""),
+    )
+    monkeypatch.setattr(technical_analysis, "get_config", lambda _key: str(tmp_path) if _key == "technical_analysis.output_dir" else "")
+
+    result = technical_analysis.run_technical_analysis("ok", "00300.SH 技术分析")
+    assert result.success is False
+    assert result.error_code == ErrorCode.TECHNICAL_ANALYSIS_FAILED
+    assert "analyze_universal.py" in result.detail
+
+    reply = handle_text_message(
+        "ok",
+        "00300.SH 技术分析",
+        technical_analysis_handler=lambda *_args: TechnicalAnalysisResult(
+            False,
+            error_code=ErrorCode.TECHNICAL_ANALYSIS_FAILED,
+            detail=result.detail,
+        ),
+    )
+
+    record = list_request_records(limit=1)[0]
+    assert reply.success is False
+    assert reply.reply_text == user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED)
+    assert "analyze_universal.py" not in reply.reply_text
+    assert "/app/businessstorage" not in reply.reply_text
+    assert "non-zero exit status" not in reply.reply_text
+    assert "analyze_universal.py" in record.error_message
+
+
+def test_technical_analysis_data_source_failure_uses_market_data_prompt(business_env, tmp_path, monkeypatch):
+    import subprocess
+
+    from business.config.constants import ErrorCode, user_message
+    from business.content import technical_analysis as technical_analysis
+
+    command = ["python", "analyze_universal.py", "--symbol", "FOO"]
+
+    def fake_run(_command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="所有数据源均失败，错误详情：\nAKShare: 数据量不足 (0 < 60)",
+            stderr="RuntimeError: 所有数据源失败",
+        )
+
+    monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: SimpleNamespace(known=False, market_date="", source=""),
+    )
+    monkeypatch.setattr(technical_analysis, "get_config", lambda _key: str(tmp_path) if _key == "technical_analysis.output_dir" else "")
+
+    result = technical_analysis.run_technical_analysis("ok", "FOO 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.MARKET_DATA_UNAVAILABLE
+    assert result.user_prompt == user_message(ErrorCode.MARKET_DATA_UNAVAILABLE)
+    assert "所有数据源失败" in result.detail
+
+
+def test_command_script_component_failure_hides_backend_detail_from_customer_reply(business_env, monkeypatch):
+    from business.config.constants import ErrorCode, ServiceType, user_message
+    from business.execution.command_script_executor import CommandScriptRunResult
+    from business.records.records import list_request_records
+    from business.routing.module_dispatcher import dispatch_module
+    from business.routing.router import RouteResult
+
+    definition = SimpleNamespace(
+        handler_type="command_script",
+        business_key="custom-command",
+        execution={"command": ["python", "{entry}"]},
+    )
+    route = RouteResult(True, ServiceType.UNMATCHED, "测试组件", target_text="测试组件", module_key="custom-command")
+    backend_detail = (
+        "Traceback (most recent call last):\n"
+        "  File \"/app/businessstorage/components/custom/scripts/run.py\", line 1, in <module>\n"
+        "RuntimeError: backend boom"
+    )
+    monkeypatch.setattr(
+        "business.execution.command_script_executor.run_command_script_component",
+        lambda *_args, **_kwargs: CommandScriptRunResult(
+            False,
+            error_code=ErrorCode.SYSTEM_ERROR,
+            detail=backend_detail,
+        ),
+    )
+
+    reply = dispatch_module(definition, "openid", "测试组件", route)
+
+    record = list_request_records(limit=1)[0]
+    assert reply.success is False
+    assert reply.reply_text == user_message(ErrorCode.SYSTEM_ERROR)
+    assert "Traceback" not in reply.reply_text
+    assert "/app/businessstorage" not in reply.reply_text
+    assert "Traceback" in record.error_message
 
 
 def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business_env, tmp_path, monkeypatch):
@@ -8866,6 +9841,62 @@ def test_technical_analysis_code_input_uses_dictionary_chinese_name_in_signal_ca
     assert "📈 标的：新易盛（300502.SZ）" in rendered_texts[0]
 
 
+def test_technical_analysis_dictionary_metadata_is_passed_to_skill(business_env, tmp_path, monkeypatch):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [
+            {
+                "code": "510300.SH",
+                "name": "沪深300ETF",
+                "market": "SH",
+                "asset_type": "etf",
+                "source": "akshare_etf",
+                "ts_code": "510300.SH",
+            }
+        ],
+        source="akshare_etf",
+    )
+    report = tmp_path / "etf_技术分析报告_2026-05-25.md"
+    chart = tmp_path / "etf_TA_2026-05-25.png"
+    report.write_text("ta report", encoding="utf-8")
+    chart.write_bytes(b"chart")
+    captured = {}
+
+    def fake_skill(symbol, _output_dir, **kwargs):
+        captured["symbol"] = symbol
+        captured["kwargs"] = kwargs
+        return report, chart
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", "沪深300ETF 技术分析")
+
+    assert result.success is True
+    assert captured == {
+        "symbol": "510300",
+        "kwargs": {
+            "name": "沪深300ETF",
+            "asset_type": "etf",
+            "market": "SH",
+            "ts_code": "510300.SH",
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("raw_input", "expected_detail"),
     [
@@ -8896,6 +9927,25 @@ def test_technical_analysis_name_miss_or_ambiguity_fails_with_code_prompt(
     assert result.error_code in {ErrorCode.STOCK_NOT_FOUND, ErrorCode.STOCK_AMBIGUOUS}
     assert "股票代码" in result.user_prompt
     assert expected_detail in result.detail
+
+
+def test_technical_analysis_malformed_index_symbol_fails_before_skill(business_env, monkeypatch):
+    from business.content import technical_analysis as technical_analysis
+    from business.config.constants import ErrorCode, user_message
+    from business.content.technical_analysis import run_technical_analysis
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("malformed index symbol must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "sh00300 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert "未匹配到该标的" in result.user_prompt
+    assert "cannot resolve symbol" in result.detail
 
 
 def test_technical_analysis_ambiguous_name_lists_candidate_codes(business_env, monkeypatch):
@@ -12422,6 +13472,42 @@ def test_stock_resolver_resolves_names_from_dictionary_sources(business_env):
     assert stock_resolver.resolve_stock("贵州茅台") == ("600519.SH", None)
 
 
+def test_stock_resolver_refreshes_bond_futures_dictionary_and_searches_by_code(business_env):
+    from business.content import stock_resolver as stock_resolver
+
+    assert stock_resolver.refresh_bond_futures_symbols_from_akshare() == 4
+
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols("TL0", limit=5)}
+    assert rows["TL0"]["name"] == "30年期国债期货主力连续"
+    assert rows["TL0"]["market"] == "CFFEX"
+    assert rows["TL0"]["asset_type"] == "futures"
+    assert rows["TL0"]["source"] == "akshare_futures"
+    assert stock_resolver.resolve_stock("30年期国债期货主力连续") == ("TL0", None)
+
+
+def test_stock_resolver_refreshes_index_dictionary_and_technical_target(business_env, monkeypatch):
+    from business.content import stock_resolver as stock_resolver
+    from business.content.technical_analysis import prepare_technical_analysis_cache_context
+
+    class FakeAkShare:
+        def stock_zh_index_spot_em(self, symbol):
+            raise RuntimeError(f"{symbol} unavailable")
+
+    monkeypatch.setattr(stock_resolver, "_akshare_client", lambda: FakeAkShare())
+
+    assert stock_resolver.refresh_index_symbols_from_akshare() >= 7
+
+    rows = {row["code"]: row for row in stock_resolver.list_stock_symbols("沪深300", limit=20)}
+    assert rows["sh000300"]["name"] == "沪深300"
+    assert rows["sh000300"]["asset_type"] == "index"
+    assert rows["sh000300"]["market"] == "CSI"
+    assert stock_resolver.resolve_stock("沪深300") == ("sh000300", None)
+    assert stock_resolver.resolve_stock("sh000300") == ("sh000300", None)
+
+    context = prepare_technical_analysis_cache_context("沪深300 技术分析")
+    assert context.normalized_target == "sh000300"
+
+
 def test_stock_resolver_persists_asset_type(business_env):
     from business.content import stock_resolver as stock_resolver
 
@@ -12791,7 +13877,10 @@ def test_stock_resolver_refreshes_from_akshare_adapter(business_env, monkeypatch
     assert result["etf"]["count"] == 2
     assert result["convertible_bond"]["count"] == 2
     assert result["gold"]["count"] == 1
+    assert result["index"]["count"] >= 7
     rows = {row["code"]: row for row in stock_resolver.list_stock_symbols(limit=20)}
+    assert rows["sh000300"]["name"] == "沪深300"
+    assert rows["sh000300"]["asset_type"] == "index"
     assert rows["510300.SH"]["asset_type"] == "etf"
     assert rows["159915.SZ"]["asset_type"] == "etf"
     assert rows["113000.SH"]["asset_type"] == "convertible_bond"
@@ -12907,12 +13996,12 @@ def test_stock_resolver_refreshes_all_dictionary_sources(business_env, monkeypat
     from business.content import stock_resolver as stock_resolver
 
     monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_tushare", lambda: {"a_share": {"count": 2}})
-    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_akshare", lambda: {"etf": {"count": 3}})
+    monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_akshare", lambda: {"etf": {"count": 3}, "futures": {"count": 4}})
     monkeypatch.setattr(stock_resolver, "refresh_all_symbols_from_baostock", lambda: {"a_share": {"count": 1}})
 
     assert stock_resolver.refresh_all_symbol_sources() == {
         "tushare": {"a_share": {"count": 2}},
-        "akshare": {"etf": {"count": 3}},
+        "akshare": {"etf": {"count": 3}, "futures": {"count": 4}},
         "baostock": {"a_share": {"count": 1}},
     }
 
@@ -12926,6 +14015,35 @@ def test_stock_resolver_refreshes_large_symbol_batch(business_env):
 
     assert stock_resolver.refresh_stock_symbols(rows, source="large-batch") == 6000
     assert stock_resolver.stock_dictionary_stats()["total"] == 6000
+
+
+def test_stock_resolver_can_cleanup_legacy_duplicate_symbol_codes(business_env):
+    from sqlalchemy import text
+
+    from business.content import stock_resolver as stock_resolver
+    from business.schema.db import connect
+
+    with connect() as conn:
+        conn.execute(text("alter table stock_symbols drop constraint if exists stock_symbols_pkey"))
+        conn.execute(text("drop index if exists idx_stock_symbols_code"))
+        conn.execute(
+            text(
+                """
+                insert into stock_symbols (code, name, market, ts_code, asset_type, source, updated_at)
+                values
+                    ('002347.SZ', 'old', 'SZ', '002347.SZ', 'a_share', 'akshare_a', '2026-06-01T00:00:00'),
+                    ('002347.SZ', 'new', 'SZ', '002347.SZ', 'a_share', 'tushare_a', '2026-06-02T00:00:00')
+                """
+            )
+        )
+
+    with connect() as conn:
+        assert stock_resolver.deduplicate_stock_symbol_codes(conn) == 1
+        conn.execute(text("create unique index idx_stock_symbols_code on stock_symbols (code)"))
+
+    rows = stock_resolver.list_stock_symbols("002347.SZ", limit=5)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "new"
 
 
 def test_stock_resolver_tushare_token_priority_and_masking(business_env, tmp_path, monkeypatch):
@@ -13056,6 +14174,8 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_etf_symbols_from_akshare", lambda: calls.append("etf") or 6)
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_convertible_bond_symbols_from_akshare", lambda: calls.append("convertible_bond") or 7)
     monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_gold_symbols_from_akshare", lambda: calls.append("gold") or 8)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_index_symbols_from_akshare", lambda: calls.append("index") or 9)
+    monkeypatch.setattr(refresh_business_stocks.stock_resolver, "refresh_index_symbols_from_tushare", lambda: calls.append("tushare_index") or 10)
 
     assert refresh_business_stocks.main(["--source", "all", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "tushare", "--json"]) == 0
@@ -13067,6 +14187,8 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
     assert refresh_business_stocks.main(["--source", "etf", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "convertible_bond", "--json"]) == 0
     assert refresh_business_stocks.main(["--source", "gold", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "index", "--json"]) == 0
+    assert refresh_business_stocks.main(["--source", "tushare_index", "--json"]) == 0
 
     assert calls == [
         "init",
@@ -13089,6 +14211,10 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
         "convertible_bond",
         "init",
         "gold",
+        "init",
+        "index",
+        "init",
+        "tushare_index",
     ]
     payloads = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
     assert [payload["source"] for payload in payloads] == [
@@ -13102,8 +14228,10 @@ def test_refresh_business_stocks_script_dispatches_sources(business_env, monkeyp
         "etf",
         "convertible_bond",
         "gold",
+        "index",
+        "tushare_index",
     ]
-    assert [payload["count"] for payload in payloads] == [6, 2, 3, 1, 3, 4, 5, 6, 7, 8]
+    assert [payload["count"] for payload in payloads] == [6, 2, 3, 1, 3, 4, 5, 6, 7, 8, 9, 10]
     assert all(payload["success"] is True for payload in payloads)
     assert all(payload["database"] == "postgresql" for payload in payloads)
 
@@ -13193,10 +14321,30 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path,
     monkeypatch.setattr(technical_analysis, "get_tushare_token", lambda: "shared-token-1234567890")
     monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
 
-    result_report, result_chart = technical_analysis._run_skill("300502", output_dir)
+    result_report, result_chart = technical_analysis._run_skill(
+        "300502",
+        output_dir,
+        name="新易盛",
+        asset_type="a_share",
+        market="SZ",
+        ts_code="300502.SZ",
+    )
 
     assert captured["env_token"] == "shared-token-1234567890"
-    assert captured["command"][-4:] == ["--symbol", "300502", "--output", str(output_dir)]
+    assert captured["command"][2:] == [
+        "--symbol",
+        "300502",
+        "--output",
+        str(output_dir),
+        "--name",
+        "新易盛",
+        "--asset-type",
+        "a_share",
+        "--market",
+        "SZ",
+        "--ts-code",
+        "300502.SZ",
+    ]
     assert result_report == report
     assert result_chart == chart
 
@@ -14714,11 +15862,11 @@ def test_health_check_reports_all_dependencies_available(business_env, tmp_path,
 
 def test_router_handles_rate_success_unauthorized_and_miss(business_env, tmp_path):
     from business.config.constants import ErrorCode
-    from business.config.constants import ServiceType
+    from business.config.constants import ServiceType, user_message
     from business.config.config_service import save_config
     from business.content.daily_content import create_content_draft, set_content_effective
     from business.records.records import get_content_record, list_request_records
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message, parse_route
+    from business.routing.router import handle_text_message, parse_route
     from business.accounts.user_service import create_user
 
     secret = "sk-secret"
@@ -14771,11 +15919,11 @@ def test_router_handles_rate_success_unauthorized_and_miss(business_env, tmp_pat
     miss = handle_text_message("ok", "hello")
     assert miss.success is False
     assert miss.handled is True
-    assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
+    assert miss.reply_text == user_message(ErrorCode.INPUT_ERROR)
     miss_record = list_request_records(limit=1)[0]
     assert miss_record.service_type == ServiceType.UNMATCHED
     assert miss_record.error_code == ErrorCode.INPUT_ERROR
-    assert miss_record.user_prompt == DEFAULT_UNMATCHED_PROMPT
+    assert miss_record.user_prompt == user_message(ErrorCode.INPUT_ERROR)
 
 
 def test_parse_route_uses_configured_business_skill_triggers(business_env):
@@ -14831,8 +15979,8 @@ def test_parse_route_uses_cowagent_business_registry_not_business_skill_matcher(
 
 def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(business_env):
     from business.config.config_service import save_config
-    from business.config.constants import ServiceType
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT, handle_text_message
+    from business.config.constants import ErrorCode, ServiceType, user_message
+    from business.routing.router import handle_text_message
     from business.accounts.user_service import create_user
 
     save_config("router.enable_agent_fallback", True, operator_role="admin")
@@ -14842,7 +15990,7 @@ def test_router_can_explicitly_fallback_to_general_agent_for_unmatched_text(busi
 
     assert miss.success is False
     assert miss.handled is False
-    assert miss.reply_text == DEFAULT_UNMATCHED_PROMPT
+    assert miss.reply_text == user_message(ErrorCode.INPUT_ERROR)
 
 
 def test_router_dispatches_daily_content_by_handler_type(business_env, tmp_path, monkeypatch):
@@ -15049,6 +16197,47 @@ def test_prompt_to_image_default_prompt_matches_rate_template(monkeypatch):
     assert "只输出" in prompt
 
 
+def test_daily_content_default_generation_passes_template_key(business_env, tmp_path, monkeypatch):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, generate_content
+
+    content_id = create_content_draft(
+        ServiceType.RATE,
+        source_text="今天流动性偏宽",
+        module_key="rate",
+    )
+    output = tmp_path / "rate.png"
+    output.write_bytes(b"png")
+    seen = {}
+
+    def fake_generate_standard_text(service_type, source_text, source_files=None, prompt_key="", module_key="", template_key=""):
+        seen["prompt_key"] = prompt_key
+        seen["module_key"] = module_key
+        seen["template_key"] = template_key
+        return type(
+            "AIResult",
+            (),
+            {
+                "success": True,
+                "text": "标准利率内容",
+                "prompt": "prompt used",
+                "detail": "",
+                "error_code": None,
+            },
+        )()
+
+    def fake_render_card(request):
+        return type("RenderResult", (), {"success": True, "image_path": str(output), "detail": "", "error_code": None})()
+
+    monkeypatch.setattr("business.audit.ai_generation.generate_standard_text", fake_generate_standard_text)
+    monkeypatch.setattr("business.content.render_service.render_card", fake_render_card)
+
+    result = generate_content(content_id)
+
+    assert result.success is True
+    assert seen == {"prompt_key": "prompt.rate", "module_key": "rate", "template_key": "rate"}
+
+
 def test_business_router_builds_reply_and_allows_unmatched_fallback(business_env, tmp_path):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
@@ -15086,9 +16275,8 @@ def test_business_router_builds_reply_and_allows_unmatched_fallback(business_env
 def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(business_env):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
     from business.accounts.user_service import create_user
-    from business.config.constants import ServiceType
+    from business.config.constants import ErrorCode, ServiceType, user_message
     from business.routing.business_router import build_business_reply
 
     create_user("wechatmp-openid", enabled=True, allowed_services=[ServiceType.ALL])
@@ -15100,7 +16288,7 @@ def test_business_router_blocks_unmatched_wechatmp_text_from_ai_fallback(busines
 
     assert reply is not None
     assert reply.type == ReplyType.TEXT
-    assert reply.content == DEFAULT_UNMATCHED_PROMPT
+    assert reply.content == user_message(ErrorCode.INPUT_ERROR)
 
 
 def test_context_kwargs_are_not_shared_between_instances():
@@ -15213,8 +16401,7 @@ def test_business_router_routes_daily_content_through_module_dispatcher(business
 
 def test_web_channel_routes_business_commands_from_admin_chat(business_env, tmp_path):
     from bridge.reply import ReplyType
-    from business.config.constants import ServiceType
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
+    from business.config.constants import ErrorCode, ServiceType, user_message
     from business.content.daily_content import create_content_draft, set_content_effective
     from business.accounts.user_service import create_user
     from channel.web.web_channel import WebChannel, _build_investment_web_reply
@@ -15236,7 +16423,7 @@ def test_web_channel_routes_business_commands_from_admin_chat(business_env, tmp_
     plain = _build_investment_web_reply("web-session", "普通聊天")
     assert plain is not None
     assert plain.type == ReplyType.TEXT
-    assert plain.content == DEFAULT_UNMATCHED_PROMPT
+    assert plain.content == user_message(ErrorCode.INPUT_ERROR)
     assert WebChannel().channel_type == "web"
 
 
@@ -15554,3 +16741,301 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business
     assert disabled_reply.content == "您的服务已停用，如需恢复请联系服务人员。"
     assert expired_reply.type == ReplyType.TEXT
     assert expired_reply.content == "您的授权已过期，如需续期请联系服务人员。"
+
+
+def test_preregistered_customer_schema_fields_exist():
+    from business.schema.tables import metadata
+
+    customer_columns = metadata.tables["customers"].columns.keys()
+    activation_columns = metadata.tables["activation_codes"].columns.keys()
+
+    assert metadata.tables["customers"].columns["openid"].nullable is True
+    assert "bind_status" in customer_columns
+    assert "bound_at" in customer_columns
+    assert "unbound_at" in customer_columns
+    assert "last_unbound_reason" in customer_columns
+    assert "activation_mode" in activation_columns
+    assert "customer_id" in activation_columns
+    assert "subscription_start_at" in activation_columns
+    assert "subscription_end_at" in activation_columns
+
+
+def test_create_preregistered_customer_without_openid_and_unbind(business_env):
+    from datetime import datetime, timedelta, UTC
+    from business.accounts.user_service import (
+        bind_customer_openid,
+        create_user,
+        get_user_by_openid,
+        get_user_by_id,
+        unbind_customer_openid,
+    )
+    from business.config.constants import ServiceType
+
+    customer_id = create_user(
+        "",
+        name="张三",
+        institution="示例机构",
+        mobile="13800000000",
+        allowed_services=[ServiceType.ALL],
+        auth_start_at=datetime.now(UTC).replace(tzinfo=None),
+        auth_end_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=180),
+    )
+
+    customer = get_user_by_id(customer_id)
+    assert customer is not None
+    assert customer.openid == ""
+    assert customer.bind_status == "unbound"
+
+    bind_customer_openid(customer_id, "openid-real")
+    assert get_user_by_openid("openid-real").id == customer_id
+
+    unbind_customer_openid(customer_id, reason="换绑")
+    unbound = get_user_by_id(customer_id)
+    assert unbound.openid == ""
+    assert unbound.bind_status == "unbound"
+    assert get_user_by_openid("openid-real") is None
+
+
+def test_delete_preregistered_customer_by_id_hides_from_customer_list(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import create_user, delete_user_by_id, get_user_by_id, list_users
+
+    customer_id = create_user(
+        "",
+        name="待删除客户",
+        mobile="13800000010",
+        allowed_services="全部",
+        auth_end_at=datetime(2026, 12, 31),
+    )
+
+    delete_user_by_id(customer_id, reason="未绑定客户删除")
+
+    deleted = get_user_by_id(customer_id)
+    assert deleted is not None
+    assert deleted.enabled is False
+    assert [user.id for user in list_users()] == []
+
+
+def test_delete_bound_customer_by_id_hides_from_customer_list(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import create_user, delete_user_by_id, get_user_by_id, list_users
+
+    customer_id = create_user(
+        "openid-delete-bound",
+        name="已绑定待删除客户",
+        mobile="13800000012",
+        allowed_services="全部",
+        auth_end_at=datetime(2026, 12, 31),
+    )
+
+    delete_user_by_id(customer_id, reason="已绑定客户删除")
+
+    deleted = get_user_by_id(customer_id)
+    assert deleted is not None
+    assert deleted.enabled is False
+    assert list_users() == []
+
+
+def test_multiple_preregistered_customers_and_duplicate_bind_rejection(business_env):
+    from datetime import datetime
+    import pytest
+    from business.accounts.user_service import bind_customer_openid, create_user, get_user_by_id
+
+    first_id = create_user("", name="客户A", mobile="13800000001", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    second_id = create_user("", name="客户B", mobile="13800000002", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+
+    first = get_user_by_id(first_id)
+    second = get_user_by_id(second_id)
+    assert first.openid == ""
+    assert second.openid == ""
+    assert first.bind_status == "unbound"
+    assert second.bind_status == "unbound"
+
+    bind_customer_openid(first_id, "openid-duplicate-check")
+    with pytest.raises(ValueError, match="already bound"):
+        bind_customer_openid(second_id, "openid-duplicate-check")
+
+    assert get_user_by_id(second_id).openid == ""
+
+
+def test_generate_customer_activation_code_carries_imported_subscription_end(business_env):
+    from datetime import datetime, UTC
+    from business.accounts.activation_service import generate_customer_activation_code, list_activation_codes
+    from business.accounts.user_service import create_user
+    from business.config.constants import ServiceType
+
+    customer_id = create_user(
+        "",
+        name="张三",
+        mobile="13800000000",
+        allowed_services=[ServiceType.TECHNICAL_ANALYSIS],
+        auth_start_at=datetime(2026, 1, 1),
+        auth_end_at=datetime(2026, 12, 31),
+    )
+
+    result = generate_customer_activation_code(
+        customer_id=customer_id,
+        code_expires_at=datetime(2026, 12, 31),
+    )
+
+    rows = list_activation_codes(batch_id=result.batch_id)
+    assert len(result.codes) == 1
+    assert rows[0].activation_mode == "preregistered"
+    assert rows[0].customer_id == customer_id
+    assert rows[0].allowed_services == [ServiceType.TECHNICAL_ANALYSIS]
+    assert rows[0].subscription_days == 1
+    assert rows[0].subscription_start_at == "2026-01-01T00:00:00"
+    assert rows[0].subscription_end_at == "2026-12-31T00:00:00"
+    assert rows[0].code_expires_at == "2026-12-31T00:00:00"
+
+
+def test_generate_customer_activation_code_defaults_expiry_to_subscription_end(business_env):
+    from datetime import datetime
+    from business.accounts.activation_service import generate_customer_activation_code, list_activation_codes
+    from business.accounts.user_service import create_user
+
+    customer_id = create_user("", name="张三", mobile="13800000000", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+
+    result = generate_customer_activation_code(customer_id=customer_id)
+
+    row = list_activation_codes(batch_id=result.batch_id)[0]
+    assert row.code_expires_at == "2026-12-31T00:00:00"
+    assert row.subscription_end_at == "2026-12-31T00:00:00"
+
+
+def test_generate_customer_activation_code_requires_existing_customer_and_end_date(business_env):
+    from datetime import datetime
+    import pytest
+    from business.accounts.activation_service import generate_customer_activation_code
+    from business.accounts.user_service import create_user
+
+    with pytest.raises(ValueError, match="customer not found"):
+        generate_customer_activation_code(customer_id=999999)
+
+    customer_id = create_user("", name="无结束日期", mobile="13800000000", allowed_services="全部", auth_start_at=datetime(2026, 1, 1))
+    with pytest.raises(ValueError, match="auth_end_at"):
+        generate_customer_activation_code(customer_id=customer_id)
+
+
+def test_import_users_with_activation_codes_returns_customer_codes(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, import_users_with_activation_codes
+
+    result = import_users_with_activation_codes([
+        ImportUserRow(
+            openid="",
+            name="张三",
+            mobile="13800000000",
+            allowed_services="全部",
+            auth_start_at=datetime(2026, 1, 1),
+            auth_end_at=datetime(2026, 12, 31),
+        )
+    ])
+
+    assert result.created == 1
+    assert result.activation_created == 1
+    assert result.rows[0].activation_code.startswith("ANAL-")
+    assert result.rows[0].auth_end_at.date().isoformat() == "2026-12-31"
+
+
+def test_export_users_import_result_xlsx_contains_generated_activation_code(business_env):
+    from datetime import datetime
+    from openpyxl import load_workbook
+    from io import BytesIO
+    from business.accounts.user_service import ImportUserRow, import_users_with_activation_codes
+    from business.records.export_service import export_users_import_result_xlsx
+
+    result = import_users_with_activation_codes([
+        ImportUserRow(
+            openid="",
+            name="张三",
+            mobile="13800000000",
+            allowed_services="全部",
+            auth_start_at=datetime(2026, 1, 1),
+            auth_end_at=datetime(2026, 12, 31),
+        )
+    ])
+
+    workbook = load_workbook(BytesIO(export_users_import_result_xlsx(result.rows)))
+    values = list(workbook.active.iter_rows(values_only=True))
+    headers = values[0]
+    data = values[1]
+
+    assert "激活码" in headers
+    assert data[headers.index("激活码")].startswith("ANAL-")
+
+
+def test_import_users_with_activation_codes_reuses_existing_unused_customer_code(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, import_users_with_activation_codes
+
+    row = ImportUserRow(openid="", name="张三", mobile="13800000007", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    first = import_users_with_activation_codes([row])
+    second = import_users_with_activation_codes([row])
+
+    assert first.activation_created == 1
+    assert second.activation_created == 0
+    assert second.updated == 1
+    assert second.rows[0].activation_code == first.rows[0].activation_code
+    assert second.rows[0].batch_id == first.rows[0].batch_id
+
+
+def test_import_users_with_activation_codes_does_not_generate_for_explicit_openid(business_env):
+    from datetime import datetime
+    from business.accounts.user_service import ImportUserRow, import_users_with_activation_codes
+
+    result = import_users_with_activation_codes([
+        ImportUserRow(openid="openid-explicit-import", name="已绑定", mobile="13800000008", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    ])
+
+    assert result.created == 1
+    assert result.activation_created == 0
+    assert result.rows[0].activation_code == ""
+    assert result.rows[0].error == ""
+
+
+def test_import_users_with_activation_codes_reports_activation_generation_error(business_env, monkeypatch):
+    from datetime import datetime
+    import business.accounts.activation_service as activation_service
+    from business.accounts.user_service import ImportUserRow, import_users_with_activation_codes
+
+    monkeypatch.setattr(activation_service, "generate_customer_activation_code", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    result = import_users_with_activation_codes([
+        ImportUserRow(openid="", name="张三", mobile="13800000009", allowed_services="全部", auth_end_at=datetime(2026, 12, 31))
+    ])
+
+    assert result.created == 1
+    assert result.activation_created == 0
+    assert result.rows[0].action == "created"
+    assert "activation code generation failed" in result.rows[0].error
+
+
+def test_export_users_import_result_xlsx_displays_beijing_dates():
+    from datetime import datetime
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from business.accounts.user_service import ImportUserActivationRow
+    from business.records.export_service import export_users_import_result_xlsx
+
+    content = export_users_import_result_xlsx([
+        ImportUserActivationRow(
+            customer_id=1,
+            openid="",
+            name="张三",
+            institution="",
+            mobile="13800000010",
+            allowed_services="全部",
+            auth_start_at=datetime(2026, 5, 31, 16, 0),
+            auth_end_at=datetime(2026, 12, 30, 16, 0),
+            activation_code="ANAL-AAAA-BBBB-CCCC-DDDD",
+            batch_id="batch",
+            action="created",
+        )
+    ])
+    values = list(load_workbook(BytesIO(content)).active.iter_rows(values_only=True))
+    headers = values[0]
+    data = values[1]
+
+    assert data[headers.index("授权开始")] == "2026-06-01"
+    assert data[headers.index("授权结束")] == "2026-12-31"

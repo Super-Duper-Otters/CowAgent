@@ -15,29 +15,6 @@ DEFAULT_PROMPT_TO_IMAGE_PROMPT = (
 )
 
 DEFAULT_PROMPT_TO_IMAGE_TEMPLATE_PROMPTS = {
-    "rate": (
-        "请将用户提供的投研需求或资料整理为利率择时图片卡片标准文本。"
-        "必须只输出卡片正文，不要输出解释、模板说明、补充问题或 Markdown 代码块。"
-        "输出必须包含并使用以下栏目和字段："
-        "【浙商固收 | 智能投研辅助系统】、标的、最新收盘、行情日期、分析模型、"
-        "当日核心信号、复合策略信号、多头：...；空头：...、日度主线、"
-        "周度全景复盘、近一周整体信号、周度主线、授权剩余时间、业务对接。"
-        "无法从资料识别的字段填“——”。"
-    ),
-    "convertible_bond": (
-        "请将用户提供的投研需求或资料整理为可转债多因子图片卡片标准文本。"
-        "必须只输出卡片正文，不要输出解释、模板说明、补充问题或 Markdown 代码块。"
-        "输出必须包含：跟踪日期、分析模型、跟踪维度、市场与风格表现、行业结构、"
-        "错定价跟踪、实操指引、授权剩余时间、数据来源、业务对接。"
-        "无法从资料识别的字段填“——”。"
-    ),
-    "technical_analysis": (
-        "请将用户提供的投研需求或资料整理为技术分析图片卡片标准文本。"
-        "必须只输出卡片正文，不要输出解释、模板说明、补充问题或 Markdown 代码块。"
-        "输出必须包含：标的、最新收盘、行情日期、分析模型、信号方向、趋势研判、"
-        "核心关键位、实操指引、授权剩余时间、业务对接。"
-        "无法从资料识别的字段填“——”。"
-    ),
 }
 
 
@@ -55,6 +32,18 @@ def _configured_prompt(prompt_key: str, *, template_key: str = "") -> str:
         return configured
     if configured is not None and not isinstance(configured, str):
         return str(configured)
+    from business.audit.ai_generation import default_prompt_for_service
+
+    service_by_template = {
+        "rate": ServiceType.RATE,
+        "technical_analysis": ServiceType.TECHNICAL_ANALYSIS,
+        "ta": ServiceType.TECHNICAL_ANALYSIS,
+        "convertible_bond": ServiceType.CONVERTIBLE_BOND,
+        "cb": ServiceType.CONVERTIBLE_BOND,
+    }
+    service_type = service_by_template.get(_normalize_template_key(template_key))
+    if service_type is not None:
+        return default_prompt_for_service(service_type)
     template_prompt = DEFAULT_PROMPT_TO_IMAGE_TEMPLATE_PROMPTS.get(_normalize_template_key(template_key))
     if template_prompt:
         return template_prompt
@@ -123,6 +112,7 @@ def generate_standard_text_for_module(
             source_files=source_files,
             prompt_key=prompt_key,
             module_key=module_key,
+            template_key=template_key,
         )
     except TypeError as exc:
         if "prompt_key" not in str(exc) and "module_key" not in str(exc):

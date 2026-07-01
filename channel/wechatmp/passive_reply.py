@@ -46,19 +46,70 @@ def _reply_text(key: str, default: str = "") -> str:
         return default
 
 
-def _reply_format(key: str, *args, default: str = "") -> str:
+def _reply_format(key: str, *args, default: str = "", **kwargs) -> str:
     try:
         from business.config.reply_config import format_reply_text
 
-        return format_reply_text(key, *args, default=default)
+        return format_reply_text(key, *args, default=default, **kwargs)
     except Exception:
-        return default.format(*args) if args else default
+        return default.format(*args, **kwargs) if (args or kwargs) else default
+
+
+def _is_activation_code_text(content: str) -> bool:
+    try:
+        from business.accounts.activation_service import is_activation_code_text
+
+        return is_activation_code_text(content)
+    except Exception:
+        return False
+
+
+def _activation_reply_for_result(result) -> str:
+    key_map = {
+        "activated": "reply.investment.activation_success",
+        "invalid": "reply.investment.activation_invalid",
+        "used": "reply.investment.activation_used",
+        "expired": "reply.investment.activation_expired",
+        "disabled": "reply.investment.activation_disabled",
+        "already_bound": "reply.investment.activation_already_bound",
+    }
+    status = str(getattr(result, "status", "") or "invalid")
+    default = str(getattr(result, "message", "") or "激活失败，请稍后重试。")
+    key = key_map.get(status, "reply.investment.activation_invalid")
+    auth_end_at = getattr(result, "auth_end_at", None)
+    auth_end_text = auth_end_at.strftime("%Y-%m-%d") if auth_end_at else ""
+    return _reply_format(key, auth_end_at=auth_end_text, default=default)
+
+
+def _redeem_activation_code_text(openid: str, content: str) -> str:
+    try:
+        from business.accounts.activation_service import redeem_activation_code
+
+        return _activation_reply_for_result(redeem_activation_code(openid, content))
+    except Exception as exc:
+        logger.warning("[wechatmp] activation redeem failed: {}".format(exc))
+        return _reply_text("reply.investment.activation_invalid", "激活失败：激活码不存在或格式不正确。")
+
+
+def _verify_wechatmp_text_access(openid: str, content: str):
+    try:
+        from business.accounts.permission_service import verify_customer_access, verify_customer_business_access
+        from business.routing.router import parse_route
+
+        route = parse_route(content)
+        if getattr(route, "matched", False):
+            return verify_customer_business_access(openid, getattr(route, "service_type", None))
+        return verify_customer_access(openid)
+    except Exception as exc:
+        logger.debug("[wechatmp] permission precheck failed: {}".format(exc))
+        return None
 
 
 def _running_technical_analysis_text(title: str) -> str:
     return _reply_format(
         RUNNING_TECHNICAL_ANALYSIS_KEY,
         title,
+        target=title,
         default="「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。",
     )
 
@@ -155,6 +206,7 @@ def _pending_result_prompt(title):
         return _reply_format(
             PENDING_TECHNICAL_ANALYSIS_KEY,
             _technical_analysis_title(title or ""),
+            target=_technical_analysis_title(title or ""),
             default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表。",
         )
     prefix = title or ""
@@ -712,6 +764,19 @@ class Query:
                 from_user = wechatmp_msg.from_user_id
                 content = wechatmp_msg.content
                 message_id = wechatmp_msg.msg_id
+                if msg.type == "text":
+                    if _is_activation_code_text(content):
+                        replyPost = create_reply(_redeem_activation_code_text(from_user, content), msg)
+                        return encrypt_func(replyPost.render())
+
+                    permission = _verify_wechatmp_text_access(from_user, content)
+                    if permission is not None and not getattr(permission, "allowed", False):
+                        reply_text = getattr(permission, "user_prompt", "") or _reply_text(
+                            "reply.investment.unauthorized",
+                            "您暂未开通该服务，如需开通请联系服务人员。",
+                        )
+                        replyPost = create_reply(reply_text, msg)
+                        return encrypt_func(replyPost.render())
                 parsed_route = None
                 allow_new_request_with_pending_result = False
                 reply_immediate_ack_after_start = False
@@ -861,6 +926,7 @@ class Query:
                                     CHAT_PREFIX_HINT_KEY,
                                     trigger_prefix,
                                     trigger_prefix,
+                                    prefix=trigger_prefix,
                                     default="请输入'{}'接你想说的话跟我说话。\n例如:\n{}你好，很高兴见到你。",
                                 )
                             else:

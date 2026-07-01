@@ -27,6 +27,12 @@ def _failure_reply_with_detail(prompt: str, detail: str) -> str:
     return f"{prompt}\n原因：{safe_detail}"
 
 
+def _customer_failure_reply(prompt: str, code: ErrorCode | None, detail: str) -> str:
+    if code == ErrorCode.STOCK_AMBIGUOUS:
+        return _failure_reply_with_detail(prompt, detail)
+    return prompt
+
+
 def _target_label(stock_code: str, stock_name: str) -> str:
     code = str(stock_code or "").strip()
     name = str(stock_name or "").strip()
@@ -47,10 +53,11 @@ def validate_technical_analysis_request(raw_input: str, route) -> str:
     target, _requested_market_date = _target_and_requested_market_date(target_text)
     target_info, error, detail = _technical_analysis_target_from_input(target)
     if error:
-        return _failure_reply_with_detail(user_message(error), detail)
+        return _customer_failure_reply(user_message(error), error, detail)
     if not target_info.normalized_target:
-        return _failure_reply_with_detail(
+        return _customer_failure_reply(
             user_message(ErrorCode.STOCK_NOT_FOUND),
+            ErrorCode.STOCK_NOT_FOUND,
             f"cannot resolve stock: {target}",
         )
     return ""
@@ -153,7 +160,7 @@ def handle_technical_analysis(
             return BusinessReply(
                 True,
                 False,
-                _failure_reply_with_detail(prompt, detail),
+                _customer_failure_reply(prompt, code, detail),
                 [],
                 route.service_type,
                 code,

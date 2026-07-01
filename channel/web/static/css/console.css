@@ -1617,6 +1617,12 @@
     gap: 12px;
 }
 
+.investment-customer-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 14px;
+}
+
 .investment-toolbar-section {
     display: flex;
     flex-wrap: wrap;
@@ -1638,6 +1644,28 @@
 
 .investment-toolbar-section.actions {
     justify-content: flex-end;
+}
+
+.investment-customer-toolbar .investment-toolbar-section.search {
+    display: grid;
+    grid-template-columns: 136px minmax(260px, 420px) auto auto;
+    align-items: end;
+    justify-content: start;
+    gap: 8px;
+}
+
+.investment-customer-toolbar .investment-search-type-field,
+.investment-customer-toolbar .investment-search-field {
+    width: auto;
+}
+
+.investment-customer-toolbar-actions {
+    justify-content: flex-end;
+    padding-top: 2px;
+}
+
+.investment-customer-toolbar-actions .investment-btn {
+    flex: 0 0 auto;
 }
 
 .investment-user-actionbar .investment-btn,
@@ -1944,20 +1972,58 @@
     font-size: 12px;
 }
 
-.investment-time-select {
+.investment-time-options {
     width: 100%;
-    min-height: 38px;
-    padding: 0 10px;
+    height: 152px;
+    padding: 6px;
     border: 1px solid #d8e2ef;
     border-radius: 8px;
     background: #ffffff;
     color: #1e293b;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+
+.investment-time-options:focus-within {
+    border-color: #35A85B;
+    box-shadow: 0 0 0 3px rgba(53, 168, 91, 0.12);
+}
+
+.investment-time-options::-webkit-scrollbar {
+    width: 6px;
+}
+
+.investment-time-options::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #cbd5e1;
+}
+
+.investment-time-option-button {
+    min-height: 30px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #1e293b;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.investment-time-option-button:hover,
+.investment-time-option-button:focus-visible {
+    border-color: #bbf7d0;
+    background: #ecfdf5;
+    color: #228547;
     outline: 0;
 }
 
-.investment-time-select:focus {
+.investment-time-option-button.active {
     border-color: #35A85B;
-    box-shadow: 0 0 0 3px rgba(53, 168, 91, 0.12);
+    background: #35A85B;
+    color: #ffffff;
 }
 
 .investment-time-separator {
@@ -3581,7 +3647,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 }
 
 .investment-stock-refresh-tool {
-    grid-template-columns: 180px 280px auto;
+    grid-template-columns: 150px 170px max-content;
+    justify-content: end;
 }
 
 .investment-stock-query-tool {
@@ -3626,6 +3693,7 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     border: 1px solid #e2e8f0;
     border-radius: 8px;
     background: #f8fafc;
+    overflow-wrap: anywhere;
 }
 
 .investment-stock-refresh-log .investment-table-wrap,
@@ -4887,6 +4955,135 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     text-overflow: clip;
 }
 
+.investment-user-page .investment-customer-table {
+    min-width: 1152px;
+}
+
+.investment-user-page .investment-customer-table th:first-child,
+.investment-user-page .investment-customer-table td:first-child {
+    width: auto;
+    max-width: none;
+}
+
+.investment-customer-col-openid {
+    width: 112px;
+}
+
+.investment-customer-col-name {
+    width: 96px;
+}
+
+.investment-customer-col-institution {
+    width: 112px;
+}
+
+.investment-customer-col-mobile {
+    width: 120px;
+}
+
+.investment-customer-col-service {
+    width: 80px;
+}
+
+.investment-customer-col-bind {
+    width: 96px;
+}
+
+.investment-customer-col-status {
+    width: 80px;
+}
+
+.investment-customer-col-auth {
+    width: 112px;
+}
+
+.investment-customer-col-actions {
+    width: 344px;
+}
+
+.investment-user-page .investment-customer-table .investment-customer-openid {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.investment-user-page .investment-customer-table .investment-customer-actions-head,
+.investment-user-page .investment-customer-table .investment-customer-actions-cell {
+    overflow: visible;
+    text-overflow: clip;
+}
+
+.investment-row-action-list {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    min-width: max-content;
+}
+
+.investment-user-page .investment-activation-table {
+    table-layout: fixed;
+    min-width: 1040px;
+}
+
+.investment-user-page .investment-activation-table th:first-child,
+.investment-user-page .investment-activation-table td:first-child {
+    width: auto;
+    max-width: none;
+}
+
+.investment-activation-col-batch {
+    width: 120px;
+}
+
+.investment-activation-col-code {
+    width: 230px;
+}
+
+.investment-activation-col-service {
+    width: 78px;
+}
+
+.investment-activation-col-days {
+    width: 86px;
+}
+
+.investment-activation-col-date {
+    width: 112px;
+}
+
+.investment-activation-col-status {
+    width: 82px;
+}
+
+.investment-activation-col-user {
+    width: 108px;
+}
+
+.investment-activation-col-created {
+    width: 118px;
+}
+
+.investment-activation-col-action {
+    width: 106px;
+}
+
+.investment-user-page .investment-activation-table .investment-activation-code,
+.investment-user-page .investment-activation-table .investment-activation-date,
+.investment-user-page .investment-activation-table .investment-activation-status,
+.investment-user-page .investment-activation-table .investment-activation-service,
+.investment-user-page .investment-activation-table .investment-activation-days,
+.investment-user-page .investment-activation-table .investment-row-actions {
+    overflow: visible;
+    text-overflow: clip;
+}
+
+.investment-user-page .investment-activation-table .investment-activation-code code {
+    display: inline-block;
+    min-width: max-content;
+    font-size: 12px;
+}
+
 .investment-user-page .investment-table > tbody:first-child > tr:first-child > *,
 .investment-user-page .investment-table > thead:first-child > tr:first-child > * {
     position: static !important;
@@ -4923,11 +5120,23 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     .investment-request-date-panel {
         grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
     }
+
+    .investment-customer-toolbar .investment-toolbar-section.search {
+        grid-template-columns: 132px minmax(220px, 1fr) auto auto;
+    }
 }
 
 @media (max-width: 768px) {
     .investment-user-toolbar-grid {
         grid-template-columns: 1fr;
+    }
+
+    .investment-customer-toolbar .investment-toolbar-section.search {
+        grid-template-columns: 1fr;
+    }
+
+    .investment-customer-toolbar-actions {
+        justify-content: flex-start;
     }
 
     .investment-toolbar-section.actions,

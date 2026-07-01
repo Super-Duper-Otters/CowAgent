@@ -616,6 +616,7 @@ def test_business_component_cards_scope_controls_by_type():
     assert "主动组件" in js
     assert "包含脚本" in js
     assert "settings.prompt_key" in config_dialog_body
+    assert "settings.prompt_configured === false" in config_dialog_body
     assert "component.runtime" in card_body
     assert "deleteInvestmentRuntimeComponent" in card_body
     assert "invest-component-modal-triggers" in config_dialog_body
@@ -901,6 +902,7 @@ def test_business_users_toolbar_is_grouped_and_paginated():
 
     assert ".investment-user-toolbar-grid" in css
     assert ".investment-toolbar-group" in css
+    assert ".investment-customer-toolbar" in css
     assert ".investment-user-pagination" in css
 
 
@@ -912,6 +914,8 @@ def test_business_customer_toolbar_has_separate_action_bar():
     assert "investment-user-actionbar" in body
     assert "investment-toolbar-section search" in body
     assert "investment-toolbar-section actions" in body
+    assert "investment-customer-toolbar" in body
+    assert "investment-customer-toolbar-actions" in body
     assert "invest-users-keyword" in body
     assert "invest-users-keyword-field" in body
     assert "keyword_field" in body
@@ -990,14 +994,25 @@ def test_business_admin_toolbar_and_table_spacing_are_polished():
     assert "text-overflow: ellipsis;" in css
     assert "white-space: nowrap;" in css
     assert ".investment-user-page .investment-table th:first-child,\n.investment-user-page .investment-table td:first-child" in css
-    assert "width: 24%;" in css
+    assert "width: 112px;" in css
+    assert "width: 344px;" in css
+    assert ".investment-row-action-list" in css
     assert ".investment-table-wrap > .investment-table:first-child" in css
 
     customer_table_body = _js_function_body(js, "renderInvestmentUsersTable")
     admin_table_body = _js_function_body(js, "renderInvestmentAdminUsersTable")
     assert "function investmentMiddleEllipsis(" in js
     assert "function investmentFormatBeijingDate(" in js
-    assert '<td title="${escapeHtml(user.openid)}">${escapeHtml(investmentMiddleEllipsis(user.openid, 10, 8))}</td>' in customer_table_body
+    assert "const isUnbound = user.bind_status === 'unbound' || !user.openid;" in customer_table_body
+    assert "待绑定" in customer_table_body
+    assert "investment-table investment-customer-table" in customer_table_body
+    assert "investment-customer-col-openid" in customer_table_body
+    assert "investment-customer-col-actions" in customer_table_body
+    assert "investmentMiddleEllipsis(user.openid, 6, 4)" in customer_table_body
+    assert "investment-row-action-list" in customer_table_body
+    assert "unbindInvestmentUserOpenid" in customer_table_body
+    assert "deleteInvestmentUser(${Number(user.id || 0)})" in customer_table_body
+    assert "isUnbound ? investmentButtonIfCan('customers.write', 'fa-trash'" not in customer_table_body
     assert "investmentFormatBeijingDate(user.auth_end_at || '')" in customer_table_body
     assert "investmentFormatBeijingTime(user.auth_end_at || '')" not in customer_table_body
     assert '<td title="${escapeHtml(user.username || \'\')}">${escapeHtml(user.username || \'\')}</td>' in admin_table_body
@@ -1044,6 +1059,59 @@ def test_business_customer_export_uses_dedicated_dialog():
     assert "downloadInvestmentUsersExport()" in export_body
     assert "investmentDownload('/api/investment/export/users.xlsx'" in download_body
     assert "openInvestmentCustomerExportDialog()" in legacy_body
+
+
+def test_activation_code_api_routes_are_registered():
+    from channel.web.investment_handlers import INVESTMENT_API_URLS
+
+    urls = "\n".join(INVESTMENT_API_URLS)
+    assert "/api/investment/activation-codes" in urls
+    assert "/api/investment/activation-codes/(.*)/disable" in urls
+    assert "/api/investment/export/activation-codes.xlsx" in urls
+
+
+def test_activation_codes_panel_is_available_in_user_management():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert "activation_codes.read" in js
+    assert "activation-codes" in js
+    assert "renderInvestmentActivationCodes" in js
+    assert "openInvestmentActivationCodeDialog" in js
+    assert "generateInvestmentActivationCodes" in js
+    assert "disableInvestmentActivationCode" in js
+    assert "window.renderInvestmentActivationCodes = renderInvestmentActivationCodes" in js
+    assert "window.openInvestmentActivationCodeDialog = openInvestmentActivationCodeDialog" in js
+    assert "window.generateInvestmentActivationCodes = generateInvestmentActivationCodes" in js
+    assert "window.disableInvestmentActivationCode = disableInvestmentActivationCode" in js
+    assert "window.applyInvestmentActivationCodeSearch = applyInvestmentActivationCodeSearch" in js
+    assert "window.clearInvestmentActivationCodeSearch = clearInvestmentActivationCodeSearch" in js
+    assert "window.exportInvestmentActivationCodes = exportInvestmentActivationCodes" in js
+    assert "/api/investment/activation-codes" in js
+    assert "/api/investment/export/activation-codes.xlsx" in js
+    assert "ANAL-" in js
+
+    render_body = _js_function_body(js, "renderInvestmentActivationCodes")
+    assert "investmentFetchJson(`/api/investment/activation-codes?${investmentUserQuery('activation_codes')}`)" in render_body
+    assert "openInvestmentActivationCodeDialog(1)" in render_body
+    assert "openInvestmentActivationCodeDialog(10)" in render_body
+
+    table_body = _js_function_body(js, "renderInvestmentActivationCodesTable")
+    assert "row.code || row.code_prefix" in table_body
+    assert "investment-table investment-activation-table" in table_body
+    assert "investment-activation-col-code" in table_body
+    assert "investment-activation-code" in table_body
+    assert "investment-activation-date" in table_body
+    assert "<th>激活码</th>" in table_body
+    assert "<th>有效期</th>" in table_body
+    assert "investmentFormatBeijingDate(row.code_expires_at || '')" in table_body
+    assert "investmentMiddleEllipsis(row.batch_id || '', 10, 8)" in table_body
+    assert "row.code_hash" not in table_body
+
+    css = CONSOLE_CSS.read_text(encoding="utf-8")
+    assert ".investment-user-page .investment-activation-table" in css
+    assert ".investment-activation-col-code" in css
+    assert ".investment-activation-col-batch" in css
+    assert ".investment-user-page .investment-activation-table .investment-activation-code" in css
 
 
 def test_business_customer_render_uses_response_rows_with_response_pagination():
@@ -1230,7 +1298,8 @@ def test_daily_content_layout_places_current_and_upload_side_by_side_above_histo
     assert ".investment-date-picker-foot" in css
     assert ".investment-time-control" in css
     assert ".investment-time-popover" in css
-    assert ".investment-time-select" in css
+    assert ".investment-time-option-button" in css
+    assert ".investment-time-options" in css
     assert ".investment-time-picker-foot" in css
     assert ".investment-history-table" in css
     assert ".investment-history-output-preview" in css
@@ -1305,6 +1374,22 @@ def test_daily_content_upload_operator_is_current_admin_without_input_field():
     assert "<span>操作人</span>" not in upload_body
     assert "form.append('operator', investmentCurrentAdminUsername());" in create_body
     assert "document.getElementById('invest-content-operator').value || 'admin'" not in create_body
+
+
+def test_daily_content_time_picker_uses_custom_option_buttons():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    panel_body = _js_function_body(js, "investmentRenderTimePickerPanel")
+    options_body = _js_function_body(js, "investmentRenderTimeOptions")
+    select_body = _js_function_body(js, "investmentSelectTime")
+
+    assert "<select" not in panel_body
+    assert "<option" not in panel_body
+    assert "investmentRenderTimeOptions(23, hour)" in panel_body
+    assert "investmentRenderTimeOptions(59, minute)" in panel_body
+    assert "investment-time-option-button" in options_body
+    assert "investment-time-options" in panel_body
+    assert "aria-pressed" in options_body
+    assert "investmentSelectedTimePart" in select_body
 
 
 def test_daily_content_upload_supports_image_and_text_generation_modes():
@@ -1472,8 +1557,10 @@ def test_business_console_hides_actions_by_admin_role():
     assert "let currentInvestmentAdmin = null;" in js
     assert "function investmentCan(" in js
     assert "async function loadInvestmentAdminSession({redirectOnMissing = false} = {})" in js
+    assert "const previousInvestmentAdmin = currentInvestmentAdmin;" in js
+    assert "currentInvestmentAdmin = previousInvestmentAdmin;" in js
     assert "/api/investment/auth/me" in js
-    assert "if (redirectOnMissing) {\n            redirectToLogin();\n            return null;\n        }" in js
+    assert "if (redirectOnMissing) {\n            currentInvestmentAdmin = null;\n            redirectToLogin();\n            return null;\n        }" in js
     assert "if (!currentInvestmentAdmin && redirectOnMissing)" in js
     assert "loadInvestmentAdminSession({redirectOnMissing: currentConsoleAuthenticated})" in js
     assert "if (currentConsoleAuthenticated && !currentInvestmentAdmin)" in js
@@ -1620,17 +1707,34 @@ def test_business_config_subpages_use_aligned_section_layouts():
     assert "investment-config-panel" in web_chat_body
     assert "investment-config-section" in web_chat_body
 
-    assert "investment-stock-action-grid" in stock_body
-    assert "investment-stock-action-card investment-stock-refresh-tool" in stock_body
-    assert "investment-stock-action-card investment-stock-query-tool" in stock_body
+    assert "investment-stock-module-actions investment-stock-refresh-tool" in stock_body
+    assert "investment-stock-module-actions investment-stock-query-tool" in stock_body
+    assert "investment-stock-workspace" in stock_body
+    assert "investment-stock-overview" in stock_body
+    assert "investment-stock-module-panel investment-stock-refresh-module" in stock_body
+    assert "investment-stock-module-panel investment-stock-query-module" in stock_body
+    assert "investment-stock-module-head" in stock_body
+    assert "investment-stock-module-actions investment-stock-refresh-tool" in stock_body
+    assert "investment-stock-module-actions investment-stock-query-tool" in stock_body
+    assert "investment-stock-query-result-shell" in stock_body
+    assert "investment-stock-log-placeholder" in stock_body
     assert "investment-stock-refresh-tool" in stock_body
     assert "investment-stock-query-tool" in stock_body
+    assert "invest-stock-refresh-provider" in stock_body
     assert "invest-stock-refresh-market" in stock_body
-    assert "刷新市场" in stock_body
-    assert "A股" in stock_body
-    assert "港股" in stock_body
-    assert "美股" in stock_body
-    assert "akshare" not in stock_body
+    assert "源" in stock_body
+    assert "市场" in stock_body
+    assert "一键刷新全部数据源" in js
+    assert "Tushare 全部" in js
+    assert "AkShare 全部" in js
+    assert "BaoStock 全部" in js
+    assert "A股" in js
+    assert "港股" in js
+    assert "美股" in js
+    assert "ETF（AkShare）" in js
+    assert "可转债（AkShare）" in js
+    assert "黄金（AkShare）" in js
+    assert "国债期货（AkShare）" in js
     assert "['auto', 'auto']" not in stock_body
     assert stock_body.count("investment-inline-form investment-stock-actions") == 0
     assert "investment-panel-heading" in stock_body
@@ -1638,7 +1742,18 @@ def test_business_config_subpages_use_aligned_section_layouts():
 
     assert ".investment-config-panel" in css
     assert ".investment-config-section" in css
-    assert ".investment-stock-action-grid" in css
+    assert ".investment-stock-workspace" in css
+    assert ".investment-stock-overview" in css
+    assert ".investment-stock-module-panel" in css
+    assert ".investment-stock-module-head" in css
+    assert ".investment-stock-module-actions" in css
+    assert ".investment-inline-field" in css
+    assert ".investment-stock-refresh-log" in css
+    assert "max-height: none;" in css
+    assert ".investment-progress-bar" in css
+    assert "grid-template-columns: 150px 170px max-content;" in css
+    assert "justify-content: end;" in css
+    assert "overflow-wrap: anywhere;" in css
     assert ".investment-stock-action-card" in css
     assert ".investment-stock-action-control" in css
     assert "grid-template-columns: minmax(0, 1fr) auto;" in css
@@ -1657,25 +1772,67 @@ def test_business_stock_data_page_combines_dictionary_config_and_tools():
     assert "investment-stock-data-panel" in stock_panel_body
     assert "investment-stock-data-card" in stock_tools_body
     assert "renderInvestmentConfigField('tushare.token', 'Tushare Token', 'text', configs['tushare.token'])" in stock_tools_body
+    assert "AkShare" in stock_tools_body
+    assert "BaoStock" in stock_tools_body
     assert "仅使用 Tushare 数据源" not in stock_tools_body
     assert "必须先填写并保存 Tushare Token" not in stock_tools_body
     assert "股票数据" in stock_tools_body
     assert "股票字典维护" not in stock_tools_body
 
 
-def test_business_stock_refresh_requires_tushare_token_and_sends_market():
+def test_business_stock_refresh_supports_multiple_sources_and_conditional_tushare_token():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     refresh_body = _js_function_body(js, "refreshInvestmentStocks")
     token_body = _js_function_body(js, "investmentHasConfiguredTushareToken")
+    needs_token_body = _js_function_body(js, "investmentStockRefreshNeedsTushareToken")
 
-    assert "invest-stock-refresh-market" in refresh_body
-    assert "investmentHasConfiguredTushareToken()" in refresh_body
+    assert "investmentSelectedStockRefreshSource()" in refresh_body
+    assert "invest-stock-refresh-provider" in js
+    assert "invest-stock-refresh-market" in js
+    assert "function updateInvestmentStockRefreshMarkets(" in js
+    assert "function investmentStockRefreshMarkets(" in js
+    assert "investmentStockRefreshNeedsTushareToken(source) && !investmentHasConfiguredTushareToken()" in refresh_body
     assert "请先填写并保存 Tushare Token" in token_body
     assert "请先保存 Tushare Token 后再刷新" in token_body
-    assert "body: JSON.stringify({source: market})" in refresh_body
-    assert "invest-stock-refresh-source" not in refresh_body
+    assert "body: JSON.stringify({source})" in refresh_body
+    assert "无新增" in js
+    assert "无变化" in js
+    assert "renderInvestmentStockRefreshLog(data)" in refresh_body
+    assert "renderInvestmentStockRefreshProgress(source)" in refresh_body
+    assert "刷新进度" in js
+    assert "正在依次调用数据源" in js
+    assert "刷新结果：${statusText}" in js
+    assert "部分成功" in js
+    assert "全部失败" in js
+    assert "成功 ${escapeHtml(summary.success_count" in js
+    assert "失败 ${escapeHtml(summary.failed_count" in js
+    assert "数据源 / 市场" in js
+    assert "去重后更新" in js
+    assert "失败原因" in js
+    assert "investmentStockRefreshScopeLabel" in js
+    assert "'tushare'" in needs_token_body
+    assert "'akshare'" not in needs_token_body
+    assert "'baostock'" not in needs_token_body
+    assert "'all'" not in needs_token_body
     assert "'auto'" not in refresh_body
-    assert "'akshare'" not in refresh_body
+
+
+def test_business_stock_refresh_errors_use_friendly_summaries():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    refresh_body = _js_function_body(js, "refreshInvestmentStocks")
+    log_body = _js_function_body(js, "renderInvestmentStockRefreshLog")
+    friendly_body = _js_function_body(js, "investmentStockRefreshFriendlyError")
+
+    assert "investmentStockRefreshFriendlyError(error.message || error)" in refresh_body
+    assert "investmentStockRefreshFriendlyError(row.error)" in log_body
+    assert "investmentStockRefreshFriendlyError(item)" in log_body
+    assert "Tushare Token 未配置或无权限" in friendly_body
+    assert "数据源连接超时" in friendly_body
+    assert "数据库写入失败" in friendly_body
+    assert "不支持的数据源" in friendly_body
+    assert "刷新失败，请检查数据源配置或稍后重试" in friendly_body
+    assert "errors.join('；')" not in log_body
+    assert "String(error.message || error))}</div>" not in refresh_body
 
 
 def test_business_config_page_renders_reply_text_section():
@@ -2848,3 +3005,71 @@ def test_business_health_ui_exposes_manual_full_check_and_levels():
     assert ".invest-health-placeholder" in css
     assert ".investment-health-summary.warning" in css
     assert ".investment-badge.warning" in css
+
+
+def test_preregistered_customer_routes_are_registered():
+    from channel.web.investment_handlers import INVESTMENT_API_URLS
+
+    urls = "\n".join(INVESTMENT_API_URLS)
+    assert "/api/investment/users/(.*)/unbind-openid" in urls
+    assert "/api/investment/users/(.*)/delete" in urls
+    assert "/api/investment/users/import-result.xlsx" in urls
+
+
+def test_preregistered_customer_web_api_wiring_exists():
+    source = Path("channel/web/web_channel.py").read_text(encoding="utf-8")
+
+    assert "bind_status" in source
+    assert "generate_customer_activation_code" in source
+    assert "activation_code" in source
+    assert "activation_batch_id" in source
+    assert "import_users_with_activation_codes" in source
+    assert "result_download_url" in source
+    assert "export_users_import_result_xlsx" in source
+    assert "class InvestmentUserUnbindOpenidHandler" in source
+    assert "unbind_customer_openid" in source
+    assert "class InvestmentUserDeleteHandler" in source
+    assert "delete_user_by_id" in source
+
+
+def test_preregistered_customer_ui_wiring_exists():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+
+    assert "bind_status" in js
+    assert "待绑定" in js
+    assert "unbindInvestmentUserOpenid" in js
+    assert "deleteInvestmentUser" in js
+    assert "删除" in js
+    assert "import-result.xlsx" in js
+    assert "activation_code" in js
+    assert "OpenID 可空" in js
+    assert "下载含激活码 Excel" in js
+    assert "客户专属激活码" in js
+
+
+def test_preregistered_customer_creation_shows_activation_code_dialog():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    save_body = _js_function_body(js, "saveInvestmentUser")
+    dialog_body = _js_function_body(js, "showInvestmentActivationCodeResultDialog")
+
+    assert "data.activation_code" in save_body
+    assert "showInvestmentActivationCodeResultDialog(data)" in save_body
+    assert "showInvestmentModal('客户专属激活码'" in dialog_body
+    assert "invest-user-created-activation-code" in dialog_body
+    assert "activation_batch_id" in dialog_body
+    assert "copyInvestmentActivationCodeFromDialog()" in dialog_body
+    assert "window.copyInvestmentActivationCodeFromDialog = copyInvestmentActivationCodeFromDialog" in js
+
+
+def test_activation_code_ui_marks_customer_bound_codes():
+    js = CONSOLE_JS.read_text(encoding="utf-8")
+    table_body = _js_function_body(js, "renderInvestmentActivationCodesTable")
+
+    assert "activation_mode === 'preregistered'" in table_body
+    assert "客户码" in table_body
+    assert "通用码" in table_body
+    assert "customer_id" in table_body
+    assert "subscription_end_at" in table_body
+    assert "<th>类型</th>" in table_body
+    assert "<th>客户ID</th>" in table_body
+    assert "<th>订阅/结束</th>" in table_body
