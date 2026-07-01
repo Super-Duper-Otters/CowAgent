@@ -79,6 +79,7 @@ class ErrorCode(StrEnum):
     INPUT_ERROR = "input_error"
     STOCK_NOT_FOUND = "stock_not_found"
     STOCK_AMBIGUOUS = "stock_ambiguous"
+    MARKET_DATA_UNAVAILABLE = "market_data_unavailable"
     TECHNICAL_ANALYSIS_FAILED = "technical_analysis_failed"
     IMAGE_GENERATION_FAILED = "image_generation_failed"
     NO_CONTENT = "no_content"
@@ -92,6 +93,7 @@ USER_MESSAGES = {
     ErrorCode.INPUT_ERROR: "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。",
     ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ、00700.HK、AAPL.US。",
     ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",
+    ErrorCode.MARKET_DATA_UNAVAILABLE: "暂未获取到该标的行情数据，请检查代码或稍后重试。",
     ErrorCode.TECHNICAL_ANALYSIS_FAILED: "分析生成失败，请稍后重试或联系服务人员。",
     ErrorCode.IMAGE_GENERATION_FAILED: "图片生成失败，请稍后重试或联系服务人员。",
     ErrorCode.NO_CONTENT: "今日内容尚未更新，请稍后再试。",
@@ -105,6 +107,7 @@ USER_MESSAGE_CONFIG_KEYS = {
     ErrorCode.INPUT_ERROR: "reply.investment.input_error",
     ErrorCode.STOCK_NOT_FOUND: "reply.investment.stock_not_found",
     ErrorCode.STOCK_AMBIGUOUS: "reply.investment.stock_ambiguous",
+    ErrorCode.MARKET_DATA_UNAVAILABLE: "reply.investment.market_data_unavailable",
     ErrorCode.TECHNICAL_ANALYSIS_FAILED: "reply.investment.technical_analysis_failed",
     ErrorCode.IMAGE_GENERATION_FAILED: "reply.investment.image_generation_failed",
     ErrorCode.NO_CONTENT: "reply.investment.no_content",

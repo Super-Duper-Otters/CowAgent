@@ -24,6 +24,7 @@ import os
 import sys
 import argparse
 import glob
+import re
 from datetime import datetime
 
 # 字体配置
@@ -164,7 +165,18 @@ DEFAULT_CONFIG = 'T0'
 
 def _normalize_columns(df):
     """统一列名为小写 date/open/high/low/close/volume"""
-    df.columns = [c.lower().strip() for c in df.columns]
+    df.columns = [str(c).lower().strip() for c in df.columns]
+    df = df.rename(
+        columns={
+            '日期': 'date',
+            '时间': 'date',
+            '开盘': 'open',
+            '最高': 'high',
+            '最低': 'low',
+            '收盘': 'close',
+            '成交量': 'volume',
+        }
+    )
     if 'date' not in df.columns and '时间' in df.columns:
         df = df.rename(columns={'时间': 'date'})
         df['date'] = pd.to_datetime(df['date'])
@@ -191,10 +203,11 @@ def _fetch_akshare_main(config):
         raise ValueError(f"AKShare 无此接口: {func_name}")
     func = getattr(ak, func_name)
     df = func(**args)
-    if 'open' in df.columns.str.lower():
-        col_map = {c: c.lower() for c in df.columns}
+    normalized_columns = [str(c).lower().strip() for c in df.columns]
+    if 'open' in normalized_columns:
+        col_map = {c: str(c).lower().strip() for c in df.columns}
         df = df.rename(columns=col_map)
-    df.columns = [c.lower().strip() for c in df.columns]
+    df.columns = [str(c).lower().strip() for c in df.columns]
     return df
 
 
@@ -330,8 +343,111 @@ def fetch_data(config, symbol_code=None):
 
 # ==================== 主分析函数 ====================
 
+def _is_prefixed_cn_index_symbol(symbol_code):
+    return bool(re.fullmatch(r'(sh|sz|bj)\d{6}', str(symbol_code or ''), flags=re.IGNORECASE))
+
+
+def _bare_code(value):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    if text.upper().startswith('HK') and text[2:].isdigit():
+        return text[2:]
+    if '.' in text:
+        return text.split('.', 1)[0]
+    return re.sub(r'^(sh|sz|bj)', '', text, flags=re.IGNORECASE)
+
+
+def _prefixed_code(value, market=''):
+    bare = _bare_code(value)
+    prefix = str(market or '').strip().lower()
+    if prefix not in {'sh', 'sz', 'bj'}:
+        upper_value = str(value or '').strip().upper()
+        if upper_value.endswith('.SH'):
+            prefix = 'sh'
+        elif upper_value.endswith('.SZ'):
+            prefix = 'sz'
+        elif upper_value.endswith('.BJ'):
+            prefix = 'bj'
+    return f'{prefix}{bare}' if prefix and bare else str(value or '').strip()
+
+
+def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
+    label = str(name or symbol_code).strip()
+    asset = str(asset_type or '').strip().lower()
+    code_for_query = str(ts_code or symbol_code).strip()
+    if not asset and _is_prefixed_cn_index_symbol(symbol_code):
+        asset = 'index'
+
+    if asset == 'index':
+        query_symbol = _prefixed_code(code_for_query or symbol_code, market).lower()
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': 'index',
+            'data_func': 'stock_zh_index_daily',
+            'data_args': {'symbol': query_symbol},
+            'price_decimal': 2,
+            'volume_unit': '手',
+            'color_theme': '#607D8B',
+        }
+    if asset in {'etf', 'fund'}:
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': asset,
+            'data_func': 'fund_etf_hist_em',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code), 'period': 'daily', 'adjust': 'qfq'},
+            'price_decimal': 3,
+            'volume_unit': '份',
+            'color_theme': '#607D8B',
+        }
+    if asset in {'hk_stock', 'hk'}:
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': 'hk_stock',
+            'data_func': 'stock_hk_hist',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).zfill(5), 'period': 'daily', 'adjust': 'qfq'},
+            'price_decimal': 3,
+            'volume_unit': '股',
+            'color_theme': '#607D8B',
+        }
+    if asset in {'us_stock', 'us'}:
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': 'us_stock',
+            'data_func': 'stock_us_hist',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).upper(), 'period': 'daily', 'adjust': 'qfq'},
+            'price_decimal': 2,
+            'volume_unit': '股',
+            'color_theme': '#607D8B',
+        }
+    if asset == 'convertible_bond':
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': 'convertible_bond',
+            'data_func': 'bond_zh_hs_cov_daily',
+            'data_args': {'symbol': _prefixed_code(code_for_query or symbol_code, market).lower()},
+            'price_decimal': 3,
+            'volume_unit': '张',
+            'color_theme': '#607D8B',
+        }
+    return {
+        'name': label,
+        'name_short': label,
+        'asset_type': asset or 'auto',
+        'data_func': 'stock_zh_a_hist',
+        'data_args': {'symbol': _bare_code(code_for_query or symbol_code), 'period': 'daily', 'adjust': 'qfq'},
+        'price_decimal': 2,
+        'volume_unit': '手',
+        'color_theme': '#607D8B',
+    }
+
 def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookback=756,
-                 output_dir=None, show_chart=True):
+                 output_dir=None, show_chart=True, name='', asset_type='', market='', ts_code=''):
     """
     对任意标的执行完整技术分析
 
@@ -373,16 +489,7 @@ def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookb
         cfg = PRESET_CONFIGS[symbol_code]
     else:
         # 动态创建配置
-        cfg = {
-            'name': symbol_code,
-            'name_short': symbol_code,
-            'asset_type': 'auto',
-            'data_func': 'stock_zh_a_hist',
-            'data_args': {'symbol': symbol_code, 'period': 'daily', 'adjust': 'qfq'},
-            'price_decimal': 2,
-            'volume_unit': '手',
-            'color_theme': '#607D8B',
-        }
+        cfg = _dynamic_config(symbol_code, name=name, asset_type=asset_type, market=market, ts_code=ts_code)
         print(f"[自动配置] 未找到预设，使用动态配置: {cfg['name']}")
 
     name = cfg['name']
@@ -1857,6 +1964,10 @@ def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookb
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='通用技术形态分析')
     parser.add_argument('--symbol', '-s', default='T0', help='标的代码（如 T0, sh000001, 600519）')
+    parser.add_argument('--name', default='', help='标的名称（可选）')
+    parser.add_argument('--asset-type', default='', help='资产类型（如 a_share, index, etf, hk_stock, us_stock, convertible_bond）')
+    parser.add_argument('--market', default='', help='市场代码（如 SH, SZ, HK, US, CSI）')
+    parser.add_argument('--ts-code', default='', help='Tushare 标准代码（可选）')
     parser.add_argument('--config', '-c', default=None, help='预设配置名（可选）')
     parser.add_argument('--days', '-d', type=int, default=120, help='图表显示天数（默认120）')
     parser.add_argument('--lookback', '-l', type=int, default=756, help='分位数回看窗口（默认756，即3年）')
@@ -1872,4 +1983,8 @@ if __name__ == '__main__':
         percentile_lookback=args.lookback,
         output_dir=args.output,
         show_chart=not args.no_chart,
+        name=args.name,
+        asset_type=args.asset_type,
+        market=args.market,
+        ts_code=args.ts_code,
     )

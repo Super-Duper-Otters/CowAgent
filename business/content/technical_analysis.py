@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import uuid
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -84,6 +85,9 @@ class TechnicalAnalysisTarget:
     skill_symbol: str = ""
     is_a_share: bool = False
     stock_name: str = ""
+    asset_type: str = ""
+    market: str = ""
+    ts_code: str = ""
 
 
 _A_SHARE_SUFFIX_RE = re.compile(r"^(\d{6})\.(SH|SZ)$", re.IGNORECASE)
@@ -94,6 +98,7 @@ _HK_SUFFIX_RE = re.compile(r"^(\d{5})\.HK$", re.IGNORECASE)
 _HK_PREFIX_RE = re.compile(r"^HK(\d{5})$", re.IGNORECASE)
 _GOLD_ALIASES = {"GC", "COMEX_GOLD", "GOLD_COMEX"}
 _INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)(\d{6})$", re.IGNORECASE)
+_MALFORMED_INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)\d+$", re.IGNORECASE)
 _ASCII_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]+$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -117,44 +122,59 @@ def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
     index_match = _INDEX_PREFIX_RE.fullmatch(value)
     if index_match:
         normalized = f"{index_match.group(1).lower()}{index_match.group(2)}"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+        return TechnicalAnalysisTarget(
+            normalized_target=normalized,
+            skill_symbol=normalized,
+            asset_type="index",
+            market=index_match.group(1).upper(),
+        )
 
     suffix_match = _A_SHARE_SUFFIX_RE.fullmatch(value)
     if suffix_match:
         bare_symbol = suffix_match.group(1)
         normalized = f"{bare_symbol}.{suffix_match.group(2).upper()}"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=bare_symbol, is_a_share=True)
+        return TechnicalAnalysisTarget(
+            normalized_target=normalized,
+            skill_symbol=bare_symbol,
+            is_a_share=True,
+            asset_type="a_share",
+            market=suffix_match.group(2).upper(),
+            ts_code=normalized,
+        )
 
     if _A_SHARE_BARE_RE.fullmatch(value):
         return TechnicalAnalysisTarget(
             normalized_target=_standard_a_share_symbol(value),
             skill_symbol=value,
             is_a_share=True,
+            asset_type="a_share",
+            market=_standard_a_share_symbol(value).rsplit(".", 1)[1],
+            ts_code=_standard_a_share_symbol(value),
         )
 
     us_prefix_match = _US_PREFIX_RE.fullmatch(value)
     if us_prefix_match:
         normalized = f"{us_prefix_match.group(1).upper()}.US"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized, asset_type="us_stock", market="US")
 
     us_suffix_match = _US_SUFFIX_RE.fullmatch(value)
     if us_suffix_match:
         normalized = f"{us_suffix_match.group(1).upper()}.US"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized, asset_type="us_stock", market="US")
 
     hk_prefix_match = _HK_PREFIX_RE.fullmatch(value)
     if hk_prefix_match:
         normalized = f"{hk_prefix_match.group(1)}.HK"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_prefix_match.group(1)}")
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_prefix_match.group(1)}", asset_type="hk_stock", market="HK")
 
     hk_suffix_match = _HK_SUFFIX_RE.fullmatch(value)
     if hk_suffix_match:
         normalized = f"{hk_suffix_match.group(1)}.HK"
-        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_suffix_match.group(1)}")
+        return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=f"HK{hk_suffix_match.group(1)}", asset_type="hk_stock", market="HK")
 
     upper_value = value.upper()
     if upper_value in _GOLD_ALIASES:
-        return TechnicalAnalysisTarget(normalized_target="GC", skill_symbol="GC")
+        return TechnicalAnalysisTarget(normalized_target="GC", skill_symbol="GC", asset_type="gold")
 
     normalized = upper_value if _ASCII_SYMBOL_RE.fullmatch(value) else value
     return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
@@ -162,6 +182,8 @@ def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
 
 def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysisTarget, ErrorCode | None, str]:
     value = str(target or "").strip()
+    if _MALFORMED_INDEX_PREFIX_RE.fullmatch(value) and not _INDEX_PREFIX_RE.fullmatch(value):
+        return TechnicalAnalysisTarget(), ErrorCode.STOCK_NOT_FOUND, f"cannot resolve symbol: {value}"
     target_info = _technical_analysis_target(value)
     if not value or not _CJK_RE.search(value):
         if target_info.normalized_target:
@@ -173,6 +195,9 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
                     skill_symbol=target_info.skill_symbol,
                     is_a_share=target_info.is_a_share,
                     stock_name=stock_name,
+                    asset_type=str(stock.get("asset_type") or target_info.asset_type),
+                    market=str(stock.get("market") or target_info.market),
+                    ts_code=str(stock.get("ts_code") or target_info.ts_code),
                 )
         return target_info, None, ""
 
@@ -183,12 +208,16 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
         return TechnicalAnalysisTarget(), ErrorCode.STOCK_NOT_FOUND, f"cannot resolve stock name: {value}"
 
     resolved = _technical_analysis_target(symbol)
+    stock = get_stock_symbol_by_code(symbol)
     return (
         TechnicalAnalysisTarget(
             normalized_target=resolved.normalized_target,
             skill_symbol=resolved.skill_symbol,
             is_a_share=resolved.is_a_share,
-            stock_name=value,
+            stock_name=str(stock.get("name") or value),
+            asset_type=str(stock.get("asset_type") or resolved.asset_type),
+            market=str(stock.get("market") or resolved.market),
+            ts_code=str(stock.get("ts_code") or resolved.ts_code),
         ),
         None,
         "",
@@ -259,7 +288,15 @@ def _force_technical_analysis_display_target(standard_text: str, target_info: Te
 DEFAULT_TECHNICAL_ANALYSIS_PATH = "builtin/components/technical-analysis/scripts/analyze_universal.py"
 
 
-def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
+def _run_skill(
+    symbol: str,
+    output_dir: Path,
+    *,
+    name: str = "",
+    asset_type: str = "",
+    market: str = "",
+    ts_code: str = "",
+) -> tuple[Path, Path]:
     skill_path = Path(str(get_config("technical_analysis.skill_path") or DEFAULT_TECHNICAL_ANALYSIS_PATH))
     if not skill_path.is_absolute():
         skill_path = Path.cwd() / skill_path
@@ -268,20 +305,68 @@ def _run_skill(symbol: str, output_dir: Path) -> tuple[Path, Path]:
     if tushare_token:
         env["TUSHARE_TOKEN"] = tushare_token
     command = [sys.executable, str(skill_path), "--symbol", symbol, "--output", str(output_dir)]
-    subprocess.run(
-        command,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-    )
+    if name:
+        command.extend(["--name", str(name)])
+    if asset_type:
+        command.extend(["--asset-type", str(asset_type)])
+    if market:
+        command.extend(["--market", str(market)])
+    if ts_code:
+        command.extend(["--ts-code", str(ts_code)])
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+    except subprocess.CalledProcessError as exc:
+        parts = [str(exc)]
+        if exc.stdout:
+            parts.append(str(exc.stdout))
+        if exc.stderr:
+            parts.append(str(exc.stderr))
+        raise RuntimeError("\n".join(parts)) from exc
     reports = sorted(output_dir.glob("*技术分析报告*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
     charts = sorted(output_dir.glob("*_TA_*.png"), key=lambda path: path.stat().st_mtime, reverse=True)
     if not reports or not charts:
         raise RuntimeError("technical analysis skill did not produce report or main chart")
     return reports[0], charts[0]
+
+
+def _run_skill_for_target(target_info: TechnicalAnalysisTarget, output_dir: Path) -> tuple[Path, Path]:
+    kwargs = {
+        "name": target_info.stock_name,
+        "asset_type": target_info.asset_type,
+        "market": target_info.market,
+        "ts_code": target_info.ts_code,
+    }
+    try:
+        signature = inspect.signature(_run_skill)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    return _run_skill(target_info.skill_symbol or _skill_symbol(target_info.normalized_target), output_dir, **kwargs)
+
+
+def _classify_technical_analysis_failure(detail: str) -> ErrorCode:
+    text = str(detail or "")
+    data_failure_markers = (
+        "所有数据源失败",
+        "所有数据源均失败",
+        "数据量不足",
+        "无 symbol_code",
+        "未配置 TUSHARE_TOKEN",
+        "no data",
+        "empty data",
+    )
+    if any(marker.lower() in text.lower() for marker in data_failure_markers):
+        return ErrorCode.MARKET_DATA_UNAVAILABLE
+    return ErrorCode.TECHNICAL_ANALYSIS_FAILED
 
 
 def _configured_skill_path() -> Path:
@@ -797,7 +882,7 @@ def run_technical_analysis(
     output_dir = output_base / _target_path_part(symbol.replace(".", "_")) / uuid.uuid4().hex
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        generated_report_path, generated_chart_path = _run_skill(target_info.skill_symbol or _skill_symbol(symbol), output_dir)
+        generated_report_path, generated_chart_path = _run_skill_for_target(target_info, output_dir)
         report_text = generated_report_path.read_text(encoding="utf-8")
         report_text_with_context = _technical_analysis_report_with_target_context(report_text, target_info)
         ai_result = generate_technical_analysis_text(report_text_with_context)
@@ -864,9 +949,11 @@ def run_technical_analysis(
             detail=market_date_warning,
         )
     except Exception as exc:
+        detail = sanitize_sensitive_text(str(exc))
+        code = _classify_technical_analysis_failure(detail)
         return TechnicalAnalysisResult(
             False,
-            error_code=ErrorCode.TECHNICAL_ANALYSIS_FAILED,
-            user_prompt=user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED),
-            detail=sanitize_sensitive_text(str(exc)),
+            error_code=code,
+            user_prompt=user_message(code),
+            detail=detail,
         )
