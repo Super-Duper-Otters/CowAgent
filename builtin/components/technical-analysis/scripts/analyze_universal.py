@@ -247,6 +247,13 @@ def _fetch_baostock_stock(code):
     return df
 
 
+def _baostock_symbol(value, market=''):
+    prefixed = _prefixed_code(value, market)
+    if re.fullmatch(r'(sh|sz|bj)\d{6}', prefixed, flags=re.IGNORECASE):
+        return f'{prefixed[:2].lower()}.{prefixed[2:]}'
+    return str(value or '').strip()
+
+
 def fetch_data(config, symbol_code=None):
     """
     根据配置获取数据（多源自动切换）。
@@ -314,7 +321,9 @@ def fetch_data(config, symbol_code=None):
     try:
         if symbol_code:
             print(f"[数据源3/3] BaoStock: {symbol_code} ...")
-            bs_code = f"sh.{symbol_code}" if symbol_code.startswith('6') else f"sz.{symbol_code}"
+            bs_code = str(config.get('baostock_symbol') or '').strip()
+            if not bs_code:
+                bs_code = f"sh.{symbol_code}" if symbol_code.startswith('6') else f"sz.{symbol_code}"
             df = _fetch_baostock_stock(bs_code)
             df = _normalize_columns(df)
             df = df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
@@ -387,17 +396,20 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'asset_type': 'index',
             'data_func': 'stock_zh_index_daily',
             'data_args': {'symbol': query_symbol},
+            'baostock_symbol': _baostock_symbol(query_symbol, market),
             'price_decimal': 2,
             'volume_unit': '手',
             'color_theme': '#607D8B',
         }
     if asset in {'etf', 'fund'}:
+        query_symbol = _prefixed_code(code_for_query or symbol_code, market).lower()
         return {
             'name': label,
             'name_short': label,
             'asset_type': asset,
-            'data_func': 'fund_etf_hist_em',
-            'data_args': {'symbol': _bare_code(code_for_query or symbol_code), 'period': 'daily', 'adjust': 'qfq'},
+            'data_func': 'fund_etf_hist_sina',
+            'data_args': {'symbol': query_symbol},
+            'baostock_symbol': _baostock_symbol(query_symbol, market),
             'price_decimal': 3,
             'volume_unit': '份',
             'color_theme': '#607D8B',
@@ -407,8 +419,8 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': 'hk_stock',
-            'data_func': 'stock_hk_hist',
-            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).zfill(5), 'period': 'daily', 'adjust': 'qfq'},
+            'data_func': 'stock_hk_daily',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).zfill(5)},
             'price_decimal': 3,
             'volume_unit': '股',
             'color_theme': '#607D8B',
@@ -418,8 +430,8 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': 'us_stock',
-            'data_func': 'stock_us_hist',
-            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).upper(), 'period': 'daily', 'adjust': 'qfq'},
+            'data_func': 'stock_us_daily',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).upper()},
             'price_decimal': 2,
             'volume_unit': '股',
             'color_theme': '#607D8B',
@@ -441,6 +453,7 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
         'asset_type': asset or 'auto',
         'data_func': 'stock_zh_a_hist',
         'data_args': {'symbol': _bare_code(code_for_query or symbol_code), 'period': 'daily', 'adjust': 'qfq'},
+        'baostock_symbol': _baostock_symbol(code_for_query or symbol_code, market),
         'price_decimal': 2,
         'volume_unit': '手',
         'color_theme': '#607D8B',

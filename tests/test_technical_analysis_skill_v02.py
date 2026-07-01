@@ -132,9 +132,9 @@ def test_v02_dynamic_index_symbol_uses_index_daily_interface(monkeypatch, tmp_pa
 @pytest.mark.parametrize(
     ("symbol", "asset_type", "market", "ts_code", "expected_name", "expected_func", "expected_args"),
     [
-        ("510300", "etf", "SH", "510300.SH", "沪深300ETF", "fund_etf_hist_em", {"symbol": "510300", "period": "daily", "adjust": "qfq"}),
-        ("HK00700", "hk_stock", "HK", "00700.HK", "腾讯控股", "stock_hk_hist", {"symbol": "00700", "period": "daily", "adjust": "qfq"}),
-        ("AAPL.US", "us_stock", "US", "AAPL", "苹果", "stock_us_hist", {"symbol": "AAPL", "period": "daily", "adjust": "qfq"}),
+        ("510300", "etf", "SH", "510300.SH", "沪深300ETF", "fund_etf_hist_sina", {"symbol": "sh510300"}),
+        ("HK00700", "hk_stock", "HK", "00700.HK", "腾讯控股", "stock_hk_daily", {"symbol": "00700"}),
+        ("AAPL.US", "us_stock", "US", "AAPL", "苹果", "stock_us_daily", {"symbol": "AAPL"}),
         ("113000", "convertible_bond", "SH", "113000.SH", "可转债样例", "bond_zh_hs_cov_daily", {"symbol": "sh113000"}),
     ],
 )
