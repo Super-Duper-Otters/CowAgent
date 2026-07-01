@@ -30,6 +30,9 @@ THINKING_TIMEOUT_KEY = "reply.wechatmp.thinking_timeout"
 CHAT_PREFIX_HINT_KEY = "reply.wechatmp.chat_prefix_hint"
 DEFAULT_CHAT_HINT_KEY = "reply.wechatmp.default_chat_hint"
 UNKNOWN_ERROR_KEY = "reply.wechatmp.unknown_error"
+SYSTEM_ERROR_KEY = "reply.wechatmp.system_error"
+UNSUPPORTED_MESSAGE_KEY = "reply.wechatmp.unsupported_message"
+CONTINUE_PROMPT_KEY = "reply.wechatmp.continue_prompt"
 RUNNING_STALE_SECONDS = 15 * 60
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -420,6 +423,14 @@ def _pending_result_invalidated_prompt():
     return _reply_text("reply.wechatmp.pending_result_invalidated", "内容已失效，请重新发起请求。")
 
 
+def _system_error_text() -> str:
+    return _reply_text(SYSTEM_ERROR_KEY, "系统暂时繁忙，请稍后重试。")
+
+
+def _unsupported_message_text() -> str:
+    return _reply_text(UNSUPPORTED_MESSAGE_KEY, "暂不支持该消息类型，请发送文字、语音或图片。")
+
+
 def _cleanup_invalid_cached_sources(cache, exclude_receiver=None):
     cleanup = getattr(cache, "discard_invalid_sources", None)
     if not cleanup:
@@ -549,7 +560,7 @@ def _render_cached_reply(channel, msg, encrypt_func, from_user, message_id, cont
         if len(reply_content.encode("utf8")) <= MAX_UTF8_LEN:
             reply_text = reply_content
         else:
-            continue_text = "\n【未完待续，回复任意文字以继续】"
+            continue_text = _reply_text(CONTINUE_PROMPT_KEY, "\n【未完待续，回复任意文字以继续】")
             splits = split_string_by_utf8_length(
                 reply_content,
                 MAX_UTF8_LEN - len(continue_text.encode("utf-8")),
@@ -959,7 +970,9 @@ class Query:
                     return "success"
             else:
                 logger.info("暂且不处理")
+                replyPost = create_reply(_unsupported_message_text(), msg)
+                return encrypt_func(replyPost.render())
             return "success"
         except Exception as exc:
             logger.exception(exc)
-            return exc
+            return _system_error_text()

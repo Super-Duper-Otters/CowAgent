@@ -108,6 +108,31 @@ class WechatMPChannel(ChatChannel):
             raw = raw[:160] + "..."
         return "{}失败：{}".format(action, raw)
 
+    def _reply_text(self, key, default):
+        try:
+            from business.config.reply_config import get_reply_text
+
+            return get_reply_text(key, default)
+        except Exception:
+            return default
+
+    def _cache_delivery_error_text(self, receiver, cache_title, text, service_type="", module_key="", request_id="", source_type="", source_id=""):
+        try:
+            self.cache_dict.discard_result(receiver)
+        except Exception:
+            pass
+        self.cache_dict.append_reply(
+            receiver,
+            "text",
+            text,
+            cache_title,
+            service_type=service_type,
+            module_key=module_key,
+            request_id=request_id,
+            source_type=source_type,
+            source_id=source_id,
+        )
+
     def startup(self):
         urls = ("/wx", "channel.wechatmp.passive_reply.Query")
         app = web.application(urls, globals(), autoreload=False)
@@ -235,6 +260,16 @@ class WechatMPChannel(ChatChannel):
                                 # todo check media_id
                         except WeChatClientException as e:
                             logger.error("[wechatmp] upload voice failed: {}".format(e))
+                            self._cache_delivery_error_text(
+                                receiver,
+                                cache_title,
+                                self._reply_text("reply.wechatmp.media_upload_failed", "媒体上传失败，请稍后重试或联系服务人员。"),
+                                business_service_type,
+                                business_module_key,
+                                business_request_id,
+                                business_source_type,
+                                business_source_id,
+                            )
                             return
                         media_id = response["media_id"]
                         logger.info("[wechatmp] voice uploaded, receiver {}, media_id {}".format(receiver, media_id))
@@ -252,6 +287,16 @@ class WechatMPChannel(ChatChannel):
                 except ImportError as e:
                     logger.error("[wechatmp] voice conversion failed: {}".format(e))
                     logger.error("[wechatmp] please install pydub: pip install pydub")
+                    self._cache_delivery_error_text(
+                        receiver,
+                        cache_title,
+                        self._reply_text("reply.wechatmp.media_read_failed", "媒体读取失败，请稍后重试或联系服务人员。"),
+                        business_service_type,
+                        business_module_key,
+                        business_request_id,
+                        business_source_type,
+                        business_source_id,
+                    )
                     return
 
             elif reply.type in (ReplyType.IMAGE_URL, ReplyType.IMAGE):  # 从网络或本地文件读取图片
@@ -263,7 +308,23 @@ class WechatMPChannel(ChatChannel):
                         logger.info("[wechatmp] image media cache hit, receiver {}, media_id {}".format(receiver, cached_media_id))
                         uploaded_media_ids.append(cached_media_id)
                         continue
-                    image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    try:
+                        image_storage, image_type = self._image_storage_from_path_or_url(image_content)
+                    except Exception as e:
+                        warning = self._wechat_error_text("图片读取", e)
+                        logger.error("[wechatmp] load image failed: {}".format(e))
+                        self._record_investment_delivery_warning(business_request_id, warning)
+                        self._cache_delivery_error_text(
+                            receiver,
+                            cache_title,
+                            self._reply_text("reply.wechatmp.media_read_failed", "媒体读取失败，请稍后重试或联系服务人员。"),
+                            business_service_type,
+                            business_module_key,
+                            business_request_id,
+                            business_source_type,
+                            business_source_id,
+                        )
+                        return
                     filename = receiver + "-" + str(context["msg"].msg_id) + "." + image_type
                     content_type = "image/" + image_type
                     try:
@@ -273,7 +334,16 @@ class WechatMPChannel(ChatChannel):
                         warning = self._wechat_error_text("图片上传", e)
                         logger.error("[wechatmp] upload image failed: {}".format(e))
                         self._record_investment_delivery_warning(business_request_id, warning)
-                        self.cache_dict.discard_result(receiver)
+                        self._cache_delivery_error_text(
+                            receiver,
+                            cache_title,
+                            self._reply_text("reply.wechatmp.media_upload_failed", "媒体上传失败，请稍后重试或联系服务人员。"),
+                            business_service_type,
+                            business_module_key,
+                            business_request_id,
+                            business_source_type,
+                            business_source_id,
+                        )
                         return
                     finally:
                         local_image_path = image_content[7:] if isinstance(image_content, str) and image_content.startswith("file://") else image_content
@@ -315,6 +385,16 @@ class WechatMPChannel(ChatChannel):
                     logger.debug("[wechatmp] upload video response: {}".format(response))
                 except WeChatClientException as e:
                     logger.error("[wechatmp] upload video failed: {}".format(e))
+                    self._cache_delivery_error_text(
+                        receiver,
+                        cache_title,
+                        self._reply_text("reply.wechatmp.media_upload_failed", "媒体上传失败，请稍后重试或联系服务人员。"),
+                        business_service_type,
+                        business_module_key,
+                        business_request_id,
+                        business_source_type,
+                        business_source_id,
+                    )
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))
@@ -341,6 +421,16 @@ class WechatMPChannel(ChatChannel):
                     logger.debug("[wechatmp] upload video response: {}".format(response))
                 except WeChatClientException as e:
                     logger.error("[wechatmp] upload video failed: {}".format(e))
+                    self._cache_delivery_error_text(
+                        receiver,
+                        cache_title,
+                        self._reply_text("reply.wechatmp.media_upload_failed", "媒体上传失败，请稍后重试或联系服务人员。"),
+                        business_service_type,
+                        business_module_key,
+                        business_request_id,
+                        business_source_type,
+                        business_source_id,
+                    )
                     return
                 media_id = response["media_id"]
                 logger.info("[wechatmp] video uploaded, receiver {}, media_id {}".format(receiver, media_id))

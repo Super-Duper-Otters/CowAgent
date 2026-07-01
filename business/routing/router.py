@@ -9,18 +9,11 @@ from business.records.business_records import (
     mark_business_failed as fail_request_record,
 )
 from business.config.config_service import get_config, sanitize_sensitive_text
-from business.config.constants import ErrorCode, ServiceType
+from business.config.constants import ErrorCode, ServiceType, user_message
 from business.accounts.permission_service import (
     verify_customer_access as verify_user_access,
     verify_customer_business_access as verify_permission,
 )
-
-
-DEFAULT_UNMATCHED_PROMPT = """请输入以下格式之一：
-1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析
-2. 利率
-3. 转债"""
-RUNNING_JOB_PROMPT = "正在运行，请稍候。"
 
 
 @dataclass
@@ -147,6 +140,7 @@ def handle_text_message(
 
     route = parse_route(raw_input)
     if not route.matched:
+        prompt = user_message(route.error_code or ErrorCode.INPUT_ERROR)
         request_id = _create_request_record_with_customer(
             openid,
             raw_input,
@@ -157,14 +151,14 @@ def handle_text_message(
         fail_request_record(
             request_id,
             route.error_code or ErrorCode.INPUT_ERROR,
-            DEFAULT_UNMATCHED_PROMPT,
+            prompt,
             "unmatched business route",
             elapsed(),
         )
         return BusinessReply(
             not _agent_fallback_enabled(),
             False,
-            DEFAULT_UNMATCHED_PROMPT,
+            prompt,
             [],
             ServiceType.UNMATCHED,
             route.error_code,

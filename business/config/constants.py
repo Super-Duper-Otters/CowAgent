@@ -77,6 +77,7 @@ class ErrorCode(StrEnum):
     USER_DISABLED = "user_disabled"
     AUTH_EXPIRED = "auth_expired"
     INPUT_ERROR = "input_error"
+    RUNNING = "running"
     STOCK_NOT_FOUND = "stock_not_found"
     STOCK_AMBIGUOUS = "stock_ambiguous"
     MARKET_DATA_UNAVAILABLE = "market_data_unavailable"
@@ -91,6 +92,7 @@ USER_MESSAGES = {
     ErrorCode.USER_DISABLED: "您的服务已停用，如需恢复请联系服务人员。",
     ErrorCode.AUTH_EXPIRED: "您的授权已过期，如需续期请联系服务人员。",
     ErrorCode.INPUT_ERROR: "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。",
+    ErrorCode.RUNNING: "正在运行，请稍候。",
     ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ、00700.HK、AAPL.US。",
     ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",
     ErrorCode.MARKET_DATA_UNAVAILABLE: "暂未获取到该标的行情数据，请检查代码或稍后重试。",
@@ -105,6 +107,7 @@ USER_MESSAGE_CONFIG_KEYS = {
     ErrorCode.USER_DISABLED: "reply.investment.user_disabled",
     ErrorCode.AUTH_EXPIRED: "reply.investment.auth_expired",
     ErrorCode.INPUT_ERROR: "reply.investment.input_error",
+    ErrorCode.RUNNING: "reply.investment.running",
     ErrorCode.STOCK_NOT_FOUND: "reply.investment.stock_not_found",
     ErrorCode.STOCK_AMBIGUOUS: "reply.investment.stock_ambiguous",
     ErrorCode.MARKET_DATA_UNAVAILABLE: "reply.investment.market_data_unavailable",

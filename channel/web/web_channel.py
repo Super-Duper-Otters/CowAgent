@@ -451,11 +451,11 @@ def _build_investment_web_reply(session_id: str, prompt: str):
         return Reply(ReplyType.TEXT, _format_investment_web_reply(reply))
 
     from business.config.config_service import get_config
-    from business.routing.router import DEFAULT_UNMATCHED_PROMPT
+    from business.config.constants import ErrorCode, user_message
 
     if get_config("router.enable_web_open_chat", False):
         return None
-    return Reply(ReplyType.TEXT, DEFAULT_UNMATCHED_PROMPT)
+    return Reply(ReplyType.TEXT, user_message(ErrorCode.INPUT_ERROR))
 
 
 @singleton

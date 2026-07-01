@@ -16,10 +16,6 @@ from business.execution.technical_analysis_executor import (
 from business.health.job_service import start_cache_job_if_absent, start_job_if_absent_with_metadata
 from business.products.product_service import replace_active_product
 
-
-RUNNING_JOB_PROMPT = "正在运行，请稍候。"
-
-
 def _image_reply(paths: list[str]) -> str:
     return "\n".join(f"[图片: {path}]" for path in paths)
 
@@ -129,15 +125,16 @@ def handle_technical_analysis(
             route.service_type,
             record_context=record_context,
             **customer_metadata,
-        )
+    )
     if not job.created:
+        running_prompt = user_message(ErrorCode.RUNNING)
         return BusinessReply(
             True,
             False,
-            RUNNING_JOB_PROMPT,
+            running_prompt,
             [],
             route.service_type,
-            user_prompt=RUNNING_JOB_PROMPT,
+            user_prompt=running_prompt,
             detail=job.record.request_id,
             request_id=job.record.request_id,
         )

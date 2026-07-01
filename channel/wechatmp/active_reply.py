@@ -13,8 +13,19 @@ from common.log import logger
 from config import conf, subscribe_msg
 
 
-ACTIVE_IMMEDIATE_ACK_TEXT = "收到，正在运行，请稍候。"
-ACTIVE_WAITING_TEXT = "正在运行，请稍候。"
+ACTIVE_IMMEDIATE_ACK_KEY = "reply.wechatmp.active_immediate_ack"
+ACTIVE_WAITING_KEY = "reply.wechatmp.active_waiting"
+SYSTEM_ERROR_KEY = "reply.wechatmp.system_error"
+UNSUPPORTED_MESSAGE_KEY = "reply.wechatmp.unsupported_message"
+
+
+def _reply_text(key, default):
+    try:
+        from business.config.reply_config import get_reply_text
+
+        return get_reply_text(key, default)
+    except Exception:
+        return default
 
 
 def _render_text_reply(text, msg, encrypt_func):
@@ -103,7 +114,7 @@ class Query:
 
                 if _is_active_running(channel, from_user):
                     logger.info("[wechatmp] active task still running for {}".format(from_user))
-                    return _render_text_reply(ACTIVE_WAITING_TEXT, msg, encrypt_func)
+                    return _render_text_reply(_reply_text(ACTIVE_WAITING_KEY, "正在运行，请稍候。"), msg, encrypt_func)
 
                 logger.info(
                     "[wechatmp] {}:{} Receive post query {} {}: {}".format(
@@ -121,9 +132,9 @@ class Query:
                 if context:
                     if not _try_mark_active_running(channel, from_user):
                         logger.info("[wechatmp] active task became running for {}".format(from_user))
-                        return _render_text_reply(ACTIVE_WAITING_TEXT, msg, encrypt_func)
+                        return _render_text_reply(_reply_text(ACTIVE_WAITING_KEY, "正在运行，请稍候。"), msg, encrypt_func)
                     channel.produce(context)
-                    return _render_text_reply(ACTIVE_IMMEDIATE_ACK_TEXT, msg, encrypt_func)
+                    return _render_text_reply(_reply_text(ACTIVE_IMMEDIATE_ACK_KEY, "收到，正在运行，请稍候。"), msg, encrypt_func)
                 # The reply will be sent by channel.send() in another thread
                 return "success"
             elif msg.type == "event":
@@ -137,7 +148,8 @@ class Query:
                     return "success"
             else:
                 logger.info("暂且不处理")
+                return _render_text_reply(_reply_text(UNSUPPORTED_MESSAGE_KEY, "暂不支持该消息类型，请发送文字、语音或图片。"), msg, encrypt_func)
             return "success"
         except Exception as exc:
             logger.exception(exc)
-            return exc
+            return _reply_text(SYSTEM_ERROR_KEY, "系统暂时繁忙，请稍后重试。")
