@@ -215,6 +215,8 @@ available_setting = {
     "web_password": "",  # Web console password; empty means no authentication required
     "web_session_expire_days": 30,  # Auth session expiry in days
     "investment.technical_analysis.cache_close_invalidate_time": "15:30",  # 技术分析缓存收盘后软失效检查时间（北京时间，HH:MM）
+    "investment_ta_allow_unresolved_bare_code_analysis": False,  # 技术分析：裸6位代码未命中字典时是否仍允许进入耗时行情查询
+    "investment_web_wechatmp_chain_verification": False,  # Web对话是否允许接入公众号链路验证
     "agent": True,  # 是否开启Agent模式
     "agent_memory_index": False,  # 是否启用长期记忆索引；关闭时不创建 SQLite memory index
     "agent_workspace": "~/cow",  # agent工作空间路径，用于存储skills、memory等

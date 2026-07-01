@@ -29,7 +29,13 @@ from business.content.market_date_resolver import MarketDateResolution, MarketDa
 from business.content.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from business.schema.tables import investment_products, investment_request_records
 from business.schema.storage import get_storage_dirs
-from business.content.stock_resolver import get_stock_symbol_by_code, get_tushare_token, list_exact_stock_name_matches, resolve_stock
+from business.content.stock_resolver import (
+    get_stock_symbol_by_code,
+    get_tushare_token,
+    list_exact_stock_name_matches,
+    list_index_symbol_matches_for_bare_code,
+    resolve_stock,
+)
 from business.versioning import file_fingerprint
 
 
@@ -199,6 +205,20 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
                     market=str(stock.get("market") or target_info.market),
                     ts_code=str(stock.get("ts_code") or target_info.ts_code),
                 )
+            elif _A_SHARE_BARE_RE.fullmatch(value):
+                index_matches = list_index_symbol_matches_for_bare_code(value)
+                if index_matches:
+                    return (
+                        TechnicalAnalysisTarget(),
+                        ErrorCode.STOCK_NOT_FOUND,
+                        _bare_code_index_suggestion_detail(value, index_matches),
+                    )
+                if not allow_unresolved_bare_code_analysis():
+                    return (
+                        TechnicalAnalysisTarget(),
+                        ErrorCode.STOCK_NOT_FOUND,
+                        _unknown_bare_code_detail(value),
+                    )
         return target_info, None, ""
 
     symbol, error = resolve_stock(value, auto_refresh_on_miss=False)
@@ -239,6 +259,42 @@ def _ambiguous_stock_detail(value: str) -> str:
     if example_code:
         lines.append(f"例如：{example_code} 技术分析")
     return "\n".join(lines)
+
+
+def _bare_code_index_suggestion_detail(value: str, matches: list[dict[str, str]]) -> str:
+    bare_code = str(value or "").strip()
+    if not matches:
+        return ""
+    if len(matches) == 1:
+        row = matches[0]
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "该指数").strip()
+        return f"未找到 {bare_code} 对应的个股。若您要分析指数“{name}”，请发送：{code} 技术分析"
+    lines = [f"未找到 {bare_code} 对应的个股。若您要分析指数，请使用指数代码重新发送："]
+    for index, row in enumerate(matches, start=1):
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "指数").strip()
+        lines.append(f"{index}. {code} {name}".strip())
+    return "\n".join(lines)
+
+
+def _unknown_bare_code_detail(value: str) -> str:
+    return f"未找到 {str(value or '').strip()} 对应的个股或指数，请检查代码。"
+
+
+def _is_user_facing_resolution_detail(detail: str) -> bool:
+    text = str(detail or "")
+    return text.startswith("未找到 ") and ("请发送" in text or "重新发送" in text or "请检查代码" in text)
+
+
+def _technical_analysis_error_prompt(error: ErrorCode, detail: str = "") -> str:
+    if error == ErrorCode.STOCK_NOT_FOUND and _is_user_facing_resolution_detail(detail):
+        return detail
+    return user_message(error)
+
+
+def allow_unresolved_bare_code_analysis() -> bool:
+    return bool(get_config(ALLOW_UNRESOLVED_BARE_CODE_ANALYSIS_CONFIG_KEY, False))
 
 
 def _skill_symbol(symbol: str) -> str:
@@ -286,6 +342,7 @@ def _force_technical_analysis_display_target(standard_text: str, target_info: Te
 
 
 DEFAULT_TECHNICAL_ANALYSIS_PATH = "builtin/components/technical-analysis/scripts/analyze_universal.py"
+ALLOW_UNRESOLVED_BARE_CODE_ANALYSIS_CONFIG_KEY = "technical_analysis.allow_unresolved_bare_code_analysis"
 
 
 def _run_skill(
@@ -732,7 +789,7 @@ def run_technical_analysis(
         return TechnicalAnalysisResult(
             False,
             error_code=error,
-            user_prompt=user_message(error),
+            user_prompt=_technical_analysis_error_prompt(error, error_detail),
             detail=error_detail,
         )
     symbol = target_info.normalized_target

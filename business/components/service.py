@@ -29,6 +29,10 @@ def _is_runtime_component(definition) -> bool:
 
 def _component_settings(definition) -> dict:
     settings = {"enabled": is_business_enabled(definition)}
+    if definition.business_key == "technical-analysis":
+        settings["allow_unresolved_bare_code_analysis"] = bool(
+            get_config("technical_analysis.allow_unresolved_bare_code_analysis", False)
+        )
     if definition.uses_triggers:
         settings["triggers"] = list(resolve_triggers(definition))
     if definition.prompt_key:
@@ -330,6 +334,17 @@ def save_component_settings(
         save_config(
             definition.prompt_key,
             str(values.get("prompt") or ""),
+            operator_role=operator_role,
+            operator=operator,
+            actor=actor,
+        )
+
+    if "allow_unresolved_bare_code_analysis" in values:
+        if definition.business_key != "technical-analysis":
+            raise ValueError("component does not accept unresolved bare code analysis setting")
+        save_config(
+            "technical_analysis.allow_unresolved_bare_code_analysis",
+            bool(values.get("allow_unresolved_bare_code_analysis")),
             operator_role=operator_role,
             operator=operator,
             actor=actor,

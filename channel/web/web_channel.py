@@ -468,6 +468,34 @@ def _build_investment_web_reply(session_id: str, prompt: str):
     return Reply(ReplyType.TEXT, user_message(ErrorCode.INPUT_ERROR))
 
 
+def _build_web_open_chat_guard_reply(prompt: str):
+    from business.routing.router import parse_route
+    from business.config.config_service import get_config
+    from business.config.constants import ErrorCode, user_message
+
+    if parse_route(prompt).matched:
+        return None
+    if get_config("router.enable_web_open_chat", False):
+        return None
+    return Reply(ReplyType.TEXT, user_message(ErrorCode.INPUT_ERROR))
+
+
+def _queue_web_immediate_reply(channel, session_id: str, request_id: str, reply: Reply, use_sse: bool):
+    if use_sse:
+        channel.sse_queues[request_id].put({
+            "type": "done",
+            "content": reply.content if reply.content is not None else "",
+            "request_id": request_id,
+            "timestamp": time.time(),
+        })
+    else:
+        channel.session_queues[session_id].put({
+            "request_id": request_id,
+            "content": reply.content if reply.content is not None else "",
+            "timestamp": time.time(),
+        })
+
+
 @singleton
 class WebChannel(ChatChannel):
     channel_type = "web"
@@ -867,11 +895,61 @@ class WebChannel(ChatChannel):
             request_id = self._generate_request_id()
             self.request_to_session[request_id] = session_id
 
-            if session_id not in self.session_queues:
+            session_queue_existed = session_id in self.session_queues
+            if not session_queue_existed:
                 self.session_queues[session_id] = Queue()
 
             if use_sse:
                 self.sse_queues[request_id] = Queue()
+
+            def _cleanup_request_state():
+                self.sse_queues.pop(request_id, None)
+                self.request_to_session.pop(request_id, None)
+                if not session_queue_existed:
+                    self.session_queues.pop(session_id, None)
+
+            from business.config.config_service import get_config
+
+            wechatmp_chain_requested = bool(json_data.get("wechatmp_chain", False))
+            wechatmp_chain_enabled = get_config("router.enable_web_wechatmp_chain_verification", False)
+            wechatmp_chain = wechatmp_chain_requested or bool(wechatmp_chain_enabled)
+            if wechatmp_chain:
+                if not wechatmp_chain_enabled:
+                    _cleanup_request_state()
+                    return json.dumps({"status": "error", "message": "公众号链路验证未开启"}, ensure_ascii=False)
+
+                try:
+                    from channel.wechatmp.simulator import simulate_wechatmp_text_message
+
+                    simulated = simulate_wechatmp_text_message(session_id, prompt, request_id=request_id)
+                    reply = Reply(ReplyType.TEXT, simulated.content)
+                    _persist_web_visible_turn(session_id, prompt, reply)
+                    if use_sse:
+                        self.sse_queues[request_id].put({
+                            "type": "done",
+                            "content": simulated.content,
+                            "request_id": request_id,
+                            "timestamp": time.time(),
+                        })
+                    else:
+                        self.session_queues[session_id].put({
+                            "request_id": request_id,
+                            "content": simulated.content,
+                            "timestamp": time.time(),
+                        })
+                    self.request_to_session.pop(request_id, None)
+                    return json.dumps({"status": "success", "request_id": request_id, "stream": use_sse}, ensure_ascii=False)
+                except Exception:
+                    logger.exception("[WebChannel] WeChatMP chain verification failed")
+                    _cleanup_request_state()
+                    return json.dumps({"status": "error", "message": "公众号链路验证失败，请稍后再试"}, ensure_ascii=False)
+
+            guard_reply = _build_web_open_chat_guard_reply(prompt)
+            if guard_reply is not None:
+                _persist_web_visible_turn(session_id, prompt, guard_reply)
+                _queue_web_immediate_reply(self, session_id, request_id, guard_reply, use_sse)
+                self.request_to_session.pop(request_id, None)
+                return json.dumps({"status": "success", "request_id": request_id, "stream": use_sse}, ensure_ascii=False)
 
             trigger_prefixs = conf().get("single_chat_prefix", [""])
             if check_prefix(prompt, trigger_prefixs) is None:
@@ -4626,6 +4704,8 @@ class InvestmentComponentSettingsHandler:
                 audit_keys.append(definition.triggers_config_key)
             if "prompt" in body and definition.prompt_key:
                 audit_keys.append(definition.prompt_key)
+            if "allow_unresolved_bare_code_analysis" in body and definition.business_key == "technical-analysis":
+                audit_keys.append("technical_analysis.allow_unresolved_bare_code_analysis")
             before_state = get_configs(audit_keys, masked=True) if audit_keys else {}
 
             component = save_component_settings(
@@ -4642,7 +4722,7 @@ class InvestmentComponentSettingsHandler:
                 "investment_component",
                 component_key,
                 admin=admin,
-                detail={"keys": [key for key in ("enabled", "triggers", "prompt") if key in body]},
+                detail={"keys": [key for key in ("enabled", "triggers", "prompt", "allow_unresolved_bare_code_analysis") if key in body]},
                 before_state=before_state,
                 after_state=after_state,
             )

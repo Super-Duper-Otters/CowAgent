@@ -35,6 +35,8 @@
   "web_host": "",
   "web_password": "",
   "investment.technical_analysis.cache_close_invalidate_time": "15:30",
+  "investment_ta_allow_unresolved_bare_code_analysis": false,
+  "investment_web_wechatmp_chain_verification": false,
   "agent": true,
   "agent_memory_index": false,
   "agent_max_context_tokens": 50000,

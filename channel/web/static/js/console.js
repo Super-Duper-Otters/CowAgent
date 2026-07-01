@@ -575,6 +575,7 @@ const INVEST_CONFIG_GROUPS = [
         title: '后台Web对话',
         keys: [
             ['router.enable_web_open_chat', 'Web 普通开放聊天（不使用记忆、技能、工具）', 'checkbox'],
+            ['router.enable_web_wechatmp_chain_verification', '允许 Web 对话接入公众号链路验证', 'checkbox'],
         ],
     },
     {
@@ -587,6 +588,7 @@ const INVEST_CONFIG_GROUPS = [
 
 const INVEST_ADMIN_ONLY_CONFIG_KEYS = new Set([
     'router.enable_web_open_chat',
+    'router.enable_web_wechatmp_chain_verification',
 ]);
 const INVEST_CONTENT_HISTORY_DATE_IDS = [
     'invest-content-history-effective-date-rate',
@@ -5786,6 +5788,15 @@ function renderInvestmentComponentConfigDialogBody(component) {
             <span>提示词${settings.prompt_configured === false ? '（当前显示默认提示词）' : ''}</span>
             <textarea id="invest-component-modal-prompt-${escapeHtml(componentKey)}" rows="8">${escapeHtml(settings.prompt || '')}</textarea>
         </label>` : '';
+    const technicalAnalysisEditor = componentKey === 'technical-analysis' ? `
+        <div class="investment-detail-block">
+            <span>裸代码查询策略 ${investmentImportInfo('关闭后，裸 6 位代码必须命中字典个股；否则提示用户改用指数代码或检查代码，避免无效行情查询耗时。')}</span>
+            ${investmentSwitch(
+                '允许未命中字典的裸 6 位代码进入行情查询',
+                `invest-component-modal-allow-unresolved-bare-code-${escapeHtml(componentKey)}`,
+                settings.allow_unresolved_bare_code_analysis === true
+            )}
+        </div>` : '';
     const commandConfigEditor = component.handler_type === 'command_script' ? renderInvestmentCommandComponentConfigFields(component) : '';
     const promptConfigEditor = component.handler_type === 'prompt_component' ? renderInvestmentPromptComponentConfigFields(component) : '';
     return `
@@ -5796,6 +5807,7 @@ function renderInvestmentComponentConfigDialogBody(component) {
             </div>
             ${investmentSwitch('启用', `invest-component-modal-enabled-${escapeHtml(componentKey)}`, settings.enabled !== false)}
             ${triggerEditor}
+            ${technicalAnalysisEditor}
             ${promptEditor}
             ${commandConfigEditor}
             ${promptConfigEditor}
@@ -5951,11 +5963,13 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const enabled = document.getElementById(`${prefix}-enabled-${componentKey}`);
     const triggers = document.getElementById(`${prefix}-triggers-${componentKey}`);
     const prompt = document.getElementById(`${prefix}-prompt-${componentKey}`);
+    const allowUnresolvedBareCode = document.getElementById(`${prefix}-allow-unresolved-bare-code-${componentKey}`);
     const command = document.getElementById('invest-component-modal-command');
     const promptTemplate = document.getElementById('invest-component-modal-prompt-template');
     if (enabled) body.enabled = enabled.checked;
     if (triggers) body.triggers = triggers.value;
     if (prompt) body.prompt = prompt.value;
+    if (allowUnresolvedBareCode) body.allow_unresolved_bare_code_analysis = allowUnresolvedBareCode.checked;
     if (command) {
         const postprocessComponent = document.getElementById('invest-component-modal-postprocess-component')?.value || '';
         body.component_config = {
@@ -8032,7 +8046,7 @@ function sendMessage() {
                 }
             } else {
                 loadingEl.remove();
-                addBotMessage(t('error_send'), new Date());
+                addBotMessage(data.message || data.user_prompt || data.detail || t('error_send'), new Date());
             }
         })
         .catch(err => {
@@ -8332,7 +8346,7 @@ function startSSE(requestId, loadingEl, timestamp, titleInfo) {
                 es.close();
                 delete activeStreams[requestId];
                 if (loadingEl) { loadingEl.remove(); loadingEl = null; }
-                addBotMessage(t('error_send'), new Date());
+                addBotMessage(item.message || item.content || t('error_send'), new Date());
             }
         };
 

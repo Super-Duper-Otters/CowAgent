@@ -3355,6 +3355,30 @@ def test_component_settings_save_updates_active_prompt_component(business_env, m
     assert get_config("prompt.rate") == "updated rate prompt"
 
 
+def test_component_settings_save_updates_technical_analysis_bare_code_lookup_switch(business_env, monkeypatch):
+    from business.components.service import list_components
+    from business.config.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
+    assert technical["settings"]["allow_unresolved_bare_code_analysis"] is False
+
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"allow_unresolved_bare_code_analysis": True}, ensure_ascii=False).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("technical-analysis"))
+
+    assert payload["status"] == "success"
+    assert payload["component"]["settings"]["allow_unresolved_bare_code_analysis"] is True
+    assert get_config("technical_analysis.allow_unresolved_bare_code_analysis") is True
+
+
 def test_component_settings_show_default_prompt_when_blank(business_env):
     from business.audit.ai_generation import DEFAULT_RATE_PROMPT
     from business.components.service import list_components
@@ -9839,6 +9863,179 @@ def test_technical_analysis_code_input_uses_dictionary_chinese_name_in_signal_ca
     assert "- 中文名称：新易盛" in ai_inputs[0]
     assert "- 标的字段必须输出：新易盛（300502.SZ）" in ai_inputs[0]
     assert "📈 标的：新易盛（300502.SZ）" in rendered_texts[0]
+
+
+def test_technical_analysis_bare_code_without_stock_suggests_matching_index(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [{"code": "sh000133", "name": "上证150", "market": "SH", "asset_type": "index", "source": "tushare_index"}],
+        source="tushare_index",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("missing bare stock with matching index must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "000133 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert result.user_prompt == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+    assert result.detail == result.user_prompt
+
+
+def test_technical_analysis_validation_returns_bare_code_index_suggestion(
+    business_env,
+):
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis_handler import validate_technical_analysis_request
+
+    refresh_stock_symbols(
+        [{"code": "sh000133", "name": "上证150", "market": "SH", "asset_type": "index", "source": "tushare_index"}],
+        source="tushare_index",
+    )
+
+    prompt = validate_technical_analysis_request(
+        "000133 技术分析",
+        SimpleNamespace(target_text="000133"),
+    )
+
+    assert prompt == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+
+
+def test_technical_analysis_router_returns_bare_code_index_suggestion_to_chat(
+    business_env, monkeypatch
+):
+    from business.accounts.user_service import create_user
+    from business.config.constants import ErrorCode, ServiceType
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.routing.router import handle_text_message
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    refresh_stock_symbols(
+        [{"code": "sh000133", "name": "上证150", "market": "SH", "asset_type": "index", "source": "tushare_index"}],
+        source="tushare_index",
+    )
+    monkeypatch.setattr(
+        "business.content.technical_analysis._run_skill",
+        lambda *_args, **_kwargs: pytest.fail("router must not enter skill for missing bare stock with matching index"),
+    )
+
+    reply = handle_text_message("ok", "000133 技术分析")
+
+    assert reply.success is False
+    assert reply.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert reply.reply_text == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+
+
+def test_technical_analysis_router_respects_unknown_bare_code_guard_switch(
+    business_env, tmp_path, monkeypatch
+):
+    from business.accounts.user_service import create_user
+    from business.config.config_service import save_config
+    from business.config.constants import ErrorCode, ServiceType
+    from business.routing.router import handle_text_message
+
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
+    calls = []
+
+    def fake_skill(symbol, output_dir, **kwargs):
+        calls.append((symbol, kwargs))
+        report = tmp_path / "router_unknown_技术分析报告_2026-05-25.md"
+        chart = tmp_path / "router_unknown_TA_2026-05-25.png"
+        report.write_text("ta report", encoding="utf-8")
+        chart.write_bytes(b"chart")
+        return report, chart
+
+    monkeypatch.setattr("business.content.technical_analysis._run_skill", fake_skill)
+    monkeypatch.setattr(
+        "business.content.technical_analysis.generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr("business.content.technical_analysis.render_technical_analysis_card", fake_render)
+
+    blocked = handle_text_message("ok", "123456 技术分析")
+
+    assert blocked.success is False
+    assert blocked.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert blocked.reply_text == "未找到 123456 对应的个股或指数，请检查代码。"
+    assert calls == []
+
+    save_config("technical_analysis.allow_unresolved_bare_code_analysis", True, operator_role="admin")
+    allowed = handle_text_message("ok", "123456 技术分析")
+
+    assert allowed.success is True
+    assert calls == [("123456", {"name": "", "asset_type": "a_share", "market": "SZ", "ts_code": "123456.SZ"})]
+
+
+def test_technical_analysis_unknown_bare_code_fails_before_skill_by_default(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("unknown bare code must not enter skill when guard is enabled"),
+    )
+
+    result = run_technical_analysis("ok", "123456 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert result.user_prompt == "未找到 123456 对应的个股或指数，请检查代码。"
+    assert result.detail == result.user_prompt
+
+
+def test_technical_analysis_unknown_bare_code_can_enter_skill_when_enabled(
+    business_env, tmp_path, monkeypatch
+):
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
+
+    save_config("technical_analysis.allow_unresolved_bare_code_analysis", True, operator_role="admin")
+    report = tmp_path / "unknown_技术分析报告_2026-05-25.md"
+    chart = tmp_path / "unknown_TA_2026-05-25.png"
+    report.write_text("ta report", encoding="utf-8")
+    chart.write_bytes(b"chart")
+    calls = []
+
+    def fake_skill(symbol, _output_dir, **kwargs):
+        calls.append((symbol, kwargs))
+        return report, chart
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+
+    def fake_render(_standard_text, output_path):
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", "123456 技术分析")
+
+    assert result.success is True
+    assert calls == [("123456", {"name": "", "asset_type": "a_share", "market": "SZ", "ts_code": "123456.SZ"})]
 
 
 def test_technical_analysis_dictionary_metadata_is_passed_to_skill(business_env, tmp_path, monkeypatch):
@@ -16672,6 +16869,35 @@ def test_web_open_chat_reply_is_persisted_to_session_history(business_env, monke
     ]
 
 
+def test_web_message_rejects_plain_chat_when_open_chat_disabled(business_env, monkeypatch):
+    import json
+
+    from business.config.config_service import save_config
+    from channel.web.web_channel import WebChannel
+
+    save_config("router.enable_web_open_chat", False, operator_role="admin")
+    monkeypatch.setattr("channel.web.web_channel._require_console_auth", lambda: None)
+    monkeypatch.setattr("channel.web.web_channel._persist_web_visible_turn", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps({
+            "session_id": "web-session-plain-disabled",
+            "message": "你好",
+            "stream": True,
+        }).encode("utf-8"),
+    )
+
+    channel = WebChannel()
+    monkeypatch.setattr(channel, "produce", lambda _context: pytest.fail("plain chat must not start produce when disabled"))
+
+    response = json.loads(channel.post_message())
+
+    assert response["status"] == "success"
+    queued = channel.sse_queues[response["request_id"]].get_nowait()
+    assert queued["type"] == "done"
+    assert "技术分析" in queued["content"]
+
+
 def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business_env, tmp_path, monkeypatch):
     from bridge.context import Context, ContextType
     from bridge.reply import ReplyType
@@ -16741,6 +16967,385 @@ def test_wechatmp_channel_uses_effective_content_and_permission_prompts(business
     assert disabled_reply.content == "您的服务已停用，如需恢复请联系服务人员。"
     assert expired_reply.type == ReplyType.TEXT
     assert expired_reply.content == "您的授权已过期，如需续期请联系服务人员。"
+
+
+def test_wechatmp_passive_handler_accepts_injected_request(business_env, monkeypatch):
+    import hashlib
+    import time
+    import xml.etree.ElementTree as ET
+
+    from config import conf
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply import handle_wechatmp_post
+
+    token = "test-token"
+    timestamp = str(int(time.time()))
+    nonce = "nonce-1"
+    signature = hashlib.sha1("".join(sorted([token, timestamp, nonce])).encode("utf-8")).hexdigest()
+    args = SimpleNamespace(
+        signature=signature,
+        timestamp=timestamp,
+        nonce=nonce,
+        get=lambda key, default=None: getattr(args, key, default),
+    )
+    body = f"""<xml>
+<ToUserName><![CDATA[gh-test]]></ToUserName>
+<FromUserName><![CDATA[openid-test]]></FromUserName>
+<CreateTime>{timestamp}</CreateTime>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[你好]]></Content>
+<MsgId>1</MsgId>
+</xml>""".encode("utf-8")
+
+    monkeypatch.setitem(conf(), "wechatmp_token", token)
+    fake_channel = SimpleNamespace(
+        cache_dict={},
+        running=set(),
+        technical_analysis_titles={},
+        running_started_at={},
+        request_cnt={},
+        crypto=None,
+        client=SimpleNamespace(),
+        _compose_context=lambda *args, **kwargs: None,
+        produce=lambda context: None,
+    )
+    monkeypatch.setattr(
+        passive_reply,
+        "WechatMPChannel",
+        lambda: fake_channel,
+    )
+
+    result = handle_wechatmp_post(args, body, env={"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "1"})
+    root = ET.fromstring(result)
+
+    assert root.findtext("MsgType") == "text"
+    assert root.findtext("Content")
+
+
+def test_wechatmp_query_post_passes_input_data_and_env(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+
+    args = SimpleNamespace(signature="sig")
+    body = b"<xml></xml>"
+    env = {"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "1"}
+    calls = []
+
+    monkeypatch.setattr(passive_reply.web, "input", lambda: args)
+    monkeypatch.setattr(passive_reply.web, "data", lambda: body)
+    monkeypatch.setattr(passive_reply.web.ctx, "env", env, raising=False)
+    monkeypatch.setattr(
+        passive_reply,
+        "handle_wechatmp_post",
+        lambda passed_args, passed_body, env=None: calls.append((passed_args, passed_body, env)) or "fake-result",
+    )
+
+    result = passive_reply.Query().POST()
+
+    assert result == "fake-result"
+    assert calls == [(args, body, env)]
+
+
+def test_wechatmp_web_simulator_returns_bare_code_index_suggestion(monkeypatch):
+    from config import conf
+    from channel.wechatmp.simulator import simulate_wechatmp_text_message
+
+    monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    monkeypatch.setattr(
+        "business.content.technical_analysis.get_stock_symbol_by_code",
+        lambda value: {},
+    )
+    monkeypatch.setattr(
+        "business.content.technical_analysis.list_index_symbol_matches_for_bare_code",
+        lambda value, limit=3: [
+            {
+                "code": "sh000133",
+                "ts_code": "000133.SH",
+                "name": "上证指数样例",
+                "market": "SH",
+                "asset_type": "index",
+                "source": "test",
+            }
+        ],
+    )
+
+    result = simulate_wechatmp_text_message(
+        session_id="web-session-1",
+        content="000133技术分析",
+        request_id="request-1",
+    )
+
+    assert result.reply_type == "text"
+    assert "请发送：sh000133 技术分析" in result.content
+    assert result.raw_reply
+
+
+def test_wechatmp_web_simulator_skips_customer_permission_for_internal_verification(monkeypatch):
+    from config import conf
+    from business.accounts.user_service import PermissionResult
+    from channel.wechatmp.simulator import simulate_wechatmp_text_message
+
+    monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    monkeypatch.setattr(
+        "channel.wechatmp.passive_reply._verify_wechatmp_text_access",
+        lambda _openid, _content: PermissionResult(False, user_prompt="您暂未开通该服务，如需开通请联系服务人员。"),
+    )
+    monkeypatch.setattr(
+        "business.content.technical_analysis.get_stock_symbol_by_code",
+        lambda value: {},
+    )
+    monkeypatch.setattr(
+        "business.content.technical_analysis.list_index_symbol_matches_for_bare_code",
+        lambda value, limit=3: [
+            {
+                "code": "sh000133",
+                "ts_code": "000133.SH",
+                "name": "上证指数样例",
+                "market": "SH",
+                "asset_type": "index",
+                "source": "test",
+            }
+        ],
+    )
+
+    result = simulate_wechatmp_text_message(
+        session_id="web-session-no-customer",
+        content="000133技术分析",
+        request_id="request-no-customer",
+    )
+
+    assert "暂未开通该服务" not in result.content
+    assert "请发送：sh000133 技术分析" in result.content
+
+
+def test_wechatmp_web_simulator_success_reply_is_user_visible_notice(monkeypatch):
+    from config import conf
+    from channel.wechatmp import passive_reply
+    from channel.wechatmp.simulator import simulate_wechatmp_text_message
+
+    monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    monkeypatch.setattr(passive_reply, "handle_wechatmp_post", lambda *_args, **_kwargs: "success")
+
+    result = simulate_wechatmp_text_message(
+        session_id="web-session-success",
+        content="利率",
+        request_id="request-success",
+    )
+
+    assert result.reply_type == "success"
+    assert result.raw_reply == "success"
+    assert result.content != "success"
+    assert "无即时回复" in result.content or "稍后" in result.content
+
+
+def test_wechatmp_web_simulator_rejects_plain_chat_without_produce(monkeypatch):
+    from config import conf
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.simulator import simulate_wechatmp_text_message
+
+    monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    fake_channel = SimpleNamespace(
+        cache_dict={},
+        running=set(),
+        technical_analysis_titles={},
+        running_started_at={},
+        request_cnt={},
+        crypto=None,
+        client=SimpleNamespace(),
+        _compose_context=lambda *args, **kwargs: SimpleNamespace(),
+        produce=lambda _context: pytest.fail("Web WeChatMP verification must not start plain AI chat"),
+    )
+    monkeypatch.setattr(passive_reply, "WechatMPChannel", lambda: fake_channel)
+
+    result = simulate_wechatmp_text_message(
+        session_id="web-session-plain-wechatmp",
+        content="你好",
+        request_id="request-plain-wechatmp",
+    )
+
+    assert result.reply_type == "text"
+    assert "技术分析" in result.content
+
+
+def test_web_message_uses_wechatmp_chain_when_enabled(monkeypatch):
+    import json
+
+    from config import conf
+    from channel.web.web_channel import WebChannel
+
+    session_id = "web-session-wechatmp-enabled"
+    monkeypatch.setitem(conf(), "investment_web_wechatmp_chain_verification", True)
+    monkeypatch.setattr(
+        "business.config.config_service.get_config",
+        lambda key, default=None, **_kwargs: True if key == "router.enable_web_wechatmp_chain_verification" else default,
+    )
+    monkeypatch.setattr("channel.web.web_channel._require_console_auth", lambda: None)
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps({
+            "session_id": session_id,
+            "message": "000133技术分析",
+            "stream": True,
+        }).encode("utf-8"),
+    )
+
+    calls = []
+
+    def fake_simulate(session_id_arg, content, request_id=""):
+        calls.append((session_id_arg, content, request_id))
+        return type(
+            "R",
+            (),
+            {"reply_type": "text", "content": "请发送：sh000133 技术分析", "raw_reply": "<xml/>"},
+        )()
+
+    monkeypatch.setattr("channel.wechatmp.simulator.simulate_wechatmp_text_message", fake_simulate)
+
+    channel = WebChannel()
+    channel.session_queues.pop(session_id, None)
+    monkeypatch.setattr("channel.web.web_channel._persist_web_visible_turn", lambda *_args, **_kwargs: None)
+    response = json.loads(channel.post_message())
+
+    assert response["status"] == "success"
+    assert response["stream"] is True
+    assert calls and calls[0][0] == session_id
+    assert calls[0][1] == "000133技术分析"
+    assert calls[0][2] == response["request_id"]
+    queued = channel.sse_queues[response["request_id"]].get_nowait()
+    assert queued["type"] == "done"
+    assert "sh000133" in queued["content"]
+    assert response["request_id"] not in channel.request_to_session
+
+
+def test_web_message_wechatmp_chain_polling_returns_simulated_content(monkeypatch):
+    import json
+
+    from config import conf
+    from channel.web.web_channel import WebChannel
+
+    session_id = "web-session-wechatmp-poll"
+    body = {
+        "session_id": session_id,
+        "message": "000133技术分析",
+        "stream": False,
+        "wechatmp_chain": True,
+    }
+    monkeypatch.setitem(conf(), "investment_web_wechatmp_chain_verification", True)
+    monkeypatch.setattr(
+        "business.config.config_service.get_config",
+        lambda key, default=None, **_kwargs: True if key == "router.enable_web_wechatmp_chain_verification" else default,
+    )
+    monkeypatch.setattr("channel.web.web_channel._require_console_auth", lambda: None)
+    monkeypatch.setattr("channel.web.web_channel._persist_web_visible_turn", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "channel.wechatmp.simulator.simulate_wechatmp_text_message",
+        lambda session_id_arg, content, request_id="": type(
+            "R",
+            (),
+            {"reply_type": "text", "content": "请发送：sh000133 技术分析", "raw_reply": "<xml/>"},
+        )(),
+    )
+
+    channel = WebChannel()
+    channel.session_queues.pop(session_id, None)
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps(body).encode("utf-8"),
+    )
+    post_response = json.loads(channel.post_message())
+
+    assert post_response["status"] == "success"
+    assert post_response["stream"] is False
+
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps({"session_id": session_id}).encode("utf-8"),
+    )
+    poll_response = json.loads(channel.poll_response())
+
+    assert poll_response["status"] == "success"
+    assert poll_response["has_content"] is True
+    assert poll_response["request_id"] == post_response["request_id"]
+    assert "sh000133" in poll_response["content"]
+    assert post_response["request_id"] not in channel.request_to_session
+
+
+def test_web_message_rejects_wechatmp_chain_when_disabled(monkeypatch):
+    import json
+
+    from config import conf
+    from channel.web.web_channel import WebChannel
+
+    session_id = "web-session-wechatmp-disabled"
+    request_id = "wechatmp-disabled-request"
+    monkeypatch.setitem(conf(), "investment_web_wechatmp_chain_verification", False)
+    monkeypatch.setattr(
+        "business.config.config_service.get_config",
+        lambda key, default=None, **_kwargs: False if key == "router.enable_web_wechatmp_chain_verification" else default,
+    )
+    monkeypatch.setattr("channel.web.web_channel._require_console_auth", lambda: None)
+    monkeypatch.setattr(
+        "channel.wechatmp.simulator.simulate_wechatmp_text_message",
+        lambda *_args, **_kwargs: pytest.fail("disabled WeChatMP chain must not call simulator"),
+    )
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps({
+            "session_id": session_id,
+            "message": "000133技术分析",
+            "stream": True,
+            "wechatmp_chain": True,
+        }).encode("utf-8"),
+    )
+
+    channel = WebChannel()
+    monkeypatch.setattr(channel, "_generate_request_id", lambda: request_id)
+    channel.session_queues.pop(session_id, None)
+    response = json.loads(channel.post_message())
+
+    assert response["status"] == "error"
+    assert "公众号链路验证未开启" in response["message"]
+    assert request_id not in channel.request_to_session
+    assert request_id not in channel.sse_queues
+    assert session_id not in channel.session_queues
+
+
+def test_web_message_wechatmp_chain_simulator_failure_returns_controlled_error(monkeypatch):
+    import json
+
+    from config import conf
+    from channel.web.web_channel import WebChannel
+
+    session_id = "web-session-wechatmp-failure"
+    request_id = "wechatmp-failure-request"
+    monkeypatch.setitem(conf(), "investment_web_wechatmp_chain_verification", True)
+    monkeypatch.setattr(
+        "business.config.config_service.get_config",
+        lambda key, default=None, **_kwargs: True if key == "router.enable_web_wechatmp_chain_verification" else default,
+    )
+    monkeypatch.setattr("channel.web.web_channel._require_console_auth", lambda: None)
+    monkeypatch.setattr(
+        "channel.wechatmp.simulator.simulate_wechatmp_text_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("simulator boom")),
+    )
+    monkeypatch.setattr(
+        "channel.web.web_channel.web.data",
+        lambda: json.dumps({
+            "session_id": session_id,
+            "message": "000133技术分析",
+            "stream": True,
+            "wechatmp_chain": True,
+        }).encode("utf-8"),
+    )
+
+    channel = WebChannel()
+    monkeypatch.setattr(channel, "_generate_request_id", lambda: request_id)
+    channel.session_queues.pop(session_id, None)
+    response = json.loads(channel.post_message())
+
+    assert response == {"status": "error", "message": "公众号链路验证失败，请稍后再试"}
+    assert request_id not in channel.request_to_session
+    assert request_id not in channel.sse_queues
+    assert session_id not in channel.session_queues
 
 
 def test_preregistered_customer_schema_fields_exist():

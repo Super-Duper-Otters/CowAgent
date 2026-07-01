@@ -45,6 +45,7 @@ def validate_technical_analysis_request(raw_input: str, route) -> str:
     """Return a user-facing error when a technical-analysis request cannot start."""
     from business.content.technical_analysis import (
         _target_and_requested_market_date,
+        _technical_analysis_error_prompt,
         _technical_analysis_target_from_input,
         parse_target,
     )
@@ -53,7 +54,7 @@ def validate_technical_analysis_request(raw_input: str, route) -> str:
     target, _requested_market_date = _target_and_requested_market_date(target_text)
     target_info, error, detail = _technical_analysis_target_from_input(target)
     if error:
-        return _customer_failure_reply(user_message(error), error, detail)
+        return _customer_failure_reply(_technical_analysis_error_prompt(error, detail), error, detail)
     if not target_info.normalized_target:
         return _customer_failure_reply(
             user_message(ErrorCode.STOCK_NOT_FOUND),
@@ -154,7 +155,7 @@ def handle_technical_analysis(
             result = technical_analysis_handler(openid, raw_input, route.target_text)
         if not result.success:
             code = result.error_code or ErrorCode.TECHNICAL_ANALYSIS_FAILED
-            prompt = user_message(code)
+            prompt = result.user_prompt or user_message(code)
             fail_request_record(request_id, code, prompt, result.detail, elapsed())
             detail = sanitize_sensitive_text(result.detail)
             return BusinessReply(

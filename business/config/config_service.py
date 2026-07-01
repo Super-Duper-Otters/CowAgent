@@ -13,14 +13,16 @@ from business.schema.tables import investment_configs
 
 SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")
 API_CONFIG_PREFIXES = ("model.", "wechatmp.")
-ADMIN_ONLY_CONFIG_KEYS = {"router.enable_web_open_chat"}
+ADMIN_ONLY_CONFIG_KEYS = {"router.enable_web_open_chat", "router.enable_web_wechatmp_chain_verification"}
 
 CONFIG_FALLBACK_KEYS = {
     "tushare.token": "tushare_token",
     "router.enable_agent_fallback": "investment_enable_agent_fallback",
     "router.enable_web_open_chat": "investment_enable_web_open_chat",
+    "router.enable_web_wechatmp_chain_verification": "investment_web_wechatmp_chain_verification",
     "technical_analysis.skill_path": "investment_ta_skill_path",
     "technical_analysis.output_dir": "investment_ta_output_dir",
+    "technical_analysis.allow_unresolved_bare_code_analysis": "investment_ta_allow_unresolved_bare_code_analysis",
     "render.renderer_path": "investment_renderer_path",
     "render.template_ta_path": "investment_template_ta_path",
     "render.template_rate_path": "investment_template_rate_path",
