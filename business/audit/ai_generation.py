@@ -128,13 +128,6 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
             "breakdown=跌破MA20（109.064）：短线走弱，关注108.80（MA60）。\n\n"
         ),
     },
-    "footer_injection_rule": {
-        "label": "页脚注入规则",
-        "text": (
-        "页脚固定字段由业务代码在渲染前注入，模型不要生成风险声明、授权剩余时间、数据来源或业务对接的固定值；"
-        "数据来源和业务对接强制使用技术分析组件的 card_footer 配置。\n\n"
-        ),
-    },
     "conversion_rules": {
         "label": "转换规则",
         "text": (

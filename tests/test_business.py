@@ -9380,14 +9380,21 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "反弹收复109.335（前收盘）：震荡偏强延续",
         "109.06~109.40区间震荡：缩量整固，等待方向",
         "跌破MA20（109.064）：短线走弱",
-        "页脚固定字段由业务代码在渲染前注入",
-        "数据来源和业务对接强制使用技术分析组件的 card_footer 配置",
     ):
         assert required in request.prompt
-    assert "刘静怡13681991121" not in request.prompt
-    assert "AKShare / Tushare / BaoStock" not in request.prompt
-    assert "授权剩余时间：——" not in request.prompt
-    assert "本内容仅供研究参考，不构成任何投资建议" not in request.prompt
+    for forbidden in (
+        "footer",
+        "card_footer",
+        "页脚",
+        "风险声明",
+        "授权剩余时间",
+        "数据来源",
+        "业务对接",
+        "刘静怡13681991121",
+        "AKShare / Tushare / BaoStock",
+        "本内容仅供研究参考，不构成任何投资建议",
+    ):
+        assert forbidden not in request.prompt
     assert "禁止输出解释" in request.prompt
     assert "只输出一个 JSON object" in request.prompt
 
