@@ -9395,6 +9395,11 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "均线多头维持+MACD金叉不破",
         "不得改变 signal_direction",
         "必须至少引用报告原文中的一个具体指标",
+        "每个 conclusion 必须写成“指标事实嵌入判断句”",
+        "不要把 evidence 原样复述成单独的尾句",
+        "evidence 数组必须逐条摘取或改写报告原文中的可核验依据",
+        "不能只写“同向偏强”“量价配合”“存在风险”等空泛判断",
+        "报告未给出该类依据",
         "evidence 不得只写结论",
         "指标变化=结论",
         "反弹收复109.335（前收盘）：震荡偏强延续",
@@ -9459,7 +9464,8 @@ def test_ai_generation_converts_technical_analysis_json_to_renderer_text(busines
     assert "📈 标的：新易盛（300502.SZ）" in result.text
     assert "📅 行情日期：2026-07-01  日内涨幅：+2.31%" in result.text
     assert "📊 趋势研判\nMA5上穿MA20+MACD红柱扩张=趋势偏强。" in result.text
-    assert "▪️ 方向确认（趋势 x 动量）：趋势与动量同向偏强，依据：MA5上穿MA20、MACD红柱扩张" in result.text
+    assert "▪️ 方向确认（趋势 x 动量）：趋势与动量同向偏强" in result.text
+    assert "依据：MA5上穿MA20、MACD红柱扩张" not in result.text
     assert "▪️ 强压力：126.80（BOLL上轨）" in result.text
     assert "- 📉 跌破113.20需防守" in result.text
     assert "授权剩余时间" not in result.text

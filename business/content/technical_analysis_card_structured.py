@@ -165,8 +165,7 @@ def _compact(text: str, max_len: int = 45) -> str:
 
 def _confirm_line(label: str, item: dict[str, Any]) -> str:
     conclusion = _as_text(item.get("conclusion"))
-    evidence = "、".join(_as_evidence(item.get("evidence"))[:3])
-    return f"▪️ {label}：{_compact(f'{conclusion}，依据：{evidence}', 72)}"
+    return f"▪️ {label}：{_compact(conclusion, 72)}"
 
 
 def render_technical_analysis_standard_text(payload: dict[str, Any]) -> str:

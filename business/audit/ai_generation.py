@@ -92,11 +92,15 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
             '必须输出 "trend" 对象：\n'
             '"trend": {\n'
             '  "summary": "<使用“指标变化=结论”的链式表达，1 到 2 句完成趋势、动量、风险和形态归纳；必须至少引用报告原文中的一个具体指标、数值、分位、形态名称或关键位>",\n'
-            '  "direction_confirm": {"conclusion": "<说明趋势与动量是否同向>", "evidence": ["<均线结构、MACD DIF/DEA、MACD柱体、RSI、KDJ等具体依据>"]},\n'
-            '  "quality_confirm": {"conclusion": "<说明成交量/量价是否配合>", "evidence": ["<成交量、量比、OBV、AD、ADOSC或量价描述>"]},\n'
-            '  "risk_confirm": {"conclusion": "<说明超买、波动或回撤风险>", "evidence": ["<RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险描述>"]},\n'
-            '  "pattern_verify": {"conclusion": "<最新K线形态及方向含义>", "evidence": ["<最新K线形态名称、看涨/看跌方向和验证含义>"]}\n'
+            '  "direction_confirm": {"conclusion": "<用3到4句话判断趋势与动量是否同向；必须把均线结构、MACD DIF/DEA、MACD柱体、RSI、KDJ等具体指标事实自然写进判断句>", "evidence": ["<逐条列出报告原文中的趋势与动量依据>"]},\n'
+            '  "quality_confirm": {"conclusion": "<用3到4句话判断成交量/量价是否配合；必须把成交量、量比、OBV、AD、ADOSC或量价描述等具体事实自然写进判断句>", "evidence": ["<逐条列出报告原文中的量价依据>"]},\n'
+            '  "risk_confirm": {"conclusion": "<用3到4句话判断超买、波动或回撤风险；必须把RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险等具体事实自然写进判断句>", "evidence": ["<逐条列出报告原文中的风险依据>"]},\n'
+            '  "pattern_verify": {"conclusion": "<用3到4句话说明最新K线形态名称、看涨/看跌方向和验证含义；必须把形态名称、日期、方向或验证条件自然写进判断句>", "evidence": ["<逐条列出报告原文中的形态依据>"]}\n'
             "}\n"
+            "每个 conclusion 必须写成“指标事实嵌入判断句”，即每句话都要用具体指标、数值、分位、形态名称或关键位支撑判断，不能只写“同向偏强”“量价配合”“存在风险”等空泛判断。\n"
+            "不要把 evidence 原样复述成单独的尾句；evidence 是结构化审计字段，conclusion 是最终展示正文，二者可以引用同一事实但表达必须自然完整。\n"
+            "evidence 数组必须逐条摘取或改写报告原文中的可核验依据，优先保留指标名、数值、分位、形态名称、关键位和量价信号。\n"
+            "报告没有某类指标时，不要用其它类别依据硬填；对应 conclusion 和 evidence 都要写明报告未给出该类依据。\n"
             "不得改变 signal_direction 给出的多空方向，不得把看涨改成看跌或把看跌改成看涨。\n"
             "示例 summary：RSI(6)从92%大幅回落至55%，超买风险化解=健康的回调整理。"
             "均线多头维持+MACD金叉不破=中期趋势未改。\n\n"
@@ -136,7 +140,7 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
         "2. 必须包含 target、signal_direction、latest_close、market_date、trend、key_levels、operation_guide。\n"
         "3. target 必须是整张图片的主标题标的，不能输出英文名、拼音、仅代码或报告原始别名来替代系统约束名称。\n"
         "4. direction_confirm / quality_confirm / risk_confirm / pattern_verify 四项必须同时包含 conclusion 和 evidence 数组。\n"
-        "5. evidence 不得只写结论，必须包含报告原文中的至少一个具体依据，如指标名、数值、分位、形态名称、关键位或量价信号；报告未提供时填“报告未给出明确依据”。\n"
+        "5. conclusion 不得只写结论，必须把报告原文中的指标事实嵌入判断句；不要把 evidence 原样复述成单独的尾句。evidence 不得只写结论，必须包含报告原文中的至少一个具体依据，如指标名、数值、分位、形态名称、关键位或量价信号；报告未提供时填“报告未给出该类依据”。\n"
         "6. trend.summary 必须优先使用“指标变化=结论”“指标A+指标B=结论”的短句组合。\n"
         "7. operation_guide 必须保持 breakout、range、breakdown 三个方向，不得因为措辞优化改变原始多空判断。\n"
         "8. 不要输出原报告的大段表格、附录、形态胜率明细或情景推演表，只保留可渲染卡片需要的信息。"
