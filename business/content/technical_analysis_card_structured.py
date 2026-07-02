@@ -9,6 +9,20 @@ from typing import Any
 
 DEFAULT_TEXT = "——"
 
+TREND_CONFIRM_DEFAULTS = {
+    "direction_confirm": "报告未给出趋势与动量的明确交叉依据",
+    "quality_confirm": "报告未给出量价配合的明确依据",
+    "risk_confirm": "报告未给出动量、波动或位置风险的明确依据",
+    "pattern_verify": "报告未给出最新K线形态的明确依据",
+}
+
+OPERATION_DEFAULTS = {
+    "summary": "报告未给出明确操作指引",
+    "breakout": "突破关键位后的走势判断未明确给出",
+    "range": "区间震荡时的量能与等待方向未明确给出",
+    "breakdown": "跌破关键支撑后的风险提示未明确给出",
+}
+
 
 @dataclass
 class StructuredCardResult:
@@ -61,8 +75,9 @@ def _confirm(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     if not isinstance(value, dict):
         value = {}
+    fallback = TREND_CONFIRM_DEFAULTS.get(key, "报告未给出该项明确依据")
     return {
-        "conclusion": _as_text(value.get("conclusion")),
+        "conclusion": _as_text(value.get("conclusion"), fallback),
         "evidence": _as_evidence(value.get("evidence")),
     }
 
@@ -71,10 +86,16 @@ def _level(payload: dict[str, Any], key: str) -> dict[str, str]:
     value = payload.get(key)
     if not isinstance(value, dict):
         value = {}
+    fallback_value = "无明显压力" if key == "strong_resistance" else "无明显支撑"
+    fallback_source = "报告未给出明确压力位" if key == "strong_resistance" else "报告未给出明确支撑位"
     return {
-        "value": _as_text(value.get("value")),
-        "source": _as_text(value.get("source")),
+        "value": _as_text(value.get("value"), fallback_value),
+        "source": _as_text(value.get("source"), fallback_source),
     }
+
+
+def _operation_text(payload: dict[str, Any], key: str) -> str:
+    return _as_text(payload.get(key), OPERATION_DEFAULTS.get(key, DEFAULT_TEXT))
 
 
 def normalize_technical_analysis_card_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -95,7 +116,7 @@ def normalize_technical_analysis_card_payload(payload: dict[str, Any]) -> dict[s
         "daily_change": _as_text(payload.get("daily_change"), ""),
         "analysis_model": _as_text(payload.get("analysis_model"), "技术分析体系"),
         "trend": {
-            "summary": _as_text(trend.get("summary")),
+            "summary": _as_text(trend.get("summary"), "报告未给出明确趋势研判"),
             "direction_confirm": _confirm(trend, "direction_confirm"),
             "quality_confirm": _confirm(trend, "quality_confirm"),
             "risk_confirm": _confirm(trend, "risk_confirm"),
@@ -106,10 +127,10 @@ def normalize_technical_analysis_card_payload(payload: dict[str, Any]) -> dict[s
             "strong_support": _level(key_levels, "strong_support"),
         },
         "operation_guide": {
-            "summary": _as_text(operation.get("summary")),
-            "breakout": _as_text(operation.get("breakout")),
-            "range": _as_text(operation.get("range")),
-            "breakdown": _as_text(operation.get("breakdown")),
+            "summary": _operation_text(operation, "summary"),
+            "breakout": _operation_text(operation, "breakout"),
+            "range": _operation_text(operation, "range"),
+            "breakdown": _operation_text(operation, "breakdown"),
         },
     }
 
@@ -128,11 +149,6 @@ def validate_technical_analysis_card_payload(payload: dict[str, Any]) -> list[st
             errors.append(f"missing trend.{key}.conclusion")
         if not _as_evidence(item.get("evidence")):
             errors.append(f"missing trend.{key}.evidence")
-    key_levels = payload.get("key_levels") if isinstance(payload.get("key_levels"), dict) else {}
-    for key in ("strong_resistance", "strong_support"):
-        item = key_levels.get(key) if isinstance(key_levels.get(key), dict) else {}
-        if _as_text(item.get("value")) == DEFAULT_TEXT:
-            errors.append(f"missing key_levels.{key}.value")
     operation = payload.get("operation_guide") if isinstance(payload.get("operation_guide"), dict) else {}
     for key in ("summary", "breakout", "range", "breakdown"):
         if _as_text(operation.get(key)) == DEFAULT_TEXT:
@@ -209,9 +225,6 @@ def render_technical_analysis_standard_text(payload: dict[str, Any]) -> str:
 def technical_analysis_card_text_from_model_output(text: str) -> StructuredCardResult:
     try:
         payload = parse_technical_analysis_card_payload(text)
-        errors = validate_technical_analysis_card_payload(payload)
-        if errors:
-            return StructuredCardResult(False, error="; ".join(errors), payload=payload)
         return StructuredCardResult(True, render_technical_analysis_standard_text(payload), payload=payload)
     except Exception as exc:
         return StructuredCardResult(False, error=str(exc))

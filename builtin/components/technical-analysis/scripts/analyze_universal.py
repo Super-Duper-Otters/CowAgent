@@ -170,18 +170,17 @@ def _normalize_columns(df):
         columns={
             '日期': 'date',
             '时间': 'date',
+            'trade_date': 'date',
             '开盘': 'open',
             '最高': 'high',
             '最低': 'low',
             '收盘': 'close',
             '成交量': 'volume',
+            'vol': 'volume',
         }
     )
-    if 'date' not in df.columns and '时间' in df.columns:
-        df = df.rename(columns={'时间': 'date'})
-        df['date'] = pd.to_datetime(df['date'])
     if 'volume' not in df.columns:
-        for vol_col in ['成交量', 'vol', 'hold']:
+        for vol_col in ['hold']:
             if vol_col in df.columns:
                 df = df.rename(columns={vol_col: 'volume'})
                 break
@@ -190,7 +189,6 @@ def _normalize_columns(df):
     for col in ['date', 'open', 'high', 'low', 'close', 'volume']:
         if col not in df.columns:
             raise ValueError(f"数据缺少必要列: {col}，实际列: {df.columns.tolist()}")
-    df['date'] = pd.to_datetime(df['date'])
     return df
 
 
@@ -215,10 +213,30 @@ def _fetch_tushare_stock(symbol, api):
     """数据源 2: Tushare 日线（股票/指数）"""
     import tushare as ts
     pro = ts.pro_api(api)
-    ts_code = symbol.upper()
-    if '.' not in ts_code:
-        ts_code = f"{ts_code}.SH" if ts_code.startswith('6') else f"{ts_code}.SZ"
+    ts_code = _tushare_daily_symbol(symbol)
     df = pro.daily(ts_code=ts_code, start_date='20200101')
+    df = df.rename(columns={'trade_date': 'date', 'vol': 'volume'})
+    df['date'] = pd.to_datetime(df['date'])
+    return df
+
+
+def _fetch_tushare_index(symbol, api):
+    """数据源 2: Tushare 指数日线"""
+    import tushare as ts
+    pro = ts.pro_api(api)
+    ts_code = symbol.upper()
+    df = pro.index_daily(ts_code=ts_code, start_date='20200101')
+    df = df.rename(columns={'trade_date': 'date', 'vol': 'volume'})
+    df['date'] = pd.to_datetime(df['date'])
+    return df
+
+
+def _fetch_tushare_api(symbol, api, api_name):
+    """Tushare dedicated daily-like API by asset type."""
+    import tushare as ts
+    pro = ts.pro_api(api)
+    func = getattr(pro, api_name)
+    df = func(ts_code=symbol, start_date='20200101')
     df = df.rename(columns={'trade_date': 'date', 'vol': 'volume'})
     df['date'] = pd.to_datetime(df['date'])
     return df
@@ -254,6 +272,183 @@ def _baostock_symbol(value, market=''):
     return str(value or '').strip()
 
 
+def _parse_hh_mm(value, fallback):
+    match = re.fullmatch(r'([01]\d|2[0-3]):([0-5]\d)', str(value or '').strip())
+    if not match:
+        return fallback
+    return int(match.group(1)), int(match.group(2))
+
+
+def _technical_analysis_now():
+    raw = os.environ.get('TECHNICAL_ANALYSIS_NOW', '').strip()
+    if raw:
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            pass
+    return datetime.now()
+
+
+def _source_date_ranking_enabled():
+    start_hour, start_minute = _parse_hh_mm(
+        os.environ.get('TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START', '15:30'),
+        (15, 30),
+    )
+    end_hour, end_minute = _parse_hh_mm(
+        os.environ.get('TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END', '18:00'),
+        (18, 0),
+    )
+    current = _technical_analysis_now().time()
+    start = current.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+    end = current.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+    return start <= current <= end
+
+
+def _load_tushare_token():
+    tushare_token = os.environ.get('TUSHARE_TOKEN', '')
+    token_file = os.path.expanduser('~/.tushare_token')
+    if not tushare_token and os.path.exists(token_file):
+        with open(token_file, 'r') as f:
+            tushare_token = f.read().strip()
+    return tushare_token
+
+
+def _prepare_source_frame(df):
+    df = _normalize_columns(df)
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    for column in ['open', 'high', 'low', 'close', 'volume']:
+        df[column] = pd.to_numeric(df[column], errors='coerce').astype('float64')
+    df = df.dropna(subset=['date', 'close'])
+    for column in ['open', 'high', 'low']:
+        df[column] = df[column].fillna(df['close']).astype('float64')
+    df['volume'] = df['volume'].fillna(0).astype('float64')
+    return df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
+
+
+def _key_level_quality(df):
+    """Return whether MA/BOLL references can provide both support and resistance."""
+    if df is None or len(df) < 60 or 'close' not in df.columns:
+        return False, '数据量不足，无法评估关键位质量'
+    close = pd.to_numeric(df['close'], errors='coerce').dropna()
+    if len(close) < 60:
+        return False, '有效收盘价不足，无法评估关键位质量'
+    last_close = float(close.iloc[-1])
+    candidates = []
+    for window in (5, 10, 20, 60):
+        value = float(close.rolling(window).mean().iloc[-1])
+        if np.isfinite(value):
+            candidates.append(value)
+    middle = close.rolling(20).mean()
+    std = close.rolling(20).std()
+    for value in (middle.iloc[-1] + 2 * std.iloc[-1], middle.iloc[-1], middle.iloc[-1] - 2 * std.iloc[-1]):
+        value = float(value)
+        if np.isfinite(value):
+            candidates.append(value)
+    unique = []
+    for value in candidates:
+        if not any(abs(value - existing) / max(abs(existing), 1e-9) < 0.001 for existing in unique):
+            unique.append(value)
+    resistances = [value for value in unique if value > last_close]
+    supports = [value for value in unique if value <= last_close]
+    if resistances and supports:
+        return True, f'关键位完整：压力 {len(resistances)} 个，支撑 {len(supports)} 个'
+    missing = []
+    if not resistances:
+        missing.append('无明显压力')
+    if not supports:
+        missing.append('无明显支撑')
+    return False, '、'.join(missing)
+
+
+def _select_usable_source_candidate(candidates):
+    if not candidates:
+        return None
+    good = [item for item in candidates if item.get('quality_ok')]
+    pool = good or candidates
+    return max(pool, key=lambda item: (item['latest_date'], item['rows']))
+
+
+def _fetch_data_ranked_by_latest_date(config, symbol_code=None):
+    errors = []
+    candidates = []
+
+    def add_candidate(source_name, df):
+        df = _prepare_source_frame(df)
+        if len(df) >= 60:
+            latest_date = df['date'].max()
+            quality_ok, quality_detail = _key_level_quality(df)
+            candidates.append({
+                'latest_date': latest_date,
+                'source_name': source_name,
+                'df': df,
+                'rows': len(df),
+                'quality_ok': quality_ok,
+                'quality_detail': quality_detail,
+            })
+            quality_label = '质量通过' if quality_ok else f'质量不足: {quality_detail}'
+            print(f"  候选: {source_name} {len(df)} 条，最新日期 {latest_date.date()}，{quality_label}")
+            return
+        errors.append(f"{source_name}: 数据量不足 ({len(df)} < 60)")
+        print(f"  数据量不足: {len(df)} < 60")
+
+    try:
+        import akshare as ak
+        print(f"[数据源1/3] AKShare: {config['data_func']} ...")
+        add_candidate("AKShare", _fetch_akshare_main(config))
+    except Exception as e:
+        errors.append(f"AKShare: {e}")
+        print(f"  失败: {e}")
+
+    try:
+        import tushare as ts
+        tushare_token = _load_tushare_token()
+        plan = _provider_symbol_plan(config, symbol_code=symbol_code)
+        if tushare_token and plan['tushare_symbol']:
+            print(f"[数据源2/3] Tushare: {plan['tushare_symbol']} ...")
+            if plan['tushare_api'] == 'index_daily':
+                add_candidate("Tushare", _fetch_tushare_index(plan['tushare_symbol'], tushare_token))
+            elif plan['tushare_api'] == 'daily':
+                add_candidate("Tushare", _fetch_tushare_stock(plan['tushare_symbol'], tushare_token))
+            else:
+                add_candidate("Tushare", _fetch_tushare_api(plan['tushare_symbol'], tushare_token, plan['tushare_api']))
+        else:
+            print("  未尝试: 未配置 TUSHARE_TOKEN 或该源适配代码")
+            errors.append("Tushare: 未配置访问凭据或适配代码")
+    except ImportError:
+        errors.append("Tushare: 未安装")
+        print("  不可用: tushare 未安装")
+    except Exception as e:
+        errors.append(f"Tushare: {e}")
+        print(f"  失败: {e}")
+
+    try:
+        plan = _provider_symbol_plan(config, symbol_code=symbol_code)
+        if plan['baostock_symbol']:
+            print(f"[数据源3/3] BaoStock: {plan['baostock_symbol']} ...")
+            bs_code = plan['baostock_symbol']
+            add_candidate("BaoStock", _fetch_baostock_stock(bs_code))
+        else:
+            errors.append("BaoStock: 未配置该源适配代码")
+            print("  未尝试: 未配置 BaoStock 适配代码")
+    except ImportError:
+        errors.append("BaoStock: 未安装")
+        print("  不可用: baostock 未安装")
+    except Exception as e:
+        errors.append(f"BaoStock: {e}")
+        print(f"  失败: {e}")
+
+    selected = _select_usable_source_candidate(candidates)
+    if selected:
+        quality_label = '质量通过' if selected['quality_ok'] else f"质量不足但已是最佳可用: {selected['quality_detail']}"
+        print(f"  选择: {selected['source_name']}，最新日期 {selected['latest_date'].date()}，{selected['rows']} 条，{quality_label}")
+        return selected['df']
+
+    print("\n所有数据源均失败，错误详情：")
+    for i, err in enumerate(errors, 1):
+        print(f"  {i}. {err}")
+    raise RuntimeError(f"所有数据源失败: {errors}")
+
+
 def fetch_data(config, symbol_code=None):
     """
     根据配置获取数据（多源自动切换）。
@@ -270,20 +465,42 @@ def fetch_data(config, symbol_code=None):
     -------
     pd.DataFrame with columns [date, open, high, low, close, volume]
     """
+    if _source_date_ranking_enabled():
+        return _fetch_data_ranked_by_latest_date(config, symbol_code=symbol_code)
+
     errors = []
+    candidates = []
+
+    def accept_or_continue(source_name, df):
+        df = _prepare_source_frame(df)
+        if len(df) < 60:
+            errors.append(f"{source_name}: 数据量不足 ({len(df)} < 60)")
+            print(f"  数据量不足: {len(df)} < 60")
+            return None
+        latest_date = df['date'].max()
+        quality_ok, quality_detail = _key_level_quality(df)
+        candidates.append({
+            'latest_date': latest_date,
+            'source_name': source_name,
+            'df': df,
+            'rows': len(df),
+            'quality_ok': quality_ok,
+            'quality_detail': quality_detail,
+        })
+        if quality_ok:
+            print(f"  成功: {len(df)} 条，质量通过: {quality_detail}")
+            return df
+        print(f"  数据可用但关键位质量不足: {quality_detail}，尝试下一数据源")
+        return None
 
     # --- 源 1: AKShare 主接口 ---
     try:
         import akshare as ak
         print(f"[数据源1/3] AKShare: {config['data_func']} ...")
         df = _fetch_akshare_main(config)
-        df = _normalize_columns(df)
-        df = df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
-        if len(df) >= 60:
-            print(f"  成功: {len(df)} 条")
-            return df
-        errors.append(f"AKShare: 数据量不足 ({len(df)} < 60)")
-        print(f"  数据量不足: {len(df)} < 60")
+        accepted = accept_or_continue("AKShare", df)
+        if accepted is not None:
+            return accepted
     except Exception as e:
         errors.append(f"AKShare: {e}")
         print(f"  失败: {e}")
@@ -291,56 +508,57 @@ def fetch_data(config, symbol_code=None):
     # --- 源 2: Tushare ---
     try:
         import tushare as ts
-        import os
-        tushare_token = os.environ.get('TUSHARE_TOKEN', '')
-        token_file = os.path.expanduser('~/.tushare_token')
-        if not tushare_token and os.path.exists(token_file):
-            with open(token_file, 'r') as f:
-                tushare_token = f.read().strip()
-        if tushare_token and symbol_code:
-            print(f"[数据源2/3] Tushare: {symbol_code} ...")
-            df = _fetch_tushare_stock(symbol_code, tushare_token)
-            df = _normalize_columns(df)
-            df = df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
-            if len(df) >= 60:
-                print(f"  成功: {len(df)} 条")
-                return df
-            errors.append("Tushare: 数据量不足")
-            print(f"  数据量不足: {len(df)} < 60")
+        tushare_token = _load_tushare_token()
+        plan = _provider_symbol_plan(config, symbol_code=symbol_code)
+        if tushare_token and plan['tushare_symbol']:
+            print(f"[数据源2/3] Tushare: {plan['tushare_symbol']} ...")
+            if plan['tushare_api'] == 'index_daily':
+                df = _fetch_tushare_index(plan['tushare_symbol'], tushare_token)
+            elif plan['tushare_api'] == 'daily':
+                df = _fetch_tushare_stock(plan['tushare_symbol'], tushare_token)
+            else:
+                df = _fetch_tushare_api(plan['tushare_symbol'], tushare_token, plan['tushare_api'])
+            accepted = accept_or_continue("Tushare", df)
+            if accepted is not None:
+                return accepted
         else:
-            print("  跳过: 未配置 TUSHARE_TOKEN 或无 symbol_code")
-            errors.append("Tushare: 未配置或无代码")
+            print("  未尝试: 未配置 TUSHARE_TOKEN 或该源适配代码")
+            errors.append("Tushare: 未配置访问凭据或适配代码")
     except ImportError:
         errors.append("Tushare: 未安装")
-        print("  跳过: tushare 未安装")
+        print("  不可用: tushare 未安装")
     except Exception as e:
         errors.append(f"Tushare: {e}")
         print(f"  失败: {e}")
 
     # --- 源 3: BaoStock ---
     try:
-        if symbol_code:
-            print(f"[数据源3/3] BaoStock: {symbol_code} ...")
-            bs_code = str(config.get('baostock_symbol') or '').strip()
-            if not bs_code:
-                bs_code = f"sh.{symbol_code}" if symbol_code.startswith('6') else f"sz.{symbol_code}"
+        plan = _provider_symbol_plan(config, symbol_code=symbol_code)
+        if plan['baostock_symbol']:
+            print(f"[数据源3/3] BaoStock: {plan['baostock_symbol']} ...")
+            bs_code = plan['baostock_symbol']
             df = _fetch_baostock_stock(bs_code)
-            df = _normalize_columns(df)
-            df = df.drop_duplicates(subset='date').sort_values('date').reset_index(drop=True)
-            if len(df) >= 60:
-                print(f"  成功: {len(df)} 条")
-                return df
-            errors.append("BaoStock: 数据量不足")
-            print(f"  数据量不足: {len(df)} < 60")
+            accepted = accept_or_continue("BaoStock", df)
+            if accepted is not None:
+                return accepted
         else:
-            errors.append("BaoStock: 无 symbol_code")
-            print("  跳过: 无 symbol_code")
+            errors.append("BaoStock: 未配置该源适配代码")
+            print("  未尝试: 未配置 BaoStock 适配代码")
     except ImportError:
         errors.append("BaoStock: 未安装")
-        print("  跳过: baostock 未安装")
+        print("  不可用: baostock 未安装")
     except Exception as e:
         errors.append(f"BaoStock: {e}")
         print(f"  失败: {e}")
+
+    selected = _select_usable_source_candidate(candidates)
+    if selected:
+        print(
+            f"  所有可用数据源关键位质量均不足，选择最佳可用: "
+            f"{selected['source_name']}，最新日期 {selected['latest_date'].date()}，"
+            f"{selected['rows']} 条，{selected['quality_detail']}"
+        )
+        return selected['df']
 
     # 全部失败
     print("\n所有数据源均失败，错误详情：")
@@ -369,10 +587,20 @@ def _bare_code(value):
 
 def _prefixed_code(value, market=''):
     bare = _bare_code(value)
-    prefix = str(market or '').strip().lower()
-    if prefix not in {'sh', 'sz', 'bj'}:
-        upper_value = str(value or '').strip().upper()
-        if upper_value.endswith('.SH'):
+    upper_value = str(value or '').strip().upper()
+    if upper_value.endswith('.CSI') and re.fullmatch(r'H\d{5}', bare.upper()):
+        bare = bare[1:]
+    market_value = str(market or '').strip().upper()
+    if market_value in {'SH', 'SSE', 'CSI'}:
+        prefix = 'sh'
+    elif market_value in {'SZ', 'SZSE'}:
+        prefix = 'sz'
+    elif market_value == 'BJ':
+        prefix = 'bj'
+    else:
+        prefix = ''
+    if not prefix:
+        if upper_value.endswith(('.SH', '.CSI')):
             prefix = 'sh'
         elif upper_value.endswith('.SZ'):
             prefix = 'sz'
@@ -381,22 +609,154 @@ def _prefixed_code(value, market=''):
     return f'{prefix}{bare}' if prefix and bare else str(value or '').strip()
 
 
+def _market_suffix_from_prefixed(value):
+    text = str(value or '').strip().lower()
+    if text.startswith('sh'):
+        return 'SH'
+    if text.startswith('sz'):
+        return 'SZ'
+    if text.startswith('bj'):
+        return 'BJ'
+    return ''
+
+
+def _tushare_daily_symbol(value):
+    ts_code = str(value or '').strip().upper()
+    if not ts_code:
+        return ''
+    if '.' in ts_code:
+        return ts_code
+    bare = _bare_code(ts_code).upper()
+    market = _market_suffix_from_prefixed(ts_code)
+    if not market:
+        market = 'SH' if bare.startswith('6') else 'SZ'
+    return f'{bare}.{market}'
+
+
+def _normalize_csi_ts_code(value):
+    text = str(value or '').strip().upper()
+    if not text.endswith('.CSI'):
+        return text
+    bare = text.rsplit('.', 1)[0]
+    if re.fullmatch(r'\d{5}', bare):
+        return f'H{bare}.CSI'
+    return text
+
+
+def _tushare_futures_symbol(value):
+    text = str(value or '').strip().upper()
+    if not text:
+        return ''
+    if text in {'T0', 'T'}:
+        return 'T.CFX'
+    if text in {'TF0', 'TF'}:
+        return 'TF.CFX'
+    if text in {'TS0', 'TS'}:
+        return 'TS.CFX'
+    if text in {'TL0', 'TL'}:
+        return 'TL0.CFX'
+    if '.' in text:
+        return text
+    return f'{text}.CFX'
+
+
+def _baostock_plan_symbol(asset, source_symbol, market=''):
+    asset_value = str(asset or '').strip().lower()
+    if asset_value not in {'a_share', 'auto', 'etf', 'fund', 'index'}:
+        return ''
+    market_value = str(market or '').strip().upper()
+    source_text = str(source_symbol or '').strip()
+    if asset_value == 'index' and (source_text.upper().endswith('.CSI') or market_value == 'CSI'):
+        return ''
+    return _baostock_symbol(source_text, market_value)
+
+
+def _tushare_plan(asset, source_symbol):
+    asset_value = str(asset or '').strip().lower()
+    if asset_value == 'index':
+        return 'index_daily', str(source_symbol or '').strip().upper()
+    if asset_value in {'etf', 'fund'}:
+        return 'fund_daily', _tushare_daily_symbol(source_symbol)
+    if asset_value in {'hk_stock', 'hk'}:
+        return 'hk_daily', _tushare_daily_symbol(source_symbol)
+    if asset_value in {'us_stock', 'us'}:
+        return 'us_daily', _bare_code(source_symbol).upper()
+    if asset_value == 'convertible_bond':
+        return 'cb_daily', _tushare_daily_symbol(source_symbol)
+    if asset_value == 'futures':
+        return 'fut_daily', _tushare_futures_symbol(source_symbol)
+    return 'daily', _tushare_daily_symbol(source_symbol)
+
+
+def _provider_symbol_plan(config, symbol_code=None):
+    """Return script-local provider symbol/API choices for fallback data sources."""
+    cfg = dict(config or {})
+    data_args = dict(cfg.get('data_args') or {})
+    asset = str(cfg.get('asset_type') or 'auto').lower()
+    source_symbol = str(symbol_code or data_args.get('symbol') or '').strip()
+    akshare_args = data_args.copy()
+
+    market = str(cfg.get('market') or '').strip().upper()
+
+    if asset == 'index':
+        tushare_symbol = _normalize_csi_ts_code(str(cfg.get('tushare_symbol') or source_symbol).strip())
+        if not tushare_symbol and data_args.get('symbol'):
+            bare = _bare_code(data_args.get('symbol')).upper()
+            market = _market_suffix_from_prefixed(data_args.get('symbol')) or 'SH'
+            tushare_symbol = f'{bare}.{market}'
+        return {
+            'akshare_args': akshare_args,
+            'baostock_symbol': str(cfg.get('baostock_symbol') or _baostock_plan_symbol(asset, source_symbol, market)).strip(),
+            'tushare_api': 'index_daily',
+            'tushare_symbol': tushare_symbol,
+        }
+
+    tushare_symbol = str(cfg.get('tushare_symbol') or '').strip().upper()
+    tushare_api = str(cfg.get('tushare_api') or '').strip()
+    if not tushare_api:
+        tushare_api, planned_symbol = _tushare_plan(asset, source_symbol)
+        if not tushare_symbol:
+            tushare_symbol = planned_symbol
+    if not tushare_symbol:
+        tushare_source = source_symbol
+        if not tushare_source and data_args.get('symbol'):
+            ak_symbol = str(data_args.get('symbol')).strip()
+            market = _market_suffix_from_prefixed(ak_symbol)
+            bare = _bare_code(ak_symbol).upper()
+            tushare_source = f'{bare}.{market}' if market else bare
+        tushare_symbol = _tushare_daily_symbol(tushare_source)
+
+    return {
+        'akshare_args': akshare_args,
+        'baostock_symbol': str(cfg.get('baostock_symbol') or _baostock_plan_symbol(asset, source_symbol, market)).strip(),
+        'tushare_api': tushare_api or 'daily',
+        'tushare_symbol': tushare_symbol,
+    }
+
+
 def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
     label = str(name or symbol_code).strip()
     asset = str(asset_type or '').strip().lower()
     code_for_query = str(ts_code or symbol_code).strip()
     if not asset and _is_prefixed_cn_index_symbol(symbol_code):
         asset = 'index'
+    if not asset and str(code_for_query or symbol_code).strip().upper().endswith('.CSI'):
+        asset = 'index'
+        if not market:
+            market = 'CSI'
 
     if asset == 'index':
-        query_symbol = _prefixed_code(code_for_query or symbol_code, market).lower()
+        normalized_ts_code = _normalize_csi_ts_code(code_for_query or symbol_code)
+        query_symbol = _prefixed_code(normalized_ts_code or symbol_code, market).lower()
         return {
             'name': label,
             'name_short': label,
             'asset_type': 'index',
+            'market': str(market or '').strip().upper(),
             'data_func': 'stock_zh_index_daily',
             'data_args': {'symbol': query_symbol},
-            'baostock_symbol': _baostock_symbol(query_symbol, market),
+            'baostock_symbol': _baostock_plan_symbol('index', query_symbol, market),
+            'tushare_symbol': normalized_ts_code.upper(),
             'price_decimal': 2,
             'volume_unit': '手',
             'color_theme': '#607D8B',
@@ -407,9 +767,11 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': asset,
+            'market': str(market or '').strip().upper(),
             'data_func': 'fund_etf_hist_sina',
             'data_args': {'symbol': query_symbol},
             'baostock_symbol': _baostock_symbol(query_symbol, market),
+            'tushare_symbol': _tushare_daily_symbol(code_for_query or query_symbol),
             'price_decimal': 3,
             'volume_unit': '份',
             'color_theme': '#607D8B',
@@ -419,8 +781,11 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': 'hk_stock',
+            'market': 'HK',
             'data_func': 'stock_hk_daily',
             'data_args': {'symbol': _bare_code(code_for_query or symbol_code).zfill(5)},
+            'baostock_symbol': '',
+            'tushare_symbol': _tushare_daily_symbol(code_for_query or symbol_code),
             'price_decimal': 3,
             'volume_unit': '股',
             'color_theme': '#607D8B',
@@ -430,8 +795,11 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': 'us_stock',
+            'market': 'US',
             'data_func': 'stock_us_daily',
             'data_args': {'symbol': _bare_code(code_for_query or symbol_code).upper()},
+            'baostock_symbol': '',
+            'tushare_symbol': _bare_code(code_for_query or symbol_code).upper(),
             'price_decimal': 2,
             'volume_unit': '股',
             'color_theme': '#607D8B',
@@ -441,19 +809,38 @@ def _dynamic_config(symbol_code, name='', asset_type='', market='', ts_code=''):
             'name': label,
             'name_short': label,
             'asset_type': 'convertible_bond',
+            'market': str(market or '').strip().upper(),
             'data_func': 'bond_zh_hs_cov_daily',
             'data_args': {'symbol': _prefixed_code(code_for_query or symbol_code, market).lower()},
+            'baostock_symbol': '',
+            'tushare_symbol': _tushare_daily_symbol(code_for_query or symbol_code),
             'price_decimal': 3,
             'volume_unit': '张',
+            'color_theme': '#607D8B',
+        }
+    if asset == 'futures':
+        return {
+            'name': label,
+            'name_short': label,
+            'asset_type': 'futures',
+            'market': str(market or '').strip().upper(),
+            'data_func': 'futures_zh_daily_sina',
+            'data_args': {'symbol': _bare_code(code_for_query or symbol_code).upper()},
+            'baostock_symbol': '',
+            'tushare_symbol': _tushare_futures_symbol(code_for_query or symbol_code),
+            'price_decimal': 3,
+            'volume_unit': '手',
             'color_theme': '#607D8B',
         }
     return {
         'name': label,
         'name_short': label,
         'asset_type': asset or 'auto',
+        'market': str(market or '').strip().upper(),
         'data_func': 'stock_zh_a_hist',
         'data_args': {'symbol': _bare_code(code_for_query or symbol_code), 'period': 'daily', 'adjust': 'qfq'},
         'baostock_symbol': _baostock_symbol(code_for_query or symbol_code, market),
+        'tushare_symbol': _tushare_daily_symbol(code_for_query or symbol_code),
         'price_decimal': 2,
         'volume_unit': '手',
         'color_theme': '#607D8B',

@@ -9382,6 +9382,9 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         '"key_levels"',
         '"strong_resistance"',
         '"strong_support"',
+        "每个对象必须同时包含 value 和 source 两个字段",
+        "不得改名为 resistance/support",
+        "报告未给出明确支撑位",
         '"operation_guide"',
         '"breakout"',
         '"range"',
@@ -9471,20 +9474,89 @@ def test_ai_generation_converts_technical_analysis_json_to_renderer_text(busines
     assert "授权剩余时间" not in result.text
 
 
+def test_ai_generation_renders_technical_analysis_when_key_level_value_missing(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    payload = {
+        "target": "浙商银行（601916.SH）",
+        "signal_direction": "区间观望",
+        "latest_close": "2.83",
+        "market_date": "2026-07-02",
+        "daily_change": "+0.35%",
+        "analysis_model": "技术分析体系",
+        "trend": {
+            "summary": "MA5走平+MACD柱体收敛=区间震荡。",
+            "direction_confirm": {"conclusion": "趋势与动量暂不同向，依据MA5走平、MACD柱体收敛", "evidence": ["MA5走平", "MACD柱体收敛"]},
+            "quality_confirm": {"conclusion": "量价配合一般，依据成交量未明显放大", "evidence": ["成交量未明显放大"]},
+            "risk_confirm": {"conclusion": "回撤风险可控，依据价格仍在BOLL中轨附近", "evidence": ["价格仍在BOLL中轨附近"]},
+            "pattern_verify": {"conclusion": "小阳线方向偏中性，依据最新K线为小阳线", "evidence": ["最新K线为小阳线"]},
+        },
+        "key_levels": {
+            "strong_resistance": {"value": "2.91", "source": "前高"},
+            "strong_support": {"source": "报告未给出明确支撑位"},
+        },
+        "operation_guide": {
+            "summary": "区间观望，等待量能确认",
+            "breakout": "突破2.91后观察偏强延续",
+            "range": "区间震荡时等待量能方向",
+            "breakdown": "跌破关键均线后注意防守",
+        },
+    }
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return json.dumps(payload, ensure_ascii=False)
+
+    result = generate_technical_analysis_text("# 601916.SH 技术分析报告", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "technical analysis JSON payload invalid" not in result.detail
+    assert "📈 标的：浙商银行（601916.SH）" in result.text
+    assert "▪️ 强压力：2.91（前高）" in result.text
+    assert "▪️ 强支撑：无明显支撑（报告未给出明确支撑位）" in result.text
+
+
+def test_ai_generation_renders_technical_analysis_when_optional_sections_missing(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return json.dumps(
+                {
+                    "target": "浙商银行（601916.SH）",
+                    "key_levels": {
+                        "strong_resistance": {"value": "2.69", "source": "BOLL下轨附近"},
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+    result = generate_technical_analysis_text("# 601916.SH 技术分析报告", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "technical analysis JSON payload invalid" not in result.detail
+    assert "📈 标的：浙商银行（601916.SH）" in result.text
+    assert "[庆祝] 信号方向：——" in result.text
+    assert "📊 趋势研判\n报告未给出明确趋势研判" in result.text
+    assert "▪️ 方向确认（趋势 x 动量）：报告未给出趋势与动量的明确交叉依据" in result.text
+    assert "▪️ 强压力：2.69（BOLL下轨附近）" in result.text
+    assert "▪️ 强支撑：无明显支撑（报告未给出明确支撑位）" in result.text
+    assert "报告未给出明确操作指引：" in result.text
+
+
 def test_ai_generation_rejects_invalid_technical_analysis_json_payload(business_env):
     from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
     from business.config.constants import ErrorCode
 
     class FakeAdapter:
         def generate(self, request: AIGenerationRequest) -> str:
-            return json.dumps({"target": "新易盛（300502.SZ）"}, ensure_ascii=False)
+            return "{bad json"
 
     result = generate_technical_analysis_text("# 技术分析报告", adapter=FakeAdapter())
 
     assert result.success is False
     assert result.error_code == ErrorCode.SYSTEM_ERROR
     assert "technical analysis JSON payload invalid" in result.detail
-    assert "missing signal_direction" in result.detail
 
 
 def test_ai_generation_normalizes_technical_analysis_intraday_change_from_report_table(business_env):

@@ -111,9 +111,11 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
         "text": (
             '必须输出 "key_levels" 对象：\n'
             '"key_levels": {\n'
-            '  "strong_resistance": {"value": "<上方最重要阻力位>", "source": "<来源，如 BOLL上轨/前高/均线>"},\n'
-            '  "strong_support": {"value": "<下方最重要支撑位>", "source": "<来源，如 MA5/MA10/MA20/BOLL中轨>"}\n'
+            '  "strong_resistance": {"value": "<上方最重要阻力位；缺失填“——”>", "source": "<来源，如 BOLL上轨/前高/均线；缺失填“报告未给出明确压力位”>"},\n'
+            '  "strong_support": {"value": "<下方最重要支撑位；缺失填“——”>", "source": "<来源，如 MA5/MA10/MA20/BOLL中轨/前低；缺失填“报告未给出明确支撑位”>"}\n'
             "}\n\n"
+            "strong_resistance 和 strong_support 两个对象必须都存在，且每个对象必须同时包含 value 和 source 两个字段；不得改名为 resistance/support。\n"
+            "支撑压力优先从报告原文的关键位、BOLL上下轨/中轨、MA5/MA10/MA20/MA60、前高前低、区间边界中抽取。\n\n"
         ),
     },
     "ops_guide_section": {
