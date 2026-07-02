@@ -345,7 +345,7 @@ def parse_bond(text: str) -> dict[str, str]:
         "WEEKLY_SIGNAL": escape_text(weekly_signal),
         "WEEKLY_ITEMS": render_plain_bullets(weekly_items),
         "WEEKLY_THEME": escape_text(weekly_theme),
-        "AUTH": escape_text(line_value(text, "授权剩余时间")),
+        "AUTH": "",
         "DATA_SOURCE": escape_text(line_value(text, "数据来源") or "——"),
         "CONTACT": escape_text(line_value(text, "业务对接")),
     }
@@ -412,7 +412,7 @@ def parse_cb(text: str) -> dict[str, str]:
         "LOW_RISK_BONDS": escape_text(low_risk),
         "OPS_GUIDE": escape_block(ops),
         "DATA_SOURCE": escape_text(line_value(text, "数据来源")),
-        "AUTH": escape_text(line_value(text, "授权剩余时间")),
+        "AUTH": "",
         "CONTACT": escape_text(line_value(text, "业务对接")),
     }
 

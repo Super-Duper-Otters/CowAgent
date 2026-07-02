@@ -16391,6 +16391,31 @@ def test_daily_content_effective_content_image_missing_returns_no_content(busine
     assert str(missing_image) in result.detail
 
 
+@pytest.mark.parametrize("service_type", ["rate", "convertible_bond"])
+def test_daily_content_reply_reuses_effective_image_without_user_auth_rendering(
+    business_env, tmp_path, service_type
+):
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft, set_content_effective, update_generation_success
+    from business.content.daily_content_handler import handle_daily_content
+
+    service = ServiceType(service_type)
+    stored_image = tmp_path / f"{service_type}-stored.png"
+    stored_image.write_bytes(b"stored")
+    content_id = create_content_draft(service, source_text="source")
+    update_generation_success(content_id, "标准投研文本\n授权剩余时间：AI旧值", str(stored_image))
+    set_content_effective(content_id, operator="admin")
+
+    reply = handle_daily_content(
+        "daily-openid",
+        "利率" if service == ServiceType.RATE else "转债",
+        SimpleNamespace(service_type=service, module_key="rate" if service == ServiceType.RATE else "convertible-bond"),
+    )
+
+    assert reply.success is True
+    assert Path(reply.output_files[0]).read_bytes() == b"stored"
+
+
 def test_render_service_validates_output_files(business_env, tmp_path):
     from business.config.constants import ErrorCode, ServiceType
     from business.content.render_service import RenderRequest, render_card
@@ -16416,6 +16441,31 @@ def test_render_service_validates_output_files(business_env, tmp_path):
     )
     assert failed.success is False
     assert failed.error_code == ErrorCode.IMAGE_GENERATION_FAILED
+
+
+@pytest.mark.parametrize(
+    ("sample_path", "parser_name"),
+    [
+        ("builtin/components/signal-card-renderer/examples/bond_sample.txt", "parse_bond"),
+        ("builtin/components/signal-card-renderer/examples/cb_sample.txt", "parse_cb"),
+    ],
+)
+def test_rate_and_convertible_bond_renderer_suppresses_auth_duration(sample_path, parser_name):
+    import importlib.util
+
+    script_path = Path("builtin/components/signal-card-renderer/scripts/render_card.py").resolve()
+    spec = importlib.util.spec_from_file_location("signal_card_render_for_test", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    sample_text = Path(sample_path).read_text(encoding="utf-8").replace(
+        "授权剩余时间：——",
+        "授权剩余时间：2027-04-20",
+    )
+
+    values = getattr(module, parser_name)(sample_text)
+
+    assert values["AUTH"] == ""
 
 
 def test_render_service_contract_uses_skill_templates_and_configured_output_dir(business_env, tmp_path):
