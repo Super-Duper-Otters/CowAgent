@@ -25,7 +25,10 @@ from business.config.config_service import get_config, sanitize_sensitive_text
 from business.config.constants import ErrorCode, ServiceType, user_message
 from business.products.product_service import find_active_product, increment_product_hit, invalidate_product_if_unchanged
 from business.schema.db import connect
-from business.content.technical_analysis_card_config import apply_technical_analysis_card_footer
+from business.content.technical_analysis_card_config import (
+    apply_technical_analysis_card_footer,
+    technical_analysis_card_footer_config_for_openid,
+)
 from business.content.market_date_resolver import MarketDateResolution, MarketDateResolver, normalize_market_date
 from business.content.render_service import DEFAULT_RENDERER_PATH, render_technical_analysis_card, template_for_service
 from business.schema.tables import investment_products, investment_request_records
@@ -1002,7 +1005,10 @@ def run_technical_analysis(
                 else ""
             )
         standard_text = _force_technical_analysis_market_date(standard_text, market_date)
-        standard_text = apply_technical_analysis_card_footer(standard_text)
+        standard_text = apply_technical_analysis_card_footer(
+            standard_text,
+            technical_analysis_card_footer_config_for_openid(openid),
+        )
         version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
         card_market_date = market_date or "unknown"
         card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"

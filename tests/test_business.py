@@ -3430,6 +3430,26 @@ def test_component_settings_save_updates_technical_analysis_card_footer_config(b
     assert get_config("technical_analysis.card.contact") == "张三13800000000"
 
 
+def test_technical_analysis_card_footer_uses_customer_auth_end_date(business_env):
+    from business.accounts.user_service import create_user
+    from business.config.config_service import save_config
+    from business.content.technical_analysis_card_config import technical_analysis_card_footer_lines
+    from business.content.technical_analysis_card_config import technical_analysis_card_footer_config_for_openid
+
+    save_config("technical_analysis.card.auth_remaining", "——", operator_role="admin")
+    create_user("footer-openid", auth_end_at="2027-03-15T23:59:59")
+
+    customer_lines = technical_analysis_card_footer_lines(
+        technical_analysis_card_footer_config_for_openid("footer-openid")
+    )
+    fallback_lines = technical_analysis_card_footer_lines(
+        technical_analysis_card_footer_config_for_openid("missing-openid")
+    )
+
+    assert "⏱️ 授权剩余时间：2027-03-15" in customer_lines
+    assert "⏱️ 授权剩余时间：——" in fallback_lines
+
+
 def test_component_settings_save_updates_technical_analysis_prompt_blocks(business_env, monkeypatch):
     from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS
     from business.components.service import list_components
@@ -10050,12 +10070,15 @@ def test_command_script_component_failure_hides_backend_detail_from_customer_rep
 def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business_env, tmp_path, monkeypatch):
     from business.content import technical_analysis as technical_analysis
     from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.accounts.user_service import create_user
     from business.content.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
 
     save_config("technical_analysis.card.risk_disclaimer", "内部研究使用，不构成投资建议", operator_role="admin")
     save_config("technical_analysis.card.auth_remaining", "2026-12-31", operator_role="admin")
     save_config("technical_analysis.card.data_source", "Tushare", operator_role="admin")
     save_config("technical_analysis.card.contact", "张三13800000000", operator_role="admin")
+    create_user("ok", enabled=True, allowed_services=[ServiceType.ALL], auth_end_at="2027-03-15T23:59:59")
 
     request = TechnicalAnalysisRequest(openid="ok", raw_input="300502.SZ 技术分析", target_text="300502.SZ")
     assert request.openid == "ok"
@@ -10124,7 +10147,7 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
     assert "# 技术分析报告\n\n核心观点" in calls[1][1]
     assert "📈 标的：300502.SZ" in calls[2][1]
     assert "⚠️ 内部研究使用，不构成投资建议" in calls[2][1]
-    assert "⏱️ 授权剩余时间：2026-12-31" in calls[2][1]
+    assert "⏱️ 授权剩余时间：2027-03-15" in calls[2][1]
     assert "📚 数据来源：Tushare" in calls[2][1]
     assert "🤝 业务对接：张三13800000000" in calls[2][1]
     assert "AI错误" not in calls[2][1]
