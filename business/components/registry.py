@@ -63,6 +63,10 @@ class BusinessDefinition:
         return f"skill.{self.business_key}.triggers"
 
     @property
+    def match_type_config_key(self) -> str:
+        return f"skill.{self.business_key}.match_type"
+
+    @property
     def script_relative_path(self) -> Path:
         return Path("scripts") / self.script_name
 
@@ -81,7 +85,7 @@ class BusinessDefinition:
             "label": self.label,
             "description": self.description,
             "service_type": str(self.service_type),
-            "match_type": self.match_type,
+            "match_type": resolve_match_type(self),
             "triggers": list(resolve_triggers(self)),
             "enabled": is_business_enabled(self),
             "handler_type": self.handler_type,
@@ -478,6 +482,11 @@ def resolve_triggers(definition: BusinessDefinition) -> tuple[str, ...]:
     return _normalize_triggers(raw)
 
 
+def resolve_match_type(definition: BusinessDefinition) -> str:
+    raw = str(get_config(definition.match_type_config_key, definition.match_type) or "").strip()
+    return raw if raw in {"exact", "prefix", "suffix"} else definition.match_type
+
+
 def match_business(raw_input: str) -> BusinessMatch | None:
     if _contains_markdown_link(raw_input):
         return None
@@ -487,15 +496,16 @@ def match_business(raw_input: str) -> BusinessMatch | None:
     for definition in list_business_definitions():
         if not definition.routable or not is_business_enabled(definition):
             continue
-        triggers = resolve_triggers(definition)
-        if definition.match_type == "exact" and text in triggers:
+        triggers = sorted(resolve_triggers(definition), key=len, reverse=True)
+        match_type = resolve_match_type(definition)
+        if match_type == "exact" and text in triggers:
             return BusinessMatch(
                 definition.business_key,
                 definition.service_type,
                 raw_input,
                 skill_key=definition.skill_key or definition.business_key,
             )
-        if definition.match_type == "suffix":
+        if match_type == "suffix":
             for trigger in triggers:
                 if not trigger or not text.endswith(trigger):
                     continue
@@ -508,7 +518,7 @@ def match_business(raw_input: str) -> BusinessMatch | None:
                         target,
                         definition.skill_key or definition.business_key,
                     )
-        if definition.match_type == "prefix":
+        if match_type == "prefix":
             for trigger in triggers:
                 if not trigger or not text.startswith(trigger):
                     continue

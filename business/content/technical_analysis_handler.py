@@ -29,6 +29,8 @@ def _failure_reply_with_detail(prompt: str, detail: str) -> str:
 
 def _customer_failure_reply(prompt: str, code: ErrorCode | None, detail: str) -> str:
     if code == ErrorCode.STOCK_AMBIGUOUS:
+        if (prompt or "").strip() == (detail or "").strip():
+            return prompt
         return _failure_reply_with_detail(prompt, detail)
     return prompt
 

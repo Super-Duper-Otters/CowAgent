@@ -17,6 +17,7 @@ from channel.wechatmp.wechatmp_message import WeChatMPMessage
 from common.log import logger
 from common.utils import split_string_by_utf8_length
 from config import conf, subscribe_msg
+from business.config.wechat_rich_text import wechat_bizmsgmenu_link
 
 
 IMMEDIATE_ACK_KEY = "reply.wechatmp.immediate_ack"
@@ -110,12 +111,12 @@ def _running_technical_analysis_text(title: str) -> str:
         RUNNING_TECHNICAL_ANALYSIS_KEY,
         title,
         target=title,
-        default="「{}」技术分析仍在运行中，请稍后再回复 1 尝试获取。",
+        default=f"「{{}}」技术分析仍在运行中，请稍后再{wechat_bizmsgmenu_link('1', '回复1', 'get_result')}尝试获取。",
     )
 
 
 def _technical_running_new_request_text(title: str) -> str:
-    default = "「{running_title}」技术分析仍在运行中，请稍后回复1获取结果。\n当前暂不接受新的技术分析请求，请在结果领取后再发起新的技术分析。"
+    default = f"「{{running_title}}」技术分析仍在运行中，请稍后{wechat_bizmsgmenu_link('1', '回复1获取结果', 'get_result')}。\n当前暂不接受新的技术分析请求，请在结果领取后再发起新的技术分析。"
     text = _reply_text(TECHNICAL_RUNNING_NEW_REQUEST_KEY, default)
     try:
         return text.format(running_title=title)
@@ -127,7 +128,7 @@ def _technical_running_new_request_text(title: str) -> str:
 
 
 def _technical_ready_text(title: str) -> str:
-    default = "「{target}」技术分析结果已准备好，回复1获取。"
+    default = f"「{{target}}」技术分析结果已准备好，{wechat_bizmsgmenu_link('1', '回复1获取', 'get_result')}。"
     text = _reply_text(TECHNICAL_READY_KEY, default)
     try:
         return text.format(target=title)
@@ -207,7 +208,7 @@ def _pending_result_prompt(title):
             PENDING_TECHNICAL_ANALYSIS_KEY,
             _technical_analysis_title(title or ""),
             target=_technical_analysis_title(title or ""),
-            default="「{}」技术分析已生成完成，回复 1 获取技术分析主图、技术指标表。",
+            default=f"「{{}}」技术分析已生成完成，{wechat_bizmsgmenu_link('1', '回复1', 'get_result')}获取技术分析主图、技术指标表。",
         )
     prefix = title or ""
     return "{}结果已生成完成，回复 1 获取。".format(prefix)
@@ -223,20 +224,21 @@ def _pending_technical_summary(cache, receiver) -> str:
     items = "\n".join(_pending_summary_item_text(index, item) for index, item in enumerate(summary, start=1))
     template = _reply_text(
         PENDING_SUMMARY_KEY,
-        "您当前还有技术分析结果待领取：\n{items}\n回复1获取或回复股票名称获取对应报告",
+        "您当前还有技术分析结果待领取：\n{items}",
     )
     try:
         return template.format(items=items)
     except Exception:
-        return "您当前还有技术分析结果待领取：\n{}\n回复1获取或回复股票名称获取对应报告".format(items)
+        return "您当前还有技术分析结果待领取：\n{}".format(items)
 
 
 def _pending_summary_item_text(index: int, item) -> str:
     target, count, created_at = _unpack_pending_summary_item(item)
+    target_link = wechat_bizmsgmenu_link(target, target, f"pending_{index}")
     created_text = _format_pending_created_at(created_at)
     if created_text:
-        return f"{index}.{target} {count}条（生成时间：{created_text}）"
-    return f"{index}.{target} {count}条"
+        return f"{index}.{target_link} {count}条（生成时间：{created_text}）"
+    return f"{index}.{target_link} {count}条"
 
 
 def _unpack_pending_summary_item(item):
@@ -269,7 +271,10 @@ def _append_pending_technical_summary(text: str, cache, receiver) -> str:
 
 def _input_error_text(cache, receiver) -> str:
     return _append_pending_technical_summary(
-        _reply_text(INPUT_ERROR_KEY, "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。"),
+        _reply_text(
+            INPUT_ERROR_KEY,
+            "请输入：#股票代码/股票名称，或点击“利率”“转债”。",
+        ),
         cache,
         receiver,
     )
@@ -277,7 +282,7 @@ def _input_error_text(cache, receiver) -> str:
 
 def _immediate_ack_text(cache, receiver) -> str:
     return _append_pending_technical_summary(
-        _reply_text(IMMEDIATE_ACK_KEY, "收到，正在处理，请稍候。请等待30-40s后回复1获取"),
+        _reply_text(IMMEDIATE_ACK_KEY, f"收到，正在处理，请稍候。请等待30-40s后{wechat_bizmsgmenu_link('1', '回复1获取', 'get_result')}"),
         cache,
         receiver,
     )
@@ -374,11 +379,14 @@ def _is_technical_analysis_service_type(service_type) -> bool:
 
 
 def _is_technical_analysis_service_title(title) -> bool:
-    return str(title or "").strip().endswith("技术分析")
+    text = str(title or "").strip()
+    return text.startswith("#") or text.endswith("技术分析")
 
 
 def _technical_analysis_title(title: str) -> str:
     text = (title or "").strip()
+    if text.startswith("#"):
+        text = text[1:].strip()
     trigger = "技术分析"
     if text.endswith(trigger):
         text = text[: -len(trigger)].strip()

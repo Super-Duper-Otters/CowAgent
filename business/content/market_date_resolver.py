@@ -6,6 +6,12 @@ from datetime import date, timedelta
 from typing import Any
 
 from business.content.stock_resolver import get_tushare_token
+from business.market.provider_adapter import (
+    classify_asset_target,
+    to_akshare_symbol,
+    to_baostock_symbol,
+    to_tushare_symbol,
+)
 
 
 @dataclass(frozen=True)
@@ -26,9 +32,22 @@ class MarketDateResolver:
         return self._latest_market_date(symbol)
 
     def _latest_market_date(self, symbol: str) -> MarketDateResolution:
+        target = classify_asset_target(symbol)
         source_loaders = [("akshare", self._latest_from_akshare)]
-        if _asset_type_from_symbol(symbol) == "a_share":
+        if target.asset_type in {"a_share", "index"}:
             source_loaders.append(("tushare", self._latest_from_tushare))
+        if target.asset_type in {"a_share", "index", "etf", "convertible_bond"}:
+            source_loaders.append(("baostock", self._latest_from_baostock))
+        if _ranking_enabled():
+            candidates = []
+            for source_name, loader in source_loaders:
+                try:
+                    market_date = loader(symbol)
+                except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
+                    market_date = ""
+                if market_date:
+                    candidates.append(MarketDateResolution(market_date=market_date, known=True, source=source_name))
+            return max(candidates, key=lambda candidate: candidate.market_date) if candidates else MarketDateResolution()
         for source_name, loader in source_loaders:
             try:
                 market_date = loader(symbol)
@@ -39,7 +58,8 @@ class MarketDateResolver:
         return MarketDateResolution()
 
     def _latest_from_tushare(self, symbol: str) -> str:
-        if _asset_type_from_symbol(symbol) != "a_share":
+        target = classify_asset_target(symbol)
+        if target.asset_type not in {"a_share", "index"}:
             return ""
         token = get_tushare_token()
         if not token:
@@ -47,26 +67,64 @@ class MarketDateResolver:
         tushare = importlib.import_module("tushare")
         end_date = date.today().strftime("%Y%m%d")
         start_date = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
-        frame = tushare.pro_api(token).daily(ts_code=symbol.upper(), start_date=start_date, end_date=end_date)
+        pro = tushare.pro_api(token)
+        ts_code = to_tushare_symbol(target)
+        if target.asset_type == "index":
+            frame = pro.index_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        else:
+            frame = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
         return _latest_date_from_records(_records_from_frame(frame), ("trade_date", "date", "日期"))
+
+    def _latest_from_baostock(self, symbol: str) -> str:
+        target = classify_asset_target(symbol)
+        baostock_symbol = to_baostock_symbol(target)
+        if not baostock_symbol:
+            return ""
+        baostock = importlib.import_module("baostock")
+        login_result = baostock.login()
+        if getattr(login_result, "error_code", "0") not in ("0", 0, ""):
+            return ""
+        try:
+            end_date = date.today().isoformat()
+            start_date = (date.today() - timedelta(days=30)).isoformat()
+            result = baostock.query_history_k_data_plus(
+                baostock_symbol,
+                "date,open,high,low,close,volume",
+                start_date=start_date,
+                end_date=end_date,
+                frequency="d",
+                adjustflag="3",
+            )
+            records = []
+            fields = list(getattr(result, "fields", []) or [])
+            while getattr(result, "error_code", "0") in ("0", 0, "") and result.next():
+                row = result.get_row_data()
+                records.append(dict(zip(fields, row)))
+            return _latest_date_from_records(records, ("date", "trade_date", "日期"))
+        finally:
+            try:
+                baostock.logout()
+            except Exception:  # noqa: BLE001 - optional provider cleanup must not hide resolved dates.
+                pass
 
     def _latest_from_akshare(self, symbol: str) -> str:
         akshare = importlib.import_module("akshare")
-        asset_type = _asset_type_from_symbol(symbol)
-        if asset_type == "index":
-            frame = akshare.stock_zh_index_daily(symbol=_prefixed_cn_symbol(symbol).lower())
-        elif asset_type == "etf":
-            frame = akshare.fund_etf_hist_sina(symbol=_prefixed_cn_symbol(symbol).lower())
-        elif asset_type == "convertible_bond":
-            frame = akshare.bond_zh_hs_cov_daily(symbol=_prefixed_cn_symbol(symbol).lower())
-        elif asset_type == "futures":
-            frame = akshare.futures_zh_daily_sina(symbol=str(symbol or "").strip().upper())
-        elif asset_type == "hk_stock":
-            frame = akshare.stock_hk_daily(symbol=_bare_symbol(symbol).zfill(5))
-        elif asset_type == "us_stock":
-            frame = akshare.stock_us_daily(symbol=_bare_symbol(symbol).upper())
+        target = classify_asset_target(symbol)
+        akshare_symbol = to_akshare_symbol(target)
+        if target.asset_type == "index":
+            frame = akshare.stock_zh_index_daily(symbol=akshare_symbol)
+        elif target.asset_type == "etf":
+            frame = akshare.fund_etf_hist_sina(symbol=akshare_symbol)
+        elif target.asset_type == "convertible_bond":
+            frame = akshare.bond_zh_hs_cov_daily(symbol=akshare_symbol)
+        elif target.asset_type == "futures":
+            frame = akshare.futures_zh_daily_sina(symbol=akshare_symbol)
+        elif target.asset_type == "hk_stock":
+            frame = akshare.stock_hk_daily(symbol=akshare_symbol)
+        elif target.asset_type == "us_stock":
+            frame = akshare.stock_us_daily(symbol=akshare_symbol)
         else:
-            frame = akshare.stock_zh_a_hist(symbol=_bare_symbol(symbol), period="daily", adjust="")
+            frame = akshare.stock_zh_a_hist(symbol=akshare_symbol, period="daily", adjust="")
         return _latest_date_from_records(_records_from_frame(frame), ("日期", "date", "trade_date"))
 
 
@@ -88,6 +146,25 @@ def _prefixed_cn_symbol(symbol: str) -> str:
     if upper.endswith(".SZ") or bare.startswith(("12", "15")):
         return f"sz{bare}"
     return f"sh{bare}"
+
+
+def _baostock_symbol(symbol: str) -> str:
+    text = str(symbol or "").strip()
+    if re.fullmatch(r"(sh|sz|bj)\.\d{6}", text, flags=re.IGNORECASE):
+        return text.lower()
+    bare = _bare_symbol(text)
+    upper = text.upper()
+    exchange = "sh" if upper.endswith(".SH") or bare.startswith(("5", "6", "9")) else "sz"
+    return f"{exchange}.{bare}"
+
+
+def _ranking_enabled() -> bool:
+    try:
+        from business.cache.cache_policy import technical_analysis_cache_update_probe_allowed
+
+        return technical_analysis_cache_update_probe_allowed()
+    except Exception:
+        return False
 
 
 def _asset_type_from_symbol(symbol: str) -> str:

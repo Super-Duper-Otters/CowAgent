@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from business.config.config_service import get_config
 from business.content.market_date_resolver import MarketDateResolver
+from business.market.provider_adapter import classify_asset_target
 
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -26,7 +27,7 @@ MARKET_PROBE_SYMBOLS = {
     "us": "AAPL.US",
     "index": "sh000300",
     "etf": "510300.SH",
-    "convertible_bond": "113000.SH",
+    "convertible_bond": "111009.SH",
     "futures": "T0",
 }
 _MARKET_UPDATE_PROBE_CACHE = {}
@@ -115,28 +116,21 @@ def reset_market_update_probe_cache() -> None:
 
 
 def market_from_symbol(symbol: str) -> str:
-    text = str(symbol or "").strip().upper()
-    lower_text = str(symbol or "").strip().lower()
-    bare = text.split(".", 1)[0]
-    if re.fullmatch(r"(sh|sz|bj)\d{6}", lower_text):
-        return "index"
-    if text in {"T0", "TL0", "TF0", "TS0", "T", "TL", "TF", "TS"}:
-        return "futures"
-    if text.endswith(".SH") or text.endswith(".SZ"):
-        if len(bare) == 6 and bare.startswith(("11", "12")):
-            return "convertible_bond"
-        if len(bare) == 6 and bare.startswith(("51", "15")):
-            return "etf"
-        return "a_share"
-    if text.endswith(".HK"):
-        return "hk"
-    if text.endswith(".US"):
-        return "us"
-    return ""
+    asset_type = classify_asset_target(symbol).asset_type
+    aliases = {
+        "hk_stock": "hk",
+        "us_stock": "us",
+    }
+    return aliases.get(asset_type, asset_type)
 
 
 def _probe_allowed(now: datetime) -> bool:
     return _configured_probe_start_time() <= now.time() <= _configured_probe_end_time()
+
+
+def technical_analysis_cache_update_probe_allowed(now: datetime | str | None = None) -> bool:
+    current = _as_beijing_datetime(now) if now is not None else beijing_now()
+    return _probe_allowed(current)
 
 
 def probe_symbols() -> list[dict]:
@@ -283,8 +277,8 @@ def technical_analysis_cache_expired_after_close(
     if latest_market_date and str(market_date or "") < latest_market_date:
         return True
     cutoff = datetime.combine(current.date(), _configured_close_invalidate_time(), tzinfo=BEIJING_TZ)
-    if normalized_target and market_from_symbol(normalized_target) and current >= cutoff and str(market_date or "") < current.date().isoformat():
-        return True
+    if normalized_target and market_from_symbol(normalized_target):
+        return False
     if current < cutoff:
         return False
     if str(market_date or "") != current.date().isoformat():

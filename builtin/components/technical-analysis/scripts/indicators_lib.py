@@ -188,9 +188,13 @@ def calc_all_indicators(high, low, close, volume, open_=None):
     low    = np.asarray(low, dtype=np.float64)
     close  = np.asarray(close, dtype=np.float64)
     volume = np.asarray(volume, dtype=np.float64)
+    if open_ is not None:
+        open_ = np.asarray(open_, dtype=np.float64)
 
     n = len(close)
     assert len(high) == len(low) == n, "所有输入序列长度必须一致"
+    if open_ is not None:
+        assert len(open_) == n, "开盘价序列长度必须与收盘价一致"
 
     # ==================== 1. 趋势类 (Trend) ====================
     trend = {

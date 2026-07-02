@@ -9,6 +9,7 @@ from business.components.registry import (
     get_business_definition,
     is_business_enabled,
     list_business_definitions,
+    resolve_match_type,
     resolve_triggers,
 )
 
@@ -42,6 +43,7 @@ def _component_settings(definition) -> dict:
         settings["card_footer"] = technical_analysis_card_footer_config()
     if definition.uses_triggers:
         settings["triggers"] = list(resolve_triggers(definition))
+        settings["match_type"] = resolve_match_type(definition)
     if definition.prompt_key:
         from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS, default_prompt_for_service
 
@@ -331,6 +333,13 @@ def save_component_settings(
                 operator=operator,
                 actor=actor,
             )
+            save_config(
+                definition.match_type_config_key,
+                definition.match_type,
+                operator_role=operator_role,
+                operator=operator,
+                actor=actor,
+            )
         if definition.prompt_key:
             from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS, default_prompt_for_service
 
@@ -387,6 +396,20 @@ def save_component_settings(
         save_config(
             definition.triggers_config_key,
             triggers,
+            operator_role=operator_role,
+            operator=operator,
+            actor=actor,
+        )
+
+    if "match_type" in values:
+        if not definition.uses_triggers:
+            raise ValueError("passive components do not accept match_type")
+        match_type = str(values.get("match_type") or "").strip()
+        if match_type not in {"exact", "prefix", "suffix"}:
+            raise ValueError("match_type must be exact, prefix, or suffix")
+        save_config(
+            definition.match_type_config_key,
+            match_type,
             operator_role=operator_role,
             operator=operator,
             actor=actor,

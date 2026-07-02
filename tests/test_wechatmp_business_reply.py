@@ -1075,13 +1075,12 @@ def test_wechatmp_passive_pending_summary_lists_targets_for_invalid_input(monkey
     _fake_passive_post(monkeypatch, passive_reply, channel, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
 
-    assert passive_reply.Query().POST() == (
-        "请输入：股票代码/股票名称 + 技术分析，或输入“利率”“转债”。\n\n"
-        "您当前还有技术分析结果待领取：\n"
-        "1.天娱数科 2条（生成时间：2024-06-15 18:00）\n"
-        "2.农业银行 1条（生成时间：2024-06-15 18:00）\n"
-        "回复1获取或回复股票名称获取对应报告"
-    )
+    response = passive_reply.Query().POST()
+
+    assert response.startswith("请输入：#股票代码/股票名称，或点击“利率”“转债”。\n\n")
+    assert 'msgmenucontent=%E5%A4%A9%E5%A8%B1%E6%95%B0%E7%A7%91' in response
+    assert 'msgmenucontent=%E5%86%9C%E4%B8%9A%E9%93%B6%E8%A1%8C' in response
+    assert 'msgmenucontent=1&msgmenuid=get_result">回复1获取</a>' not in response
     assert produced_contexts == []
 
 
@@ -1123,12 +1122,11 @@ def test_wechatmp_passive_immediate_ack_appends_pending_summary(monkeypatch):
 
     response = passive_reply._immediate_ack_text(cache, "openid")
 
-    assert response.startswith(
-        "收到，正在处理，请稍候。请等待30-40s后回复1获取\n\n"
-        "您当前还有技术分析结果待领取：\n"
-        "1.农业银行 1条（生成时间："
-    )
-    assert response.endswith("）\n回复1获取或回复股票名称获取对应报告")
+    assert response.startswith("收到，正在处理，请稍候。请等待30-40s后")
+    assert 'msgmenucontent=1&msgmenuid=get_result">回复1获取</a>' in response
+    assert response.count('msgmenucontent=1&msgmenuid=get_result">回复1获取</a>') == 1
+    assert 'msgmenucontent=%E5%86%9C%E4%B8%9A%E9%93%B6%E8%A1%8C' in response
+    assert "或点击股票名称获取对应报告" not in response
 
 
 def test_wechatmp_passive_invalidated_technical_cache_is_not_returned_by_confirm(monkeypatch):
@@ -1614,7 +1612,10 @@ def test_wechatmp_passive_running_technical_analysis_confirm_prompts_retry(monke
     )
     channel.technical_analysis_titles = {"openid": "天娱数科"}
 
-    assert passive_reply.Query().POST() == "「天娱数科」技术分析仍在运行中，请稍后再回复 1 尝试获取。"
+    response = passive_reply.Query().POST()
+
+    assert response.startswith("「天娱数科」技术分析仍在运行中，请稍后再")
+    assert 'msgmenucontent=1&msgmenuid=get_result">回复1</a>' in response
     assert produced_contexts == []
 
 
@@ -1754,7 +1755,10 @@ def test_wechatmp_passive_ready_technical_result_returns_claim_prompt_without_st
     monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
     monkeypatch.setattr(passive_reply, "_queue_ready_technical_result", lambda *_args, **_kwargs: True)
 
-    assert passive_reply.Query().POST() == "「天娱数科」技术分析结果已准备好，回复1获取。"
+    response = passive_reply.Query().POST()
+
+    assert response.startswith("「天娱数科」技术分析结果已准备好，")
+    assert 'msgmenucontent=1&msgmenuid=get_result">回复1获取</a>' in response
     assert produced_contexts == []
     assert "openid" not in channel_state.running
 

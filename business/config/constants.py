@@ -93,13 +93,13 @@ USER_MESSAGES = {
     ErrorCode.AUTH_EXPIRED: "您的授权已过期，如需续期请联系服务人员。",
     ErrorCode.INPUT_ERROR: (
         "请输入以下格式之一：\n"
-        "1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析\n"
+        "1. 技术分析：输入 #股票代码/名称，例如 #000300.SH\n"
         "2. 利率\n"
         "3. 转债"
     ),
     ErrorCode.RUNNING: "正在运行，请稍候。",
-    ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用股票代码后重试，例如 300502.SZ、00700.HK、AAPL.US。",
-    ErrorCode.STOCK_AMBIGUOUS: "股票名称匹配到多个标的，请改用股票代码。",
+    ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用完整代码重试，例如 #300502.SZ。",
+    ErrorCode.STOCK_AMBIGUOUS: "匹配到多个标的，请点击候选项或改用完整代码。",
     ErrorCode.MARKET_DATA_UNAVAILABLE: "暂未获取到该标的行情数据，请检查代码或稍后重试。",
     ErrorCode.TECHNICAL_ANALYSIS_FAILED: "分析生成失败，请稍后重试或联系服务人员。",
     ErrorCode.IMAGE_GENERATION_FAILED: "图片生成失败，请稍后重试或联系服务人员。",

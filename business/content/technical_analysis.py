@@ -12,7 +12,7 @@ from sqlalchemy import and_, desc, select
 
 from business.cache import cache_service as cache_service
 from business.audit.ai_generation import generate_technical_analysis_text
-from business.cache.cache_policy import technical_analysis_cache_expired_after_close
+from business.cache.cache_policy import technical_analysis_cache_expired_after_close, technical_analysis_cache_update_config
 from business.cache.cache_service import (
     build_cache_key,
     find_cache_entry,
@@ -23,6 +23,8 @@ from business.cache.cache_service import (
 )
 from business.config.config_service import get_config, sanitize_sensitive_text
 from business.config.constants import ErrorCode, ServiceType, user_message
+from business.config.reply_config import format_reply_text
+from business.config.wechat_rich_text import component_link
 from business.products.product_service import find_active_product, increment_product_hit, invalidate_product_if_unchanged
 from business.schema.db import connect
 from business.content.technical_analysis_card_config import (
@@ -36,6 +38,7 @@ from business.schema.storage import get_storage_dirs
 from business.content.stock_resolver import (
     get_stock_symbol_by_code,
     get_tushare_token,
+    list_bare_code_symbol_matches,
     list_exact_stock_name_matches,
     list_index_symbol_matches_for_bare_code,
     resolve_stock,
@@ -109,12 +112,15 @@ _HK_PREFIX_RE = re.compile(r"^HK(\d{5})$", re.IGNORECASE)
 _GOLD_ALIASES = {"GC", "COMEX_GOLD", "GOLD_COMEX"}
 _INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)(\d{6})$", re.IGNORECASE)
 _MALFORMED_INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)\d+$", re.IGNORECASE)
+_CSI_SUFFIX_RE = re.compile(r"^([A-Z]?\d{5,6})\.CSI$", re.IGNORECASE)
 _ASCII_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]+$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
 def parse_target(raw_input: str) -> str:
     text = (raw_input or "").strip()
+    if text.startswith("#"):
+        return text[1:].strip()
     if not text.endswith("技术分析"):
         return ""
     return text[: -len("技术分析")].strip()
@@ -122,6 +128,26 @@ def parse_target(raw_input: str) -> str:
 
 def _standard_a_share_symbol(bare_symbol: str) -> str:
     return f"{bare_symbol}.SH" if bare_symbol.startswith("6") else f"{bare_symbol}.SZ"
+
+
+def _normalize_csi_symbol(value: str) -> str:
+    match = _CSI_SUFFIX_RE.fullmatch(str(value or "").strip())
+    if not match:
+        return ""
+    bare = match.group(1).upper()
+    if re.fullmatch(r"\d{5}", bare):
+        bare = f"H{bare}"
+    return f"{bare}.CSI"
+
+
+def _csi_symbol_suggestion(value: str) -> str:
+    match = _CSI_SUFFIX_RE.fullmatch(str(value or "").strip())
+    if not match:
+        return ""
+    bare = match.group(1).upper()
+    if re.fullmatch(r"\d{5}", bare):
+        return f"H{bare}.CSI"
+    return ""
 
 
 def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
@@ -137,6 +163,16 @@ def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
             skill_symbol=normalized,
             asset_type="index",
             market=index_match.group(1).upper(),
+        )
+
+    csi_symbol = _normalize_csi_symbol(value)
+    if csi_symbol:
+        return TechnicalAnalysisTarget(
+            normalized_target=csi_symbol,
+            skill_symbol=csi_symbol,
+            asset_type="index",
+            market="CSI",
+            ts_code=csi_symbol,
         )
 
     suffix_match = _A_SHARE_SUFFIX_RE.fullmatch(value)
@@ -194,12 +230,30 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
     value = str(target or "").strip()
     if _MALFORMED_INDEX_PREFIX_RE.fullmatch(value) and not _INDEX_PREFIX_RE.fullmatch(value):
         return TechnicalAnalysisTarget(), ErrorCode.STOCK_NOT_FOUND, f"cannot resolve symbol: {value}"
+    csi_suggestion = _csi_symbol_suggestion(value)
+    if csi_suggestion:
+        return (
+            TechnicalAnalysisTarget(),
+            ErrorCode.STOCK_NOT_FOUND,
+            _csi_symbol_suggestion_detail(value, csi_suggestion),
+        )
     target_info = _technical_analysis_target(value)
     if not value or not _CJK_RE.search(value):
+        if _A_SHARE_BARE_RE.fullmatch(value):
+            symbol_matches = list_bare_code_symbol_matches(value)
+            if len(symbol_matches) > 1:
+                return (
+                    TechnicalAnalysisTarget(),
+                    ErrorCode.STOCK_AMBIGUOUS,
+                    _bare_code_ambiguous_detail(value, symbol_matches),
+                )
         if target_info.normalized_target:
             stock = get_stock_symbol_by_code(target_info.normalized_target)
             stock_name = str(stock.get("name") or "").strip()
             if stock_name:
+                resolved_ts_code = str(stock.get("ts_code") or target_info.ts_code)
+                if target_info.asset_type == "index" and target_info.market == "CSI":
+                    resolved_ts_code = _normalize_csi_symbol(resolved_ts_code) or resolved_ts_code
                 target_info = TechnicalAnalysisTarget(
                     normalized_target=target_info.normalized_target,
                     skill_symbol=target_info.skill_symbol,
@@ -207,7 +261,7 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
                     stock_name=stock_name,
                     asset_type=str(stock.get("asset_type") or target_info.asset_type),
                     market=str(stock.get("market") or target_info.market),
-                    ts_code=str(stock.get("ts_code") or target_info.ts_code),
+                    ts_code=resolved_ts_code,
                 )
             elif _A_SHARE_BARE_RE.fullmatch(value):
                 index_matches = list_index_symbol_matches_for_bare_code(value)
@@ -251,18 +305,30 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
 def _ambiguous_stock_detail(value: str) -> str:
     matches = list_exact_stock_name_matches(value)
     if not matches:
-        return f"股票名称“{value}”匹配到多个标的，请改用股票代码重新发送。"
-    lines = [f"股票名称“{value}”匹配到多个标的，请改用股票代码重新发送："]
-    for index, row in enumerate(matches, start=1):
+        candidate_list = ""
+    else:
+        candidate_list = _candidate_list(matches, lambda row: _stock_candidate_label(row, value))
+    return format_reply_text(
+        "reply.technical_analysis.stock_name_ambiguous",
+        target=value,
+        candidate_list=candidate_list,
+    )
+
+
+def _candidate_list(rows: list[dict[str, str]], label_func) -> str:
+    lines: list[str] = []
+    for index, row in enumerate(rows, start=1):
         code = str(row.get("code") or "").strip()
-        name = str(row.get("name") or value).strip()
-        market = str(row.get("market") or "").strip().upper()
-        suffix = f"（{market}）" if market else ""
-        lines.append(f"{index}. {code} {name}{suffix}".strip())
-    example_code = str(matches[-1].get("code") or matches[0].get("code") or "").strip()
-    if example_code:
-        lines.append(f"例如：{example_code} 技术分析")
+        lines.append(f"{index}. {component_link('technical-analysis', code, label_func(row))}")
     return "\n".join(lines)
+
+
+def _stock_candidate_label(row: dict[str, str], fallback_name: str = "") -> str:
+    code = str(row.get("code") or "").strip()
+    name = str(row.get("name") or fallback_name).strip()
+    market = str(row.get("market") or "").strip().upper()
+    suffix = f"（{market}）" if market else ""
+    return f"{code} {name}{suffix}".strip()
 
 
 def _bare_code_index_suggestion_detail(value: str, matches: list[dict[str, str]]) -> str:
@@ -273,26 +339,77 @@ def _bare_code_index_suggestion_detail(value: str, matches: list[dict[str, str]]
         row = matches[0]
         code = str(row.get("code") or "").strip()
         name = str(row.get("name") or "该指数").strip()
-        return f"未找到 {bare_code} 对应的个股。若您要分析指数“{name}”，请发送：{code} 技术分析"
-    lines = [f"未找到 {bare_code} 对应的个股。若您要分析指数，请使用指数代码重新发送："]
-    for index, row in enumerate(matches, start=1):
-        code = str(row.get("code") or "").strip()
-        name = str(row.get("name") or "指数").strip()
-        lines.append(f"{index}. {code} {name}".strip())
-    return "\n".join(lines)
+        candidate = component_link("technical-analysis", code)
+        return format_reply_text(
+            "reply.technical_analysis.bare_code_index_suggestion",
+            target=bare_code,
+            name=name,
+            candidate=candidate,
+            candidate_list=f"1. {candidate}",
+        )
+    candidate_list = _candidate_list(
+        matches,
+        lambda row: f"{str(row.get('code') or '').strip()} {str(row.get('name') or '指数').strip()}".strip(),
+    )
+    return format_reply_text(
+        "reply.technical_analysis.bare_code_index_candidates",
+        target=bare_code,
+        candidate_list=candidate_list,
+    )
+
+
+def _bare_code_ambiguous_detail(value: str, matches: list[dict[str, str]]) -> str:
+    bare_code = str(value or "").strip()
+    return format_reply_text(
+        "reply.technical_analysis.bare_code_ambiguous",
+        target=bare_code,
+        candidate_list=_candidate_list(matches, _asset_candidate_label),
+    )
+
+
+def _asset_candidate_label(row: dict[str, str]) -> str:
+    code = str(row.get("code") or "").strip()
+    name = str(row.get("name") or "").strip()
+    asset_type = str(row.get("asset_type") or "").strip().lower()
+    asset_label = {
+        "a_share": "A股",
+        "index": "指数",
+        "etf": "ETF",
+        "fund": "基金",
+        "convertible_bond": "可转债",
+    }.get(asset_type, asset_type or "标的")
+    label = f"（{asset_label}）" if asset_label else ""
+    return f"{code} {name}{label}".strip()
 
 
 def _unknown_bare_code_detail(value: str) -> str:
-    return f"未找到 {str(value or '').strip()} 对应的个股或指数，请检查代码。"
+    return format_reply_text(
+        "reply.technical_analysis.unknown_bare_code",
+        target=str(value or "").strip(),
+        example=component_link("technical-analysis", "300502.SZ"),
+    )
+
+
+def _csi_symbol_suggestion_detail(value: str, suggestion: str) -> str:
+    raw = str(value or "").strip().upper()
+    return format_reply_text(
+        "reply.technical_analysis.csi_symbol_suggestion",
+        target=raw,
+        suggestion=component_link("technical-analysis", suggestion),
+    )
 
 
 def _is_user_facing_resolution_detail(detail: str) -> bool:
     text = str(detail or "")
-    return text.startswith("未找到 ") and ("请发送" in text or "重新发送" in text or "请检查代码" in text)
+    return (
+        (text.startswith("未找到 ") and ("请发送" in text or "请点击" in text or "重新发送" in text or "请检查代码" in text))
+        or (text.startswith("代码 ") and "匹配到多个标的" in text and ("重新发送" in text or "请点击" in text))
+        or (text.startswith("股票名称") and "匹配到多个标的" in text and ("重新发送" in text or "请点击" in text))
+    )
 
 
 def _technical_analysis_error_prompt(error: ErrorCode, detail: str = "") -> str:
-    if error == ErrorCode.STOCK_NOT_FOUND and _is_user_facing_resolution_detail(detail):
+    if error in {ErrorCode.STOCK_NOT_FOUND, ErrorCode.STOCK_AMBIGUOUS} and _is_user_facing_resolution_detail(detail):
         return detail
     return user_message(error)
 
@@ -365,6 +482,9 @@ def _run_skill(
     tushare_token = str(get_tushare_token() or "").strip()
     if tushare_token:
         env["TUSHARE_TOKEN"] = tushare_token
+    cache_update_config = technical_analysis_cache_update_config()
+    env["TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START"] = str(cache_update_config.get("probe_start") or "15:30")
+    env["TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END"] = str(cache_update_config.get("probe_end") or "18:00")
     command = [sys.executable, str(skill_path), "--symbol", symbol, "--output", str(output_dir)]
     if name:
         command.extend(["--name", str(name)])

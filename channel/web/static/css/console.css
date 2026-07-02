@@ -860,6 +860,55 @@
     color: #cbd5e1;
 }
 
+.investment-reply-chip {
+    display: inline-flex;
+    max-width: min(360px, 100%);
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    margin: 0 3px;
+    padding: 2px 8px;
+    border: 1px solid #93c5fd;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+.investment-reply-chip-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.investment-reply-chip-trigger {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 180px;
+    overflow: hidden;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: rgba(29, 78, 216, 0.1);
+    color: #1e40af;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dark .investment-reply-chip {
+    border-color: rgba(96, 165, 250, 0.45);
+    background: rgba(37, 99, 235, 0.16);
+    color: #bfdbfe;
+}
+
+.dark .investment-reply-chip-trigger {
+    background: rgba(147, 197, 253, 0.16);
+    color: #dbeafe;
+}
+
 .investment-reply-row-actions {
     display: flex;
     align-items: center;
@@ -928,6 +977,28 @@
     gap: 8px;
 }
 
+.investment-reply-placeholder-section {
+    display: grid;
+    gap: 8px;
+}
+
+.investment-reply-text-placeholders {
+    display: grid;
+    gap: 8px;
+}
+
+.investment-reply-text-placeholders summary {
+    width: max-content;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.dark .investment-reply-text-placeholders summary {
+    color: #94a3b8;
+}
+
 .investment-reply-placeholder {
     display: inline-flex;
     align-items: center;
@@ -947,6 +1018,23 @@
     background: #dbeafe;
 }
 
+.investment-reply-placeholder.rich {
+    border-color: #93c5fd;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-family: inherit;
+    font-weight: 600;
+}
+
+.investment-reply-placeholder.rich code {
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: rgba(29, 78, 216, 0.1);
+    color: #1e40af;
+    font-size: 11px;
+}
+
 .dark .investment-reply-placeholder {
     border-color: rgba(96, 165, 250, 0.35);
     background: rgba(37, 99, 235, 0.14);
@@ -958,9 +1046,189 @@
     background: rgba(37, 99, 235, 0.22);
 }
 
+.dark .investment-reply-placeholder.rich {
+    border-color: rgba(96, 165, 250, 0.45);
+    background: rgba(37, 99, 235, 0.16);
+    color: #bfdbfe;
+}
+
+.dark .investment-reply-placeholder.rich code {
+    background: rgba(147, 197, 253, 0.16);
+    color: #dbeafe;
+}
+
+.investment-reply-action-tools {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.dark .investment-reply-action-tools {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.investment-reply-action-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.investment-reply-action-heading small {
+    color: #64748b;
+    font-weight: 400;
+}
+
+.dark .investment-reply-action-heading {
+    color: #e2e8f0;
+}
+
+.dark .investment-reply-action-heading small {
+    color: #94a3b8;
+}
+
+.investment-reply-action-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.investment-reply-action-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.investment-reply-extra-actions {
+    display: grid;
+    gap: 8px;
+}
+
+.investment-reply-extra-actions summary {
+    width: max-content;
+    color: #0369a1;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.dark .investment-reply-extra-actions summary {
+    color: #7dd3fc;
+}
+
+.investment-reply-action-chip {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 3px 9px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.investment-reply-action-chip:hover {
+    border-color: #38bdf8;
+    color: #0369a1;
+}
+
+.investment-reply-action-chip code {
+    max-width: 160px;
+    overflow: hidden;
+    color: #0369a1;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.investment-reply-action-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #64748b;
+    cursor: pointer;
+}
+
+.investment-reply-action-edit:hover {
+    border-color: #38bdf8;
+    color: #0369a1;
+}
+
+.investment-reply-custom-action-editor {
+    display: grid;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed #cbd5e1;
+}
+
+.dark .investment-reply-action-chip {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e2e8f0;
+}
+
+.dark .investment-reply-action-chip:hover {
+    border-color: rgba(56, 189, 248, 0.65);
+    color: #bae6fd;
+}
+
+.dark .investment-reply-action-chip code {
+    color: #bae6fd;
+}
+
+.dark .investment-reply-action-edit {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #cbd5e1;
+}
+
+.dark .investment-reply-action-edit:hover {
+    border-color: rgba(56, 189, 248, 0.65);
+    color: #bae6fd;
+}
+
+.dark .investment-reply-custom-action-editor {
+    border-top-color: rgba(255, 255, 255, 0.14);
+}
+
 .investment-reply-dialog-field textarea {
     min-height: 180px;
     resize: vertical;
+}
+
+.investment-reply-template-preview {
+    min-height: 48px;
+    padding: 10px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.dark .investment-reply-template-preview {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: #cbd5e1;
 }
 
 @media (max-width: 640px) {

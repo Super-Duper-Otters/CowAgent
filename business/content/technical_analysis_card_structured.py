@@ -181,7 +181,8 @@ def _compact(text: str, max_len: int = 45) -> str:
 
 def _confirm_line(label: str, item: dict[str, Any]) -> str:
     conclusion = _as_text(item.get("conclusion"))
-    return f"▪️ {label}：{_compact(conclusion, 72)}"
+    value = re.sub(r"\s+", "", conclusion)
+    return f"▪️ {label}：{value}"
 
 
 def render_technical_analysis_standard_text(payload: dict[str, Any]) -> str:

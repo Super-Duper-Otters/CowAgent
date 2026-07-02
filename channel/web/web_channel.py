@@ -4629,11 +4629,16 @@ class InvestmentConfigHandler:
         _require_investment_permission("config.read")
         try:
             from business.config.config_service import CONFIG_FALLBACK_KEYS, get_configs
-            from business.config.reply_config import reply_text_config_metadata
+            from business.config.reply_config import REPLY_TEXT_DEFINITIONS, get_reply_template, reply_text_config_metadata
+
+            configs = get_configs(list(CONFIG_FALLBACK_KEYS.keys()), masked=True)
+            for reply_key in REPLY_TEXT_DEFINITIONS:
+                if reply_key in configs:
+                    configs[reply_key] = get_reply_template(reply_key)
 
             return _investment_json_response({
                 "status": "success",
-                "configs": get_configs(list(CONFIG_FALLBACK_KEYS.keys()), masked=True),
+                "configs": configs,
                 "reply_texts": reply_text_config_metadata(),
             })
         except Exception as e:
@@ -4800,6 +4805,7 @@ class InvestmentComponentSettingsHandler:
                 audit_keys.append(definition.enabled_config_key)
                 if definition.uses_triggers:
                     audit_keys.append(definition.triggers_config_key)
+                    audit_keys.append(definition.match_type_config_key)
                 if definition.prompt_key:
                     audit_keys.append(definition.prompt_key)
                     if definition.business_key == "technical-analysis":
@@ -4813,6 +4819,8 @@ class InvestmentComponentSettingsHandler:
                 audit_keys.append(definition.enabled_config_key)
             if "triggers" in body and definition.uses_triggers:
                 audit_keys.append(definition.triggers_config_key)
+            if "match_type" in body and definition.uses_triggers:
+                audit_keys.append(definition.match_type_config_key)
             if "prompt" in body and definition.prompt_key:
                 audit_keys.append(definition.prompt_key)
             if "prompt_blocks" in body and definition.business_key == "technical-analysis" and definition.prompt_key:
@@ -4845,6 +4853,7 @@ class InvestmentComponentSettingsHandler:
                         for key in (
                             "enabled",
                             "triggers",
+                            "match_type",
                             "prompt",
                             "prompt_blocks",
                             "allow_unresolved_bare_code_analysis",

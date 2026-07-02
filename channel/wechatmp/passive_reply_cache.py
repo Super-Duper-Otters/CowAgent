@@ -338,6 +338,8 @@ class PassiveReplyCache:
 
     def _normalize_technical_title(self, title):
         text = str(title or "").strip()
+        if text.startswith("#"):
+            text = text[1:].strip()
         suffix = "技术分析"
         if text.endswith(suffix):
             text = text[: -len(suffix)].strip()

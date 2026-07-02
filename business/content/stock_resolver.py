@@ -323,6 +323,34 @@ def list_index_symbol_matches_for_bare_code(value: str, limit: int = 3) -> list[
     return [by_code[code] for code in candidates if code in by_code][: max(1, min(int(limit or 3), 10))]
 
 
+def list_bare_code_symbol_matches(value: str, limit: int = 10) -> list[dict[str, str]]:
+    bare_code = str(value or "").strip()
+    if not _BARE_CODE_RE.fullmatch(bare_code):
+        return []
+    candidates = [
+        f"{bare_code}.SH",
+        f"{bare_code}.SZ",
+        f"{bare_code}.BJ",
+        f"sh{bare_code}",
+        f"sz{bare_code}",
+        f"bj{bare_code}",
+        f"{bare_code}.CSI",
+    ]
+    table = investment_stock_symbols
+    stmt = (
+        select(table.c.code, table.c.name, table.c.market, table.c.ts_code, table.c.asset_type, table.c.source)
+        .where(
+            table.c.code.in_(candidates),
+            _trusted_dictionary_source_condition(table),
+        )
+    )
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    by_code = {str(row_to_dict(row).get("code") or ""): row_to_dict(row) for row in rows}
+    ordered = [by_code[code] for code in candidates if code in by_code]
+    return ordered[: max(1, min(int(limit or 10), 50))]
+
+
 def get_tushare_token(masked: bool = False) -> str:
     token = str(get_config("tushare.token", "") or "").strip()
     if not token:

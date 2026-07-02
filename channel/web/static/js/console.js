@@ -5796,10 +5796,16 @@ function renderInvestmentComponentConfigDialogBody(component) {
     const settings = component.settings || {};
     const triggerValue = (settings.triggers || []).join('，');
     const triggerEditor = component.uses_triggers ? `
-        <label class="investment-field">
-            <span>触发词</span>
-            <input id="invest-component-modal-triggers-${escapeHtml(componentKey)}" value="${escapeHtml(triggerValue)}" placeholder="多个触发词用逗号分隔">
-        </label>` : '';
+        <div class="investment-grid cols-2">
+            <label class="investment-field">
+                <span>触发词</span>
+                <input id="invest-component-modal-triggers-${escapeHtml(componentKey)}" value="${escapeHtml(triggerValue)}" placeholder="多个触发词用逗号分隔">
+            </label>
+            <label class="investment-field">
+                <span>匹配方式 ${investmentImportInfo('前缀/后缀匹配会把触发词之外的文本作为 target_text；精确匹配要求整句等于触发词。')}</span>
+                ${investmentDropdown(`invest-component-modal-match-type-${componentKey}`, investmentComponentMatchDropdownOptions(), settings.match_type || component.match_type || 'suffix')}
+            </label>
+        </div>` : '';
     const promptBlocks = Array.isArray(settings.prompt_blocks) ? settings.prompt_blocks : [];
     const promptBlockEditor = promptBlocks.length ? `
         <div class="investment-detail-block">
@@ -6014,6 +6020,7 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const prefix = source === 'modal' ? 'invest-component-modal' : 'invest-component';
     const enabled = document.getElementById(`${prefix}-enabled-${componentKey}`);
     const triggers = document.getElementById(`${prefix}-triggers-${componentKey}`);
+    const matchType = document.getElementById(`${prefix}-match-type-${componentKey}`);
     const prompt = document.getElementById(`${prefix}-prompt-${componentKey}`);
     const promptBlocks = Array.from(document.querySelectorAll('.invest-component-modal-prompt-block'));
     const allowUnresolvedBareCode = document.getElementById(`${prefix}-allow-unresolved-bare-code-${componentKey}`);
@@ -6025,6 +6032,7 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const promptTemplate = document.getElementById('invest-component-modal-prompt-template');
     if (enabled) body.enabled = enabled.checked;
     if (triggers) body.triggers = triggers.value;
+    if (matchType) body.match_type = matchType.value || 'suffix';
     if (prompt) body.prompt = prompt.value;
     if (promptBlocks.length) {
         body.prompt_blocks = {};
@@ -6663,21 +6671,27 @@ const investmentReplyConfigDialogPayloads = {};
 function renderInvestmentReplyConfigGroups(replyTexts, configs) {
     const groups = replyTexts.groups || [];
     const definitions = replyTexts.definitions || {};
+    const richActions = replyTexts.rich_actions || {};
+    const customActions = configs['reply.rich_actions'] || {};
     if (!groups.length) return '';
     return groups.map(group => `
         <section class="investment-panel investment-workbench-full">
             <div class="investment-panel-title"><i class="fas fa-message"></i><span>${escapeHtml(group.title || '公众号回复词')}</span></div>
             <div class="investment-reply-list">
-                ${(group.keys || []).map(key => renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key])).join('')}
+                ${(group.keys || []).map(key => renderInvestmentReplyConfigField(key, definitions[key] || {}, configs[key], richActions, customActions)).join('')}
             </div>
         </section>`).join('');
 }
 
-function renderInvestmentReplyConfigField(key, definition, value = '') {
+function renderInvestmentReplyConfigField(key, definition, value = '', richActions = {}, customActions = {}) {
     const label = definition.label || key;
     const description = definition.description || '';
     const placeholders = Array.isArray(definition.placeholders) ? definition.placeholders : [];
-    investmentReplyConfigDialogPayloads[key] = {key, label, description, placeholders, value: value || ''};
+    const placeholderDetails = definition.placeholder_details || {};
+    const definitionActions = definition.rich_actions || {};
+    const actions = {...richActions, ...definitionActions};
+    const defaultTemplate = definition.default_template || definition.default || '';
+    investmentReplyConfigDialogPayloads[key] = {key, label, description, placeholders, placeholderDetails, value: value || '', defaultTemplate, actions, definitionActions, customActions};
     const canEdit = investmentCanEditConfig(key);
     const preview = String(value || '').trim() || '未配置回复词';
     return `
@@ -6687,7 +6701,7 @@ function renderInvestmentReplyConfigField(key, definition, value = '') {
                     <strong>${escapeHtml(label)}</strong>
                     ${description ? `<span class="investment-reply-help" data-tooltip="${escapeHtml(description)}" title="${escapeHtml(description)}" aria-label="${escapeHtml(description)}"><i class="fas fa-info"></i></span>` : ''}
                 </div>
-                <div class="investment-reply-row-preview" id="${escapeHtml(investmentReplyPreviewId(key))}">${escapeHtml(preview)}</div>
+                <div class="investment-reply-row-preview" id="${escapeHtml(investmentReplyPreviewId(key))}">${renderInvestmentReplyTemplatePreview(preview, actions, placeholderDetails)}</div>
             </div>
             <div class="investment-reply-row-actions">
                 ${canEdit ? `<button class="investment-btn compact" type="button" onclick='openInvestmentReplyConfigDialog(${investmentJsString(key)})'><i class="fas fa-pen"></i><span>编辑</span></button>` : '<span class="investment-muted-inline">只读</span>'}
@@ -6704,15 +6718,14 @@ function openInvestmentReplyConfigDialog(key = '') {
     const label = payload.label || key;
     const description = payload.description || '';
     const placeholders = Array.isArray(payload.placeholders) ? payload.placeholders : [];
+    const placeholderDetails = payload.placeholderDetails || {};
+    const actions = payload.actions || {};
+    const definitionActions = payload.definitionActions || {};
+    const customActions = payload.customActions || {};
     const id = investmentConfigElementId(key);
     const safeId = escapeHtml(id);
-    const placeholderTools = placeholders.length ? `
-            <div class="investment-reply-placeholders">
-                <span>可用变量</span>
-                <div class="investment-reply-placeholder-list">
-                    ${placeholders.map(item => `<button class="investment-reply-placeholder" type="button" onclick='insertInvestmentReplyPlaceholder(${investmentJsString(key)}, ${investmentJsString(item)})'>{${escapeHtml(item)}}</button>`).join('')}
-                </div>
-            </div>` : '';
+    const placeholderTools = renderInvestmentReplyPlaceholderTools(key, placeholders, placeholderDetails);
+    const actionTools = renderInvestmentReplyActionTools(key, definitionActions, actions, customActions);
     const body = `
         <div class="investment-reply-dialog">
             <div class="investment-reply-dialog-heading">
@@ -6720,12 +6733,18 @@ function openInvestmentReplyConfigDialog(key = '') {
                 ${description ? `<p>${escapeHtml(description)}</p>` : ''}
             </div>
             ${placeholderTools}
+            ${actionTools}
             <label class="investment-field textarea investment-reply-dialog-field">
-                <span>回复内容</span>
-                <textarea id="${safeId}" rows="8" oninput='markInvestmentConfigDirty(${investmentJsString(key)})'>${escapeHtml(payload.value || '')}</textarea>
+                <span>回复模板</span>
+                <textarea id="${safeId}" rows="8" oninput='markInvestmentConfigDirty(${investmentJsString(key)}); refreshInvestmentReplyTemplatePreview(${investmentJsString(key)})'>${escapeHtml(payload.value || '')}</textarea>
             </label>
+            <div class="investment-reply-template-preview" id="${safeId}-rich-preview">
+                ${renderInvestmentReplyTemplatePreview(payload.value || '', actions, placeholderDetails)}
+            </div>
             <div class="investment-actions investment-modal-actions">
                 <button id="${safeId}-save" class="investment-btn primary investment-config-save hidden" type="button" onclick='saveInvestmentReplyConfigDialog(${investmentJsString(key)})'><i class="fas fa-floppy-disk"></i><span>保存</span></button>
+                <button class="investment-btn" type="button" onclick='refreshInvestmentReplyTemplatePreview(${investmentJsString(key)})'><i class="fas fa-arrows-rotate"></i><span>刷新</span></button>
+                <button class="investment-btn" type="button" onclick='resetInvestmentReplyConfigDialog(${investmentJsString(key)})'><i class="fas fa-rotate-left"></i><span>重置</span></button>
                 <button class="investment-btn" type="button" onclick="hideInvestmentModal()"><i class="fas fa-xmark"></i><span>取消</span></button>
                 <span id="${safeId}-status" class="investment-config-status"></span>
             </div>
@@ -6733,11 +6752,242 @@ function openInvestmentReplyConfigDialog(key = '') {
     showInvestmentModal('编辑公众号回复词', body);
 }
 
+function renderInvestmentReplyActionTools(key, primaryActions = {}, allActions = {}, customActions = {}) {
+    const primaryEntries = Object.entries(primaryActions);
+    const extraEntries = Object.entries(allActions).filter(([actionId]) => !primaryActions[actionId]);
+    if (!primaryEntries.length && !extraEntries.length) return '';
+    const actionButtons = entries => entries.map(([actionId, action]) => `
+        <span class="investment-reply-action-wrap">
+            <button class="investment-reply-action-chip" type="button" onclick='insertInvestmentReplyAction(${investmentJsString(key)}, ${investmentJsString(actionId)})' title="${escapeHtml(action.description || '')}">
+                <i class="fas fa-link"></i>
+                <span>${escapeHtml(action.display_text || action.label || actionId)}</span>
+                <code>${escapeHtml(action.trigger_text || '')}</code>
+            </button>
+            ${action.source === 'custom' ? `<button class="investment-reply-action-edit" type="button" onclick='editInvestmentReplyCustomAction(${investmentJsString(key)}, ${investmentJsString(actionId)})' title="编辑"><i class="fas fa-pen"></i></button>` : ''}
+        </span>
+    `).join('');
+    const editorId = investmentConfigElementId(key);
+    return `
+        <div class="investment-reply-action-tools" id="${escapeHtml(editorId)}-actions">
+            <div class="investment-reply-action-heading">
+                <span>富文本标签</span>
+                <small>插入后按当前组件触发词渲染</small>
+            </div>
+            ${primaryEntries.length ? `<div class="investment-reply-action-list">${actionButtons(primaryEntries)}</div>` : '<div class="investment-muted-inline">当前回复词没有专用富文本标签</div>'}
+            ${extraEntries.length ? `
+                <details class="investment-reply-extra-actions">
+                    <summary>更多可插入标签</summary>
+                    <div class="investment-reply-action-list">${actionButtons(extraEntries)}</div>
+                </details>` : ''}
+            ${renderInvestmentReplyCustomActionEditor(key, customActions)}
+        </div>`;
+}
+
+function renderInvestmentReplyCustomActionEditor(key, customActions = {}) {
+    const id = investmentConfigElementId(key);
+    const customCount = Object.keys(customActions || {}).length;
+    return `
+        <div class="investment-reply-custom-action-editor">
+            <div class="investment-reply-action-heading">
+                <span>自定义富文本标签</span>
+                <small>${customCount ? `${customCount} 个已配置` : '可手动新增'}</small>
+            </div>
+            <div class="investment-grid cols-2">
+                <label class="investment-field"><span>标签ID</span><input id="${escapeHtml(id)}-action-id" placeholder="例如 custom_macro"></label>
+                <label class="investment-field"><span>显示文本</span><input id="${escapeHtml(id)}-action-display" placeholder="例如 宏观跟踪"></label>
+                <label class="investment-field"><span>触发文本</span><input id="${escapeHtml(id)}-action-trigger" placeholder="点击后发送的内容"></label>
+                <label class="investment-field"><span>msgmenuid</span><input id="${escapeHtml(id)}-action-menuid" placeholder="默认使用标签ID"></label>
+            </div>
+            <div class="investment-actions">
+                <button class="investment-btn compact" type="button" onclick='saveInvestmentReplyCustomAction(${investmentJsString(key)})'><i class="fas fa-floppy-disk"></i><span>保存标签</span></button>
+                <button class="investment-btn compact" type="button" onclick='clearInvestmentReplyCustomActionEditor(${investmentJsString(key)})'><i class="fas fa-eraser"></i><span>清空</span></button>
+                <span id="${escapeHtml(id)}-action-status" class="investment-config-status"></span>
+            </div>
+        </div>`;
+}
+
+function renderInvestmentReplyPlaceholderTools(key, placeholders = [], details = {}) {
+    const richItems = placeholders.filter(name => {
+        const kind = details[name]?.kind || 'text';
+        return kind !== 'text';
+    });
+    const textItems = placeholders.filter(name => !richItems.includes(name));
+    if (!richItems.length && !textItems.length) return '';
+    return `
+        <div class="investment-reply-placeholders">
+            ${richItems.length ? `
+                <div class="investment-reply-placeholder-section">
+                    <span>动态富文本变量</span>
+                    <div class="investment-reply-placeholder-list">
+                        ${richItems.map(item => renderInvestmentReplyPlaceholderButton(key, item, details[item] || {})).join('')}
+                    </div>
+                </div>` : ''}
+            ${textItems.length ? `
+                <details class="investment-reply-text-placeholders">
+                    <summary>系统文本变量</summary>
+                    <div class="investment-reply-placeholder-list">
+                        ${textItems.map(item => renderInvestmentReplyPlaceholderButton(key, item, details[item] || {})).join('')}
+                    </div>
+                </details>` : ''}
+        </div>`;
+}
+
+function renderInvestmentReplyPlaceholderButton(key, name, detail = {}) {
+    const kind = detail.kind || 'text';
+    const label = detail.display_text || name;
+    const icon = kind === 'text' ? 'fa-brackets-curly' : 'fa-link';
+    const className = kind === 'text' ? 'investment-reply-placeholder' : 'investment-reply-placeholder rich';
+    return `
+        <button class="${className}" type="button" onclick='insertInvestmentReplyPlaceholder(${investmentJsString(key)}, ${investmentJsString(name)})' title="${escapeHtml(kind === 'rich_text_list' ? '运行时生成富文本列表' : kind === 'rich_text' ? '运行时生成富文本链接' : '普通文本变量')}">
+            <i class="fas ${icon}"></i>
+            <span>${escapeHtml(label)}</span>
+            <code>{${escapeHtml(name)}}</code>
+        </button>`;
+}
+
+function renderInvestmentReplyTemplatePreview(template, actions = {}, placeholderDetails = {}) {
+    const text = String(template || '').trim();
+    if (!text) return '<span class="investment-muted-inline">未配置回复词</span>';
+    const pattern = /<a\s+[^>]*href=["']weixin:\/\/bizmsgmenu\?([^"']+)["'][^>]*>(.*?)<\/a>|\{\{\s*action:([A-Za-z0-9_-]+)\s*\}\}|\{([A-Za-z0-9_]+)\}/gi;
+    let html = '';
+    let cursor = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+        html += escapeHtml(text.slice(cursor, match.index));
+        if (match[3]) {
+            const action = actions[match[3]] || {label: match[3], display_text: match[3], trigger_text: ''};
+            html += investmentReplyActionChipHtml(action);
+        } else if (match[4]) {
+            const detail = placeholderDetails[match[4]];
+            if (detail && detail.kind && detail.kind !== 'text') {
+                html += investmentReplyVariableChipHtml(detail);
+            } else {
+                html += escapeHtml(match[0]);
+            }
+        } else {
+            const params = new URLSearchParams(String(match[1] || '').replaceAll('&amp;', '&'));
+            html += investmentReplyActionChipHtml({
+                display_text: stripHtml(match[2] || ''),
+                trigger_text: params.get('msgmenucontent') || '',
+            });
+        }
+        cursor = pattern.lastIndex;
+    }
+    html += escapeHtml(text.slice(cursor));
+    return html;
+}
+
+function investmentReplyVariableChipHtml(detail) {
+    const display = detail.display_text || detail.name || '';
+    const token = detail.token || `{${detail.name || ''}}`;
+    return `<span class="investment-reply-chip variable" title="动态变量：${escapeHtml(token)}"><i class="fas fa-link"></i><span class="investment-reply-chip-label">${escapeHtml(display)}</span><code class="investment-reply-chip-trigger">${escapeHtml(token)}</code></span>`;
+}
+
+function investmentReplyActionChipHtml(action) {
+    const display = action.display_text || action.label || '';
+    const trigger = action.trigger_text || '';
+    return `<span class="investment-reply-chip" title="触发文本：${escapeHtml(trigger)}"><i class="fas fa-link"></i><span class="investment-reply-chip-label">${escapeHtml(display)}</span><code class="investment-reply-chip-trigger">${escapeHtml(trigger)}</code></span>`;
+}
+
+function stripHtml(value) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(value || '');
+    return tmp.textContent || tmp.innerText || '';
+}
+
+function insertInvestmentReplyAction(key, actionId) {
+    const payload = investmentReplyConfigDialogPayloads[key] || {};
+    const action = (payload.actions || {})[actionId];
+    const token = action?.token || `{{action:${actionId}}}`;
+    insertInvestmentReplyToken(key, token);
+}
+
+function editInvestmentReplyCustomAction(key, actionId) {
+    const payload = investmentReplyConfigDialogPayloads[key] || {};
+    const action = (payload.customActions || {})[actionId] || (payload.actions || {})[actionId] || {};
+    const id = investmentConfigElementId(key);
+    const actionInput = document.getElementById(`${id}-action-id`);
+    const displayInput = document.getElementById(`${id}-action-display`);
+    const triggerInput = document.getElementById(`${id}-action-trigger`);
+    const menuInput = document.getElementById(`${id}-action-menuid`);
+    if (actionInput) actionInput.value = actionId || '';
+    if (displayInput) displayInput.value = action.display_text || action.label || '';
+    if (triggerInput) triggerInput.value = action.trigger_text || '';
+    if (menuInput) menuInput.value = action.msgmenuid || actionId || '';
+}
+
+function clearInvestmentReplyCustomActionEditor(key) {
+    const id = investmentConfigElementId(key);
+    ['action-id', 'action-display', 'action-trigger', 'action-menuid'].forEach(suffix => {
+        const el = document.getElementById(`${id}-${suffix}`);
+        if (el) el.value = '';
+    });
+}
+
+async function saveInvestmentReplyCustomAction(key) {
+    const payload = investmentReplyConfigDialogPayloads[key] || {};
+    const id = investmentConfigElementId(key);
+    const status = document.getElementById(`${id}-action-status`);
+    const actionId = sanitizeInvestmentReplyActionId(document.getElementById(`${id}-action-id`)?.value || '');
+    const displayText = String(document.getElementById(`${id}-action-display`)?.value || '').trim();
+    const triggerText = String(document.getElementById(`${id}-action-trigger`)?.value || '').trim();
+    const msgmenuid = String(document.getElementById(`${id}-action-menuid`)?.value || '').trim() || actionId;
+    if (!actionId || !displayText || !triggerText) {
+        if (status) status.textContent = '请填写标签ID、显示文本和触发文本';
+        return;
+    }
+    const customActions = {...(payload.customActions || {})};
+    customActions[actionId] = {
+        label: displayText,
+        display_text: displayText,
+        trigger_text: triggerText,
+        msgmenuid,
+    };
+    if (status) status.textContent = '保存中...';
+    try {
+        await investmentFetchJson('/api/investment/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({configs: {'reply.rich_actions': customActions}}),
+        });
+        payload.customActions = customActions;
+        payload.actions = {
+            ...(payload.actions || {}),
+            [actionId]: {
+                id: actionId,
+                label: displayText,
+                display_text: displayText,
+                trigger_text: triggerText,
+                msgmenuid,
+                editable: true,
+                source: 'custom',
+                token: `{{action:${actionId}}}`,
+            },
+        };
+        investmentReplyConfigDialogPayloads[key] = payload;
+        const tools = document.getElementById(`${id}-actions`);
+        if (tools) tools.outerHTML = renderInvestmentReplyActionTools(key, payload.definitionActions || {}, payload.actions || {}, customActions);
+        refreshInvestmentReplyTemplatePreview(key);
+        if (status) status.textContent = '已保存';
+        showInvestmentToast('富文本标签已保存');
+    } catch (error) {
+        if (status) status.textContent = String(error.message || error);
+        showInvestmentToast('富文本标签保存失败', 'error');
+    }
+}
+
+function sanitizeInvestmentReplyActionId(value) {
+    return String(value || '').trim().replace(/[^0-9A-Za-z_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+}
+
 function insertInvestmentReplyPlaceholder(key, placeholder) {
+    insertInvestmentReplyToken(key, `{${String(placeholder || '')}}`);
+}
+
+function insertInvestmentReplyToken(key, token) {
     const id = investmentConfigElementId(key);
     const textarea = document.getElementById(id);
     if (!textarea) return;
-    const token = `{${String(placeholder || '')}}`;
     const start = textarea.selectionStart ?? textarea.value.length;
     const end = textarea.selectionEnd ?? textarea.value.length;
     textarea.value = `${textarea.value.slice(0, start)}${token}${textarea.value.slice(end)}`;
@@ -6745,6 +6995,25 @@ function insertInvestmentReplyPlaceholder(key, placeholder) {
     textarea.focus();
     textarea.setSelectionRange(nextCursor, nextCursor);
     markInvestmentConfigDirty(key);
+    refreshInvestmentReplyTemplatePreview(key);
+}
+
+function refreshInvestmentReplyTemplatePreview(key) {
+    const payload = investmentReplyConfigDialogPayloads[key] || {};
+    const id = investmentConfigElementId(key);
+    const textarea = document.getElementById(id);
+    const preview = document.getElementById(`${id}-rich-preview`);
+    if (preview) preview.innerHTML = renderInvestmentReplyTemplatePreview(textarea?.value || '', payload.actions || {}, payload.placeholderDetails || {});
+}
+
+function resetInvestmentReplyConfigDialog(key) {
+    const payload = investmentReplyConfigDialogPayloads[key] || {};
+    const id = investmentConfigElementId(key);
+    const textarea = document.getElementById(id);
+    if (!textarea) return;
+    textarea.value = payload.defaultTemplate || '';
+    markInvestmentConfigDirty(key);
+    refreshInvestmentReplyTemplatePreview(key);
 }
 
 async function saveInvestmentReplyConfigDialog(key) {
@@ -6753,7 +7022,7 @@ async function saveInvestmentReplyConfigDialog(key) {
     const preview = document.getElementById(investmentReplyPreviewId(key));
     const value = investmentConfigValue(key, 'textarea');
     if (investmentReplyConfigDialogPayloads[key]) investmentReplyConfigDialogPayloads[key].value = value;
-    if (preview) preview.textContent = String(value || '').trim() || '未配置回复词';
+    if (preview) preview.innerHTML = renderInvestmentReplyTemplatePreview(value, investmentReplyConfigDialogPayloads[key]?.actions || {}, investmentReplyConfigDialogPayloads[key]?.placeholderDetails || {});
     hideInvestmentModal();
 }
 
@@ -7439,6 +7708,12 @@ window.saveInvestmentConfigKey = saveInvestmentConfigKey;
 window.openInvestmentReplyConfigDialog = openInvestmentReplyConfigDialog;
 window.saveInvestmentReplyConfigDialog = saveInvestmentReplyConfigDialog;
 window.insertInvestmentReplyPlaceholder = insertInvestmentReplyPlaceholder;
+window.insertInvestmentReplyAction = insertInvestmentReplyAction;
+window.editInvestmentReplyCustomAction = editInvestmentReplyCustomAction;
+window.clearInvestmentReplyCustomActionEditor = clearInvestmentReplyCustomActionEditor;
+window.saveInvestmentReplyCustomAction = saveInvestmentReplyCustomAction;
+window.refreshInvestmentReplyTemplatePreview = refreshInvestmentReplyTemplatePreview;
+window.resetInvestmentReplyConfigDialog = resetInvestmentReplyConfigDialog;
 window.loadInvestmentComponents = loadInvestmentComponents;
 window.uploadInvestmentSkill = uploadInvestmentSkill;
 window.uploadInvestmentSkillPackage = uploadInvestmentSkillPackage;

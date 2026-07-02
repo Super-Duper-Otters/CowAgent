@@ -1493,13 +1493,175 @@ def test_config_masks_sensitive_values_and_checks_permissions(business_env, monk
 
 def test_business_user_message_uses_reply_config_defaults(business_env):
     from business.config.constants import ErrorCode, user_message
+    from business.config.reply_config import default_reply_template, default_reply_text
+
+    assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
+    assert "请输入以下格式之一：" in default_reply_template("reply.investment.input_error")
+    assert "{{action:technical_analysis_example}}" in default_reply_template("reply.investment.input_error")
+    assert "weixin://bizmsgmenu" not in default_reply_template("reply.investment.input_error")
+    assert "weixin://bizmsgmenu" in default_reply_text("reply.investment.input_error")
+    assert user_message(ErrorCode.INPUT_ERROR) == default_reply_text("reply.investment.input_error")
+    assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+
+
+def test_reply_text_defaults_follow_active_component_triggers(business_env):
+    from business.config.config_service import save_config
     from business.config.reply_config import default_reply_text
 
-    input_error = "请输入以下格式之一：\n1. 股票代码/股票名称 + 技术分析，例如：300502.SZ 技术分析\n2. 利率\n3. 转债"
-    assert user_message(ErrorCode.UNAUTHORIZED) == "您暂未开通该服务，如需开通请联系服务人员。"
-    assert default_reply_text("reply.investment.input_error") == input_error
-    assert user_message(ErrorCode.INPUT_ERROR) == input_error
-    assert user_message(ErrorCode.SYSTEM_ERROR) == "系统暂时繁忙，请稍后重试。"
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+    save_config("skill.rate.triggers", ["今日利率"], operator_role="admin", operator="pytest")
+
+    text = default_reply_text("reply.investment.input_error")
+
+    assert "msgmenucontent=%23000300.SH" in text
+    assert "msgmenucontent=%E4%BB%8A%E6%97%A5%E5%88%A9%E7%8E%87" in text
+    assert "msgmenucontent=%E8%BD%AC%E5%80%BA" in text
+
+
+def test_reply_text_metadata_exposes_templates_and_rich_actions(business_env):
+    from business.config.config_service import save_config
+    from business.config.reply_config import reply_text_config_metadata
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+
+    metadata = reply_text_config_metadata()
+    definition = metadata["definitions"]["reply.investment.input_error"]
+
+    assert "{{action:technical_analysis_example}}" in definition["default_template"]
+    assert "weixin://bizmsgmenu" not in definition["default_template"]
+    assert "weixin://bizmsgmenu" in definition["default"]
+    assert "technical_analysis_example" in definition["rich_actions"]
+    assert metadata["rich_actions"]["technical_analysis_example"]["display_text"]
+    assert metadata["rich_actions"]["technical_analysis_example"]["trigger_text"].startswith("#")
+
+
+def test_reply_text_runtime_renders_rich_action_tags(business_env):
+    from business.config.config_service import save_config
+    from business.config.reply_config import render_reply_template
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+
+    rendered = render_reply_template("例如 {{action:technical_analysis_example}}")
+
+    assert '<a href="weixin://bizmsgmenu?' in rendered
+    assert "msgmenucontent=%23" in rendered
+    assert "#000300.SH" in rendered
+
+
+def test_reply_text_metadata_separates_template_from_rendered_default(business_env):
+    from business.config.reply_config import reply_text_config_metadata
+
+    definition = reply_text_config_metadata()["definitions"]["reply.wechatmp.immediate_ack"]
+
+    assert "{{action:get_result}}" in definition["default_template"]
+    assert "weixin://bizmsgmenu" not in definition["default_template"]
+    assert "weixin://bizmsgmenu" in definition["default"]
+    assert "get_result" in definition["rich_actions"]
+
+
+def test_pending_summary_template_uses_items_as_clickable_list_only(business_env):
+    from business.config.reply_config import default_reply_template, default_reply_text, reply_text_config_metadata
+
+    template = default_reply_template("reply.wechatmp.pending_summary")
+    definition = reply_text_config_metadata()["definitions"]["reply.wechatmp.pending_summary"]
+
+    assert template == "您当前还有技术分析结果待领取：\n{items}"
+    assert "{{action:get_result}}" not in template
+    assert "回复1获取" not in default_reply_text("reply.wechatmp.pending_summary")
+    assert definition["placeholder_details"]["items"]["kind"] == "rich_text_list"
+    assert definition["placeholder_details"]["items"]["display_text"] == "待领取富文本列表"
+
+
+def test_stock_not_found_metadata_prioritizes_only_relevant_rich_action(business_env):
+    from business.config.reply_config import reply_text_config_metadata
+
+    definition = reply_text_config_metadata()["definitions"]["reply.investment.stock_not_found"]
+
+    assert list(definition["rich_actions"]) == ["stock_not_found_example"]
+    assert "technical_analysis_example" not in definition["rich_actions"]
+
+
+def test_custom_reply_rich_action_can_be_configured_and_rendered(business_env):
+    from business.config.config_service import save_config
+    from business.config.reply_config import render_reply_template, reply_text_config_metadata
+
+    save_config(
+        "reply.rich_actions",
+        {
+            "custom_macro": {
+                "label": "宏观跟踪",
+                "display_text": "宏观跟踪",
+                "trigger_text": "宏观",
+                "msgmenuid": "custom_macro",
+            }
+        },
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    metadata = reply_text_config_metadata()
+    rendered = render_reply_template("点击 {{action:custom_macro}}")
+
+    assert metadata["rich_actions"]["custom_macro"]["editable"] is True
+    assert metadata["rich_actions"]["custom_macro"]["source"] == "custom"
+    assert 'msgmenucontent=%E5%AE%8F%E8%A7%82&msgmenuid=custom_macro">宏观跟踪</a>' in rendered
+
+
+def test_technical_analysis_dynamic_not_found_prompts_are_configurable(business_env):
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+
+    save_config(
+        "reply.technical_analysis.unknown_bare_code",
+        "找不到 {target}，请点示例 {example}",
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    text = technical_analysis._unknown_bare_code_detail("123456")
+
+    assert text.startswith("找不到 123456，请点示例 ")
+    assert "weixin://bizmsgmenu" in text
+    assert "300502.SZ" in text
+
+
+def test_technical_analysis_candidate_list_prompt_is_configurable(business_env):
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+    save_config(
+        "reply.technical_analysis.bare_code_ambiguous",
+        "多个候选 {target}：\n{candidate_list}",
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    text = technical_analysis._bare_code_ambiguous_detail(
+        "000001",
+        [
+            {"code": "000001.SZ", "name": "平安银行", "asset_type": "a_share"},
+            {"code": "sh000001", "name": "上证指数", "asset_type": "index"},
+        ],
+    )
+
+    assert text.startswith("多个候选 000001：")
+    assert 'msgmenucontent=%23000001.SZ' in text
+    assert 'msgmenucontent=%23sh000001' in text
+
+
+def test_technical_analysis_candidate_list_placeholder_is_rich_text_metadata(business_env):
+    from business.config.reply_config import reply_text_config_metadata
+
+    definition = reply_text_config_metadata()["definitions"]["reply.technical_analysis.bare_code_ambiguous"]
+
+    assert definition["placeholder_details"]["candidate_list"]["kind"] == "rich_text_list"
+    assert definition["placeholder_details"]["candidate_list"]["display_text"] == "候选富文本列表"
+    assert definition["placeholder_details"]["target"]["kind"] == "text"
 
 
 def test_business_user_message_can_be_overridden_from_database(business_env):
@@ -3359,6 +3521,34 @@ def test_component_settings_save_updates_active_prompt_component(business_env, m
     assert get_config("prompt.rate") == "updated rate prompt"
 
 
+def test_component_settings_save_updates_active_component_match_type(business_env, monkeypatch):
+    from business.components.service import list_components
+    from business.config.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "triggers": ["分析"],
+                "match_type": "prefix",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("technical-analysis"))
+
+    assert payload["status"] == "success"
+    assert get_config("skill.technical-analysis.match_type") == "prefix"
+    technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
+    assert technical["settings"]["match_type"] == "prefix"
+
+
 def test_component_settings_save_updates_technical_analysis_bare_code_lookup_switch(business_env, monkeypatch):
     from business.components.service import list_components
     from business.config.config_service import get_config
@@ -3831,7 +4021,10 @@ def test_web_business_config_returns_reply_text_metadata(business_env, monkeypat
     assert "reply.wechatmp.pending_result_invalidated" in payload["configs"]
     assert payload["configs"]["reply.wechatmp.pending_result_invalidated"] == "内容已失效，请重新发起请求。"
     assert payload["reply_texts"]["definitions"]["reply.wechatmp.immediate_ack"]["label"] == "收到请求提示"
-    assert payload["configs"]["reply.wechatmp.immediate_ack"] == "收到，正在处理，请稍候。请等待30-40s后回复1获取\n{pending_summary}"
+    assert "{{action:get_result}}" in payload["configs"]["reply.wechatmp.immediate_ack"]
+    assert "weixin://bizmsgmenu" not in payload["configs"]["reply.wechatmp.immediate_ack"]
+    assert 'msgmenucontent=1&msgmenuid=get_result">回复1获取</a>' in payload["reply_texts"]["definitions"]["reply.wechatmp.immediate_ack"]["default"]
+    assert payload["configs"]["reply.wechatmp.immediate_ack"].endswith("\n{pending_summary}")
     assert payload["reply_texts"]["definitions"]["reply.wechatmp.immediate_ack"]["placeholders"] == ["pending_summary"]
     assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_running_new_request"]["label"] == "运行中重复技术分析提示"
     assert payload["reply_texts"]["definitions"]["reply.wechatmp.technical_running_new_request"]["placeholders"] == ["running_title"]
@@ -3853,6 +4046,24 @@ def test_web_business_config_saves_reply_text_values(business_env, monkeypatch):
 
     assert payload["status"] == "success"
     assert get_config("reply.wechatmp.pending_result_invalidated") == "结果已失效，请重新发起。"
+
+
+def test_web_business_config_returns_custom_rich_actions_config(business_env, monkeypatch):
+    from business.config.config_service import save_config
+    from channel.web.web_channel import InvestmentConfigHandler
+
+    save_config(
+        "reply.rich_actions",
+        {"custom_macro": {"display_text": "宏观跟踪", "trigger_text": "宏观"}},
+        operator_role="admin",
+        operator="pytest",
+    )
+
+    payload = _call_investment_json_handler(monkeypatch, InvestmentConfigHandler().GET)
+
+    assert payload["status"] == "success"
+    assert payload["configs"]["reply.rich_actions"]["custom_macro"]["trigger_text"] == "宏观"
+    assert payload["reply_texts"]["rich_actions"]["custom_macro"]["source"] == "custom"
 
 
 def test_web_business_config_audit_records_before_and_after_values(business_env, monkeypatch):
@@ -4062,7 +4273,7 @@ def test_web_cache_update_status_and_manual_probe_returns_probe_rows(business_en
 
     assert manual["status"] == "success"
     assert manual["latest_market_date"] == "2026-06-17"
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_web_cache_update_config_save_and_clear_technical_cache(business_env, monkeypatch, tmp_path):
@@ -9516,6 +9727,51 @@ def test_ai_generation_renders_technical_analysis_when_key_level_value_missing(b
     assert "▪️ 强支撑：无明显支撑（报告未给出明确支撑位）" in result.text
 
 
+def test_ai_generation_preserves_long_technical_analysis_confirmations(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    long_confirmation = (
+        "趋势结构0/3均线多头且MACD死叉，动量RSI(6)39.31(20%分位)和KDJJ=9.65(13%分位)均偏低，"
+        "趋势与动量同向偏弱，短线方向确认偏谨慎，需要等待MACD柱体和KDJ同步修复后再确认。"
+    )
+    payload = {
+        "target": "十年国债期货（T0）",
+        "signal_direction": "区间观望",
+        "latest_close": "109.220",
+        "market_date": "2026-07-01",
+        "daily_change": "-0.05%",
+        "analysis_model": "技术分析体系",
+        "trend": {
+            "summary": "均线转弱+动量低位=短线偏谨慎。",
+            "direction_confirm": {"conclusion": long_confirmation, "evidence": ["RSI(6)=39.31", "KDJJ=9.65"]},
+            "quality_confirm": {"conclusion": "报告未给出量价配合的明确依据", "evidence": ["报告未给出该类依据"]},
+            "risk_confirm": {"conclusion": long_confirmation, "evidence": ["OBV处于99%分位"]},
+            "pattern_verify": {"conclusion": "最新K线为短蜡烛线，方向偏空，高位震荡后出现犹豫/转弱信号，需警惕方向选择。", "evidence": ["短蜡烛线"]},
+        },
+        "key_levels": {
+            "strong_resistance": {"value": "109.40", "source": "前高"},
+            "strong_support": {"value": "109.06", "source": "MA20"},
+        },
+        "operation_guide": {
+            "summary": "区间观望，等待方向确认",
+            "breakout": "突破109.40后观察修复延续",
+            "range": "109.06~109.40区间震荡",
+            "breakdown": "跌破109.06注意防守",
+        },
+    }
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return json.dumps(payload, ensure_ascii=False)
+
+    result = generate_technical_analysis_text("# T0 技术分析报告", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert long_confirmation in result.text
+    assert "等待MACD柱体和KDJ同步修复后再确认。" in result.text
+    assert "趋势与动量同向偏弱，短线方向确认偏谨慎，需要等待MACD柱体和KDJ同步修复后再确认…" not in result.text
+
+
 def test_ai_generation_renders_technical_analysis_when_optional_sections_missing(business_env):
     from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
 
@@ -10296,6 +10552,45 @@ def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
     assert result.stock_name == ""
 
 
+def test_technical_analysis_short_csi_code_requires_confirmation_prompt(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("CSI typo suggestion must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "20444.csi 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert "未找到 20444.CSI 对应标的。若您要分析 CSI 指数，请点击：" in result.user_prompt
+    assert "weixin://bizmsgmenu" in result.user_prompt
+    assert "H20444.CSI 技术分析</a>" in result.user_prompt
+    assert result.detail == result.user_prompt
+
+
+def test_technical_analysis_validation_returns_short_csi_confirmation_prompt(
+    business_env,
+):
+    from business.content.technical_analysis_handler import validate_technical_analysis_request
+
+    prompt = validate_technical_analysis_request(
+        "20444.csi 技术分析",
+        SimpleNamespace(target_text="20444.csi"),
+    )
+
+    assert "未找到 20444.CSI 对应标的。若您要分析 CSI 指数，请点击：" in prompt
+    assert "weixin://bizmsgmenu" in prompt
+    assert "H20444.CSI 技术分析</a>" in prompt
+
+
 def test_technical_analysis_etf_uses_market_data_date_over_system_analysis_date(
     business_env, tmp_path, monkeypatch
 ):
@@ -10505,8 +10800,125 @@ def test_technical_analysis_bare_code_without_stock_suggests_matching_index(
 
     assert result.success is False
     assert result.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert result.user_prompt == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+    assert "未找到 000133 对应的个股。若您要分析指数“上证150”，请点击：" in result.user_prompt
+    assert "weixin://bizmsgmenu" in result.user_prompt
+    assert "sh000133 技术分析</a>" in result.user_prompt
     assert result.detail == result.user_prompt
+
+
+def test_technical_analysis_bare_code_index_suggestion_uses_wechat_rich_link(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+    refresh_stock_symbols(
+        [{"code": "sh000133", "name": "上证150", "market": "SH", "asset_type": "index", "source": "tushare_index"}],
+        source="tushare_index",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("missing bare stock with matching index must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "000133 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23sh000133&msgmenuid=ta_sh000133"' in result.user_prompt
+    assert ">#sh000133</a>" in result.user_prompt
+
+
+def test_stock_resolver_lists_bare_code_symbol_conflicts(business_env):
+    from business.content.stock_resolver import list_bare_code_symbol_matches, refresh_stock_symbols
+
+    refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "平安银行", "market": "SZ", "asset_type": "a_share", "source": "tushare_a"},
+            {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "tushare_index"},
+        ],
+        source="tushare_a",
+    )
+
+    matches = list_bare_code_symbol_matches("000001")
+
+    assert [(row["code"], row["name"], row["asset_type"]) for row in matches] == [
+        ("000001.SZ", "平安银行", "a_share"),
+        ("sh000001", "上证指数", "index"),
+    ]
+
+
+def test_technical_analysis_bare_code_with_stock_and_index_conflict_requires_full_code(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "平安银行", "market": "SZ", "asset_type": "a_share", "source": "tushare_a"},
+            {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "tushare_index"},
+        ],
+        source="tushare_a",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("ambiguous bare code must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "000001 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
+    assert result.user_prompt.startswith("代码 000001 匹配到多个标的，请点击候选项：\n")
+    assert 'msgmenucontent=000001.SZ%20%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90' in result.user_prompt
+    assert 'msgmenucontent=sh000001%20%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90' in result.user_prompt
+    assert "000001.SZ 平安银行（A股）</a>" in result.user_prompt
+    assert "sh000001 上证指数（指数）</a>" in result.user_prompt
+    assert "例如：" not in result.user_prompt
+    assert result.detail == result.user_prompt
+
+
+def test_technical_analysis_bare_code_conflict_lists_all_candidates_as_wechat_links(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+    refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "平安银行", "market": "SZ", "asset_type": "a_share", "source": "tushare_a"},
+            {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "tushare_index"},
+        ],
+        source="tushare_a",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("ambiguous bare code must not enter skill"),
+    )
+
+    result = run_technical_analysis("ok", "000001 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23000001.SZ&msgmenuid=ta_000001_SZ"' in result.user_prompt
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23sh000001&msgmenuid=ta_sh000001"' in result.user_prompt
+    assert "例如：" not in result.user_prompt
 
 
 def test_technical_analysis_validation_returns_bare_code_index_suggestion(
@@ -10525,7 +10937,34 @@ def test_technical_analysis_validation_returns_bare_code_index_suggestion(
         SimpleNamespace(target_text="000133"),
     )
 
-    assert prompt == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+    assert "未找到 000133 对应的个股。若您要分析指数“上证150”，请点击：" in prompt
+    assert "weixin://bizmsgmenu" in prompt
+    assert "sh000133 技术分析</a>" in prompt
+
+
+def test_technical_analysis_validation_returns_bare_code_conflict_prompt(
+    business_env,
+):
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis_handler import validate_technical_analysis_request
+
+    refresh_stock_symbols(
+        [
+            {"code": "000001.SZ", "name": "平安银行", "market": "SZ", "asset_type": "a_share", "source": "tushare_a"},
+            {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "tushare_index"},
+        ],
+        source="tushare_a",
+    )
+
+    prompt = validate_technical_analysis_request(
+        "000001 技术分析",
+        SimpleNamespace(target_text="000001"),
+    )
+
+    assert prompt.startswith("代码 000001 匹配到多个标的，请点击候选项：\n")
+    assert "000001.SZ 平安银行（A股）</a>" in prompt
+    assert "sh000001 上证指数（指数）</a>" in prompt
+    assert "例如：" not in prompt
 
 
 def test_technical_analysis_router_returns_bare_code_index_suggestion_to_chat(
@@ -10550,7 +10989,36 @@ def test_technical_analysis_router_returns_bare_code_index_suggestion_to_chat(
 
     assert reply.success is False
     assert reply.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert reply.reply_text == "未找到 000133 对应的个股。若您要分析指数“上证150”，请发送：sh000133 技术分析"
+    assert "未找到 000133 对应的个股。若您要分析指数“上证150”，请点击：" in reply.reply_text
+    assert "weixin://bizmsgmenu" in reply.reply_text
+    assert "sh000133 技术分析</a>" in reply.reply_text
+
+
+def test_technical_analysis_ambiguous_name_lists_candidate_codes_as_wechat_links(business_env, monkeypatch):
+    from business.config.constants import ErrorCode
+    from business.config.config_service import save_config
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+    refresh_stock_symbols(
+        [
+            {"code": "601398.SH", "name": "工商银行", "market": "SH", "source": "tushare_a"},
+            {"code": "01398.HK", "name": "工商银行", "market": "HK", "source": "tushare_hk"},
+        ],
+        source="tushare_a",
+    )
+    monkeypatch.setattr(technical_analysis, "_run_skill", lambda *_args, **_kwargs: pytest.fail("ambiguous names must not enter skill"))
+
+    result = run_technical_analysis("ok", "工商银行 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23601398.SH&msgmenuid=ta_601398_SH"' in result.user_prompt
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%2301398.HK&msgmenuid=ta_01398_HK"' in result.user_prompt
+    assert "例如：" not in result.user_prompt
 
 
 def test_technical_analysis_router_respects_unknown_bare_code_guard_switch(
@@ -10615,7 +11083,8 @@ def test_technical_analysis_unknown_bare_code_fails_before_skill_by_default(
 
     assert result.success is False
     assert result.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert result.user_prompt == "未找到 123456 对应的个股或指数，请检查代码。"
+    assert "未找到 123456 对应的个股或指数，请检查代码" in result.user_prompt
+    assert "weixin://bizmsgmenu" in result.user_prompt
     assert result.detail == result.user_prompt
 
 
@@ -12744,7 +13213,7 @@ def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close
     )
 
 
-def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff_even_without_probe_update(monkeypatch):
+def test_technical_analysis_cache_policy_keeps_market_cache_after_cutoff_without_probe_update(monkeypatch):
     import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
@@ -12762,8 +13231,53 @@ def test_technical_analysis_cache_policy_expires_market_cache_after_fixed_cutoff
             now="2026-06-15T17:30:00+08:00",
             normalized_target="600519.SH",
         )
-        is True
+        is False
     )
+
+
+def test_technical_analysis_cache_policy_keeps_market_cache_when_probe_date_not_updated(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FakeResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            raise AssertionError("probe should not run after the configured refresh window")
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-30",
+            "2026-07-01T10:22:36.016143+00:00",
+            now="2026-07-01T18:01:00+08:00",
+            normalized_target="510300.SH",
+        )
+        is False
+    )
+
+
+def test_product_display_status_keeps_previous_market_date_when_source_date_not_updated(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+    from business.products.product_service import product_display_status
+
+    cache_policy.reset_market_update_probe_cache()
+    monkeypatch.setattr(
+        cache_policy,
+        "beijing_now",
+        lambda: cache_policy._as_beijing_datetime("2026-07-01T18:01:00+08:00"),
+    )
+
+    status, label = product_display_status({
+        "business_type": "technical_analysis",
+        "target_key": "510300.SH",
+        "business_date": "2026-06-30",
+        "status": "active",
+        "updated_at": "2026-07-01T10:22:36.016143+00:00",
+        "expires_at": "",
+    })
+
+    assert (status, label) == ("active", "有效")
 
 
 def test_technical_analysis_cache_policy_keeps_today_cache_written_at_or_after_close_cutoff():
@@ -12887,6 +13401,95 @@ def test_technical_analysis_cache_policy_classifies_markets_by_symbol_suffix():
     assert market_from_symbol("UNKNOWN") == ""
 
 
+@pytest.mark.parametrize(
+    ("symbol", "expected_asset_type", "expected_market", "expected_normalized"),
+    [
+        ("600519.SH", "a_share", "SH", "600519.SH"),
+        ("000001.SZ", "a_share", "SZ", "000001.SZ"),
+        ("931250.CSI", "index", "CSI", "931250.CSI"),
+        ("20444.CSI", "index", "CSI", "20444.CSI"),
+        ("H20444.CSI", "index", "CSI", "H20444.CSI"),
+        ("sh000300", "index", "SH", "sh000300"),
+        ("510300.SH", "etf", "SH", "510300.SH"),
+        ("00700.HK", "hk_stock", "HK", "00700.HK"),
+        ("AAPL.US", "us_stock", "US", "AAPL.US"),
+        ("111009.SH", "convertible_bond", "SH", "111009.SH"),
+        ("810011.BJ", "convertible_bond", "BJ", "810011.BJ"),
+        ("T0", "futures", "CFFEX", "T0"),
+    ],
+)
+def test_provider_adapter_classifies_asset_targets(symbol, expected_asset_type, expected_market, expected_normalized):
+    from business.market.provider_adapter import classify_asset_target
+
+    target = classify_asset_target(symbol)
+
+    assert target.normalized_code == expected_normalized
+    assert target.asset_type == expected_asset_type
+    assert target.market == expected_market
+
+
+@pytest.mark.parametrize(
+    ("symbol", "asset_type", "market", "expected"),
+    [
+        (
+            "931250.CSI",
+            "index",
+            "CSI",
+            {"akshare": "sh931250", "tushare": "931250.CSI", "baostock": "sh.931250"},
+        ),
+        (
+            "20444.CSI",
+            "index",
+            "CSI",
+            {"akshare": "sh20444", "tushare": "20444.CSI", "baostock": "sh.20444"},
+        ),
+        (
+            "H20444.CSI",
+            "index",
+            "CSI",
+            {"akshare": "sh20444", "tushare": "H20444.CSI", "baostock": ""},
+        ),
+        (
+            "510300.SH",
+            "etf",
+            "SH",
+            {"akshare": "sh510300", "tushare": "510300.SH", "baostock": "sh.510300"},
+        ),
+        (
+            "00700.HK",
+            "hk_stock",
+            "HK",
+            {"akshare": "00700", "tushare": "00700.HK", "baostock": ""},
+        ),
+        (
+            "AAPL.US",
+            "us_stock",
+            "US",
+            {"akshare": "AAPL", "tushare": "AAPL.US", "baostock": ""},
+        ),
+        (
+            "T0",
+            "futures",
+            "CFFEX",
+            {"akshare": "T0", "tushare": "T0", "baostock": ""},
+        ),
+    ],
+)
+def test_provider_adapter_formats_symbols_for_each_source(symbol, asset_type, market, expected):
+    from business.market.provider_adapter import (
+        classify_asset_target,
+        to_akshare_symbol,
+        to_baostock_symbol,
+        to_tushare_symbol,
+    )
+
+    target = classify_asset_target(symbol, asset_type=asset_type, market=market, ts_code=symbol)
+
+    assert to_akshare_symbol(target) == expected["akshare"]
+    assert to_tushare_symbol(target) == expected["tushare"]
+    assert to_baostock_symbol(target) == expected["baostock"]
+
+
 def test_market_date_resolver_uses_asset_specific_akshare_interfaces(monkeypatch):
     from business.content.market_date_resolver import MarketDateResolver
 
@@ -12913,18 +13516,122 @@ def test_market_date_resolver_uses_asset_specific_akshare_interfaces(monkeypatch
 
     assert resolver.resolve("sh000300").market_date == "2026-06-15"
     assert resolver.resolve("510300.SH").market_date == "2026-06-15"
-    assert resolver.resolve("113000.SH").market_date == "2026-06-15"
+    assert resolver.resolve("111009.SH").market_date == "2026-06-15"
     assert resolver.resolve("T0").market_date == "2026-06-15"
     assert resolver.resolve("00700.HK").market_date == "2026-06-15"
     assert resolver.resolve("AAPL.US").market_date == "2026-06-15"
     assert calls == [
         ("stock_zh_index_daily", {"symbol": "sh000300"}),
         ("fund_etf_hist_sina", {"symbol": "sh510300"}),
-        ("bond_zh_hs_cov_daily", {"symbol": "sh113000"}),
+        ("bond_zh_hs_cov_daily", {"symbol": "sh111009"}),
         ("futures_zh_daily_sina", {"symbol": "T0"}),
         ("stock_hk_daily", {"symbol": "00700"}),
         ("stock_us_daily", {"symbol": "AAPL"}),
     ]
+
+
+def test_market_date_resolver_ranks_a_share_sources_by_latest_date_during_probe_window(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    calls = []
+
+    def fake_akshare_a_hist(**kwargs):
+        calls.append(("akshare", kwargs))
+        return _FakeDataFrame([{"日期": "2026-06-29"}, {"日期": "2026-06-30"}])
+
+    class FakePro:
+        def daily(self, **kwargs):
+            calls.append(("tushare", kwargs))
+            return _FakeDataFrame([{"trade_date": "20260701"}, {"trade_date": "20260630"}])
+
+    class FakeLogin:
+        error_code = "0"
+
+    class EmptyBaoStockResult:
+        fields = ["date", "open", "high", "low", "close", "volume"]
+        error_code = "0"
+
+        def next(self):
+            return False
+
+    def fake_query_history_k_data_plus(symbol, *args, **kwargs):
+        calls.append(("baostock", {"symbol": symbol, **kwargs}))
+        return EmptyBaoStockResult()
+
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(stock_zh_a_hist=fake_akshare_a_hist))
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(pro_api=lambda _token: FakePro()))
+    monkeypatch.setitem(
+        sys.modules,
+        "baostock",
+        SimpleNamespace(
+            login=lambda: FakeLogin(),
+            logout=lambda: None,
+            query_history_k_data_plus=fake_query_history_k_data_plus,
+        ),
+    )
+    monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+    monkeypatch.setattr(cache_policy, "beijing_now", lambda: cache_policy._as_beijing_datetime("2026-07-01T15:45:00+08:00"))
+
+    resolved = MarketDateResolver().resolve("600519.SH")
+
+    assert resolved.market_date == "2026-07-01"
+    assert resolved.source == "tushare"
+    assert [source for source, _kwargs in calls] == ["akshare", "tushare", "baostock"]
+
+
+def test_market_date_resolver_ranks_etf_baostock_over_akshare_during_probe_window(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+    from business.content.market_date_resolver import MarketDateResolver
+
+    calls = []
+
+    def fake_etf_hist(**kwargs):
+        calls.append(("akshare", kwargs))
+        return _FakeDataFrame([{"date": "2026-06-29"}, {"date": "2026-06-30"}])
+
+    class FakeLogin:
+        error_code = "0"
+
+    class FakeBaoStockResult:
+        fields = ["date", "open", "high", "low", "close", "volume"]
+
+        def __init__(self):
+            self.rows = [
+                ["2026-06-30", "1", "2", "1", "2", "100"],
+                ["2026-07-01", "1", "2", "1", "2", "100"],
+            ]
+            self.index = -1
+            self.error_code = "0"
+
+        def next(self):
+            self.index += 1
+            return self.index < len(self.rows)
+
+        def get_row_data(self):
+            return self.rows[self.index]
+
+    def fake_query_history_k_data_plus(symbol, *args, **kwargs):
+        calls.append(("baostock", {"symbol": symbol, **kwargs}))
+        return FakeBaoStockResult()
+
+    fake_baostock = SimpleNamespace(
+        login=lambda: FakeLogin(),
+        logout=lambda: None,
+        query_history_k_data_plus=fake_query_history_k_data_plus,
+    )
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(fund_etf_hist_sina=fake_etf_hist))
+    monkeypatch.setitem(sys.modules, "baostock", fake_baostock)
+    monkeypatch.setattr(cache_policy, "beijing_now", lambda: cache_policy._as_beijing_datetime("2026-07-01T15:45:00+08:00"))
+
+    resolved = MarketDateResolver().resolve("510300.SH")
+
+    assert resolved.market_date == "2026-07-01"
+    assert resolved.source == "baostock"
+    assert calls[0] == ("akshare", {"symbol": "sh510300"})
+    assert calls[1][0] == "baostock"
+    assert calls[1][1]["symbol"] == "sh.510300"
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
@@ -12949,7 +13656,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
         )
         is True
     )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
@@ -12997,7 +13704,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
             )
             is True
         )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
@@ -13018,9 +13725,9 @@ def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monk
     assert cache_policy.latest_market_date_for_symbol("AAPL.US", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("sh000300", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("510300.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
-    assert cache_policy.latest_market_date_for_symbol("113000.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("111009.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert cache_policy.latest_market_date_for_symbol("T0", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_stops_probe_after_non_trading_refresh_window(monkeypatch):
@@ -13062,7 +13769,7 @@ def test_technical_analysis_cache_policy_expires_all_markets_when_any_probe_date
         )
         is True
     )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "113000.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_technical_analysis_cache_policy_expires_index_cache_from_global_probe(monkeypatch):
@@ -15226,8 +15933,10 @@ def test_tushare_token_config_permission_is_sensitive(business_env):
         save_config("tushare.token", "blocked-token", operator_role="operator")
 
 
-def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path, monkeypatch):
+def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(business_env, tmp_path, monkeypatch):
     from business.content import technical_analysis as technical_analysis
+    from business.config.config_service import save_config
+
     output_dir = tmp_path / "ta-output"
     output_dir.mkdir()
     report = output_dir / "300502_技术分析报告_2026-05-25.md"
@@ -15237,10 +15946,14 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path,
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["env_token"] = kwargs["env"].get("TUSHARE_TOKEN")
+        captured["env_probe_start"] = kwargs["env"].get("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START")
+        captured["env_probe_end"] = kwargs["env"].get("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END")
         report.write_text("ta report", encoding="utf-8")
         chart.write_bytes(b"chart")
         return SimpleNamespace(returncode=0)
 
+    save_config("investment.technical_analysis.cache_update_probe_start", "15:35", operator="pytest")
+    save_config("investment.technical_analysis.cache_update_probe_end", "17:55", operator="pytest")
     monkeypatch.setattr(technical_analysis, "get_tushare_token", lambda: "shared-token-1234567890")
     monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
 
@@ -15254,6 +15967,8 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(tmp_path,
     )
 
     assert captured["env_token"] == "shared-token-1234567890"
+    assert captured["env_probe_start"] == "15:35"
+    assert captured["env_probe_end"] == "17:55"
     assert captured["command"][2:] == [
         "--symbol",
         "300502",
@@ -16916,6 +17631,55 @@ def test_parse_route_uses_configured_business_skill_triggers(business_env):
     assert route.target_text == "300502.SZ"
 
 
+def test_parse_route_uses_configured_active_component_match_type(business_env):
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.routing.router import parse_route
+
+    save_config("skill.rate.match_type", "prefix", operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+
+    rate_route = parse_route("利率 今日")
+    assert rate_route.matched is True
+    assert rate_route.service_type == ServiceType.RATE
+    assert rate_route.target_text == "今日"
+
+    technical_route = parse_route("技术分析 300502.SZ")
+    assert technical_route.matched is True
+    assert technical_route.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert technical_route.target_text == "300502.SZ"
+
+
+def test_parse_route_prefers_longest_suffix_trigger_for_target_extraction(business_env):
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.routing.router import parse_route
+
+    save_config("skill.technical-analysis.triggers", ["分析", "技术分析"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "suffix", operator_role="admin", operator="pytest")
+
+    route = parse_route("300502.SZ 技术分析")
+
+    assert route.matched is True
+    assert route.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert route.target_text == "300502.SZ"
+
+
+def test_parse_route_prefers_longest_prefix_trigger_for_target_extraction(business_env):
+    from business.config.config_service import save_config
+    from business.config.constants import ServiceType
+    from business.routing.router import parse_route
+
+    save_config("skill.technical-analysis.triggers", ["技术", "技术分析"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
+
+    route = parse_route("技术分析 300502.SZ")
+
+    assert route.matched is True
+    assert route.service_type == ServiceType.TECHNICAL_ANALYSIS
+    assert route.target_text == "300502.SZ"
+
+
 def test_parse_route_rejects_markdown_link_targets(business_env):
     from business.routing.router import parse_route
 
@@ -17821,11 +18585,14 @@ def test_wechatmp_query_post_passes_input_data_and_env(monkeypatch):
     assert calls == [(args, body, env)]
 
 
-def test_wechatmp_web_simulator_returns_bare_code_index_suggestion(monkeypatch):
+def test_wechatmp_web_simulator_returns_bare_code_index_suggestion(business_env, monkeypatch):
     from config import conf
+    from business.config.config_service import save_config
     from channel.wechatmp.simulator import simulate_wechatmp_text_message
 
     monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
     monkeypatch.setattr(
         "business.content.technical_analysis.get_stock_symbol_by_code",
         lambda value: {},
@@ -17846,21 +18613,26 @@ def test_wechatmp_web_simulator_returns_bare_code_index_suggestion(monkeypatch):
 
     result = simulate_wechatmp_text_message(
         session_id="web-session-1",
-        content="000133技术分析",
+        content="#000133",
         request_id="request-1",
     )
 
     assert result.reply_type == "text"
-    assert "请发送：sh000133 技术分析" in result.content
+    assert "请点击：" in result.content
+    assert "weixin://bizmsgmenu" in result.content
+    assert "sh000133" in result.content
     assert result.raw_reply
 
 
-def test_wechatmp_web_simulator_skips_customer_permission_for_internal_verification(monkeypatch):
+def test_wechatmp_web_simulator_skips_customer_permission_for_internal_verification(business_env, monkeypatch):
     from config import conf
     from business.accounts.user_service import PermissionResult
+    from business.config.config_service import save_config
     from channel.wechatmp.simulator import simulate_wechatmp_text_message
 
     monkeypatch.setitem(conf(), "wechatmp_token", "test-token")
+    save_config("skill.technical-analysis.triggers", ["#"], operator_role="admin", operator="pytest")
+    save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
     monkeypatch.setattr(
         "channel.wechatmp.passive_reply._verify_wechatmp_text_access",
         lambda _openid, _content: PermissionResult(False, user_prompt="您暂未开通该服务，如需开通请联系服务人员。"),
@@ -17885,12 +18657,14 @@ def test_wechatmp_web_simulator_skips_customer_permission_for_internal_verificat
 
     result = simulate_wechatmp_text_message(
         session_id="web-session-no-customer",
-        content="000133技术分析",
+        content="#000133",
         request_id="request-no-customer",
     )
 
     assert "暂未开通该服务" not in result.content
-    assert "请发送：sh000133 技术分析" in result.content
+    assert "请点击：" in result.content
+    assert "weixin://bizmsgmenu" in result.content
+    assert "sh000133" in result.content
 
 
 def test_wechatmp_web_simulator_success_reply_is_user_visible_notice(monkeypatch):
