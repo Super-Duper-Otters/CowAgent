@@ -4802,8 +4802,14 @@ class InvestmentComponentSettingsHandler:
                 audit_keys.append(definition.triggers_config_key)
             if "prompt" in body and definition.prompt_key:
                 audit_keys.append(definition.prompt_key)
+            if "prompt_blocks" in body and definition.business_key == "technical-analysis" and definition.prompt_key:
+                audit_keys.extend([definition.prompt_key, "prompt.technical_analysis.blocks"])
             if "allow_unresolved_bare_code_analysis" in body and definition.business_key == "technical-analysis":
                 audit_keys.append("technical_analysis.allow_unresolved_bare_code_analysis")
+            if "card_footer" in body and definition.business_key == "technical-analysis":
+                from business.content.technical_analysis_card_config import TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS
+
+                audit_keys.extend(TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS.values())
             before_state = get_configs(audit_keys, masked=True) if audit_keys else {}
 
             component = save_component_settings(
@@ -4820,7 +4826,20 @@ class InvestmentComponentSettingsHandler:
                 "investment_component",
                 component_key,
                 admin=admin,
-                detail={"keys": [key for key in ("enabled", "triggers", "prompt", "allow_unresolved_bare_code_analysis") if key in body]},
+                detail={
+                    "keys": [
+                        key
+                        for key in (
+                            "enabled",
+                            "triggers",
+                            "prompt",
+                            "prompt_blocks",
+                            "allow_unresolved_bare_code_analysis",
+                            "card_footer",
+                        )
+                        if key in body
+                    ]
+                },
                 before_state=before_state,
                 after_state=after_state,
             )

@@ -3383,6 +3383,86 @@ def test_component_settings_save_updates_technical_analysis_bare_code_lookup_swi
     assert get_config("technical_analysis.allow_unresolved_bare_code_analysis") is True
 
 
+def test_component_settings_save_updates_technical_analysis_card_footer_config(business_env, monkeypatch):
+    from business.components.service import list_components
+    from business.config.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
+    assert technical["settings"]["card_footer"] == {
+        "risk_disclaimer": "本内容仅供研究参考，不构成任何投资建议",
+        "auth_remaining": "——",
+        "data_source": "AKShare / Tushare / BaoStock",
+        "contact": "刘静怡13681991121",
+    }
+
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps(
+            {
+                "card_footer": {
+                    "risk_disclaimer": "内部研究使用，不构成投资建议",
+                    "auth_remaining": "2026-12-31",
+                    "data_source": "Tushare",
+                    "contact": "张三13800000000",
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("technical-analysis"))
+
+    assert payload["status"] == "success"
+    assert payload["component"]["settings"]["card_footer"] == {
+        "risk_disclaimer": "内部研究使用，不构成投资建议",
+        "auth_remaining": "2026-12-31",
+        "data_source": "Tushare",
+        "contact": "张三13800000000",
+    }
+    assert get_config("technical_analysis.card.risk_disclaimer") == "内部研究使用，不构成投资建议"
+    assert get_config("technical_analysis.card.auth_remaining") == "2026-12-31"
+    assert get_config("technical_analysis.card.data_source") == "Tushare"
+    assert get_config("technical_analysis.card.contact") == "张三13800000000"
+
+
+def test_component_settings_save_updates_technical_analysis_prompt_blocks(business_env, monkeypatch):
+    from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS
+    from business.components.service import list_components
+    from business.config.config_service import get_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    _login_default_investment_admin(monkeypatch)
+    technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
+    assert [block["key"] for block in technical["settings"]["prompt_blocks"]] == list(TECHNICAL_ANALYSIS_PROMPT_BLOCKS)
+    assert technical["settings"]["prompt_blocks"][0]["label"] == "角色与输出边界"
+
+    edited_blocks = {
+        key: block["text"].replace("技术分析报告信号卡整理助手", "技术分析卡片分块整理助手")
+        if key == "role"
+        else block["text"]
+        for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items()
+    }
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"prompt_blocks": edited_blocks}, ensure_ascii=False).encode("utf-8"),
+    )
+
+    payload = json.loads(InvestmentComponentSettingsHandler().POST("technical-analysis"))
+
+    assert payload["status"] == "success"
+    assert get_config("prompt.technical_analysis.blocks") == edited_blocks
+    assert get_config("prompt.technical_analysis") == "".join(edited_blocks.values())
+    assert payload["component"]["settings"]["prompt_blocks"][0]["text"].startswith("你是技术分析卡片分块整理助手")
+
+
 def test_component_settings_show_default_prompt_when_blank(business_env):
     from business.audit.ai_generation import DEFAULT_RATE_PROMPT
     from business.components.service import list_components
@@ -9221,9 +9301,6 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "强压力：",
         "强支撑：",
         "实操指引",
-        "授权剩余时间：",
-        "数据来源：",
-        "业务对接：",
         "【系统约束：标的名称】",
         "标的字段必须输出",
         "图片主标题由“📈 标的：”字段渲染而来",
@@ -9232,16 +9309,22 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "超买风险化解=健康的回调整理",
         "均线多头维持+MACD金叉不破=中期趋势未改",
         "不得改变“信号方向”",
-        "▪️ 方向确认（趋势 x 动量）：<趋势与动量是否同向，45 字以内>",
-        "▪️ 质量确认（趋势 x 量价）：<成交量/量价是否配合，45 字以内>",
-        "▪️ 风险确认（动量 x 波动 x 位置风险）：<超买、波动或回撤风险，45 字以内>",
-        "▪️ 形态验证：<最新 K 线形态及方向含义，45 字以内>",
+        "趋势研判章节第一段必须先输出一条总论句",
+        "方向确认（趋势 x 动量）：<必须引用报告中的趋势与动量具体依据",
+        "质量确认（趋势 x 量价）：<必须引用报告中的成交量、量比、OBV、AD、ADOSC或量价描述",
+        "风险确认（动量 x 波动 x 位置风险）：<必须引用报告中的RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险描述",
+        "形态验证：<必须引用报告中的最新K线形态名称、看涨/看跌方向和验证含义",
+        "“方向确认 / 质量确认 / 风险确认 / 形态验证”四项不得只写结论",
         "- 📈 反弹收复109.335（前收盘）：震荡偏强延续",
         "- 🔄 109.06~109.40区间震荡：缩量整固，等待方向",
         "- 📉 跌破MA20（109.064）：短线走弱，关注108.80（MA60）",
-        "报告中的业务对接；没有则填 刘静怡13681991121",
+        "页脚固定字段由业务代码在渲染前注入",
     ):
         assert required in request.prompt
+    assert "刘静怡13681991121" not in request.prompt
+    assert "AKShare / Tushare / BaoStock" not in request.prompt
+    assert "授权剩余时间：——" not in request.prompt
+    assert "本内容仅供研究参考，不构成任何投资建议" not in request.prompt
     assert "禁止输出 Markdown 表格" in request.prompt
     assert "只输出卡片正文" in request.prompt
 
@@ -9834,7 +9917,13 @@ def test_command_script_component_failure_hides_backend_detail_from_customer_rep
 
 def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business_env, tmp_path, monkeypatch):
     from business.content import technical_analysis as technical_analysis
+    from business.config.config_service import save_config
     from business.content.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
+
+    save_config("technical_analysis.card.risk_disclaimer", "内部研究使用，不构成投资建议", operator_role="admin")
+    save_config("technical_analysis.card.auth_remaining", "2026-12-31", operator_role="admin")
+    save_config("technical_analysis.card.data_source", "Tushare", operator_role="admin")
+    save_config("technical_analysis.card.contact", "张三13800000000", operator_role="admin")
 
     request = TechnicalAnalysisRequest(openid="ok", raw_input="300502.SZ 技术分析", target_text="300502.SZ")
     assert request.openid == "ok"
@@ -9870,10 +9959,10 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
                 "▪️ 强支撑：720.00（MA20）\n\n"
                 "💡 实操指引\n"
                 "观察突破和跌破。\n"
-                "⚠️ 本内容仅供研究参考，不构成任何投资建议\n"
-                "⏱️ 授权剩余时间：——\n"
-                "📚 数据来源：AKShare\n"
-                "🤝 业务对接：——"
+                "⚠️ AI 写入的错误风险提示\n"
+                "⏱️ 授权剩余时间：AI错误授权\n"
+                "📚 数据来源：AI错误来源\n"
+                "🤝 业务对接：AI错误联系人"
             ),
         )
 
@@ -9902,6 +9991,11 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
     assert calls[1][0] == "ai"
     assert "# 技术分析报告\n\n核心观点" in calls[1][1]
     assert "📈 标的：300502.SZ" in calls[2][1]
+    assert "⚠️ 内部研究使用，不构成投资建议" in calls[2][1]
+    assert "⏱️ 授权剩余时间：2026-12-31" in calls[2][1]
+    assert "📚 数据来源：Tushare" in calls[2][1]
+    assert "🤝 业务对接：张三13800000000" in calls[2][1]
+    assert "AI错误" not in calls[2][1]
     assert calls[2][2].startswith("300502_SZ_signal_card_2026-05-29_")
     assert calls[2][2].endswith(".png")
     assert result.report_path == str(report)

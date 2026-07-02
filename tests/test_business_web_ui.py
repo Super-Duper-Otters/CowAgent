@@ -670,6 +670,7 @@ def test_business_component_cards_scope_controls_by_type():
     js = CONSOLE_JS.read_text(encoding="utf-8")
     card_body = _js_function_body(js, "renderInvestmentComponentCard")
     config_dialog_body = _js_function_body(js, "renderInvestmentComponentConfigDialogBody")
+    settings_body = _js_function_body(js, "investmentComponentSettingsBody")
     tag_body = _js_function_body(js, "investmentComponentTags")
 
     assert "component.uses_triggers" in tag_body
@@ -679,10 +680,18 @@ def test_business_component_cards_scope_controls_by_type():
     assert "包含脚本" in js
     assert "settings.prompt_key" in config_dialog_body
     assert "settings.prompt_configured === false" in config_dialog_body
+    assert "settings.prompt_blocks" in config_dialog_body
+    assert "invest-component-modal-prompt-block" in config_dialog_body
     assert "component.runtime" in card_body
     assert "deleteInvestmentRuntimeComponent" in card_body
     assert "invest-component-modal-triggers" in config_dialog_body
     assert "invest-component-modal-prompt" in config_dialog_body
+    assert "invest-component-modal-card-footer-risk" in config_dialog_body
+    assert "invest-component-modal-card-footer-auth" in config_dialog_body
+    assert "invest-component-modal-card-footer-data-source" in config_dialog_body
+    assert "invest-component-modal-card-footer-contact" in config_dialog_body
+    assert "body.prompt_blocks" in settings_body
+    assert "body.card_footer" in settings_body
 
 
 def test_business_component_cards_hide_business_details():

@@ -5800,11 +5800,23 @@ function renderInvestmentComponentConfigDialogBody(component) {
             <span>触发词</span>
             <input id="invest-component-modal-triggers-${escapeHtml(componentKey)}" value="${escapeHtml(triggerValue)}" placeholder="多个触发词用逗号分隔">
         </label>` : '';
-    const promptEditor = settings.prompt_key ? `
+    const promptBlocks = Array.isArray(settings.prompt_blocks) ? settings.prompt_blocks : [];
+    const promptBlockEditor = promptBlocks.length ? `
+        <div class="investment-detail-block">
+            <span>技术分析提示词分块 ${investmentImportInfo('保存后会按当前顺序拼接为最终模型提示词，运行链路仍读取同一个 prompt 配置。')}</span>
+        </div>
+        ${promptBlocks.map(block => `
+            <label class="investment-field textarea">
+                <span>${escapeHtml(block.label || block.key || '提示词块')}</span>
+                <textarea class="invest-component-modal-prompt-block" data-prompt-block-key="${escapeHtml(block.key || '')}" rows="5">${escapeHtml(block.text || '')}</textarea>
+            </label>
+        `).join('')}` : '';
+    const promptEditor = settings.prompt_key && !promptBlocks.length ? `
         <label class="investment-field textarea">
             <span>提示词${settings.prompt_configured === false ? '（当前显示默认提示词）' : ''}</span>
             <textarea id="invest-component-modal-prompt-${escapeHtml(componentKey)}" rows="8">${escapeHtml(settings.prompt || '')}</textarea>
         </label>` : '';
+    const cardFooter = settings.card_footer || {};
     const technicalAnalysisEditor = componentKey === 'technical-analysis' ? `
         <div class="investment-detail-block">
             <span>裸代码查询策略 ${investmentImportInfo('关闭后，裸 6 位代码必须命中字典个股；否则提示用户改用指数代码或检查代码，避免无效行情查询耗时。')}</span>
@@ -5813,6 +5825,27 @@ function renderInvestmentComponentConfigDialogBody(component) {
                 `invest-component-modal-allow-unresolved-bare-code-${escapeHtml(componentKey)}`,
                 settings.allow_unresolved_bare_code_analysis === true
             )}
+        </div>
+        <div class="investment-detail-block">
+            <span>技术分析卡片页脚 ${investmentImportInfo('这些固定字段不会交给 AI 生成，会在图片渲染前由业务代码直接注入。')}</span>
+        </div>
+        <div class="investment-grid cols-2">
+            <label class="investment-field">
+                <span>风险声明</span>
+                <input id="invest-component-modal-card-footer-risk" value="${escapeHtml(cardFooter.risk_disclaimer || '')}">
+            </label>
+            <label class="investment-field">
+                <span>授权剩余时间</span>
+                <input id="invest-component-modal-card-footer-auth" value="${escapeHtml(cardFooter.auth_remaining || '')}">
+            </label>
+            <label class="investment-field">
+                <span>数据来源</span>
+                <input id="invest-component-modal-card-footer-data-source" value="${escapeHtml(cardFooter.data_source || '')}">
+            </label>
+            <label class="investment-field">
+                <span>业务对接</span>
+                <input id="invest-component-modal-card-footer-contact" value="${escapeHtml(cardFooter.contact || '')}">
+            </label>
         </div>` : '';
     const commandConfigEditor = component.handler_type === 'command_script' ? renderInvestmentCommandComponentConfigFields(component) : '';
     const promptConfigEditor = component.handler_type === 'prompt_component' ? renderInvestmentPromptComponentConfigFields(component) : '';
@@ -5825,6 +5858,7 @@ function renderInvestmentComponentConfigDialogBody(component) {
             ${investmentSwitch('启用', `invest-component-modal-enabled-${escapeHtml(componentKey)}`, settings.enabled !== false)}
             ${triggerEditor}
             ${technicalAnalysisEditor}
+            ${promptBlockEditor}
             ${promptEditor}
             ${commandConfigEditor}
             ${promptConfigEditor}
@@ -5980,13 +6014,33 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const enabled = document.getElementById(`${prefix}-enabled-${componentKey}`);
     const triggers = document.getElementById(`${prefix}-triggers-${componentKey}`);
     const prompt = document.getElementById(`${prefix}-prompt-${componentKey}`);
+    const promptBlocks = Array.from(document.querySelectorAll('.invest-component-modal-prompt-block'));
     const allowUnresolvedBareCode = document.getElementById(`${prefix}-allow-unresolved-bare-code-${componentKey}`);
+    const cardFooterRisk = document.getElementById('invest-component-modal-card-footer-risk');
+    const cardFooterAuth = document.getElementById('invest-component-modal-card-footer-auth');
+    const cardFooterDataSource = document.getElementById('invest-component-modal-card-footer-data-source');
+    const cardFooterContact = document.getElementById('invest-component-modal-card-footer-contact');
     const command = document.getElementById('invest-component-modal-command');
     const promptTemplate = document.getElementById('invest-component-modal-prompt-template');
     if (enabled) body.enabled = enabled.checked;
     if (triggers) body.triggers = triggers.value;
     if (prompt) body.prompt = prompt.value;
+    if (promptBlocks.length) {
+        body.prompt_blocks = {};
+        promptBlocks.forEach(block => {
+            const key = block.dataset.promptBlockKey || '';
+            if (key) body.prompt_blocks[key] = block.value || '';
+        });
+    }
     if (allowUnresolvedBareCode) body.allow_unresolved_bare_code_analysis = allowUnresolvedBareCode.checked;
+    if (cardFooterRisk || cardFooterAuth || cardFooterDataSource || cardFooterContact) {
+        body.card_footer = {
+            risk_disclaimer: cardFooterRisk?.value || '',
+            auth_remaining: cardFooterAuth?.value || '',
+            data_source: cardFooterDataSource?.value || '',
+            contact: cardFooterContact?.value || '',
+        };
+    }
     if (command) {
         const postprocessComponent = document.getElementById('invest-component-modal-postprocess-component')?.value || '';
         body.component_config = {

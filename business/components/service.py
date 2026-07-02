@@ -15,6 +15,12 @@ from business.components.registry import (
 from business.config.config_service import get_config, save_config
 from business.components.paths import runtime_component_root, runtime_components_root
 from business.components.skill_versions import list_versions
+from business.content.technical_analysis_card_config import (
+    TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS,
+    technical_analysis_card_footer_config,
+)
+
+TECHNICAL_ANALYSIS_PROMPT_BLOCKS_CONFIG_KEY = "prompt.technical_analysis.blocks"
 
 
 def _is_runtime_component(definition) -> bool:
@@ -33,10 +39,11 @@ def _component_settings(definition) -> dict:
         settings["allow_unresolved_bare_code_analysis"] = bool(
             get_config("technical_analysis.allow_unresolved_bare_code_analysis", False)
         )
+        settings["card_footer"] = technical_analysis_card_footer_config()
     if definition.uses_triggers:
         settings["triggers"] = list(resolve_triggers(definition))
     if definition.prompt_key:
-        from business.audit.ai_generation import default_prompt_for_service
+        from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS, default_prompt_for_service
 
         configured_prompt = get_config(definition.prompt_key, None)
         default_prompt = ""
@@ -50,6 +57,17 @@ def _component_settings(definition) -> dict:
         settings["prompt_configured"] = bool(isinstance(configured_prompt, str) and configured_prompt.strip())
         if default_prompt:
             settings["default_prompt"] = default_prompt
+        if definition.business_key == "technical-analysis":
+            configured_blocks = get_config(TECHNICAL_ANALYSIS_PROMPT_BLOCKS_CONFIG_KEY, None)
+            block_values = configured_blocks if isinstance(configured_blocks, dict) else {}
+            settings["prompt_blocks"] = [
+                {
+                    "key": key,
+                    "label": block["label"],
+                    "text": str(block_values.get(key) or block["text"]),
+                }
+                for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items()
+            ]
     return settings
 
 
@@ -339,6 +357,35 @@ def save_component_settings(
             actor=actor,
         )
 
+    if "prompt_blocks" in values:
+        if definition.business_key != "technical-analysis" or not definition.prompt_key:
+            raise ValueError("component does not accept prompt blocks")
+        from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS
+
+        raw_blocks = values.get("prompt_blocks")
+        if not isinstance(raw_blocks, dict):
+            raise ValueError("prompt_blocks must be an object")
+        block_values = {}
+        prompt_parts = []
+        for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items():
+            value = str(raw_blocks.get(key) or block["text"])
+            block_values[key] = value
+            prompt_parts.append(value)
+        save_config(
+            TECHNICAL_ANALYSIS_PROMPT_BLOCKS_CONFIG_KEY,
+            block_values,
+            operator_role=operator_role,
+            operator=operator,
+            actor=actor,
+        )
+        save_config(
+            definition.prompt_key,
+            "".join(prompt_parts),
+            operator_role=operator_role,
+            operator=operator,
+            actor=actor,
+        )
+
     if "allow_unresolved_bare_code_analysis" in values:
         if definition.business_key != "technical-analysis":
             raise ValueError("component does not accept unresolved bare code analysis setting")
@@ -349,6 +396,23 @@ def save_component_settings(
             operator=operator,
             actor=actor,
         )
+
+    if "card_footer" in values:
+        if definition.business_key != "technical-analysis":
+            raise ValueError("component does not accept card footer setting")
+        footer = values.get("card_footer")
+        if not isinstance(footer, dict):
+            raise ValueError("card_footer must be an object")
+        for field, config_key in TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS.items():
+            if field not in footer:
+                continue
+            save_config(
+                config_key,
+                str(footer.get(field) or "").strip(),
+                operator_role=operator_role,
+                operator=operator,
+                actor=actor,
+            )
 
     return next(item for item in list_components() if item["component_key"] == component_key)
 
