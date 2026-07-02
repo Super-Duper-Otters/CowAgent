@@ -3440,10 +3440,10 @@ def test_component_settings_save_updates_technical_analysis_prompt_blocks(busine
     _login_default_investment_admin(monkeypatch)
     technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
     assert [block["key"] for block in technical["settings"]["prompt_blocks"]] == list(TECHNICAL_ANALYSIS_PROMPT_BLOCKS)
-    assert technical["settings"]["prompt_blocks"][0]["label"] == "角色与输出边界"
+    assert technical["settings"]["prompt_blocks"][0]["label"] == "角色与 JSON 输出边界"
 
     edited_blocks = {
-        key: block["text"].replace("技术分析报告信号卡整理助手", "技术分析卡片分块整理助手")
+        key: block["text"].replace("技术分析报告结构化抽取助手", "技术分析JSON分块抽取助手")
         if key == "role"
         else block["text"]
         for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items()
@@ -3460,7 +3460,59 @@ def test_component_settings_save_updates_technical_analysis_prompt_blocks(busine
     assert payload["status"] == "success"
     assert get_config("prompt.technical_analysis.blocks") == edited_blocks
     assert get_config("prompt.technical_analysis") == "".join(edited_blocks.values())
-    assert payload["component"]["settings"]["prompt_blocks"][0]["text"].startswith("你是技术分析卡片分块整理助手")
+    assert payload["component"]["settings"]["prompt_blocks"][0]["text"].startswith("你是技术分析JSON分块抽取助手")
+
+
+def test_component_settings_reset_defaults_restores_prompt_and_technical_footer(business_env, monkeypatch):
+    from business.audit.ai_generation import DEFAULT_RATE_PROMPT, TECHNICAL_ANALYSIS_PROMPT_BLOCKS
+    from business.components.service import list_components
+    from business.config.config_service import get_config, save_config
+    from channel.web import web_channel
+    from channel.web.web_channel import InvestmentComponentSettingsHandler
+
+    save_config("skill.rate.enabled", False, operator_role="admin")
+    save_config("skill.rate.triggers", ["自定义利率"], operator_role="admin")
+    save_config("prompt.rate", "custom rate prompt", operator_role="admin")
+    save_config("skill.technical-analysis.enabled", False, operator_role="admin")
+    save_config("skill.technical-analysis.triggers", ["自定义技术分析"], operator_role="admin")
+    save_config("prompt.technical_analysis", "custom ta prompt", operator_role="admin")
+    save_config("prompt.technical_analysis.blocks", {"role": "custom role"}, operator_role="admin")
+    save_config("technical_analysis.allow_unresolved_bare_code_analysis", True, operator_role="admin")
+    save_config("technical_analysis.card.risk_disclaimer", "自定义风险", operator_role="admin")
+    save_config("technical_analysis.card.auth_remaining", "2026-12-31", operator_role="admin")
+    save_config("technical_analysis.card.data_source", "CustomSource", operator_role="admin")
+    save_config("technical_analysis.card.contact", "CustomContact", operator_role="admin")
+
+    _login_default_investment_admin(monkeypatch)
+    monkeypatch.setattr(web_channel.web, "header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_channel.web,
+        "data",
+        lambda: json.dumps({"reset_defaults": True}, ensure_ascii=False).encode("utf-8"),
+    )
+
+    rate_payload = json.loads(InvestmentComponentSettingsHandler().POST("rate"))
+    technical_payload = json.loads(InvestmentComponentSettingsHandler().POST("technical-analysis"))
+
+    assert rate_payload["status"] == "success"
+    assert get_config("skill.rate.enabled") is True
+    assert get_config("skill.rate.triggers") == ["利率"]
+    assert get_config("prompt.rate") == DEFAULT_RATE_PROMPT
+    assert technical_payload["status"] == "success"
+    assert get_config("skill.technical-analysis.enabled") is True
+    assert get_config("skill.technical-analysis.triggers") == ["技术分析"]
+    assert get_config("technical_analysis.allow_unresolved_bare_code_analysis") is False
+    assert get_config("prompt.technical_analysis.blocks") == {
+        key: block["text"] for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items()
+    }
+    technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
+    assert technical["settings"]["card_footer"] == {
+        "risk_disclaimer": "本内容仅供研究参考，不构成任何投资建议",
+        "auth_remaining": "——",
+        "data_source": "AKShare / Tushare / BaoStock",
+        "contact": "刘静怡13681991121",
+    }
+    assert technical["settings"]["prompt_blocks"][0]["text"] == TECHNICAL_ANALYSIS_PROMPT_BLOCKS["role"]["text"]
 
 
 def test_component_settings_show_default_prompt_when_blank(business_env):
@@ -9292,41 +9344,114 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
     request = build_generation_request(ServiceType.TECHNICAL_ANALYSIS, "ta report")
 
     for required in (
-        "标的：",
-        "信号方向：",
-        "最新收盘：",
-        "行情日期：",
-        "趋势研判",
-        "核心关键位",
-        "强压力：",
-        "强支撑：",
-        "实操指引",
+        "严格 JSON",
+        "【固收 | 智能投研辅助系统】",
+        "📈 标的：<target>",
+        "[庆祝] 信号方向：<signal_direction>",
+        '"target"',
+        '"signal_direction"',
+        '"latest_close"',
+        '"market_date"',
+        '"daily_change"',
+        '"trend"',
+        '"summary"',
+        '"direction_confirm"',
+        '"quality_confirm"',
+        '"risk_confirm"',
+        '"pattern_verify"',
+        '"key_levels"',
+        '"strong_resistance"',
+        '"strong_support"',
+        '"operation_guide"',
+        '"breakout"',
+        '"range"',
+        '"breakdown"',
         "【系统约束：标的名称】",
         "标的字段必须输出",
         "图片主标题由“📈 标的：”字段渲染而来",
         "股票字典中文名",
         "RSI(6)从92%大幅回落至55%",
         "超买风险化解=健康的回调整理",
-        "均线多头维持+MACD金叉不破=中期趋势未改",
-        "不得改变“信号方向”",
-        "趋势研判章节第一段必须先输出一条总论句",
-        "方向确认（趋势 x 动量）：<必须引用报告中的趋势与动量具体依据",
-        "质量确认（趋势 x 量价）：<必须引用报告中的成交量、量比、OBV、AD、ADOSC或量价描述",
-        "风险确认（动量 x 波动 x 位置风险）：<必须引用报告中的RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险描述",
-        "形态验证：<必须引用报告中的最新K线形态名称、看涨/看跌方向和验证含义",
-        "“方向确认 / 质量确认 / 风险确认 / 形态验证”四项不得只写结论",
-        "- 📈 反弹收复109.335（前收盘）：震荡偏强延续",
-        "- 🔄 109.06~109.40区间震荡：缩量整固，等待方向",
-        "- 📉 跌破MA20（109.064）：短线走弱，关注108.80（MA60）",
+        "均线多头维持+MACD金叉不破",
+        "不得改变 signal_direction",
+        "必须至少引用报告原文中的一个具体指标",
+        "evidence 不得只写结论",
+        "指标变化=结论",
+        "反弹收复109.335（前收盘）：震荡偏强延续",
+        "109.06~109.40区间震荡：缩量整固，等待方向",
+        "跌破MA20（109.064）：短线走弱",
         "页脚固定字段由业务代码在渲染前注入",
+        "数据来源和业务对接强制使用技术分析组件的 card_footer 配置",
     ):
         assert required in request.prompt
     assert "刘静怡13681991121" not in request.prompt
     assert "AKShare / Tushare / BaoStock" not in request.prompt
     assert "授权剩余时间：——" not in request.prompt
     assert "本内容仅供研究参考，不构成任何投资建议" not in request.prompt
-    assert "禁止输出 Markdown 表格" in request.prompt
-    assert "只输出卡片正文" in request.prompt
+    assert "禁止输出解释" in request.prompt
+    assert "只输出一个 JSON object" in request.prompt
+
+
+def test_ai_generation_converts_technical_analysis_json_to_renderer_text(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    payload = {
+        "target": "新易盛（300502.SZ）",
+        "signal_direction": "看涨观察",
+        "latest_close": "120.50",
+        "market_date": "2026-07-01",
+        "daily_change": "+2.31%",
+        "analysis_model": "技术分析体系",
+        "trend": {
+            "summary": "MA5上穿MA20+MACD红柱扩张=趋势偏强。",
+            "direction_confirm": {"conclusion": "趋势与动量同向偏强", "evidence": ["MA5上穿MA20", "MACD红柱扩张"]},
+            "quality_confirm": {"conclusion": "量价配合尚可", "evidence": ["成交量较前日放大", "OBV继续抬升"]},
+            "risk_confirm": {"conclusion": "短线有超买回撤风险", "evidence": ["RSI(6)=82", "价格贴近BOLL上轨"]},
+            "pattern_verify": {"conclusion": "放量中阳线偏多", "evidence": ["最新K线为放量中阳线"]},
+        },
+        "key_levels": {
+            "strong_resistance": {"value": "126.80", "source": "BOLL上轨"},
+            "strong_support": {"value": "113.20", "source": "MA20"},
+        },
+        "operation_guide": {
+            "summary": "趋势偏强但短线超买，等待回踩确认",
+            "breakout": "突破126.80后偏强延续",
+            "range": "113.20~126.80震荡观察量能",
+            "breakdown": "跌破113.20需防守",
+        },
+    }
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
+
+    result = generate_technical_analysis_text("# 技术分析报告", adapter=FakeAdapter())
+
+    assert result.success is True
+    assert result.text.startswith("【固收 | 智能投研辅助系统】")
+    assert "📈 标的：新易盛（300502.SZ）" in result.text
+    assert "📅 行情日期：2026-07-01  日内涨幅：+2.31%" in result.text
+    assert "📊 趋势研判\nMA5上穿MA20+MACD红柱扩张=趋势偏强。" in result.text
+    assert "▪️ 方向确认（趋势 x 动量）：趋势与动量同向偏强，依据：MA5上穿MA20、MACD红柱扩张" in result.text
+    assert "▪️ 强压力：126.80（BOLL上轨）" in result.text
+    assert "- 📉 跌破113.20需防守" in result.text
+    assert "授权剩余时间" not in result.text
+
+
+def test_ai_generation_rejects_invalid_technical_analysis_json_payload(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+    from business.config.constants import ErrorCode
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return json.dumps({"target": "新易盛（300502.SZ）"}, ensure_ascii=False)
+
+    result = generate_technical_analysis_text("# 技术分析报告", adapter=FakeAdapter())
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.SYSTEM_ERROR
+    assert "technical analysis JSON payload invalid" in result.detail
+    assert "missing signal_direction" in result.detail
 
 
 def test_ai_generation_normalizes_technical_analysis_intraday_change_from_report_table(business_env):

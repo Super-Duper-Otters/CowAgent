@@ -5864,6 +5864,7 @@ function renderInvestmentComponentConfigDialogBody(component) {
             ${promptConfigEditor}
         </div>
         <div class="investment-actions investment-modal-actions">
+            ${investmentButtonIfCan('skills.write', 'fa-rotate-left', '恢复默认配置', `resetInvestmentComponentDefaults('${escapeHtml(componentKey)}')`)}
             ${investmentButtonIfCan('skills.write', 'fa-floppy-disk', '保存配置', `saveInvestmentComponentSettings('${escapeHtml(componentKey)}', 'modal')`, 'primary')}
         </div>
     `;
@@ -6087,6 +6088,24 @@ async function saveInvestmentComponentSettings(componentKey, source = '') {
         if (source === 'modal') hideInvestmentModal();
     } catch (error) {
         showInvestmentToast(`保存配置失败：${String(error.message || error)}`, 'error');
+    }
+}
+
+async function resetInvestmentComponentDefaults(componentKey) {
+    try {
+        await investmentFetchJson(`/api/investment/components/${encodeURIComponent(componentKey)}/settings`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reset_defaults: true}),
+        });
+        await loadInvestmentComponents();
+        const item = currentInvestmentSkills.find(row => (row.component_key || row.skill_key) === componentKey);
+        if (item) {
+            showInvestmentModal('组件配置', renderInvestmentComponentConfigDialogBody(item));
+        }
+        showInvestmentToast('已恢复默认配置', 'success');
+    } catch (error) {
+        showInvestmentToast(`恢复默认配置失败：${String(error.message || error)}`, 'error');
     }
 }
 
@@ -7433,6 +7452,7 @@ window.openInvestmentPromptComponentDialog = openInvestmentPromptComponentDialog
 window.refreshInvestmentPromptComponentPreview = refreshInvestmentPromptComponentPreview;
 window.createInvestmentPromptComponent = createInvestmentPromptComponent;
 window.saveInvestmentComponentSettings = saveInvestmentComponentSettings;
+window.resetInvestmentComponentDefaults = resetInvestmentComponentDefaults;
 window.saveInvestmentComponentEnabled = saveInvestmentComponentEnabled;
 window.saveInvestmentSkillSettings = saveInvestmentSkillSettings;
 window.saveInvestmentSkillDialog = saveInvestmentSkillDialog;

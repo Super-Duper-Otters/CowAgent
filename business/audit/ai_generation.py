@@ -47,12 +47,12 @@ RATE_LABELS = (
 
 TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
     "role": {
-        "label": "角色与输出边界",
+        "label": "角色与 JSON 输出边界",
         "text": (
-        "你是技术分析报告信号卡整理助手。请把用户提供的技术分析 Markdown 报告整理成 "
-        "signal-card-renderer 可直接渲染的技术分析卡片文本。\n"
-        "必须只输出卡片正文，禁止输出解释、模板说明或补充问题；禁止输出 Markdown 表格、Markdown 代码块或多余标题。\n"
-        "字段缺失时填“——”；不要编造报告中没有的数据；数值、日期、支撑阻力优先使用报告原文。\n\n"
+            "你是技术分析报告结构化抽取助手。请把用户提供的技术分析 Markdown 报告整理成严格 JSON，"
+            "供业务代码生成 signal-card-renderer 技术分析卡片文本。\n"
+            "必须只输出一个 JSON object，禁止输出解释、Markdown 代码块、表格、模板说明或补充问题。\n"
+            "字段缺失时填“——”；不要编造报告中没有的数据；数值、日期、支撑阻力优先使用报告原文。\n\n"
         ),
     },
     "target_constraints": {
@@ -65,77 +65,87 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
         ),
     },
     "header_fields": {
-        "label": "头部字段",
+        "label": "JSON 顶层字段",
         "text": (
-        "输出必须严格使用下面结构和字段名，每个字段名和章节标题都必须保留：\n"
-        "【浙商固收 | 智能投研辅助系统】\n\n"
-        "——————————————\n"
-        "📈 标的：<优先使用系统约束中的标的字段必须输出；否则使用股票中文名（标准代码）；无法识别才使用代码>\n"
-        "[庆祝] 信号方向：<看涨观察/区间观望/看跌防守/买入/卖出等，按报告多空倾向归纳>\n"
-        "💰 最新收盘：<价格> 元\n"
-        "📅 行情日期：<YYYY-MM-DD>  日内涨幅：<+x.xx%> 或 日内跌幅：<-x.xx%>\n"
-        "🔧 分析模型：技术分析体系\n\n"
+            "业务代码会把 JSON 渲染为下面的卡片头部结构，字段含义必须按此模板抽取：\n"
+            "【固收 | 智能投研辅助系统】\n\n"
+            "——————————————\n"
+            "📈 标的：<target>\n"
+            "[庆祝] 信号方向：<signal_direction>\n"
+            "💰 最新收盘：<latest_close> 元\n"
+            "📅 行情日期：<market_date>  日内涨幅：<daily_change> 或 日内跌幅：<daily_change>\n"
+            "🔧 分析模型：技术分析体系\n\n"
+            "JSON 顶层字段必须包含：\n"
+            "{\n"
+            '  "target": "<优先使用系统约束中的标的字段必须输出；否则使用股票中文名（标准代码）>",\n'
+            '  "signal_direction": "<看涨观察/区间观望/看跌防守/买入/卖出等，按报告多空倾向归纳>",\n'
+            '  "latest_close": "<价格，不带“元”；无法识别填“——”>",\n'
+            '  "market_date": "<YYYY-MM-DD；无法识别填“——”>",\n'
+            '  "daily_change": "<+x.xx% 或 -x.xx%；无法识别填空字符串>",\n'
+            '  "analysis_model": "技术分析体系"\n'
+            "}\n\n"
         ),
     },
     "trend_section": {
-        "label": "趋势研判",
+        "label": "趋势研判 JSON",
         "text": (
-        "📊 趋势研判\n"
-        "<使用“指标变化=结论”的链式表达，2 到 3 句完成趋势、动量、风险和形态归纳；"
-        "趋势研判章节第一段必须先输出一条总论句，作为该章节的总的结论，不能直接从方向确认等 bullet 开始；"
-        "总论句必须至少引用报告原文中的一个具体指标、数值、分位、形态名称或关键位，避免只写泛泛结论；"
-        "不得改变“信号方向”字段给出的多空方向，不得把看涨改成看跌或把看跌改成看涨。"
-        "示例：RSI(6)从92%大幅回落至55%，超买风险化解=健康的回调整理。"
-        "均线多头维持+MACD金叉不破=中期趋势未改>\n"
-        "▪️ 方向确认（趋势 x 动量）：<必须引用报告中的趋势与动量具体依据，例如均线结构、MACD DIF/DEA、MACD柱体、RSI、KDJ等；说明二者是否同向，45 字以内>\n"
-        "▪️ 质量确认（趋势 x 量价）：<必须引用报告中的成交量、量比、OBV、AD、ADOSC或量价描述；说明趋势是否有量价配合，45 字以内>\n"
-        "▪️ 风险确认（动量 x 波动 x 位置风险）：<必须引用报告中的RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险描述；说明主要风险，45 字以内>\n"
-        "▪️ 形态验证：<必须引用报告中的最新K线形态名称、看涨/看跌方向和验证含义，45 字以内>\n\n"
+            '必须输出 "trend" 对象：\n'
+            '"trend": {\n'
+            '  "summary": "<使用“指标变化=结论”的链式表达，1 到 2 句完成趋势、动量、风险和形态归纳；必须至少引用报告原文中的一个具体指标、数值、分位、形态名称或关键位>",\n'
+            '  "direction_confirm": {"conclusion": "<说明趋势与动量是否同向>", "evidence": ["<均线结构、MACD DIF/DEA、MACD柱体、RSI、KDJ等具体依据>"]},\n'
+            '  "quality_confirm": {"conclusion": "<说明成交量/量价是否配合>", "evidence": ["<成交量、量比、OBV、AD、ADOSC或量价描述>"]},\n'
+            '  "risk_confirm": {"conclusion": "<说明超买、波动或回撤风险>", "evidence": ["<RSI/KDJ超买超卖、ATR分位、BOLL位置/宽度、历史分位或位置风险描述>"]},\n'
+            '  "pattern_verify": {"conclusion": "<最新K线形态及方向含义>", "evidence": ["<最新K线形态名称、看涨/看跌方向和验证含义>"]}\n'
+            "}\n"
+            "不得改变 signal_direction 给出的多空方向，不得把看涨改成看跌或把看跌改成看涨。\n"
+            "示例 summary：RSI(6)从92%大幅回落至55%，超买风险化解=健康的回调整理。"
+            "均线多头维持+MACD金叉不破=中期趋势未改。\n\n"
         ),
     },
     "key_levels_section": {
-        "label": "核心关键位",
+        "label": "核心关键位 JSON",
         "text": (
-        "🎯 核心关键位\n"
-        "▪️ 强压力：<上方最重要阻力位> （<来源，如 BOLL上轨/前高/均线>）\n"
-        "▪️ 强支撑：<下方最重要支撑位> （<来源，如 MA5/MA10/MA20/BOLL中轨>）\n\n"
+            '必须输出 "key_levels" 对象：\n'
+            '"key_levels": {\n'
+            '  "strong_resistance": {"value": "<上方最重要阻力位>", "source": "<来源，如 BOLL上轨/前高/均线>"},\n'
+            '  "strong_support": {"value": "<下方最重要支撑位>", "source": "<来源，如 MA5/MA10/MA20/BOLL中轨>"}\n'
+            "}\n\n"
         ),
     },
     "ops_guide_section": {
-        "label": "实操指引",
+        "label": "实操指引 JSON",
         "text": (
-        "💡 实操指引\n"
-        "<按以下固定格式输出，不要写多余解释；格式可以优化措辞，但不能修改输出方向：\n"
-        "第一行：一句总评，以中文逗号分隔，末尾使用冒号。\n"
-        "后面三行必须用“- 图标 条件：结论”的格式输出，依次为：\n"
-        "- 突破/反弹收复关键位后的走势判断\n"
-        "- 区间震荡时的量能与等待方向\n"
-        "- 跌破关键均线/支撑后的风险提示\n\n"
-        "示例格式：\n"
-        "超买化解，均线多头维持，健康的回调整理：\n"
-        "- 📈 反弹收复109.335（前收盘）：震荡偏强延续\n"
-        "- 🔄 109.06~109.40区间震荡：缩量整固，等待方向\n"
-        "- 📉 跌破MA20（109.064）：短线走弱，关注108.80（MA60）>\n"
+            '必须输出 "operation_guide" 对象：\n'
+            '"operation_guide": {\n'
+            '  "summary": "<一句总评，不带冒号>",\n'
+            '  "breakout": "<突破/反弹收复关键位后的走势判断>",\n'
+            '  "range": "<区间震荡时的量能与等待方向>",\n'
+            '  "breakdown": "<跌破关键均线/支撑后的风险提示>"\n'
+            "}\n"
+            "示例：summary=超买化解，均线多头维持，健康的回调整理；"
+            "breakout=反弹收复109.335（前收盘）：震荡偏强延续；"
+            "range=109.06~109.40区间震荡：缩量整固，等待方向；"
+            "breakdown=跌破MA20（109.064）：短线走弱，关注108.80（MA60）。\n\n"
         ),
     },
     "footer_injection_rule": {
         "label": "页脚注入规则",
         "text": (
-        "页脚固定字段由业务代码在渲染前注入，模型不要生成风险声明、授权剩余时间、数据来源或业务对接的固定值。\n\n"
+        "页脚固定字段由业务代码在渲染前注入，模型不要生成风险声明、授权剩余时间、数据来源或业务对接的固定值；"
+        "数据来源和业务对接强制使用技术分析组件的 card_footer 配置。\n\n"
         ),
     },
     "conversion_rules": {
         "label": "转换规则",
         "text": (
         "转换规则：\n"
-        "1. 必须包含“趋势研判”“核心关键位”“实操指引”三个章节标题。\n"
-        "2. 必须包含“标的：”“信号方向：”“最新收盘：”“行情日期：”；页脚固定字段由业务代码在渲染前注入，不需要模型生成。\n"
-        "3. “标的：”必须是整张图片的主标题标的，不能输出英文名、拼音、仅代码或报告原始别名来替代系统约束名称。\n"
-        "4. “核心关键位”下必须使用“强压力：”和“强支撑：”两行；多个点位可用 / 合并。\n"
-        "5. “趋势研判”必须优先使用“指标变化=结论”“指标A+指标B=结论”的短句组合，避免拆成方向确认、质量确认等模板化小标题。\n"
-        "6. “实操指引”必须保持反弹、震荡、跌破三个方向，不得因为格式优化改变原始多空判断。\n"
-        "7. “方向确认 / 质量确认 / 风险确认 / 形态验证”四项不得只写结论，必须包含报告原文中的至少一个具体依据，"
-        "如指标名、数值、分位、形态名称、关键位或量价信号；报告未提供时填“报告未给出明确依据”，不得编造。\n"
+        "1. 输出必须是合法 JSON object，不能包含 Markdown 代码块。\n"
+        "2. 必须包含 target、signal_direction、latest_close、market_date、trend、key_levels、operation_guide。\n"
+        "3. target 必须是整张图片的主标题标的，不能输出英文名、拼音、仅代码或报告原始别名来替代系统约束名称。\n"
+        "4. direction_confirm / quality_confirm / risk_confirm / pattern_verify 四项必须同时包含 conclusion 和 evidence 数组。\n"
+        "5. evidence 不得只写结论，必须包含报告原文中的至少一个具体依据，如指标名、数值、分位、形态名称、关键位或量价信号；报告未提供时填“报告未给出明确依据”。\n"
+        "6. trend.summary 必须优先使用“指标变化=结论”“指标A+指标B=结论”的短句组合。\n"
+        "7. operation_guide 必须保持 breakout、range、breakdown 三个方向，不得因为措辞优化改变原始多空判断。\n"
         "8. 不要输出原报告的大段表格、附录、形态胜率明细或情景推演表，只保留可渲染卡片需要的信息。"
         ),
     },
@@ -377,6 +387,13 @@ def _normalize_technical_analysis_text(text: str, source_text: str) -> str:
 
 def normalize_generated_text(service_type: ServiceType, text: str, source_text: str = "") -> str:
     if service_type == ServiceType.TECHNICAL_ANALYSIS:
+        from business.content.technical_analysis_card_structured import technical_analysis_card_text_from_model_output
+
+        structured = technical_analysis_card_text_from_model_output(text)
+        if structured.success:
+            return _normalize_technical_analysis_text(structured.standard_text, source_text)
+        if re.match(r"^\s*(?:```json\s*)?\{", text or "", flags=re.I):
+            raise ValueError(f"technical analysis JSON payload invalid: {structured.error}")
         return _normalize_technical_analysis_text(text, source_text)
     if service_type == ServiceType.RATE:
         return _normalize_rate_text(text)

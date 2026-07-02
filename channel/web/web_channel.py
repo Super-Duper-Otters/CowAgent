@@ -4796,6 +4796,19 @@ class InvestmentComponentSettingsHandler:
             definition = get_business_definition(component_key)
             body = _investment_json_body()
             audit_keys = []
+            if body.get("reset_defaults") is True:
+                audit_keys.append(definition.enabled_config_key)
+                if definition.uses_triggers:
+                    audit_keys.append(definition.triggers_config_key)
+                if definition.prompt_key:
+                    audit_keys.append(definition.prompt_key)
+                    if definition.business_key == "technical-analysis":
+                        audit_keys.append("prompt.technical_analysis.blocks")
+                if definition.business_key == "technical-analysis":
+                    audit_keys.append("technical_analysis.allow_unresolved_bare_code_analysis")
+                    from business.content.technical_analysis_card_config import TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS
+
+                    audit_keys.extend(TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS.values())
             if "enabled" in body:
                 audit_keys.append(definition.enabled_config_key)
             if "triggers" in body and definition.uses_triggers:
@@ -4836,6 +4849,7 @@ class InvestmentComponentSettingsHandler:
                             "prompt_blocks",
                             "allow_unresolved_bare_code_analysis",
                             "card_footer",
+                            "reset_defaults",
                         )
                         if key in body
                     ]

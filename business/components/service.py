@@ -315,6 +315,61 @@ def save_component_settings(
 ) -> dict:
     definition = get_business_definition(component_key)
 
+    if values.get("reset_defaults") is True:
+        save_config(
+            definition.enabled_config_key,
+            True,
+            operator_role=operator_role,
+            operator=operator,
+            actor=actor,
+        )
+        if definition.uses_triggers:
+            save_config(
+                definition.triggers_config_key,
+                list(definition.default_triggers),
+                operator_role=operator_role,
+                operator=operator,
+                actor=actor,
+            )
+        if definition.prompt_key:
+            from business.audit.ai_generation import TECHNICAL_ANALYSIS_PROMPT_BLOCKS, default_prompt_for_service
+
+            default_prompt = default_prompt_for_service(definition.service_type)
+            save_config(
+                definition.prompt_key,
+                default_prompt,
+                operator_role=operator_role,
+                operator=operator,
+                actor=actor,
+            )
+            if definition.business_key == "technical-analysis":
+                save_config(
+                    TECHNICAL_ANALYSIS_PROMPT_BLOCKS_CONFIG_KEY,
+                    {key: block["text"] for key, block in TECHNICAL_ANALYSIS_PROMPT_BLOCKS.items()},
+                    operator_role=operator_role,
+                    operator=operator,
+                    actor=actor,
+                )
+        if definition.business_key == "technical-analysis":
+            save_config(
+                "technical_analysis.allow_unresolved_bare_code_analysis",
+                False,
+                operator_role=operator_role,
+                operator=operator,
+                actor=actor,
+            )
+            from business.content.technical_analysis_card_config import TECHNICAL_ANALYSIS_CARD_FOOTER_DEFAULTS
+
+            for field, config_key in TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS.items():
+                save_config(
+                    config_key,
+                    TECHNICAL_ANALYSIS_CARD_FOOTER_DEFAULTS[field],
+                    operator_role=operator_role,
+                    operator=operator,
+                    actor=actor,
+                )
+        return next(item for item in list_components() if item["component_key"] == component_key)
+
     if values.get("component_config") is not None:
         if definition.handler_type == "command_script":
             _update_runtime_command_component_manifest(definition, values)
