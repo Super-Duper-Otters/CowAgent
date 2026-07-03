@@ -419,6 +419,56 @@ def find_latest_cache_entry(
     return None
 
 
+def find_latest_cache_entry_for_target(
+    *,
+    service_type: ServiceType,
+    normalized_target: str,
+    require_files: bool = True,
+) -> CacheEntry | None:
+    conditions = [
+        investment_products.c.business_type == str(service_type),
+        investment_products.c.target_key == normalized_target,
+        investment_products.c.source_cache_key != "",
+        investment_products.c.status == CACHE_STATUS_ACTIVE,
+    ]
+    stmt = (
+        select(investment_products)
+        .where(and_(*conditions))
+        .order_by(desc(investment_products.c.business_date), desc(investment_products.c.updated_at))
+    )
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    for row in rows:
+        item = row_to_dict(row)
+        entry = CacheEntry(
+            cache_key=str(item.get("source_cache_key") or ""),
+            service_type=ServiceType(item.get("business_type")),
+            normalized_target=str(item.get("target_key") or ""),
+            market_date=str(item.get("business_date") or ""),
+            version_fingerprint=str(item.get("version_fingerprint") or ""),
+            output_files=_load_list(item.get("output_files")),
+            artifact_owner_id=str(item.get("source_request_id") or ""),
+            status=str(item.get("status") or CACHE_STATUS_ACTIVE),
+            hit_count=int(item.get("hit_count") or 0),
+            created_at=str(item.get("created_at") or ""),
+            updated_at=str(item.get("updated_at") or ""),
+        )
+        if require_files and not _files_available(entry.output_files):
+            from business.products.product_service import invalidate_product_if_unchanged
+
+            invalidate_product_if_unchanged(
+                {
+                    "source_cache_key": entry.cache_key,
+                    "status": entry.status,
+                    "output_files": entry.output_files,
+                    "updated_at": entry.updated_at,
+                }
+            )
+            continue
+        return entry
+    return None
+
+
 def increment_cache_hit(cache_key: str) -> None:
     from business.products.product_service import find_product_cache_entry_by_key, increment_product_hit
 

@@ -1349,7 +1349,9 @@ def test_wechatmp_passive_technical_analysis_events_share_original_request_id(mo
     monkeypatch.setattr(business_records, "mark_request_delivered", lambda _request_id: None, raising=False)
     monkeypatch.setattr(business_records, "record_request_event", lambda **kwargs: events.append(kwargs), raising=False)
 
-    assert "回复1获取或回复股票名称获取对应报告" in passive_reply.Query().POST()
+    prompt = passive_reply.Query().POST()
+    assert "300502.SZ" in prompt
+    assert "pending_1" in prompt
     current_message.update({"content": "1", "msg_id": "msg-ta-confirm"})
     assert passive_reply.Query().POST() == "<image>media-1</image>"
 
@@ -1743,7 +1745,85 @@ def test_wechatmp_passive_one_without_pending_result_uses_normal_request_path(mo
     assert [context.content for context in produced_contexts] == ["1"]
 
 
-def test_wechatmp_passive_ready_technical_result_returns_claim_prompt_without_starting_generation(monkeypatch):
+def test_wechatmp_passive_new_technical_request_does_not_sync_ready_lookup(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    produced_contexts = []
+    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
+    current_message = {"content": "#000001.SZ", "msg_id": "msg-tech-new-no-ready-lookup"}
+
+    _fake_passive_post(monkeypatch, passive_reply, channel_state, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
+    monkeypatch.setattr(
+        passive_reply,
+        "_parse_business_route",
+        lambda content: SimpleNamespace(
+            matched=True,
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            raw_input=content,
+            target_text="000001.SZ",
+            defer_precheck=True,
+        ),
+    )
+    monkeypatch.setattr(passive_reply, "_technical_analysis_precheck_error", lambda _route: "")
+    monkeypatch.setattr(passive_reply, "_queue_fast_ready_technical_result", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        passive_reply,
+        "_queue_ready_technical_result",
+        lambda *_args, **_kwargs: pytest.fail("new technical requests must not block on ready-result lookup"),
+    )
+
+    response = passive_reply.Query().POST()
+
+    assert response.startswith("收到，正在处理，请稍候。")
+    assert [context.content for context in produced_contexts] == ["#000001.SZ"]
+
+
+def test_wechatmp_passive_hash_technical_request_defers_heavy_precheck(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    produced_contexts = []
+    channel_state = SimpleNamespace(cache_dict=PassiveReplyCache(), running=set(), request_cnt={})
+    current_message = {"content": "#000001.SZ", "msg_id": "msg-tech-new-no-heavy-precheck"}
+
+    _fake_passive_post(monkeypatch, passive_reply, channel_state, current_message, produced_contexts)
+    monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
+    monkeypatch.setattr(
+        passive_reply,
+        "_technical_analysis_precheck_error",
+        lambda _route: pytest.fail("hash technical ack route must defer heavy precheck"),
+    )
+    monkeypatch.setattr(passive_reply, "_queue_fast_ready_technical_result", lambda *_args, **_kwargs: False)
+
+    response = passive_reply.Query().POST()
+
+    assert response.startswith("收到，正在处理，请稍候。")
+    assert [context.content for context in produced_contexts] == ["#000001.SZ"]
+
+
+def test_wechatmp_passive_hash_technical_route_avoids_full_business_router_import(monkeypatch):
+    import builtins
+    import channel.wechatmp.passive_reply as passive_reply
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "business.routing.router":
+            raise AssertionError("hash technical ack route must not import full business router")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    route = passive_reply._parse_business_route("#000001.SZ")
+
+    assert route.matched is True
+    assert str(route.service_type) in {"technical_analysis", "ServiceType.TECHNICAL_ANALYSIS"}
+    assert route.raw_input == "#000001.SZ"
+
+
+def test_wechatmp_passive_new_technical_request_returns_ready_prompt_on_fast_cache_hit(monkeypatch):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
 
@@ -1753,12 +1833,22 @@ def test_wechatmp_passive_ready_technical_result_returns_claim_prompt_without_st
 
     _fake_passive_post(monkeypatch, passive_reply, channel_state, current_message, produced_contexts)
     monkeypatch.setattr(passive_reply, "_reply_text", lambda _key, default="": default)
-    monkeypatch.setattr(passive_reply, "_queue_ready_technical_result", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        passive_reply,
+        "_parse_business_route",
+        lambda content: SimpleNamespace(matched=True, service_type=ServiceType.TECHNICAL_ANALYSIS, raw_input=content),
+    )
+    monkeypatch.setattr(passive_reply, "_technical_analysis_precheck_error", lambda _route: "")
+    monkeypatch.setattr(passive_reply, "_queue_fast_ready_technical_result", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        passive_reply,
+        "_queue_ready_technical_result",
+        lambda *_args, **_kwargs: pytest.fail("fast cache hit must not call slow ready lookup"),
+    )
 
     response = passive_reply.Query().POST()
 
     assert response.startswith("「天娱数科」技术分析结果已准备好，")
-    assert 'msgmenucontent=1&msgmenuid=get_result">回复1获取</a>' in response
     assert produced_contexts == []
     assert "openid" not in channel_state.running
 
@@ -1860,6 +1950,28 @@ def test_wechatmp_immediate_ack_replaces_empty_pending_summary_placeholder(monke
     )
 
     assert passive_reply._immediate_ack_text(PassiveReplyCache(), "openid") == "收到，正在处理，请稍候。请等待30-40s后回复1获取"
+
+
+def test_wechatmp_immediate_ack_uses_default_without_cold_reply_config_import(monkeypatch):
+    import builtins
+    import sys
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    monkeypatch.delitem(sys.modules, "business.config.reply_config", raising=False)
+    original_import = builtins.__import__
+    attempted = []
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "business.config.reply_config":
+            attempted.append(name)
+            raise AssertionError("cold immediate ack must not import reply_config")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    assert passive_reply._immediate_ack_text(PassiveReplyCache(), "openid").startswith("收到，正在处理，请稍候。")
+    assert attempted == []
 
 
 def test_wechatmp_passive_rate_and_bond_return_ready_image_without_running_ack(monkeypatch):

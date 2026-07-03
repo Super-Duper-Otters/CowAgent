@@ -1,8 +1,10 @@
 import asyncio
 import os
+import sys
 import threading
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import web
@@ -45,6 +47,12 @@ def _reply_text(key: str, default: str = "") -> str:
         return get_reply_text(key, default)
     except Exception:
         return default
+
+
+def _reply_text_if_loaded(key: str, default: str = "") -> str:
+    if "business.config.reply_config" not in sys.modules:
+        return default
+    return _reply_text(key, default)
 
 
 def _reply_format(key: str, *args, default: str = "", **kwargs) -> str:
@@ -281,18 +289,30 @@ def _input_error_text(cache, receiver) -> str:
 
 
 def _immediate_ack_text(cache, receiver) -> str:
+    default = f"收到，正在处理，请稍候。请等待30-40s后{wechat_bizmsgmenu_link('1', '回复1获取', 'get_result')}"
     return _append_pending_technical_summary(
-        _reply_text(IMMEDIATE_ACK_KEY, f"收到，正在处理，请稍候。请等待30-40s后{wechat_bizmsgmenu_link('1', '回复1获取', 'get_result')}"),
+        _reply_text_if_loaded(IMMEDIATE_ACK_KEY, default),
         cache,
         receiver,
     )
 
 
 def _parse_business_route(content):
+    text = str(content or "").strip()
+    if text.startswith("#"):
+        return SimpleNamespace(
+            matched=True,
+            service_type="technical_analysis",
+            raw_input=text,
+            target_text=text[1:].strip(),
+            skill_key="technical-analysis",
+            module_key="technical-analysis",
+            defer_precheck=True,
+        )
     try:
         from business.routing.router import parse_route
 
-        return parse_route(content)
+        return parse_route(text)
     except Exception as exc:
         logger.debug("[wechatmp] parse business route failed: {}".format(exc))
         return None
@@ -304,6 +324,10 @@ def _route_is_matched(route) -> bool:
 
 def _route_is_technical_analysis(route) -> bool:
     return _is_technical_analysis_service_type(getattr(route, "service_type", ""))
+
+
+def _route_defers_precheck(route) -> bool:
+    return bool(getattr(route, "defer_precheck", False))
 
 
 def _technical_analysis_precheck_error(route) -> str:
@@ -354,6 +378,61 @@ def _queue_ready_technical_result(channel, wechatmp_msg, route) -> bool:
     except Exception as exc:
         logger.warning("[wechatmp] queue ready technical result failed: {}".format(exc))
         return False
+
+
+def _queue_fast_ready_technical_result(channel, wechatmp_msg, route) -> bool:
+    if not _route_is_technical_analysis(route):
+        return False
+    target = str(getattr(route, "target_text", "") or "").strip().upper()
+    if not target or not any(ch.isdigit() for ch in target) or "." not in target:
+        return False
+    try:
+        from business.cache.cache_service import find_latest_cache_entry_for_target, technical_analysis_cache_expired_after_close
+        from business.config.constants import ServiceType
+        from business.products.product_service import invalidate_products_by_source
+
+        entry = find_latest_cache_entry_for_target(
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=target,
+            require_files=True,
+        )
+        if entry is None:
+            return False
+        if technical_analysis_cache_expired_after_close(
+            entry.market_date,
+            entry.updated_at,
+            normalized_target=entry.normalized_target,
+        ):
+            invalidate_products_by_source(source_cache_key=entry.cache_key)
+            return False
+        openid = str(getattr(wechatmp_msg, "from_user_id", "") or "")
+        title = getattr(route, "raw_input", "") or str(getattr(wechatmp_msg, "content", "") or "")
+        for path in entry.output_files:
+            if not path:
+                continue
+            _append_cached_reply(
+                channel.cache_dict,
+                openid,
+                "image_file",
+                path,
+                title,
+                service_type=ServiceType.TECHNICAL_ANALYSIS,
+                request_id=entry.artifact_owner_id,
+                source_type="cache",
+                source_id=entry.cache_key,
+            )
+        return _peek_cached_result(channel.cache_dict, openid) is not None
+    except Exception as exc:
+        logger.warning("[wechatmp] queue fast ready technical result failed: {}".format(exc))
+        return False
+
+
+def _queue_ready_technical_result_for_route(channel, wechatmp_msg, route) -> bool:
+    if _queue_fast_ready_technical_result(channel, wechatmp_msg, route):
+        return True
+    if _route_defers_precheck(route):
+        return False
+    return _queue_ready_technical_result(channel, wechatmp_msg, route)
 
 
 def _pop_cached_reply_by_title(cache, receiver, title):
@@ -859,11 +938,11 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
                     )
                     replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
                     return encrypt_func(replyPost.render())
-                precheck_error = _technical_analysis_precheck_error(parsed_route)
+                precheck_error = "" if _route_defers_precheck(parsed_route) else _technical_analysis_precheck_error(parsed_route)
                 if precheck_error:
                     replyPost = create_reply(_append_pending_technical_summary(precheck_error, channel.cache_dict, from_user), msg)
                     return encrypt_func(replyPost.render())
-                if _queue_ready_technical_result(channel, wechatmp_msg, parsed_route):
+                if _queue_ready_technical_result_for_route(channel, wechatmp_msg, parsed_route):
                     replyPost = create_reply(_technical_ready_text(_technical_analysis_title(content)), msg)
                     return encrypt_func(replyPost.render())
                 allow_new_request_with_pending_result = True
@@ -897,11 +976,11 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
                 if business_only and not _route_is_matched(parsed_route):
                     replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
                     return encrypt_func(replyPost.render())
-                precheck_error = _technical_analysis_precheck_error(parsed_route)
+                precheck_error = "" if _route_defers_precheck(parsed_route) else _technical_analysis_precheck_error(parsed_route)
                 if precheck_error:
                     replyPost = create_reply(_append_pending_technical_summary(precheck_error, channel.cache_dict, from_user), msg)
                     return encrypt_func(replyPost.render())
-                if _queue_ready_technical_result(channel, wechatmp_msg, parsed_route):
+                if _queue_ready_technical_result_for_route(channel, wechatmp_msg, parsed_route):
                     replyPost = create_reply(_technical_ready_text(_technical_analysis_title(content)), msg)
                     return encrypt_func(replyPost.render())
                 if _route_is_technical_analysis(parsed_route):
