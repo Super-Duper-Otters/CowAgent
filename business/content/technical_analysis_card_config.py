@@ -1,21 +1,17 @@
 # encoding:utf-8
 import re
-from datetime import datetime
-from typing import Any
 
 from business.config.config_service import get_config
 
 
 TECHNICAL_ANALYSIS_CARD_FOOTER_DEFAULTS = {
     "risk_disclaimer": "本内容仅供研究参考，不构成任何投资建议",
-    "auth_remaining": "——",
     "data_source": "AKShare / Tushare / BaoStock",
     "contact": "刘静怡13681991121",
 }
 
 TECHNICAL_ANALYSIS_CARD_FOOTER_CONFIG_KEYS = {
     "risk_disclaimer": "technical_analysis.card.risk_disclaimer",
-    "auth_remaining": "technical_analysis.card.auth_remaining",
     "data_source": "technical_analysis.card.data_source",
     "contact": "technical_analysis.card.contact",
 }
@@ -29,34 +25,6 @@ def technical_analysis_card_footer_config() -> dict[str, str]:
     }
 
 
-def _format_auth_end_date(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        return datetime.fromisoformat(text).date().isoformat()
-    except ValueError:
-        return text[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", text) else ""
-
-
-def technical_analysis_card_footer_config_for_openid(openid: str) -> dict[str, str]:
-    values = technical_analysis_card_footer_config()
-    try:
-        from business.accounts.user_service import get_user_by_openid
-
-        user = get_user_by_openid(openid)
-    except Exception:
-        user = None
-    auth_end = _format_auth_end_date(getattr(user, "auth_end_at", None))
-    if auth_end:
-        values["auth_remaining"] = auth_end
-    return values
-
-
 def _strip_prefixed_value(value: str, pattern: str) -> str:
     return re.sub(pattern, "", str(value or "").strip(), count=1).strip() or "——"
 
@@ -64,13 +32,11 @@ def _strip_prefixed_value(value: str, pattern: str) -> str:
 def technical_analysis_card_footer_lines(config: dict[str, str] | None = None) -> list[str]:
     values = config or technical_analysis_card_footer_config()
     risk = str(values.get("risk_disclaimer") or "").strip() or TECHNICAL_ANALYSIS_CARD_FOOTER_DEFAULTS["risk_disclaimer"]
-    auth = _strip_prefixed_value(values.get("auth_remaining", ""), r"^⏱️?\s*授权剩余时间\s*[:：]\s*")
     data_source = _strip_prefixed_value(values.get("data_source", ""), r"^📚?\s*数据来源\s*[:：]\s*")
     contact = _strip_prefixed_value(values.get("contact", ""), r"^🤝?\s*业务对接\s*[:：]\s*")
     risk_line = risk if risk.startswith("⚠️") else f"⚠️ {risk}"
     return [
         risk_line,
-        f"⏱️ 授权剩余时间：{auth}",
         f"📚 数据来源：{data_source}",
         f"🤝 业务对接：{contact}",
     ]

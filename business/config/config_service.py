@@ -24,7 +24,6 @@ CONFIG_FALLBACK_KEYS = {
     "technical_analysis.output_dir": "investment_ta_output_dir",
     "technical_analysis.allow_unresolved_bare_code_analysis": "investment_ta_allow_unresolved_bare_code_analysis",
     "technical_analysis.card.risk_disclaimer": "investment_ta_card_risk_disclaimer",
-    "technical_analysis.card.auth_remaining": "investment_ta_card_auth_remaining",
     "technical_analysis.card.data_source": "investment_ta_card_data_source",
     "technical_analysis.card.contact": "investment_ta_card_contact",
     "investment.technical_analysis.cache_update_probe_start": "investment_ta_cache_update_probe_start",

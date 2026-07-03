@@ -5841,10 +5841,6 @@ function renderInvestmentComponentConfigDialogBody(component) {
                 <input id="invest-component-modal-card-footer-risk" value="${escapeHtml(cardFooter.risk_disclaimer || '')}">
             </label>
             <label class="investment-field">
-                <span>授权剩余时间</span>
-                <input id="invest-component-modal-card-footer-auth" value="${escapeHtml(cardFooter.auth_remaining || '')}">
-            </label>
-            <label class="investment-field">
                 <span>数据来源</span>
                 <input id="invest-component-modal-card-footer-data-source" value="${escapeHtml(cardFooter.data_source || '')}">
             </label>
@@ -6025,7 +6021,6 @@ function investmentComponentSettingsBody(componentKey, source = '') {
     const promptBlocks = Array.from(document.querySelectorAll('.invest-component-modal-prompt-block'));
     const allowUnresolvedBareCode = document.getElementById(`${prefix}-allow-unresolved-bare-code-${componentKey}`);
     const cardFooterRisk = document.getElementById('invest-component-modal-card-footer-risk');
-    const cardFooterAuth = document.getElementById('invest-component-modal-card-footer-auth');
     const cardFooterDataSource = document.getElementById('invest-component-modal-card-footer-data-source');
     const cardFooterContact = document.getElementById('invest-component-modal-card-footer-contact');
     const command = document.getElementById('invest-component-modal-command');
@@ -6042,10 +6037,9 @@ function investmentComponentSettingsBody(componentKey, source = '') {
         });
     }
     if (allowUnresolvedBareCode) body.allow_unresolved_bare_code_analysis = allowUnresolvedBareCode.checked;
-    if (cardFooterRisk || cardFooterAuth || cardFooterDataSource || cardFooterContact) {
+    if (cardFooterRisk || cardFooterDataSource || cardFooterContact) {
         body.card_footer = {
             risk_disclaimer: cardFooterRisk?.value || '',
-            auth_remaining: cardFooterAuth?.value || '',
             data_source: cardFooterDataSource?.value || '',
             contact: cardFooterContact?.value || '',
         };

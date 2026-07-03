@@ -244,7 +244,6 @@ def parse_ta(text: str) -> dict[str, str]:
     ops_lines = extract_section(text, "实操指引", ("本内容仅供研究参考", "授权剩余时间", "数据来源", "业务对接"))
     ops = "\n".join(ops_lines).strip()
 
-    auth = line_value(text, "授权剩余时间")
     data_source = line_value(text, "数据来源")
     contact = line_value(text, "业务对接")
 
@@ -273,7 +272,7 @@ def parse_ta(text: str) -> dict[str, str]:
         "OPS_BG": ops_bg,
         "OPS_COLOR": ops_color,
         "DATA_SOURCE": escape_text(data_source),
-        "AUTH": escape_text(auth),
+        "AUTH": "",
         "CONTACT": escape_text(contact),
     }
 

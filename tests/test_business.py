@@ -3583,7 +3583,6 @@ def test_component_settings_save_updates_technical_analysis_card_footer_config(b
     technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
     assert technical["settings"]["card_footer"] == {
         "risk_disclaimer": "本内容仅供研究参考，不构成任何投资建议",
-        "auth_remaining": "——",
         "data_source": "AKShare / Tushare / BaoStock",
         "contact": "刘静怡13681991121",
     }
@@ -3596,7 +3595,6 @@ def test_component_settings_save_updates_technical_analysis_card_footer_config(b
             {
                 "card_footer": {
                     "risk_disclaimer": "内部研究使用，不构成投资建议",
-                    "auth_remaining": "2026-12-31",
                     "data_source": "Tushare",
                     "contact": "张三13800000000",
                 },
@@ -3610,34 +3608,26 @@ def test_component_settings_save_updates_technical_analysis_card_footer_config(b
     assert payload["status"] == "success"
     assert payload["component"]["settings"]["card_footer"] == {
         "risk_disclaimer": "内部研究使用，不构成投资建议",
-        "auth_remaining": "2026-12-31",
         "data_source": "Tushare",
         "contact": "张三13800000000",
     }
     assert get_config("technical_analysis.card.risk_disclaimer") == "内部研究使用，不构成投资建议"
-    assert get_config("technical_analysis.card.auth_remaining") == "2026-12-31"
     assert get_config("technical_analysis.card.data_source") == "Tushare"
     assert get_config("technical_analysis.card.contact") == "张三13800000000"
 
 
-def test_technical_analysis_card_footer_uses_customer_auth_end_date(business_env):
-    from business.accounts.user_service import create_user
-    from business.config.config_service import save_config
+def test_technical_analysis_card_footer_omits_auth_duration(business_env):
+    from business.content.technical_analysis_card_config import apply_technical_analysis_card_footer
     from business.content.technical_analysis_card_config import technical_analysis_card_footer_lines
-    from business.content.technical_analysis_card_config import technical_analysis_card_footer_config_for_openid
 
-    save_config("technical_analysis.card.auth_remaining", "——", operator_role="admin")
-    create_user("footer-openid", auth_end_at="2027-03-15T23:59:59")
-
-    customer_lines = technical_analysis_card_footer_lines(
-        technical_analysis_card_footer_config_for_openid("footer-openid")
-    )
-    fallback_lines = technical_analysis_card_footer_lines(
-        technical_analysis_card_footer_config_for_openid("missing-openid")
+    lines = technical_analysis_card_footer_lines()
+    text = apply_technical_analysis_card_footer(
+        "标准投研文本\n⏱️ 授权剩余时间：AI错误授权\n📚 数据来源：AI错误来源"
     )
 
-    assert "⏱️ 授权剩余时间：2027-03-15" in customer_lines
-    assert "⏱️ 授权剩余时间：——" in fallback_lines
+    assert not any("授权剩余时间" in line for line in lines)
+    assert "授权剩余时间" not in text
+    assert "📚 数据来源：AKShare / Tushare / BaoStock" in text
 
 
 def test_component_settings_save_updates_technical_analysis_prompt_blocks(business_env, monkeypatch):
@@ -3689,7 +3679,6 @@ def test_component_settings_reset_defaults_restores_prompt_and_technical_footer(
     save_config("prompt.technical_analysis.blocks", {"role": "custom role"}, operator_role="admin")
     save_config("technical_analysis.allow_unresolved_bare_code_analysis", True, operator_role="admin")
     save_config("technical_analysis.card.risk_disclaimer", "自定义风险", operator_role="admin")
-    save_config("technical_analysis.card.auth_remaining", "2026-12-31", operator_role="admin")
     save_config("technical_analysis.card.data_source", "CustomSource", operator_role="admin")
     save_config("technical_analysis.card.contact", "CustomContact", operator_role="admin")
 
@@ -3718,7 +3707,6 @@ def test_component_settings_reset_defaults_restores_prompt_and_technical_footer(
     technical = next(item for item in list_components() if item["component_key"] == "technical-analysis")
     assert technical["settings"]["card_footer"] == {
         "risk_disclaimer": "本内容仅供研究参考，不构成任何投资建议",
-        "auth_remaining": "——",
         "data_source": "AKShare / Tushare / BaoStock",
         "contact": "刘静怡13681991121",
     }
@@ -10409,7 +10397,6 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
     from business.content.technical_analysis import TechnicalAnalysisRequest, run_technical_analysis
 
     save_config("technical_analysis.card.risk_disclaimer", "内部研究使用，不构成投资建议", operator_role="admin")
-    save_config("technical_analysis.card.auth_remaining", "2026-12-31", operator_role="admin")
     save_config("technical_analysis.card.data_source", "Tushare", operator_role="admin")
     save_config("technical_analysis.card.contact", "张三13800000000", operator_role="admin")
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL], auth_end_at="2027-03-15T23:59:59")
@@ -10481,7 +10468,7 @@ def test_technical_analysis_uses_skill_cli_symbol_and_saves_all_outputs(business
     assert "# 技术分析报告\n\n核心观点" in calls[1][1]
     assert "📈 标的：300502.SZ" in calls[2][1]
     assert "⚠️ 内部研究使用，不构成投资建议" in calls[2][1]
-    assert "⏱️ 授权剩余时间：2027-03-15" in calls[2][1]
+    assert "授权剩余时间" not in calls[2][1]
     assert "📚 数据来源：Tushare" in calls[2][1]
     assert "🤝 业务对接：张三13800000000" in calls[2][1]
     assert "AI错误" not in calls[2][1]
@@ -17233,11 +17220,12 @@ def test_render_service_validates_output_files(business_env, tmp_path):
 @pytest.mark.parametrize(
     ("sample_path", "parser_name"),
     [
+        ("builtin/components/signal-card-renderer/examples/ta_sample.txt", "parse_ta"),
         ("builtin/components/signal-card-renderer/examples/bond_sample.txt", "parse_bond"),
         ("builtin/components/signal-card-renderer/examples/cb_sample.txt", "parse_cb"),
     ],
 )
-def test_rate_and_convertible_bond_renderer_suppresses_auth_duration(sample_path, parser_name):
+def test_signal_card_renderer_suppresses_auth_duration(sample_path, parser_name):
     import importlib.util
 
     script_path = Path("builtin/components/signal-card-renderer/scripts/render_card.py").resolve()

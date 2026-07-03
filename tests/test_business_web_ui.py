@@ -687,7 +687,7 @@ def test_business_component_cards_scope_controls_by_type():
     assert "invest-component-modal-triggers" in config_dialog_body
     assert "invest-component-modal-prompt" in config_dialog_body
     assert "invest-component-modal-card-footer-risk" in config_dialog_body
-    assert "invest-component-modal-card-footer-auth" in config_dialog_body
+    assert "invest-component-modal-card-footer-auth" not in config_dialog_body
     assert "invest-component-modal-card-footer-data-source" in config_dialog_body
     assert "invest-component-modal-card-footer-contact" in config_dialog_body
     assert "恢复默认配置" in config_dialog_body
