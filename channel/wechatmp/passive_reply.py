@@ -178,6 +178,40 @@ def _pop_cached_reply(cache, receiver):
         return None
 
 
+def _pop_latest_technical_cached_reply(cache, receiver):
+    pop_result = getattr(cache, "pop_latest_technical_result_with_metadata", None)
+    if pop_result:
+        selected = pop_result(receiver)
+        if selected is None:
+            return None, None
+        return selected
+    pending_result = _peek_cached_result(cache, receiver)
+    if pending_result is None or not _is_technical_analysis_service_type(getattr(pending_result, "service_type", "")):
+        return None, None
+    return _pop_cached_reply(cache, receiver), pending_result
+
+
+def _bind_technical_confirm(cache, receiver, title, request_id="", source_type="", source_id=""):
+    bind = getattr(cache, "bind_technical_confirm", None)
+    if bind:
+        bind(receiver, title, request_id=request_id, source_type=source_type, source_id=source_id)
+
+
+def _has_technical_confirm_binding(cache, receiver) -> bool:
+    has_binding = getattr(cache, "has_technical_confirm_binding", None)
+    return bool(has_binding and has_binding(receiver))
+
+
+def _pop_bound_technical_cached_reply(cache, receiver):
+    pop_result = getattr(cache, "pop_bound_technical_result_with_metadata", None)
+    if pop_result:
+        selected = pop_result(receiver)
+        if selected is None:
+            return None, None
+        return selected
+    return _pop_latest_technical_cached_reply(cache, receiver)
+
+
 def _discard_cached_result(cache, receiver):
     discard = getattr(cache, "discard_result", None)
     if discard:
@@ -223,7 +257,7 @@ def _pending_result_prompt(title):
 
 
 def _pending_technical_summary(cache, receiver) -> str:
-    summary_func = getattr(cache, "pending_technical_summary", None)
+    summary_func = getattr(cache, "pending_summary", None) or getattr(cache, "pending_technical_summary", None)
     if not summary_func:
         return ""
     summary = summary_func(receiver)
@@ -288,6 +322,10 @@ def _input_error_text(cache, receiver) -> str:
     )
 
 
+def _no_pending_result_text(cache, receiver) -> str:
+    return "当前没有待领取结果，\n{}".format(_input_error_text(cache, receiver))
+
+
 def _immediate_ack_text(cache, receiver) -> str:
     default = f"收到，正在处理，请稍候。请等待30-40s后{wechat_bizmsgmenu_link('1', '回复1获取', 'get_result')}"
     return _append_pending_technical_summary(
@@ -300,14 +338,15 @@ def _immediate_ack_text(cache, receiver) -> str:
 def _parse_business_route(content):
     text = str(content or "").strip()
     if text.startswith("#"):
+        target_text = text[1:].strip()
         return SimpleNamespace(
             matched=True,
             service_type="technical_analysis",
             raw_input=text,
-            target_text=text[1:].strip(),
+            target_text=target_text,
             skill_key="technical-analysis",
             module_key="technical-analysis",
-            defer_precheck=True,
+            defer_precheck=_is_fast_technical_target(target_text),
         )
     try:
         from business.routing.router import parse_route
@@ -324,6 +363,11 @@ def _route_is_matched(route) -> bool:
 
 def _route_is_technical_analysis(route) -> bool:
     return _is_technical_analysis_service_type(getattr(route, "service_type", ""))
+
+
+def _is_fast_technical_target(target: str) -> bool:
+    text = str(target or "").strip().upper()
+    return bool(text and "." in text and any(ch.isdigit() for ch in text))
 
 
 def _route_defers_precheck(route) -> bool:
@@ -363,17 +407,31 @@ def _queue_ready_technical_result(channel, wechatmp_msg, route) -> bool:
         for path in business_reply.output_files:
             if not path:
                 continue
+            media_id = _upload_image_file_for_passive_reply(
+                channel,
+                openid,
+                getattr(business_reply, "request_id", "") or getattr(wechatmp_msg, "msg_id", ""),
+                path,
+            )
             _append_cached_reply(
                 channel.cache_dict,
                 openid,
-                "image_file",
-                path,
+                "image",
+                media_id,
                 title,
                 service_type=business_reply.service_type,
                 request_id=getattr(business_reply, "request_id", ""),
                 source_type=getattr(business_reply, "source_type", ""),
                 source_id=getattr(business_reply, "source_id", ""),
             )
+        _bind_technical_confirm(
+            channel.cache_dict,
+            openid,
+            title,
+            request_id=getattr(business_reply, "request_id", ""),
+            source_type=getattr(business_reply, "source_type", ""),
+            source_id=getattr(business_reply, "source_id", ""),
+        )
         return _peek_cached_result(channel.cache_dict, openid) is not None
     except Exception as exc:
         logger.warning("[wechatmp] queue ready technical result failed: {}".format(exc))
@@ -410,17 +468,31 @@ def _queue_fast_ready_technical_result(channel, wechatmp_msg, route) -> bool:
         for path in entry.output_files:
             if not path:
                 continue
+            media_id = _upload_image_file_for_passive_reply(
+                channel,
+                openid,
+                getattr(entry, "artifact_owner_id", "") or str(getattr(wechatmp_msg, "msg_id", "") or ""),
+                path,
+            )
             _append_cached_reply(
                 channel.cache_dict,
                 openid,
-                "image_file",
-                path,
+                "image",
+                media_id,
                 title,
                 service_type=ServiceType.TECHNICAL_ANALYSIS,
                 request_id=entry.artifact_owner_id,
                 source_type="cache",
                 source_id=entry.cache_key,
             )
+        _bind_technical_confirm(
+            channel.cache_dict,
+            openid,
+            title,
+            request_id=entry.artifact_owner_id,
+            source_type="cache",
+            source_id=entry.cache_key,
+        )
         return _peek_cached_result(channel.cache_dict, openid) is not None
     except Exception as exc:
         logger.warning("[wechatmp] queue fast ready technical result failed: {}".format(exc))
@@ -519,6 +591,7 @@ def _mark_running(channel, receiver, is_technical_analysis=False, content=""):
         _running_started_at(channel)[receiver] = time.time()
         if is_technical_analysis:
             _set_running_technical_title(channel, receiver, content)
+            _bind_technical_confirm(channel.cache_dict, receiver, content)
 
 
 def _clear_running(channel, receiver):
@@ -869,25 +942,35 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
 
             _cleanup_stale_running(channel, from_user)
             _cleanup_invalid_cached_sources(channel.cache_dict, exclude_receiver=from_user)
-            pending_result = _peek_cached_result(channel.cache_dict, from_user)
-            if pending_result is not None:
-                if content == "1":
+            if content == "1" and from_user in channel.running:
+                technical_title = _get_running_technical_title(channel, from_user)
+                if technical_title:
+                    replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
+                    return encrypt_func(replyPost.render())
+            if content == "1":
+                if not _has_technical_confirm_binding(channel.cache_dict, from_user):
+                    pending_result = _peek_cached_result(channel.cache_dict, from_user)
+                    if pending_result is not None:
+                        replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
+                        return encrypt_func(replyPost.render())
+                    replyPost = create_reply(_no_pending_result_text(channel.cache_dict, from_user), msg)
+                    return encrypt_func(replyPost.render())
+                cached_item, selected_result = _pop_bound_technical_cached_reply(channel.cache_dict, from_user)
+                if cached_item is not None and selected_result is not None:
                     _record_request_event_safe(
-                        request_id=getattr(pending_result, "request_id", ""),
+                        request_id=getattr(selected_result, "request_id", ""),
                         openid=from_user,
                         event_type="customer_confirm",
                         message_type="text",
                         content=content,
                         result="accepted",
                     )
-                    if not _cached_result_source_is_valid(pending_result):
+                    if not _cached_result_source_is_valid(selected_result):
                         _discard_cached_result(channel.cache_dict, from_user)
                         _pop_pending_command(channel.cache_dict, from_user)
                         replyPost = create_reply(_pending_result_invalidated_prompt(), msg)
                         return encrypt_func(replyPost.render())
-                    if content == "1":
-                        _pop_pending_command(channel.cache_dict, from_user)
-                    cached_item = _pop_cached_reply(channel.cache_dict, from_user)
+                    _pop_pending_command(channel.cache_dict, from_user)
                     rendered_reply = _render_cached_reply(
                         channel,
                         msg,
@@ -897,12 +980,31 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
                         content,
                         1,
                         cached_item,
-                        pending_result.title,
-                        getattr(pending_result, "service_type", ""),
-                        getattr(pending_result, "request_id", ""),
+                        selected_result.title,
+                        getattr(selected_result, "service_type", ""),
+                        getattr(selected_result, "request_id", ""),
                     )
-                    _mark_cached_result_delivered(pending_result, rendered_reply)
+                    _mark_cached_result_delivered(selected_result, rendered_reply)
                     return rendered_reply
+                pending_result = _peek_cached_result(channel.cache_dict, from_user)
+                if pending_result is not None:
+                    replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
+                    return encrypt_func(replyPost.render())
+                replyPost = create_reply(_no_pending_result_text(channel.cache_dict, from_user), msg)
+                return encrypt_func(replyPost.render())
+            pending_result = _peek_cached_result(channel.cache_dict, from_user)
+            if pending_result is not None:
+                if content == "1":
+                    _record_request_event_safe(
+                        request_id=getattr(pending_result, "request_id", ""),
+                        openid=from_user,
+                        event_type="pending_prompt_sent",
+                        message_type="text",
+                        content=content,
+                        result="success",
+                    )
+                    replyPost = create_reply(_input_error_text(channel.cache_dict, from_user), msg)
+                    return encrypt_func(replyPost.render())
                 cached_item, selected_result = _pop_cached_reply_by_title(channel.cache_dict, from_user, content)
                 if cached_item is not None:
                     selected_result = selected_result or pending_result
@@ -928,6 +1030,10 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
 
                 parsed_route = _parse_business_route(content)
                 if not _route_is_matched(parsed_route):
+                    technical_title = _get_running_technical_title(channel, from_user) if from_user in channel.running else ""
+                    if technical_title:
+                        replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
+                        return encrypt_func(replyPost.render())
                     _record_request_event_safe(
                         request_id=getattr(pending_result, "request_id", ""),
                         openid=from_user,
@@ -952,17 +1058,20 @@ def handle_wechatmp_post(args, message: bytes, env=None, *, skip_permission: boo
                 else:
                     _set_pending_command(channel.cache_dict, from_user, content)
 
-            if content == "1" and from_user in channel.running:
-                technical_title = _get_running_technical_title(channel, from_user)
-                if technical_title:
-                    replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
-                    return encrypt_func(replyPost.render())
             if from_user in channel.running:
                 parsed_route = parsed_route or _parse_business_route(content)
                 if _route_is_technical_analysis(parsed_route):
                     technical_title = _get_running_technical_title(channel, from_user) or getattr(parsed_route, "target_text", "") or content
                     replyPost = create_reply(_technical_running_new_request_text(technical_title), msg)
                     return encrypt_func(replyPost.render())
+                technical_title = _get_running_technical_title(channel, from_user)
+                if technical_title:
+                    replyPost = create_reply(_running_technical_analysis_text(technical_title), msg)
+                    return encrypt_func(replyPost.render())
+
+            if content == "1":
+                replyPost = create_reply(_no_pending_result_text(channel.cache_dict, from_user), msg)
+                return encrypt_func(replyPost.render())
 
             # New request
             if (
