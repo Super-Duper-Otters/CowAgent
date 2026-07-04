@@ -46,6 +46,9 @@ from chart_helpers import _plot_pattern_detail
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
+REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', '..', '..'))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 # ==================== 预设标的配置 ====================
 
@@ -304,6 +307,78 @@ def _source_date_ranking_enabled():
     return start <= current <= end
 
 
+def _trading_calendar_filter_enabled():
+    value = os.environ.get('TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED', '').strip().lower()
+    return value in {'1', 'true', 'yes', 'on'}
+
+
+def _accepted_market_dates():
+    if not _trading_calendar_filter_enabled():
+        return set()
+    raw_dates = os.environ.get('TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES', '')
+    dates = set()
+    for item in raw_dates.split(','):
+        normalized = _normalize_market_date(item)
+        if normalized:
+            dates.add(normalized)
+    return dates
+
+
+def _normalize_market_date(value):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        return pd.to_datetime(text, errors='raise').date().isoformat()
+    except Exception:
+        return ''
+
+
+def _market_date_allowed(latest_date, accepted_dates=None):
+    if not _trading_calendar_filter_enabled():
+        return True
+    accepted = accepted_dates if accepted_dates is not None else _accepted_market_dates()
+    if not accepted:
+        return True
+    normalized = _normalize_market_date(latest_date)
+    return normalized in accepted
+
+
+def _max_stale_market_days():
+    raw = os.environ.get('TECHNICAL_ANALYSIS_MAX_STALE_MARKET_DAYS', '15')
+    try:
+        return max(0, int(raw))
+    except Exception:
+        return 15
+
+
+def _market_date_stale_fallback_allowed(latest_date):
+    normalized = _normalize_market_date(latest_date)
+    if not normalized:
+        return False
+    try:
+        market_day = pd.to_datetime(normalized, errors='raise').date()
+        reference_text = _normalize_market_date(os.environ.get('TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE', ''))
+        reference_day = pd.to_datetime(reference_text, errors='raise').date() if reference_text else _technical_analysis_now().date()
+    except Exception:
+        return False
+    age_days = (reference_day - market_day).days
+    return 0 <= age_days <= _max_stale_market_days()
+
+
+def _select_stale_source_candidate(candidates, errors):
+    allowed = []
+    for candidate in candidates:
+        if _market_date_stale_fallback_allowed(candidate['latest_date']):
+            allowed.append(candidate)
+            continue
+        latest_label = _normalize_market_date(candidate['latest_date']) or str(candidate['latest_date'])
+        errors.append(
+            f"{candidate['source_name']}: 最新日期 {latest_label} 超过最大允许滞后 {_max_stale_market_days()} 天"
+        )
+    return _select_usable_source_candidate(allowed)
+
+
 def _load_tushare_token():
     tushare_token = os.environ.get('TUSHARE_TOKEN', '')
     token_file = os.path.expanduser('~/.tushare_token')
@@ -368,24 +443,41 @@ def _select_usable_source_candidate(candidates):
     return max(pool, key=lambda item: (item['latest_date'], item['rows']))
 
 
+def _source_candidate(source_name, df, latest_date):
+    quality_ok, quality_detail = _key_level_quality(df)
+    return {
+        'latest_date': latest_date,
+        'source_name': source_name,
+        'df': df,
+        'rows': len(df),
+        'quality_ok': quality_ok,
+        'quality_detail': quality_detail,
+    }
+
+
 def _fetch_data_ranked_by_latest_date(config, symbol_code=None):
     errors = []
     candidates = []
+    stale_candidates = []
+    accepted_dates = _accepted_market_dates()
 
     def add_candidate(source_name, df):
         df = _prepare_source_frame(df)
         if len(df) >= 60:
             latest_date = df['date'].max()
-            quality_ok, quality_detail = _key_level_quality(df)
-            candidates.append({
-                'latest_date': latest_date,
-                'source_name': source_name,
-                'df': df,
-                'rows': len(df),
-                'quality_ok': quality_ok,
-                'quality_detail': quality_detail,
-            })
-            quality_label = '质量通过' if quality_ok else f'质量不足: {quality_detail}'
+            candidate = _source_candidate(source_name, df, latest_date)
+            if not _market_date_allowed(latest_date, accepted_dates):
+                latest_label = _normalize_market_date(latest_date) or str(latest_date)
+                expected_label = os.environ.get('TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE', '').strip()
+                detail = f"{source_name}: 最新日期 {latest_label} 不在交易日历允许范围"
+                if expected_label:
+                    detail += f"（预期 {expected_label}）"
+                errors.append(detail)
+                stale_candidates.append(candidate)
+                print(f"  日期过旧: {detail}")
+                return
+            candidates.append(candidate)
+            quality_label = '质量通过' if candidate['quality_ok'] else f"质量不足: {candidate['quality_detail']}"
             print(f"  候选: {source_name} {len(df)} 条，最新日期 {latest_date.date()}，{quality_label}")
             return
         errors.append(f"{source_name}: 数据量不足 ({len(df)} < 60)")
@@ -442,6 +534,15 @@ def _fetch_data_ranked_by_latest_date(config, symbol_code=None):
         quality_label = '质量通过' if selected['quality_ok'] else f"质量不足但已是最佳可用: {selected['quality_detail']}"
         print(f"  选择: {selected['source_name']}，最新日期 {selected['latest_date'].date()}，{selected['rows']} 条，{quality_label}")
         return selected['df']
+    stale_selected = _select_stale_source_candidate(stale_candidates, errors)
+    if stale_selected:
+        quality_label = '质量通过' if stale_selected['quality_ok'] else f"质量不足但已是最新可用: {stale_selected['quality_detail']}"
+        print(
+            f"  交易日历严格校验无匹配数据，降级选择最新可用: "
+            f"{stale_selected['source_name']}，最新日期 {stale_selected['latest_date'].date()}，"
+            f"{stale_selected['rows']} 条，{quality_label}"
+        )
+        return stale_selected['df']
 
     print("\n所有数据源均失败，错误详情：")
     for i, err in enumerate(errors, 1):
@@ -470,6 +571,8 @@ def fetch_data(config, symbol_code=None):
 
     errors = []
     candidates = []
+    stale_candidates = []
+    accepted_dates = _accepted_market_dates()
 
     def accept_or_continue(source_name, df):
         df = _prepare_source_frame(df)
@@ -478,19 +581,22 @@ def fetch_data(config, symbol_code=None):
             print(f"  数据量不足: {len(df)} < 60")
             return None
         latest_date = df['date'].max()
-        quality_ok, quality_detail = _key_level_quality(df)
-        candidates.append({
-            'latest_date': latest_date,
-            'source_name': source_name,
-            'df': df,
-            'rows': len(df),
-            'quality_ok': quality_ok,
-            'quality_detail': quality_detail,
-        })
-        if quality_ok:
-            print(f"  成功: {len(df)} 条，质量通过: {quality_detail}")
+        candidate = _source_candidate(source_name, df, latest_date)
+        if not _market_date_allowed(latest_date, accepted_dates):
+            latest_label = _normalize_market_date(latest_date) or str(latest_date)
+            expected_label = os.environ.get('TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE', '').strip()
+            detail = f"{source_name}: 最新日期 {latest_label} 不在交易日历允许范围"
+            if expected_label:
+                detail += f"（预期 {expected_label}）"
+            errors.append(detail)
+            stale_candidates.append(candidate)
+            print(f"  日期过旧: {detail}")
+            return None
+        candidates.append(candidate)
+        if candidate['quality_ok']:
+            print(f"  成功: {len(df)} 条，质量通过: {candidate['quality_detail']}")
             return df
-        print(f"  数据可用但关键位质量不足: {quality_detail}，尝试下一数据源")
+        print(f"  数据可用但关键位质量不足: {candidate['quality_detail']}，尝试下一数据源")
         return None
 
     # --- 源 1: AKShare 主接口 ---
@@ -559,6 +665,14 @@ def fetch_data(config, symbol_code=None):
             f"{selected['rows']} 条，{selected['quality_detail']}"
         )
         return selected['df']
+    stale_selected = _select_stale_source_candidate(stale_candidates, errors)
+    if stale_selected:
+        print(
+            f"  交易日历严格校验无匹配数据，降级选择最新可用: "
+            f"{stale_selected['source_name']}，最新日期 {stale_selected['latest_date'].date()}，"
+            f"{stale_selected['rows']} 条，{stale_selected['quality_detail']}"
+        )
+        return stale_selected['df']
 
     # 全部失败
     print("\n所有数据源均失败，错误详情：")
@@ -671,65 +785,50 @@ def _baostock_plan_symbol(asset, source_symbol, market=''):
     return _baostock_symbol(source_text, market_value)
 
 
-def _tushare_plan(asset, source_symbol):
-    asset_value = str(asset or '').strip().lower()
-    if asset_value == 'index':
-        return 'index_daily', str(source_symbol or '').strip().upper()
-    if asset_value in {'etf', 'fund'}:
-        return 'fund_daily', _tushare_daily_symbol(source_symbol)
-    if asset_value in {'hk_stock', 'hk'}:
-        return 'hk_daily', _tushare_daily_symbol(source_symbol)
-    if asset_value in {'us_stock', 'us'}:
-        return 'us_daily', _bare_code(source_symbol).upper()
-    if asset_value == 'convertible_bond':
-        return 'cb_daily', _tushare_daily_symbol(source_symbol)
-    if asset_value == 'futures':
-        return 'fut_daily', _tushare_futures_symbol(source_symbol)
-    return 'daily', _tushare_daily_symbol(source_symbol)
-
-
 def _provider_symbol_plan(config, symbol_code=None):
-    """Return script-local provider symbol/API choices for fallback data sources."""
+    """Return provider symbol/API choices for fallback data sources."""
     cfg = dict(config or {})
     data_args = dict(cfg.get('data_args') or {})
     asset = str(cfg.get('asset_type') or 'auto').lower()
     source_symbol = str(symbol_code or data_args.get('symbol') or '').strip()
     akshare_args = data_args.copy()
-
     market = str(cfg.get('market') or '').strip().upper()
+    adapter_asset = '' if asset == 'auto' else asset
+    from business.market.provider_adapter import (
+        classify_asset_target,
+        to_baostock_symbol,
+        to_tushare_symbol,
+    )
 
-    if asset == 'index':
-        tushare_symbol = _normalize_csi_ts_code(str(cfg.get('tushare_symbol') or source_symbol).strip())
-        if not tushare_symbol and data_args.get('symbol'):
-            bare = _bare_code(data_args.get('symbol')).upper()
-            market = _market_suffix_from_prefixed(data_args.get('symbol')) or 'SH'
-            tushare_symbol = f'{bare}.{market}'
-        return {
-            'akshare_args': akshare_args,
-            'baostock_symbol': str(cfg.get('baostock_symbol') or _baostock_plan_symbol(asset, source_symbol, market)).strip(),
-            'tushare_api': 'index_daily',
-            'tushare_symbol': tushare_symbol,
-        }
-
-    tushare_symbol = str(cfg.get('tushare_symbol') or '').strip().upper()
-    tushare_api = str(cfg.get('tushare_api') or '').strip()
-    if not tushare_api:
-        tushare_api, planned_symbol = _tushare_plan(asset, source_symbol)
-        if not tushare_symbol:
-            tushare_symbol = planned_symbol
-    if not tushare_symbol:
-        tushare_source = source_symbol
-        if not tushare_source and data_args.get('symbol'):
-            ak_symbol = str(data_args.get('symbol')).strip()
-            market = _market_suffix_from_prefixed(ak_symbol)
-            bare = _bare_code(ak_symbol).upper()
-            tushare_source = f'{bare}.{market}' if market else bare
-        tushare_symbol = _tushare_daily_symbol(tushare_source)
+    target = classify_asset_target(
+        str(cfg.get('tushare_symbol') or source_symbol or data_args.get('symbol') or '').strip(),
+        asset_type=adapter_asset,
+        market=market,
+        ts_code=str(cfg.get('tushare_symbol') or '').strip(),
+    )
+    tushare_api_map = {
+        'index': 'index_daily',
+        'etf': 'fund_daily',
+        'fund': 'fund_daily',
+        'hk_stock': 'hk_daily',
+        'hk': 'hk_daily',
+        'us_stock': 'us_daily',
+        'us': 'us_daily',
+        'convertible_bond': 'cb_daily',
+        'futures': 'fut_daily',
+    }
+    if 'baostock_symbol' in cfg:
+        baostock_symbol = str(cfg.get('baostock_symbol') or '').strip()
+    else:
+        baostock_symbol = to_baostock_symbol(target)
+    tushare_symbol = str(cfg.get('tushare_symbol') or '').strip().upper() or to_tushare_symbol(target)
+    if target.asset_type == 'futures':
+        tushare_symbol = str(cfg.get('tushare_symbol') or '').strip().upper() or _tushare_futures_symbol(source_symbol)
 
     return {
         'akshare_args': akshare_args,
-        'baostock_symbol': str(cfg.get('baostock_symbol') or _baostock_plan_symbol(asset, source_symbol, market)).strip(),
-        'tushare_api': tushare_api or 'daily',
+        'baostock_symbol': baostock_symbol,
+        'tushare_api': str(cfg.get('tushare_api') or '').strip() or tushare_api_map.get(target.asset_type, 'daily'),
         'tushare_symbol': tushare_symbol,
     }
 

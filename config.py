@@ -218,6 +218,15 @@ available_setting = {
     "investment_ta_cache_update_probe_start": "15:30",  # 技术分析缓存数据源探测开始时间（北京时间，HH:MM）
     "investment_ta_cache_update_probe_end": "18:00",  # 技术分析缓存数据源探测结束时间（北京时间，HH:MM）
     "investment_ta_cache_update_probe_interval_minutes": 15,  # 技术分析缓存数据源探测间隔（分钟）
+    "investment_ta_market_date_probe_timeout_seconds": 2.0,  # 单个标的行情日期多源并发探测总超时时间（秒）
+    "investment_trading_calendar_enabled": True,  # 技术分析交易日历校验开关
+    "investment_trading_calendar_sources": "baostock,tushare,akshare",  # 交易日历数据源优先级
+    "investment_trading_calendar_refresh_time": "06:00",  # 本地交易日历每日自动刷新时间（本地时间，HH:MM）
+    "investment_trading_calendar_market_data_ready_time": "15:30",  # 交易日当天日线行情确认时间（北京时间，HH:MM）
+    "investment_trading_calendar_cache_days": 7,  # 本地交易日历缓存天数
+    "investment_trading_calendar_max_lag_trade_days": 0,  # 行情日期最大允许滞后交易日
+    "investment_trading_calendar_max_stale_market_days": 15,  # 所有数据源均不满足交易日历时，允许兜底的最大自然日滞后
+    "investment_ta_generation_max_attempts": 3,  # 技术分析 AI 标准化/图片渲染最大尝试次数
     "investment_ta_allow_unresolved_bare_code_analysis": False,  # 技术分析：裸6位代码未命中字典时是否仍允许进入耗时行情查询
     "investment_web_wechatmp_chain_verification": False,  # Web对话是否允许接入公众号链路验证
     "agent": True,  # 是否开启Agent模式

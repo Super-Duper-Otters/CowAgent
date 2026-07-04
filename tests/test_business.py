@@ -1664,6 +1664,41 @@ def test_technical_analysis_candidate_list_placeholder_is_rich_text_metadata(bus
     assert definition["placeholder_details"]["target"]["kind"] == "text"
 
 
+def test_technical_analysis_versions_reuse_fingerprints_until_files_change(business_env, monkeypatch, tmp_path):
+    from business.content import technical_analysis
+
+    paths = []
+    for name in ("program.py", "skill.py", "renderer.py", "template.txt"):
+        path = tmp_path / name
+        path.write_text(name, encoding="utf-8")
+        paths.append(path)
+
+    monkeypatch.setattr(technical_analysis, "__file__", str(paths[0]))
+    monkeypatch.setattr(technical_analysis, "_configured_skill_path", lambda: paths[1])
+    monkeypatch.setattr(technical_analysis, "_configured_renderer_path", lambda: paths[2])
+    monkeypatch.setattr(technical_analysis, "template_for_service", lambda _service: paths[3])
+
+    calls = []
+
+    def fake_fingerprint(path):
+        calls.append(str(path))
+        return f"fp:{Path(path).name}:{len(calls)}"
+
+    monkeypatch.setattr(technical_analysis, "file_fingerprint", fake_fingerprint)
+
+    first = technical_analysis._versions()
+    second = technical_analysis._versions()
+
+    assert second == first
+    assert len(calls) == 4
+
+    paths[2].write_text("renderer changed", encoding="utf-8")
+    third = technical_analysis._versions()
+
+    assert third != first
+    assert len(calls) == 8
+
+
 def test_business_user_message_can_be_overridden_from_database(business_env):
     from business.config.config_service import save_config
     from business.config.constants import ErrorCode, user_message
@@ -4261,7 +4296,7 @@ def test_web_cache_update_status_and_manual_probe_returns_probe_rows(business_en
 
     assert manual["status"] == "success"
     assert manual["latest_market_date"] == "2026-06-17"
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
+    assert calls == ["600519.SH"]
 
 
 def test_web_cache_update_config_save_and_clear_technical_cache(business_env, monkeypatch, tmp_path):
@@ -4299,12 +4334,16 @@ def test_web_cache_update_config_save_and_clear_technical_cache(business_env, mo
             "probe_start": "15:35",
             "probe_end": "17:55",
             "probe_interval_minutes": 9,
+            "trading_calendar_market_data_ready_time": "16:00",
+            "trading_calendar_max_stale_market_days": 15,
         },
     )
     assert saved["status"] == "success"
     assert get_config("investment.technical_analysis.cache_update_probe_start") == "15:35"
     assert get_config("investment.technical_analysis.cache_update_probe_end") == "17:55"
     assert get_config("investment.technical_analysis.cache_update_probe_interval_minutes") == 9
+    assert get_config("investment.trading_calendar.market_data_ready_time") == "16:00"
+    assert get_config("investment.trading_calendar.max_stale_market_days") == 15
 
     cleared = _call_investment_json_handler(
         monkeypatch,
@@ -10660,6 +10699,78 @@ def test_technical_analysis_market_date_prefers_data_range_end_over_analysis_dat
     assert warning == ""
 
 
+def test_technical_analysis_retries_ai_and_render_without_rerunning_market_skill(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
+
+    report = tmp_path / "300502_技术分析报告_2026-07-02.md"
+    chart = tmp_path / "300502_TA_2026-07-02.png"
+    report.write_text(
+        "# 新易盛技术分析\n"
+        "**分析日期:** 2026-07-03\n"
+        "**数据范围:** 2026-01-01 ~ 2026-07-02（120 交易日）\n",
+        encoding="utf-8",
+    )
+    chart.write_bytes(b"chart")
+    calls = []
+
+    def fake_skill(symbol, _output_dir):
+        calls.append(("skill", symbol))
+        return report, chart
+
+    ai_outputs = [
+        SimpleNamespace(success=False, detail="technical analysis JSON payload invalid: Expecting ':' delimiter"),
+        SimpleNamespace(success=True, text="The request was rejected because it was considered high risk"),
+        SimpleNamespace(
+            success=True,
+            text=(
+                "📈 标的：300502.SZ\n"
+                "📅 行情日期：2026-07-02\n"
+                "📊 趋势研判\n"
+                "区间震荡。\n"
+                "🎯 核心关键位\n"
+                "强压力：100。强支撑：90。\n"
+                "💡 实操指引\n"
+                "等待方向确认。"
+            ),
+        ),
+    ]
+
+    def fake_ai(report_text):
+        calls.append(("ai", report_text))
+        return ai_outputs.pop(0)
+
+    render_attempts = []
+
+    def fake_render(standard_text, output_path):
+        render_attempts.append(standard_text)
+        calls.append(("render", Path(output_path).name))
+        if len(render_attempts) == 1:
+            return SimpleNamespace(success=False, detail="renderer failed")
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    class UnknownResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            return SimpleNamespace(market_date="", known=False, source="unknown")
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(technical_analysis, "generate_technical_analysis_text", fake_ai)
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", UnknownResolver, raising=False)
+
+    result = run_technical_analysis("ok", "300502.SZ 技术分析")
+
+    assert result.success is True, result.detail
+    assert [name for name, *_ in calls].count("skill") == 1
+    assert [name for name, *_ in calls].count("ai") == 3
+    assert [name for name, *_ in calls].count("render") == 2
+    assert "The request was rejected" not in "\n".join(render_attempts)
+    assert result.market_date == "2026-07-02"
+
+
 @pytest.mark.parametrize(
     ("raw_input", "dictionary_code", "expected_normalized", "expected_skill_symbol"),
     [
@@ -11525,7 +11636,7 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     assert records[1].cache_hit is False
     assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
-    assert second.source_id == records[0].cache_key
+    assert second.source_id.startswith("prod_")
     products, product_total = list_products_page(business_type=str(ServiceType.TECHNICAL_ANALYSIS))
     assert product_total == 1
     assert products[0]["hit_count"] == 1
@@ -11533,6 +11644,30 @@ def test_technical_analysis_reuses_cached_outputs_without_explicit_date_when_res
     assert cache_entry.hit_count == 1
     assert cache_entry.market_date == "2026-05-25"
     assert cache_entry.artifact_owner_id == records[1].request_id
+
+
+def test_prepare_technical_analysis_context_keeps_empty_cache_key_when_market_date_unknown(
+    business_env, monkeypatch
+):
+    from business.content import technical_analysis
+    from business.content.technical_analysis import MarketDateResolution, prepare_technical_analysis_cache_context
+
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    calls = []
+
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: calls.append(_args) or MarketDateResolution(),
+    )
+
+    context = prepare_technical_analysis_cache_context("#300502.SZ", "300502.SZ")
+
+    assert context.normalized_target == "300502.SZ"
+    assert context.market_date == ""
+    assert context.cache_key == ""
+    assert context.resolved_market_date.known is False
+    assert len(calls) == 1
 
 
 def test_technical_analysis_reuses_today_cache_before_close_cutoff(
@@ -11861,12 +11996,12 @@ def test_technical_analysis_explicit_market_date_keeps_specified_cache_date(busi
     assert records[1].cache_hit is False
     assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
-    assert second.source_id == records[0].cache_key
+    assert second.source_id.startswith("prod_")
     assert records[0].market_date == "2026-05-25"
     assert records[1].market_date == "2026-05-25"
 
 
-def test_technical_analysis_explicit_market_date_overrides_generated_output_date(
+def test_technical_analysis_user_typed_date_does_not_override_generated_output_date(
     business_env, tmp_path, monkeypatch
 ):
     from business.content import technical_analysis as technical_analysis
@@ -11879,13 +12014,11 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
     calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-26")
 
-    class FakeResolver:
-        def resolve(self, symbol, requested_market_date=""):
-            assert symbol == "300502.SZ"
-            assert requested_market_date == "2026-05-25"
-            return SimpleNamespace(market_date="2026-05-25", known=True, source="explicit")
-
-    monkeypatch.setattr(technical_analysis, "MarketDateResolver", FakeResolver, raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: pytest.fail("user typed date must not force a market-date probe"),
+    )
 
     first = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
     second = handle_text_message("ok", "300502.SZ 2026-05-25 技术分析")
@@ -11898,13 +12031,13 @@ def test_technical_analysis_explicit_market_date_overrides_generated_output_date
     records = list_request_records(limit=2)
     assert records[0].cache_hit is True
     assert records[1].cache_hit is False
-    assert records[0].market_date == "2026-05-25"
-    assert records[1].market_date == "2026-05-25"
+    assert records[0].market_date == "2026-05-26"
+    assert records[1].market_date == "2026-05-26"
     assert records[0].cache_key == records[1].cache_key
-    assert "2026-05-25" in records[0].cache_key
+    assert "2026-05-26" in records[0].cache_key
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
-    assert cache_entry.market_date == "2026-05-25"
-    assert "2026-05-25" in cache_entry.cache_key
+    assert cache_entry.market_date == "2026-05-26"
+    assert "2026-05-26" in cache_entry.cache_key
 
 
 def test_technical_analysis_unknown_market_date_reuses_recent_latest_cache(
@@ -12094,6 +12227,39 @@ def test_technical_analysis_unknown_market_date_does_not_reuse_legacy_program_ve
     assert context.cache_lookup_version_fingerprint == context.version_fingerprint
 
 
+def test_technical_analysis_cache_context_without_cache_probes_market_date(
+    business_env, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.cache.cache_service import build_cache_key, version_fingerprint
+    from business.config.constants import ServiceType
+    from business.content.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    calls = []
+
+    class ProbeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append((symbol, requested_market_date))
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="probe")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ProbeResolver, raising=False)
+
+    context = technical_analysis.prepare_technical_analysis_cache_context("天娱数科 技术分析")
+    expected_version = version_fingerprint("sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1")
+
+    assert context.normalized_target == "002354.SZ"
+    assert context.market_date == "2026-05-29"
+    assert context.cache_key == build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "002354.SZ", "2026-05-29", expected_version)
+    assert context.version_fingerprint == expected_version
+    assert calls == [("002354.SZ", "")]
+
+
 def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_latest_cache_without_context(
     business_env, tmp_path, monkeypatch
 ):
@@ -12137,6 +12303,37 @@ def test_direct_technical_analysis_unknown_market_date_does_not_reuse_legacy_lat
     assert result.cache_hit is False
     assert result.cache_key != cache_key
     assert result.output_files != cached_files
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+
+def test_direct_technical_analysis_without_cache_probes_market_data_before_generation(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    probe_calls = []
+
+    class ProbeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            probe_calls.append((symbol, requested_market_date))
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="probe")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ProbeResolver, raising=False)
+
+    result = technical_analysis.run_technical_analysis("ok", "天娱数科 技术分析")
+
+    assert result.success is True
+    assert result.market_date == "2026-05-29"
+    assert result.cache_hit is False
+    assert probe_calls == [("002354.SZ", "")]
     assert [call[0] for call in calls] == ["skill", "ai", "render"]
 
 
@@ -12280,13 +12477,13 @@ def test_router_context_uses_specific_compatible_legacy_cache_key_when_plain_loo
         lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
 
-    class KnownResolver:
+    class ProbeResolver:
         def resolve(self, symbol, requested_market_date=""):
             assert symbol == "002354.SZ"
             assert requested_market_date == ""
-            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="probe")
 
-    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ProbeResolver, raising=False)
 
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
@@ -12355,15 +12552,7 @@ def test_technical_analysis_invalidates_compatible_today_intraday_cache_after_cl
             .values(updated_at="2026-05-29T07:00:00+00:00")
         )
 
-    class KnownResolver:
-        def resolve(self, symbol, requested_market_date=""):
-            assert symbol == "002354.SZ"
-            assert requested_market_date == ""
-            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
-
-    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
-
-    reply = handle_text_message("ok", "天娱数科 技术分析")
+    reply = handle_text_message("ok", "天娱数科 2026-05-29 技术分析")
 
     assert reply.success is True
     assert reply.output_files != compatible_files[:2]
@@ -12522,13 +12711,13 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
         lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
 
-    class KnownResolver:
+    class ProbeResolver:
         def resolve(self, symbol, requested_market_date=""):
             assert symbol == "002354.SZ"
             assert requested_market_date == ""
-            return SimpleNamespace(market_date="2026-05-29", known=True, source="latest")
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="probe")
 
-    monkeypatch.setattr(technical_analysis, "MarketDateResolver", KnownResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ProbeResolver, raising=False)
 
     reply = handle_text_message("ok", "天娱数科 技术分析")
 
@@ -12545,7 +12734,37 @@ def test_technical_analysis_known_market_date_reuses_legacy_program_version_cach
     assert record.market_date == "2026-05-29"
 
 
-def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_cache(
+def test_technical_analysis_user_typed_date_is_ignored_and_system_probe_selects_date(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+
+    refresh_stock_symbols([{"code": "002354.SZ", "name": "天娱数科", "market": "SZ", "source": "tushare_a"}], source="tushare_a")
+    calls = _patch_fake_technical_analysis_pipeline(monkeypatch, tmp_path, generated_market_date="2026-05-29")
+    monkeypatch.setattr(
+        technical_analysis,
+        "_versions",
+        lambda: ("sha256:program-v1", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
+    )
+    probe_calls = []
+
+    class ProbeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            probe_calls.append((symbol, requested_market_date))
+            return SimpleNamespace(market_date="2026-05-29", known=True, source="probe")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ProbeResolver, raising=False)
+
+    result = technical_analysis.run_technical_analysis("ok", "天娱数科 2020-01-02 技术分析")
+
+    assert result.success is True
+    assert result.market_date == "2026-05-29"
+    assert probe_calls == [("002354.SZ", "")]
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
+
+
+def test_technical_analysis_user_typed_date_does_not_force_legacy_cache_date(
     business_env, tmp_path, monkeypatch
 ):
     from business.cache import cache_service as cache_service
@@ -12577,26 +12796,24 @@ def test_technical_analysis_explicit_market_date_reuses_legacy_program_version_c
         lambda: ("sha256:new-program", "sha256:ta-v1", "sha256:renderer-v1", "sha256:template-v1"),
     )
 
-    class ExplicitResolver:
-        def resolve(self, symbol, requested_market_date=""):
-            assert symbol == "300502.SZ"
-            assert requested_market_date == "2026-05-28"
-            return SimpleNamespace(market_date="2026-05-28", known=True, source="explicit")
-
-    monkeypatch.setattr(technical_analysis, "MarketDateResolver", ExplicitResolver, raising=False)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: pytest.fail("user typed date must not force a market-date probe"),
+    )
 
     reply = handle_text_message("ok", "300502.SZ 2026-05-28 技术分析")
 
     assert reply.success is True
     assert reply.output_files != cached_files[:2]
-    assert [Path(path).read_bytes() for path in reply.output_files] == [
+    assert [Path(path).read_bytes() for path in reply.output_files] != [
         Path(cached_files[0]).read_bytes(),
         Path(cached_files[1]).read_bytes(),
     ]
-    assert calls == []
+    assert [call[0] for call in calls] == ["skill", "ai", "render"]
     record = list_request_records(limit=1)[0]
-    assert record.cache_hit is True
-    assert record.cache_key == cache_key
+    assert record.cache_hit is False
+    assert record.cache_key != cache_key
     assert record.market_date == "2026-05-28"
 
 
@@ -13052,7 +13269,7 @@ def test_technical_analysis_resolver_market_date_is_used_when_generated_outputs_
     assert records[1].cache_key
     assert records[0].cache_key == records[1].cache_key
     assert second.source_type == "product"
-    assert second.source_id == records[0].cache_key
+    assert second.source_id.startswith("prod_")
     cache_entry = list_cache_entries(service_type=ServiceType.TECHNICAL_ANALYSIS)[0]
     assert cache_entry.hit_count == 1
     assert cache_entry.market_date == "2026-05-25"
@@ -13478,6 +13695,7 @@ def test_provider_adapter_formats_symbols_for_each_source(symbol, asset_type, ma
 
 
 def test_market_date_resolver_uses_asset_specific_akshare_interfaces(monkeypatch):
+    import business.content.market_date_resolver as market_date_resolver
     from business.content.market_date_resolver import MarketDateResolver
 
     calls = []
@@ -13498,6 +13716,11 @@ def test_market_date_resolver_uses_asset_specific_akshare_interfaces(monkeypatch
         stock_us_daily=frame("stock_us_daily"),
     )
     monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
+    monkeypatch.setattr(
+        market_date_resolver,
+        "trading_calendar_from_config",
+        lambda: SimpleNamespace(accept_market_date=lambda *_args, **_kwargs: True),
+    )
 
     resolver = MarketDateResolver()
 
@@ -13559,6 +13782,11 @@ def test_market_date_resolver_ranks_a_share_sources_by_latest_date_during_probe_
         ),
     )
     monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+    monkeypatch.setattr(
+        market_date_resolver,
+        "trading_calendar_from_config",
+        lambda: SimpleNamespace(accept_market_date=lambda *_args, **_kwargs: True),
+    )
     monkeypatch.setattr(cache_policy, "beijing_now", lambda: cache_policy._as_beijing_datetime("2026-07-01T15:45:00+08:00"))
 
     resolved = MarketDateResolver().resolve("600519.SH")
@@ -13568,8 +13796,47 @@ def test_market_date_resolver_ranks_a_share_sources_by_latest_date_during_probe_
     assert [source for source, _kwargs in calls] == ["akshare", "tushare", "baostock"]
 
 
+def test_market_date_resolver_parallel_probe_uses_fast_valid_sources_before_slow_timeout(monkeypatch):
+    import time
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    monkeypatch.setattr(market_date_resolver, "_ranking_enabled", lambda: True)
+    monkeypatch.setattr(market_date_resolver, "_probe_timeout_seconds", lambda: 0.2)
+    monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+
+    class FakeCalendar:
+        def accept_market_date(self, market_date, *, today=None, asset_type=""):
+            return True
+
+    monkeypatch.setattr(market_date_resolver, "trading_calendar_from_config", lambda: FakeCalendar())
+
+    def slow_akshare(_self, _symbol):
+        time.sleep(1)
+        return "2026-07-03"
+
+    def fast_tushare(_self, _symbol):
+        return "2026-07-02"
+
+    def fast_baostock(_self, _symbol):
+        return "2026-07-01"
+
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_akshare", slow_akshare)
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_tushare", fast_tushare)
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_baostock", fast_baostock)
+
+    started = time.perf_counter()
+    resolved = MarketDateResolver().resolve("600519.SH")
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.7
+    assert resolved.market_date == "2026-07-02"
+    assert resolved.source == "tushare"
+
+
 def test_market_date_resolver_ranks_etf_baostock_over_akshare_during_probe_window(monkeypatch):
     import business.cache.cache_policy as cache_policy
+    import business.content.market_date_resolver as market_date_resolver
     from business.content.market_date_resolver import MarketDateResolver
 
     calls = []
@@ -13610,6 +13877,11 @@ def test_market_date_resolver_ranks_etf_baostock_over_akshare_during_probe_windo
     )
     monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(fund_etf_hist_sina=fake_etf_hist))
     monkeypatch.setitem(sys.modules, "baostock", fake_baostock)
+    monkeypatch.setattr(
+        market_date_resolver,
+        "trading_calendar_from_config",
+        lambda: SimpleNamespace(accept_market_date=lambda *_args, **_kwargs: True),
+    )
     monkeypatch.setattr(cache_policy, "beijing_now", lambda: cache_policy._as_beijing_datetime("2026-07-01T15:45:00+08:00"))
 
     resolved = MarketDateResolver().resolve("510300.SH")
@@ -13619,6 +13891,182 @@ def test_market_date_resolver_ranks_etf_baostock_over_akshare_during_probe_windo
     assert calls[0] == ("akshare", {"symbol": "sh510300"})
     assert calls[1][0] == "baostock"
     assert calls[1][1]["symbol"] == "sh.510300"
+
+
+def test_trading_calendar_accepts_only_recent_expected_market_dates(monkeypatch, tmp_path):
+    from datetime import date, datetime
+
+    from business.market import trading_calendar
+
+    monkeypatch.setattr(trading_calendar, "_load_calendar_from_sources", lambda *_args, **_kwargs: ["2026-06-30", "2026-07-01", "2026-07-02"])
+
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        refresh_time="06:00",
+        cache_days=1,
+        max_lag_trade_days=1,
+        source_order=("baostock",),
+        cache_path=tmp_path / "trading-calendar.json",
+    )
+
+    assert calendar.expected_market_date(today=date(2026, 7, 3)) == "2026-07-02"
+    assert calendar.accepted_market_dates(today=date(2026, 7, 3)) == ["2026-07-01", "2026-07-02"]
+    assert calendar.accept_market_date("2026-07-02", today=date(2026, 7, 3)) is True
+    assert calendar.accept_market_date("2026-07-01", today=date(2026, 7, 3)) is True
+    assert calendar.accept_market_date("2020-12-25", today=date(2026, 7, 3)) is False
+
+    monkeypatch.setattr(
+        trading_calendar,
+        "_load_calendar_from_sources",
+        lambda *_args, **_kwargs: ["2026-07-01", "2026-07-02", "2026-07-03"],
+    )
+    intraday_calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        refresh_time="06:00",
+        market_data_ready_time="15:30",
+        cache_days=1,
+        max_lag_trade_days=0,
+        source_order=("baostock",),
+        cache_path=tmp_path / "trading-calendar-intraday.json",
+    )
+
+    assert intraday_calendar.expected_market_date(now=datetime.fromisoformat("2026-07-03T14:59:00")) == "2026-07-02"
+    assert intraday_calendar.expected_market_date(now=datetime.fromisoformat("2026-07-03T15:31:00")) == "2026-07-03"
+
+
+def test_trading_calendar_status_reports_expected_market_date(monkeypatch, tmp_path):
+    from datetime import date
+
+    from business.market import trading_calendar
+
+    monkeypatch.setattr(
+        trading_calendar,
+        "_load_calendar_from_sources",
+        lambda *_args, **_kwargs: ["2026-06-30", "2026-07-01", "2026-07-02"],
+    )
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        refresh_time="06:00",
+        cache_days=1,
+        max_lag_trade_days=0,
+        source_order=("baostock", "tushare"),
+        cache_path=tmp_path / "trading-calendar.json",
+    )
+
+    status = calendar.status(today=date(2026, 7, 3))
+
+    assert status["state"] == "ok"
+    assert status["system_date"] == "2026-07-03"
+    assert status["expected_market_date"] == "2026-07-02"
+    assert status["market_data_ready_time"] == "15:30"
+    assert status["trade_dates_count"] == 3
+    assert status["source_order"] == ["baostock", "tushare"]
+
+
+def test_trading_calendar_from_config_parses_string_boolean(monkeypatch):
+    from business.market import trading_calendar
+
+    values = {
+        trading_calendar.TRADING_CALENDAR_ENABLED_KEY: "false",
+        trading_calendar.TRADING_CALENDAR_SOURCES_KEY: "baostock,tushare",
+        trading_calendar.TRADING_CALENDAR_MAX_STALE_DAYS_KEY: "15",
+    }
+
+    monkeypatch.setattr(trading_calendar, "_safe_config_value", lambda key, default: values.get(key, default))
+
+    calendar = trading_calendar.trading_calendar_from_config()
+
+    assert calendar.enabled is False
+    assert calendar.max_stale_market_days == 15
+
+
+def test_trading_calendar_stale_limit_uses_expected_market_date(monkeypatch, tmp_path):
+    from datetime import date
+
+    from business.market import trading_calendar
+
+    monkeypatch.setattr(trading_calendar, "_load_calendar_from_sources", lambda *_args, **_kwargs: ["2026-07-03"])
+
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        cache_days=1,
+        max_stale_market_days=15,
+        source_order=("baostock",),
+        cache_path=tmp_path / "trading-calendar.json",
+    )
+
+    assert calendar.expected_market_date(today=date(2026, 7, 4)) == "2026-07-03"
+    assert calendar.accept_stale_market_date("2026-06-18", today=date(2026, 7, 4)) is True
+    assert calendar.accept_stale_market_date("2026-06-17", today=date(2026, 7, 4)) is False
+
+
+def test_market_date_resolver_discards_stale_source_dates_with_trading_calendar(monkeypatch):
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    monkeypatch.setattr(market_date_resolver, "_ranking_enabled", lambda: False)
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_akshare", lambda _self, _symbol: "2020-12-25")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_tushare", lambda _self, _symbol: "2026-07-02")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_baostock", lambda _self, _symbol: "")
+
+    class FakeCalendar:
+        def accept_market_date(self, market_date, *, today=None, asset_type=""):
+            return market_date == "2026-07-02"
+
+    monkeypatch.setattr(market_date_resolver, "trading_calendar_from_config", lambda: FakeCalendar())
+    monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+
+    resolved = MarketDateResolver().resolve("000171.CSI")
+
+    assert resolved.market_date == "2026-07-02"
+    assert resolved.source == "tushare"
+
+
+def test_market_date_resolver_falls_back_to_latest_stale_date_when_all_sources_miss_calendar(monkeypatch):
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    monkeypatch.setattr(market_date_resolver, "_ranking_enabled", lambda: True)
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_akshare", lambda _self, _symbol: "2026-07-01")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_tushare", lambda _self, _symbol: "2026-07-02")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_baostock", lambda _self, _symbol: "2026-06-30")
+
+    class FakeCalendar:
+        def accept_market_date(self, market_date, *, today=None, asset_type=""):
+            return market_date == "2026-07-03"
+
+    monkeypatch.setattr(market_date_resolver, "trading_calendar_from_config", lambda: FakeCalendar())
+    monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+
+    resolved = MarketDateResolver().resolve("600519.SH")
+
+    assert resolved.market_date == "2026-07-02"
+    assert resolved.source == "tushare"
+
+
+def test_market_date_resolver_rejects_stale_dates_older_than_calendar_limit(monkeypatch):
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    monkeypatch.setattr(market_date_resolver, "_ranking_enabled", lambda: True)
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_akshare", lambda _self, _symbol: "2023-08-10")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_tushare", lambda _self, _symbol: "2023-08-09")
+    monkeypatch.setattr(MarketDateResolver, "_latest_from_baostock", lambda _self, _symbol: "")
+
+    class FakeCalendar:
+        def accept_market_date(self, market_date, *, today=None, asset_type=""):
+            return False
+
+        def accept_stale_market_date(self, market_date, *, today=None):
+            return False
+
+    monkeypatch.setattr(market_date_resolver, "trading_calendar_from_config", lambda: FakeCalendar())
+    monkeypatch.setattr(market_date_resolver, "get_tushare_token", lambda: "token")
+
+    resolved = MarketDateResolver().resolve("128100.SZ")
+
+    assert resolved.known is False
+    assert resolved.market_date == ""
 
 
 def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_updates(monkeypatch):
@@ -13634,6 +14082,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
 
     monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
 
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert (
         cache_policy.technical_analysis_cache_expired_after_close(
             "2026-06-14",
@@ -13643,7 +14092,7 @@ def test_technical_analysis_cache_policy_expires_market_cache_when_probe_date_up
         )
         is True
     )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
+    assert calls == ["600519.SH"]
 
 
 def test_technical_analysis_cache_policy_keeps_cache_before_probe_window(monkeypatch):
@@ -13681,6 +14130,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
 
     monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
 
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     for minute in (31, 40):
         assert (
             cache_policy.technical_analysis_cache_expired_after_close(
@@ -13691,7 +14141,7 @@ def test_technical_analysis_cache_policy_reuses_probe_result_for_15_minutes(monk
             )
             is True
         )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
+    assert calls == ["600519.SH"]
 
 
 def test_technical_analysis_cache_policy_uses_distinct_market_probe_symbols(monkeypatch):
@@ -13734,7 +14184,7 @@ def test_technical_analysis_cache_policy_stops_probe_after_non_trading_refresh_w
     assert calls == []
 
 
-def test_technical_analysis_cache_policy_expires_all_markets_when_any_probe_date_updates(monkeypatch):
+def test_technical_analysis_cache_policy_expires_only_matching_asset_type_when_probe_date_updates(monkeypatch):
     import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
@@ -13743,10 +14193,23 @@ def test_technical_analysis_cache_policy_expires_all_markets_when_any_probe_date
     class FakeResolver:
         def resolve(self, symbol, requested_market_date=""):
             calls.append(symbol)
-            return SimpleNamespace(market_date="2026-06-15", known=True)
+            if symbol == "600519.SH":
+                return SimpleNamespace(market_date="2026-06-15", known=True)
+            return SimpleNamespace(market_date="2026-06-14", known=True)
 
     monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
 
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("00700.HK", now="2026-06-15T15:31:00+08:00") == "2026-06-14"
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-14T18:00:00+08:00",
+            now="2026-06-15T15:31:00+08:00",
+            normalized_target="600519.SH",
+        )
+        is True
+    )
     assert (
         cache_policy.technical_analysis_cache_expired_after_close(
             "2026-06-14",
@@ -13754,9 +14217,9 @@ def test_technical_analysis_cache_policy_expires_all_markets_when_any_probe_date
             now="2026-06-15T15:31:00+08:00",
             normalized_target="00700.HK",
         )
-        is True
+        is False
     )
-    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
+    assert calls == ["600519.SH", "00700.HK"]
 
 
 def test_technical_analysis_cache_policy_expires_index_cache_from_global_probe(monkeypatch):
@@ -13770,6 +14233,7 @@ def test_technical_analysis_cache_policy_expires_index_cache_from_global_probe(m
 
     monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
 
+    assert cache_policy.latest_market_date_for_symbol("sh000300", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
     assert (
         cache_policy.technical_analysis_cache_expired_after_close(
             "2026-06-14",
@@ -15923,6 +16387,7 @@ def test_tushare_token_config_permission_is_sensitive(business_env):
 def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(business_env, tmp_path, monkeypatch):
     from business.content import technical_analysis as technical_analysis
     from business.config.config_service import save_config
+    from business.market import trading_calendar
 
     output_dir = tmp_path / "ta-output"
     output_dir.mkdir()
@@ -15935,6 +16400,9 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(business_
         captured["env_token"] = kwargs["env"].get("TUSHARE_TOKEN")
         captured["env_probe_start"] = kwargs["env"].get("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START")
         captured["env_probe_end"] = kwargs["env"].get("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END")
+        captured["env_calendar_enabled"] = kwargs["env"].get("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED")
+        captured["env_accepted_dates"] = kwargs["env"].get("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES")
+        captured["env_expected_date"] = kwargs["env"].get("TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE")
         report.write_text("ta report", encoding="utf-8")
         chart.write_bytes(b"chart")
         return SimpleNamespace(returncode=0)
@@ -15942,6 +16410,11 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(business_
     save_config("investment.technical_analysis.cache_update_probe_start", "15:35", operator="pytest")
     save_config("investment.technical_analysis.cache_update_probe_end", "17:55", operator="pytest")
     monkeypatch.setattr(technical_analysis, "get_tushare_token", lambda: "shared-token-1234567890")
+    monkeypatch.setattr(
+        trading_calendar,
+        "trading_calendar_from_config",
+        lambda: SimpleNamespace(enabled=True, accepted_market_dates=lambda: ["2026-07-01", "2026-07-02"]),
+    )
     monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
 
     result_report, result_chart = technical_analysis._run_skill(
@@ -15956,6 +16429,9 @@ def test_technical_analysis_skill_env_uses_shared_tushare_token_reader(business_
     assert captured["env_token"] == "shared-token-1234567890"
     assert captured["env_probe_start"] == "15:35"
     assert captured["env_probe_end"] == "17:55"
+    assert captured["env_calendar_enabled"] == "1"
+    assert captured["env_accepted_dates"] == "2026-07-01,2026-07-02"
+    assert captured["env_expected_date"] == "2026-07-02"
     assert captured["command"][2:] == [
         "--symbol",
         "300502",

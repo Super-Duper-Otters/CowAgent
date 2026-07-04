@@ -114,6 +114,7 @@ _MALFORMED_INDEX_PREFIX_RE = re.compile(r"^(sh|sz|bj)\d+$", re.IGNORECASE)
 _CSI_SUFFIX_RE = re.compile(r"^([A-Z]?\d{5,6})\.CSI$", re.IGNORECASE)
 _ASCII_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]+$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_VERSION_FINGERPRINT_CACHE: tuple[tuple[tuple[str, bool, int, int], ...], tuple[str, str, str, str]] | None = None
 
 
 def parse_target(raw_input: str) -> str:
@@ -484,6 +485,20 @@ def _run_skill(
     cache_update_config = technical_analysis_cache_update_config()
     env["TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START"] = str(cache_update_config.get("probe_start") or "15:30")
     env["TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END"] = str(cache_update_config.get("probe_end") or "18:00")
+    try:
+        from business.market.trading_calendar import trading_calendar_from_config
+
+        calendar = trading_calendar_from_config()
+        accepted_market_dates = calendar.accepted_market_dates()
+        if calendar.enabled and accepted_market_dates:
+            env["TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED"] = "1"
+            env["TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES"] = ",".join(accepted_market_dates)
+            env["TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE"] = accepted_market_dates[-1]
+            env["TECHNICAL_ANALYSIS_MAX_STALE_MARKET_DAYS"] = str(max(0, int(getattr(calendar, "max_stale_market_days", 15))))
+        else:
+            env["TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED"] = "0"
+    except Exception:
+        env["TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED"] = "0"
     command = [sys.executable, str(skill_path), "--symbol", symbol, "--output", str(output_dir)]
     if name:
         command.extend(["--name", str(name)])
@@ -547,6 +562,29 @@ def _classify_technical_analysis_failure(detail: str) -> ErrorCode:
     if any(marker.lower() in text.lower() for marker in data_failure_markers):
         return ErrorCode.MARKET_DATA_UNAVAILABLE
     return ErrorCode.TECHNICAL_ANALYSIS_FAILED
+
+
+def _technical_analysis_generation_max_attempts() -> int:
+    try:
+        return max(1, min(10, int(get_config("technical_analysis.generation_max_attempts", 3) or 3)))
+    except Exception:
+        return 3
+
+
+def _technical_analysis_refusal_detail(text: str) -> str:
+    lowered = str(text or "").lower()
+    markers = (
+        "request was rejected",
+        "considered high risk",
+        "i can't",
+        "i cannot",
+        "无法提供",
+        "不能提供",
+        "拒绝",
+    )
+    if any(marker in lowered for marker in markers):
+        return "technical analysis model returned refusal text"
+    return ""
 
 
 def _configured_skill_path() -> Path:
@@ -629,12 +667,28 @@ def _market_date(standard_text: str = "", *paths: Path) -> tuple[str, str]:
 
 
 def _versions() -> tuple[str, str, str, str]:
-    return (
-        file_fingerprint(__file__),
-        file_fingerprint(_configured_skill_path()),
-        file_fingerprint(_configured_renderer_path()),
-        file_fingerprint(template_for_service(ServiceType.TECHNICAL_ANALYSIS)),
+    global _VERSION_FINGERPRINT_CACHE
+    paths = (
+        Path(__file__),
+        Path(_configured_skill_path()),
+        Path(_configured_renderer_path()),
+        Path(template_for_service(ServiceType.TECHNICAL_ANALYSIS)),
     )
+    cache_key = tuple(_version_file_state(path) for path in paths)
+    if _VERSION_FINGERPRINT_CACHE is not None and _VERSION_FINGERPRINT_CACHE[0] == cache_key:
+        return _VERSION_FINGERPRINT_CACHE[1]
+    versions = tuple(file_fingerprint(path) for path in paths)
+    _VERSION_FINGERPRINT_CACHE = (cache_key, versions)
+    return versions
+
+
+def _version_file_state(path: Path) -> tuple[str, bool, int, int]:
+    try:
+        absolute = path if path.is_absolute() else Path.cwd() / path
+        stat = absolute.stat()
+    except OSError:
+        return (str(path), False, 0, 0)
+    return (str(absolute), True, int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _cache_version_fingerprint(ta_version: str, renderer_version: str, template_version: str) -> str:
@@ -853,11 +907,79 @@ def _find_cache_context_entry(
     return cached
 
 
+def _find_latest_current_product(
+    *,
+    symbol: str,
+    version_fingerprint: str,
+    current_version_fingerprint: str,
+    ta_version: str,
+    renderer_version: str,
+    template_version: str,
+) -> dict | None:
+    product = find_active_product(
+        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
+        target_key=symbol,
+        version_fingerprint=version_fingerprint,
+    )
+    if product is None:
+        return None
+    if not _technical_analysis_product_allowed(product, normalized_target=symbol):
+        return None
+    if not _product_owner_matches_versions(
+        product,
+        current_version_fingerprint=current_version_fingerprint,
+        ta_version=ta_version,
+        renderer_version=renderer_version,
+        template_version=template_version,
+    ):
+        return None
+    return product
+
+
+def _technical_analysis_result_from_product(
+    product: dict,
+    *,
+    symbol: str,
+    target_info: TechnicalAnalysisTarget,
+    program_version: str,
+    ta_version: str,
+    renderer_version: str,
+    template_version: str,
+    cache_lookup_version: str,
+) -> TechnicalAnalysisResult:
+    increment_product_hit(product["product_id"])
+    product_cache_key = str(product.get("source_cache_key") or "")
+    output_files = list(product.get("output_files") or [])
+    signal_card_path = output_files[0] if output_files else ""
+    main_chart_path = output_files[1] if len(output_files) > 1 else ""
+    cached_report_path = output_files[2] if len(output_files) > 2 else ""
+    return TechnicalAnalysisResult(
+        True,
+        signal_card_path,
+        main_chart_path,
+        cached_report_path,
+        output_files=output_files,
+        normalized_target=symbol,
+        stock_code=symbol,
+        stock_name=target_info.stock_name,
+        market_date=str(product.get("business_date") or ""),
+        program_version=program_version,
+        ta_version=ta_version,
+        renderer_version=renderer_version,
+        template_version=template_version,
+        version_fingerprint=str(product.get("version_fingerprint") or cache_lookup_version),
+        cache_key=product_cache_key,
+        cache_hit=True,
+        source_type="product",
+        source_id=str(product.get("product_id") or ""),
+    )
+
+
 def prepare_technical_analysis_cache_context(
     raw_input: str,
     target_text: str | None = None,
 ) -> TechnicalAnalysisCacheContext:
-    target, requested_market_date = _target_and_requested_market_date(target_text or parse_target(raw_input))
+    target, _ignored_user_market_date = _target_and_requested_market_date(target_text or parse_target(raw_input))
     target_info, error, _detail = _technical_analysis_target_from_input(target)
     if error:
         return TechnicalAnalysisCacheContext()
@@ -866,51 +988,43 @@ def prepare_technical_analysis_cache_context(
         return TechnicalAnalysisCacheContext()
     program_version, ta_version, renderer_version, template_version = _versions()
     combined_version = _cache_version_fingerprint(ta_version, renderer_version, template_version)
-    resolved_market_date = _resolve_market_date(target_info, requested_market_date)
-    if not resolved_market_date.known or not resolved_market_date.market_date:
-        cached = _find_latest_current_cache_entry(
-            symbol=symbol,
-            version_fingerprint=combined_version,
-        )
+    cached = _find_latest_current_cache_entry(
+        symbol=symbol,
+        version_fingerprint=combined_version,
+    )
+    if cached is not None:
         return TechnicalAnalysisCacheContext(
             normalized_target=symbol,
-            market_date=cached.market_date if cached is not None else "",
+            market_date=cached.market_date,
             program_version=program_version,
             ta_version=ta_version,
             renderer_version=renderer_version,
             template_version=template_version,
             version_fingerprint=combined_version,
-            cache_lookup_version_fingerprint=cached.version_fingerprint if cached is not None else combined_version,
-            cache_key=cached.cache_key if cached is not None else "",
-            resolved_market_date=resolved_market_date,
+            cache_lookup_version_fingerprint=cached.version_fingerprint,
+            cache_key=cached.cache_key,
+            resolved_market_date=MarketDateResolution(),
         )
-    cached = find_cache_entry(
-        service_type=ServiceType.TECHNICAL_ANALYSIS,
-        normalized_target=symbol,
-        version_fingerprint=combined_version,
-        market_date=resolved_market_date.market_date,
-    )
-    if cached is not None and not _technical_analysis_cache_entry_allowed(cached):
-        cached = None
-    if cached is None:
-        cached = _find_compatible_cache_entry_for_market_date(
-            symbol=symbol,
+    resolved_market_date = _resolve_market_date(target_info, "")
+    if resolved_market_date.known and resolved_market_date.market_date:
+        cached = find_cache_entry(
+            service_type=ServiceType.TECHNICAL_ANALYSIS,
+            normalized_target=symbol,
+            version_fingerprint=combined_version,
             market_date=resolved_market_date.market_date,
-            current_version_fingerprint=combined_version,
-            ta_version=ta_version,
-            renderer_version=renderer_version,
-            template_version=template_version,
         )
-    return TechnicalAnalysisCacheContext(
-        normalized_target=symbol,
-        market_date=cached.market_date if cached is not None else resolved_market_date.market_date,
-        program_version=program_version,
-        ta_version=ta_version,
-        renderer_version=renderer_version,
-        template_version=template_version,
-        version_fingerprint=combined_version,
-        cache_lookup_version_fingerprint=cached.version_fingerprint if cached is not None else combined_version,
-        cache_key=(
+        if cached is not None and not _technical_analysis_cache_entry_allowed(cached):
+            cached = None
+        if cached is None:
+            cached = _find_compatible_cache_entry_for_market_date(
+                symbol=symbol,
+                market_date=resolved_market_date.market_date,
+                current_version_fingerprint=combined_version,
+                ta_version=ta_version,
+                renderer_version=renderer_version,
+                template_version=template_version,
+            )
+        cache_key = (
             cached.cache_key
             if cached is not None
             else build_cache_key(
@@ -919,8 +1033,30 @@ def prepare_technical_analysis_cache_context(
                 resolved_market_date.market_date,
                 combined_version,
             )
-        ),
-        resolved_market_date=resolved_market_date,
+        )
+        return TechnicalAnalysisCacheContext(
+            normalized_target=symbol,
+            market_date=cached.market_date if cached is not None else resolved_market_date.market_date,
+            program_version=program_version,
+            ta_version=ta_version,
+            renderer_version=renderer_version,
+            template_version=template_version,
+            version_fingerprint=combined_version,
+            cache_lookup_version_fingerprint=cached.version_fingerprint if cached is not None else combined_version,
+            cache_key=cache_key,
+            resolved_market_date=resolved_market_date,
+        )
+    return TechnicalAnalysisCacheContext(
+        normalized_target=symbol,
+        market_date="",
+        program_version=program_version,
+        ta_version=ta_version,
+        renderer_version=renderer_version,
+        template_version=template_version,
+        version_fingerprint=combined_version,
+        cache_lookup_version_fingerprint=combined_version,
+        cache_key="",
+        resolved_market_date=MarketDateResolution(),
     )
 
 
@@ -932,7 +1068,7 @@ def run_technical_analysis(
     cache_context: TechnicalAnalysisCacheContext | None = None,
 ) -> TechnicalAnalysisResult:
     request = TechnicalAnalysisRequest(openid=openid, raw_input=raw_input, target_text=target_text or parse_target(raw_input))
-    target, requested_market_date = _target_and_requested_market_date(request.target_text)
+    target, _ignored_user_market_date = _target_and_requested_market_date(request.target_text)
     target_info, error, error_detail = _technical_analysis_target_from_input(target)
     if error:
         return TechnicalAnalysisResult(
@@ -966,7 +1102,7 @@ def run_technical_analysis(
     if use_cache_context and cache_context.resolved_market_date is not None:
         resolved_market_date = cache_context.resolved_market_date
     else:
-        resolved_market_date = _resolve_market_date(target_info, requested_market_date)
+        resolved_market_date = _resolve_market_date(target_info, "")
     if resolved_market_date.known and resolved_market_date.market_date:
         product = find_active_product(
             business_type=str(ServiceType.TECHNICAL_ANALYSIS),
@@ -1010,6 +1146,26 @@ def run_technical_analysis(
                 cache_hit=True,
                 source_type="product",
                 source_id=str(product.get("product_id") or ""),
+            )
+    elif not (use_cache_context and cache_context.cache_key):
+        product = _find_latest_current_product(
+            symbol=symbol,
+            version_fingerprint=cache_lookup_version,
+            current_version_fingerprint=combined_version,
+            ta_version=ta_version,
+            renderer_version=renderer_version,
+            template_version=template_version,
+        )
+        if product is not None:
+            return _technical_analysis_result_from_product(
+                product,
+                symbol=symbol,
+                target_info=target_info,
+                program_version=program_version,
+                ta_version=ta_version,
+                renderer_version=renderer_version,
+                template_version=template_version,
+                cache_lookup_version=cache_lookup_version,
             )
     if use_cache_context and cache_context.cache_key:
         cached = _find_cache_context_entry(
@@ -1091,50 +1247,72 @@ def run_technical_analysis(
         generated_report_path, generated_chart_path = _run_skill_for_target(target_info, output_dir)
         report_text = generated_report_path.read_text(encoding="utf-8")
         report_text_with_context = _technical_analysis_report_with_target_context(report_text, target_info)
-        ai_result = generate_technical_analysis_text(report_text_with_context)
-        if not ai_result.success:
-            return TechnicalAnalysisResult(
-                False,
-                error_code=ErrorCode.TECHNICAL_ANALYSIS_FAILED,
-                user_prompt=user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED),
-                detail=sanitize_sensitive_text(ai_result.detail),
-            )
-        standard_text = _force_technical_analysis_display_target(ai_result.text, target_info)
-        generated_market_date, market_date_warning = _market_date(standard_text, generated_report_path, generated_chart_path)
-        if resolved_market_date.source == "explicit" and resolved_market_date.market_date:
-            market_date = resolved_market_date.market_date
-            market_date_warning = ""
-        elif not requested_market_date and resolved_market_date.known and resolved_market_date.market_date:
-            market_date = resolved_market_date.market_date
-            if generated_market_date and generated_market_date != market_date:
-                market_date_warning = f"market_date resolved from market data source: {resolved_market_date.source}"
-        elif generated_market_date:
-            market_date = generated_market_date
-        elif resolved_market_date.known and resolved_market_date.market_date:
-            market_date = resolved_market_date.market_date
-            market_date_warning = f"market_date resolved from market data source: {resolved_market_date.source}"
-        else:
-            market_date = ""
-        if use_cache_context and cache_context.cache_key and market_date == cache_context.market_date:
-            cache_key = cache_context.cache_key
-        else:
-            cache_key = (
-                build_cache_key(ServiceType.TECHNICAL_ANALYSIS, symbol, market_date, combined_version)
-                if market_date
-                else ""
-            )
-        standard_text = _force_technical_analysis_market_date(standard_text, market_date)
-        standard_text = apply_technical_analysis_card_footer(standard_text)
-        version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
-        card_market_date = market_date or "unknown"
-        card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"
-        render_result = render_technical_analysis_card(standard_text, str(card_path))
-        if not render_result.success:
+        attempts = _technical_analysis_generation_max_attempts()
+        last_ai_detail = ""
+        last_render_detail = ""
+        render_result = None
+        market_date = ""
+        market_date_warning = ""
+        standard_text = ""
+        cache_key = ""
+        for _attempt in range(attempts):
+            ai_result = generate_technical_analysis_text(report_text_with_context)
+            if not ai_result.success:
+                last_ai_detail = sanitize_sensitive_text(ai_result.detail)
+                continue
+            refusal_detail = _technical_analysis_refusal_detail(ai_result.text)
+            if refusal_detail:
+                last_ai_detail = refusal_detail
+                continue
+            standard_text = _force_technical_analysis_display_target(ai_result.text, target_info)
+            report_market_date = _extract_market_date_from_text(report_text)
+            report_market_date_warning = "" if report_market_date else "market_date unknown: no date found in generated report text"
+            text_market_date, _text_market_date_warning = _market_date(standard_text)
+            generated_market_date = report_market_date or text_market_date
+            market_date_warning = report_market_date_warning
+            if resolved_market_date.known and resolved_market_date.market_date:
+                market_date = resolved_market_date.market_date
+                if generated_market_date and generated_market_date != market_date:
+                    market_date_warning = f"market_date resolved from generated report; source {resolved_market_date.source} differed"
+                else:
+                    market_date_warning = ""
+            elif generated_market_date:
+                market_date = generated_market_date
+            else:
+                market_date = ""
+            if use_cache_context and cache_context.cache_key and market_date == cache_context.market_date:
+                cache_key = cache_context.cache_key
+            else:
+                cache_key = (
+                    build_cache_key(ServiceType.TECHNICAL_ANALYSIS, symbol, market_date, combined_version)
+                    if market_date
+                    else ""
+                )
+            standard_text = _force_technical_analysis_market_date(standard_text, market_date)
+            standard_text = apply_technical_analysis_card_footer(standard_text)
+            version_suffix = re.sub(r"[^A-Za-z0-9]+", "", combined_version)[-12:] or "version"
+            card_market_date = market_date or "unknown"
+            card_path = output_dir / f"{_target_path_part(symbol.replace('.', '_'))}_signal_card_{card_market_date}_{version_suffix}.png"
+            for _render_attempt in range(attempts):
+                render_result = render_technical_analysis_card(standard_text, str(card_path))
+                if render_result.success:
+                    break
+                last_render_detail = sanitize_sensitive_text(render_result.detail)
+            if render_result is not None and render_result.success:
+                break
+        if render_result is None or not render_result.success:
+            if last_ai_detail and not standard_text:
+                return TechnicalAnalysisResult(
+                    False,
+                    error_code=ErrorCode.TECHNICAL_ANALYSIS_FAILED,
+                    user_prompt=user_message(ErrorCode.TECHNICAL_ANALYSIS_FAILED),
+                    detail=last_ai_detail,
+                )
             return TechnicalAnalysisResult(
                 False,
                 error_code=ErrorCode.IMAGE_GENERATION_FAILED,
                 user_prompt=user_message(ErrorCode.IMAGE_GENERATION_FAILED),
-                detail=sanitize_sensitive_text(render_result.detail),
+                detail=last_render_detail or last_ai_detail,
             )
         output_files = [render_result.image_path, str(generated_chart_path), str(generated_report_path)]
         return TechnicalAnalysisResult(

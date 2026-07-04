@@ -100,6 +100,13 @@ def _configured_probe_interval() -> timedelta:
     return timedelta(minutes=max(1, min(value, 240)))
 
 
+def _safe_config_value(key: str, default):
+    try:
+        return get_config(key, default)
+    except Exception:
+        return default
+
+
 def technical_analysis_cache_update_config() -> dict:
     start = _configured_probe_start_time()
     end = _configured_probe_end_time()
@@ -108,6 +115,15 @@ def technical_analysis_cache_update_config() -> dict:
         "probe_start": start.strftime("%H:%M"),
         "probe_end": end.strftime("%H:%M"),
         "probe_interval_minutes": int(interval.total_seconds() // 60),
+        "trading_calendar_enabled": bool(_safe_config_value("investment.trading_calendar.enabled", True)),
+        "trading_calendar_sources": str(_safe_config_value("investment.trading_calendar.sources", "baostock,tushare,akshare") or ""),
+        "trading_calendar_refresh_time": str(_safe_config_value("investment.trading_calendar.refresh_time", "06:00") or "06:00"),
+        "trading_calendar_market_data_ready_time": str(_safe_config_value("investment.trading_calendar.market_data_ready_time", "15:30") or "15:30"),
+        "trading_calendar_cache_days": int(_safe_config_value("investment.trading_calendar.cache_days", 7) or 7),
+        "trading_calendar_max_lag_trade_days": int(_safe_config_value("investment.trading_calendar.max_lag_trade_days", 0) or 0),
+        "trading_calendar_max_stale_market_days": int(_safe_config_value("investment.trading_calendar.max_stale_market_days", 15) or 15),
+        "market_date_probe_timeout_seconds": float(_safe_config_value("investment.technical_analysis.market_date_probe_timeout_seconds", 2.0) or 2.0),
+        "generation_max_attempts": int(_safe_config_value("technical_analysis.generation_max_attempts", 3) or 3),
     }
 
 
@@ -201,8 +217,16 @@ def latest_market_date_for_symbol(symbol: str, now: datetime | str | None = None
     return str(_probe_market_date(market, probe_symbol, current).get("market_date") or "")
 
 
+def cached_latest_market_date_for_symbol(symbol: str) -> str:
+    market = market_from_symbol(symbol)
+    cached = _MARKET_UPDATE_PROBE_CACHE.get(market) if market else None
+    return str((cached or {}).get("market_date") or "")
+
+
 def probe_market_update_dates(now: datetime | str | None = None, *, force: bool = False) -> dict:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
+    from business.market.trading_calendar import trading_calendar_status_from_config
+
     if not force and not _probe_allowed(current):
         targets = [
             {
@@ -224,6 +248,7 @@ def probe_market_update_dates(now: datetime | str | None = None, *, force: bool 
     latest = max((target.get("market_date") or "" for target in targets), default="")
     return {
         "config": technical_analysis_cache_update_config(),
+        "trading_calendar_status": trading_calendar_status_from_config(),
         "targets": targets,
         "latest_market_date": latest,
         "checked_at": current.isoformat(),
@@ -232,6 +257,8 @@ def probe_market_update_dates(now: datetime | str | None = None, *, force: bool 
 
 def cached_market_update_dates(now: datetime | str | None = None) -> dict:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
+    from business.market.trading_calendar import trading_calendar_status_from_config
+
     targets = []
     for target in probe_symbols():
         cached = _MARKET_UPDATE_PROBE_CACHE.get(target["asset_type"]) or {}
@@ -249,6 +276,7 @@ def cached_market_update_dates(now: datetime | str | None = None) -> dict:
     latest = max((target.get("market_date") or "" for target in targets), default="")
     return {
         "config": technical_analysis_cache_update_config(),
+        "trading_calendar_status": trading_calendar_status_from_config(),
         "targets": targets,
         "latest_market_date": latest,
         "checked_at": current.isoformat(),
@@ -269,16 +297,10 @@ def technical_analysis_cache_expired_after_close(
     normalized_target: str = "",
 ) -> bool:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
-    latest_market_date = (
-        latest_market_date_from_probe_symbols(now=current)
-        if normalized_target and market_from_symbol(normalized_target)
-        else ""
-    )
+    latest_market_date = cached_latest_market_date_for_symbol(normalized_target) if normalized_target else ""
     if latest_market_date and str(market_date or "") < latest_market_date:
         return True
     cutoff = datetime.combine(current.date(), _configured_close_invalidate_time(), tzinfo=BEIJING_TZ)
-    if normalized_target and market_from_symbol(normalized_target):
-        return False
     if current < cutoff:
         return False
     if str(market_date or "") != current.date().isoformat():

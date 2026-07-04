@@ -1,10 +1,13 @@
 # encoding:utf-8
 import importlib
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from business.config.config_service import get_config
 from business.content.stock_resolver import get_tushare_token
 from business.market.provider_adapter import (
     classify_asset_target,
@@ -12,6 +15,7 @@ from business.market.provider_adapter import (
     to_baostock_symbol,
     to_tushare_symbol,
 )
+from business.market.trading_calendar import trading_calendar_from_config
 
 
 @dataclass(frozen=True)
@@ -38,24 +42,32 @@ class MarketDateResolver:
             source_loaders.append(("tushare", self._latest_from_tushare))
         if target.asset_type in {"a_share", "index", "etf", "convertible_bond"}:
             source_loaders.append(("baostock", self._latest_from_baostock))
+        calendar = trading_calendar_from_config()
+        source_results = _probe_sources_concurrently(symbol, source_loaders)
         if _ranking_enabled():
             candidates = []
-            for source_name, loader in source_loaders:
-                try:
-                    market_date = loader(symbol)
-                except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
-                    market_date = ""
-                if market_date:
-                    candidates.append(MarketDateResolution(market_date=market_date, known=True, source=source_name))
-            return max(candidates, key=lambda candidate: candidate.market_date) if candidates else MarketDateResolution()
-        for source_name, loader in source_loaders:
-            try:
-                market_date = loader(symbol)
-            except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
-                market_date = ""
-            if market_date:
+            stale_candidates = []
+            for source_name, market_date in source_results:
+                if not market_date:
+                    continue
+                resolution = MarketDateResolution(market_date=market_date, known=True, source=source_name)
+                if calendar.accept_market_date(market_date, asset_type=target.asset_type):
+                    candidates.append(resolution)
+                else:
+                    stale_candidates.append(resolution)
+            if candidates:
+                return max(candidates, key=lambda candidate: candidate.market_date)
+            stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar)
+            return max(stale_candidates, key=lambda candidate: candidate.market_date) if stale_candidates else MarketDateResolution()
+        stale_candidates = []
+        for source_name, market_date in source_results:
+            if not market_date:
+                continue
+            if calendar.accept_market_date(market_date, asset_type=target.asset_type):
                 return MarketDateResolution(market_date=market_date, known=True, source=source_name)
-        return MarketDateResolution()
+            stale_candidates.append(MarketDateResolution(market_date=market_date, known=True, source=source_name))
+        stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar)
+        return max(stale_candidates, key=lambda candidate: candidate.market_date) if stale_candidates else MarketDateResolution()
 
     def _latest_from_tushare(self, symbol: str) -> str:
         target = classify_asset_target(symbol)
@@ -167,6 +179,49 @@ def _ranking_enabled() -> bool:
         return False
 
 
+def _probe_timeout_seconds() -> float:
+    try:
+        value = float(get_config("investment.technical_analysis.market_date_probe_timeout_seconds", 2.0) or 2.0)
+    except Exception:
+        value = 2.0
+    return max(0.2, min(value, 10.0))
+
+
+def _probe_sources_concurrently(symbol: str, source_loaders: list[tuple[str, Any]]) -> list[tuple[str, str]]:
+    if len(source_loaders) <= 1:
+        source_name, loader = source_loaders[0]
+        try:
+            return [(source_name, str(loader(symbol) or ""))]
+        except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
+            return [(source_name, "")]
+
+    timeout_seconds = _probe_timeout_seconds()
+    started = time.monotonic()
+    executor = ThreadPoolExecutor(max_workers=len(source_loaders))
+    futures = {
+        executor.submit(loader, symbol): source_name
+        for source_name, loader in source_loaders
+    }
+    values: dict[str, str] = {source_name: "" for source_name, _loader in source_loaders}
+    try:
+        for future in as_completed(futures, timeout=timeout_seconds):
+            source_name = futures[future]
+            try:
+                values[source_name] = str(future.result(timeout=0) or "")
+            except Exception:  # noqa: BLE001 - optional market data providers must not break analysis flow.
+                values[source_name] = ""
+            if time.monotonic() - started >= timeout_seconds:
+                break
+    except TimeoutError:
+        pass
+    finally:
+        for future in futures:
+            if not future.done():
+                future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+    return [(source_name, values.get(source_name, "")) for source_name, _loader in source_loaders]
+
+
 def _asset_type_from_symbol(symbol: str) -> str:
     text = str(symbol or "").strip()
     upper = text.upper()
@@ -219,6 +274,13 @@ def normalize_market_date(value: Any) -> str:
     except ValueError:
         return ""
     return normalized
+
+
+def _filter_stale_candidates_with_calendar(candidates: list[MarketDateResolution], calendar: Any) -> list[MarketDateResolution]:
+    accept_stale = getattr(calendar, "accept_stale_market_date", None)
+    if not callable(accept_stale):
+        return candidates
+    return [candidate for candidate in candidates if accept_stale(candidate.market_date)]
 
 
 _normalize_date = normalize_market_date

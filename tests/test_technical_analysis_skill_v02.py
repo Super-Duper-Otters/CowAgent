@@ -300,6 +300,163 @@ def test_v02_probe_window_ranks_data_sources_by_latest_date(monkeypatch):
     assert df["date"].max().strftime("%Y-%m-%d") == "2026-07-01"
 
 
+def test_v02_probe_window_filters_source_dates_with_trading_calendar(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: calls.append("akshare") or frame("2020-12-25"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: calls.append("tushare") or frame("2026-07-02"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: calls.append("baostock") or frame("2026-07-01"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START", "15:30")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END", "18:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T15:45:00+08:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-02")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    df = module.fetch_data(
+        {"data_func": "stock_zh_a_hist", "data_args": {"symbol": "600519"}},
+        symbol_code="600519",
+    )
+
+    assert calls == ["akshare", "tushare", "baostock"]
+    assert df["date"].max().strftime("%Y-%m-%d") == "2026-07-02"
+
+
+def test_v02_probe_window_falls_back_to_latest_stale_source_when_none_match_calendar(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: calls.append("akshare") or frame("2026-07-01"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: calls.append("tushare") or frame("2026-07-02"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: calls.append("baostock") or frame("2026-06-30"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START", "15:30")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END", "18:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T15:45:00+08:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-03")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    df = module.fetch_data(
+        {"data_func": "stock_zh_a_hist", "data_args": {"symbol": "600519"}},
+        symbol_code="600519",
+    )
+
+    assert calls == ["akshare", "tushare", "baostock"]
+    assert df["date"].max().strftime("%Y-%m-%d") == "2026-07-02"
+
+
+def test_v02_probe_window_rejects_stale_source_older_than_limit(monkeypatch):
+    module = _load_v02_skill_module()
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: frame("2023-08-10"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: frame("2023-08-09"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: frame("2023-08-08"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START", "15:30")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END", "18:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T15:45:00+08:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-03")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    with pytest.raises(RuntimeError, match="超过最大允许滞后"):
+        module.fetch_data(
+            {"data_func": "stock_zh_a_hist", "data_args": {"symbol": "600519"}},
+            symbol_code="600519",
+        )
+
+
+def test_v02_probe_window_stale_limit_uses_expected_market_date(monkeypatch):
+    module = _load_v02_skill_module()
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: frame("2026-06-18"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: frame("2026-06-17"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: frame("2026-06-16"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_START", "15:30")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_CACHE_UPDATE_PROBE_END", "18:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-04T10:00:00+08:00")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-03")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_EXPECTED_MARKET_DATE", "2026-07-03")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_MAX_STALE_MARKET_DAYS", "15")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    df = module.fetch_data(
+        {"data_func": "stock_zh_a_hist", "data_args": {"symbol": "600519"}},
+        symbol_code="600519",
+    )
+
+    assert df["date"].max().strftime("%Y-%m-%d") == "2026-06-18"
+
+
 def test_v02_on_demand_refetch_stops_after_good_first_source(monkeypatch):
     module = _load_v02_skill_module()
     calls = []
@@ -333,6 +490,117 @@ def test_v02_on_demand_refetch_stops_after_good_first_source(monkeypatch):
 
     assert len(df) == 80
     assert calls == ["akshare"]
+
+
+def test_v02_on_demand_refetch_discards_dates_rejected_by_trading_calendar(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: calls.append("akshare") or frame("2020-12-25"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: calls.append("tushare") or frame("2026-07-02"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: calls.append("baostock") or frame("2026-07-01"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-02")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T12:00:00+08:00")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    df = module.fetch_data(
+        module._dynamic_config("600519", asset_type="a_share", market="SH", ts_code="600519.SH"),
+        symbol_code="600519",
+    )
+
+    assert df["date"].max().strftime("%Y-%m-%d") == "2026-07-02"
+    assert calls == ["akshare", "tushare"]
+
+
+def test_v02_on_demand_refetch_falls_back_to_latest_stale_source_when_none_match_calendar(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: calls.append("akshare") or frame("2026-07-01"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: calls.append("tushare") or frame("2026-07-02"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: calls.append("baostock") or frame("2026-06-30"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-03")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T16:00:00+08:00")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    df = module.fetch_data(
+        module._dynamic_config("600519", asset_type="a_share", market="SH", ts_code="600519.SH"),
+        symbol_code="600519",
+    )
+
+    assert df["date"].max().strftime("%Y-%m-%d") == "2026-07-02"
+    assert calls == ["akshare", "tushare", "baostock"]
+
+
+def test_v02_on_demand_refetch_rejects_stale_source_older_than_limit(monkeypatch):
+    module = _load_v02_skill_module()
+
+    def frame(end_date):
+        periods = 80
+        closes = [1.0 + 0.01 * index for index in range(periods)]
+        return pd.DataFrame(
+            {
+                "date": pd.date_range(end=end_date, periods=periods, freq="D"),
+                "open": closes,
+                "high": [value + 0.01 for value in closes],
+                "low": [value - 0.01 for value in closes],
+                "close": closes,
+                "volume": range(100, 100 + periods),
+            }
+        )
+
+    monkeypatch.setattr(module, "_fetch_akshare_main", lambda _config: frame("2023-08-10"))
+    monkeypatch.setattr(module, "_fetch_tushare_stock", lambda _symbol, _token: frame("2023-08-09"))
+    monkeypatch.setattr(module, "_fetch_baostock_stock", lambda _symbol: frame("2023-08-08"))
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_TRADING_CALENDAR_ENABLED", "1")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_ACCEPTED_MARKET_DATES", "2026-07-03")
+    monkeypatch.setenv("TECHNICAL_ANALYSIS_NOW", "2026-07-03T16:00:00+08:00")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "baostock", SimpleNamespace())
+
+    with pytest.raises(RuntimeError, match="超过最大允许滞后"):
+        module.fetch_data(
+            module._dynamic_config("600519", asset_type="a_share", market="SH", ts_code="600519.SH"),
+            symbol_code="600519",
+        )
 
 
 def test_v02_on_demand_refetch_tries_next_source_when_key_levels_poor(monkeypatch):
@@ -507,6 +775,18 @@ def test_v02_indicators_accept_string_open_array():
             },
         ),
         (
+            "sh000300",
+            "index",
+            "SH",
+            "000300.SH",
+            {
+                "akshare_args": {"symbol": "sh000300"},
+                "baostock_symbol": "sh.000300",
+                "tushare_api": "index_daily",
+                "tushare_symbol": "000300.SH",
+            },
+        ),
+        (
             "600519",
             "a_share",
             "SH",
@@ -592,3 +872,15 @@ def test_v02_provider_symbol_plan_centralizes_symbol_and_api_adaptation(
     assert plan["baostock_symbol"] == expected["baostock_symbol"]
     assert plan["tushare_api"] == expected["tushare_api"]
     assert plan["tushare_symbol"] == expected["tushare_symbol"]
+
+
+def test_v02_provider_symbol_plan_normalizes_prefixed_index_for_tushare():
+    module = _load_v02_skill_module()
+
+    plan = module._provider_symbol_plan(
+        {"asset_type": "index", "market": "SH", "data_args": {"symbol": "sh000300"}},
+        symbol_code="sh000300",
+    )
+
+    assert plan["tushare_api"] == "index_daily"
+    assert plan["tushare_symbol"] == "000300.SH"
