@@ -1,5 +1,8 @@
 # encoding:utf-8
 import json
+import os
+import threading
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,9 +14,12 @@ from business.schema.db import connect, row_to_dict, upsert_config
 from business.schema.tables import investment_configs
 
 
+CONFIG_CACHE_TTL_SECONDS = 5.0
 SENSITIVE_MARKERS = ("api_key", "secret", "token", "aes_key", "password")
 API_CONFIG_PREFIXES = ("model.", "wechatmp.")
 ADMIN_ONLY_CONFIG_KEYS = {"router.enable_web_open_chat", "router.enable_web_wechatmp_chain_verification"}
+_CONFIG_CACHE: dict[tuple[tuple[str, int], str, str, str, bool], tuple[float, Any]] = {}
+_CONFIG_CACHE_LOCK = threading.RLock()
 
 CONFIG_FALLBACK_KEYS = {
     "tushare.token": "tushare_token",
@@ -29,6 +35,15 @@ CONFIG_FALLBACK_KEYS = {
     "investment.technical_analysis.cache_update_probe_start": "investment_ta_cache_update_probe_start",
     "investment.technical_analysis.cache_update_probe_end": "investment_ta_cache_update_probe_end",
     "investment.technical_analysis.cache_update_probe_interval_minutes": "investment_ta_cache_update_probe_interval_minutes",
+    "investment.technical_analysis.market_date_probe_timeout_seconds": "investment_ta_market_date_probe_timeout_seconds",
+    "investment.trading_calendar.enabled": "investment_trading_calendar_enabled",
+    "investment.trading_calendar.sources": "investment_trading_calendar_sources",
+    "investment.trading_calendar.refresh_time": "investment_trading_calendar_refresh_time",
+    "investment.trading_calendar.market_data_ready_time": "investment_trading_calendar_market_data_ready_time",
+    "investment.trading_calendar.cache_days": "investment_trading_calendar_cache_days",
+    "investment.trading_calendar.max_lag_trade_days": "investment_trading_calendar_max_lag_trade_days",
+    "investment.trading_calendar.max_stale_market_days": "investment_trading_calendar_max_stale_market_days",
+    "technical_analysis.generation_max_attempts": "investment_ta_generation_max_attempts",
     "render.renderer_path": "investment_renderer_path",
     "render.template_ta_path": "investment_template_ta_path",
     "render.template_rate_path": "investment_template_rate_path",
@@ -64,6 +79,31 @@ def _deserialize(value: str | None) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _cache_default_key(default: Any) -> str:
+    try:
+        return json.dumps(default, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return repr(default)
+
+
+def _config_cache_namespace() -> tuple[str, int]:
+    return (os.environ.get("COWAGENT_INVESTMENT_DATABASE_URL", ""), id(conf))
+
+
+def clear_config_cache() -> None:
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE.clear()
+
+
+def _clear_dependent_runtime_caches() -> None:
+    try:
+        from business.components.registry import clear_business_definition_cache
+
+        clear_business_definition_cache()
+    except Exception:
+        pass
 
 
 def is_sensitive_key(key: str) -> bool:
@@ -132,6 +172,14 @@ def can_modify_config(key: str, operator_role: str) -> bool:
 
 
 def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
+    namespace = _config_cache_namespace()
+    cache_key = (namespace, str(key), _cache_default_key(default), repr(type(default)), bool(masked))
+    now = time.monotonic()
+    with _CONFIG_CACHE_LOCK:
+        cached = _CONFIG_CACHE.get(cache_key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
     with connect() as conn:
         row = conn.execute(
             select(investment_configs.c.config_value).where(investment_configs.c.config_key == key),
@@ -148,8 +196,12 @@ def get_config(key: str, default: Any = None, *, masked: bool = False) -> Any:
             except Exception:
                 value = default
     if masked and is_sensitive_key(key):
-        return mask_sensitive_value(value)
-    return value if value is not None else default
+        result = mask_sensitive_value(value)
+    else:
+        result = value if value is not None else default
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE[cache_key] = (time.monotonic() + CONFIG_CACHE_TTL_SECONDS, result)
+    return result
 
 
 def save_config(
@@ -193,6 +245,8 @@ def save_config(
             updated_by_username=updated_by,
             updated_by_role=actor_role or operator_role,
         )
+    clear_config_cache()
+    _clear_dependent_runtime_caches()
 
 
 def get_configs(keys: list[str], *, masked: bool = False) -> dict[str, Any]:
@@ -217,3 +271,5 @@ def save_configs(
             actor=actor,
             sync_project=sync_project,
         )
+    clear_config_cache()
+    _clear_dependent_runtime_caches()

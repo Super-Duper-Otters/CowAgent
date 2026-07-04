@@ -3,6 +3,8 @@
 
 import json
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,9 @@ from business.content.render_service import DEFAULT_RENDERER_PATH
 
 
 SAFE_BUSINESS_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+BUSINESS_DEFINITION_CACHE_TTL_SECONDS = 5.0
+_BUSINESS_DEFINITION_CACHE: tuple[float, tuple[str, str], tuple[Any, ...]] | None = None
+_BUSINESS_DEFINITION_CACHE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -459,11 +464,33 @@ def _read_active_version_component_definition(component_dir: Path) -> BusinessDe
     return None
 
 
+def clear_business_definition_cache() -> None:
+    global _BUSINESS_DEFINITION_CACHE
+    with _BUSINESS_DEFINITION_CACHE_LOCK:
+        _BUSINESS_DEFINITION_CACHE = None
+
+
 def list_business_definitions() -> list[BusinessDefinition]:
+    global _BUSINESS_DEFINITION_CACHE
+    now = time.monotonic()
+    builtin_root = builtin_components_root()
+    runtime_root = runtime_components_root()
+    cache_key = (str(builtin_root), str(runtime_root))
+    with _BUSINESS_DEFINITION_CACHE_LOCK:
+        if (
+            _BUSINESS_DEFINITION_CACHE is not None
+            and _BUSINESS_DEFINITION_CACHE[0] > now
+            and _BUSINESS_DEFINITION_CACHE[1] == cache_key
+        ):
+            return list(_BUSINESS_DEFINITION_CACHE[2])
+
     definitions = {definition.business_key: definition for definition in BUILTIN_DEFINITIONS}
-    _merge_component_definitions(definitions, builtin_components_root())
-    _merge_component_definitions(definitions, runtime_components_root())
-    return list(definitions.values())
+    _merge_component_definitions(definitions, builtin_root)
+    _merge_component_definitions(definitions, runtime_root)
+    result = tuple(definitions.values())
+    with _BUSINESS_DEFINITION_CACHE_LOCK:
+        _BUSINESS_DEFINITION_CACHE = (time.monotonic() + BUSINESS_DEFINITION_CACHE_TTL_SECONDS, cache_key, result)
+    return list(result)
 
 
 def get_business_definition(business_key: str) -> BusinessDefinition:
