@@ -7333,6 +7333,17 @@ let currentInvestmentCacheUpdateData = null;
 
 function renderInvestmentCacheUpdateContent(data = {}) {
     const config = data.config || {};
+    const calendarStatus = data.trading_calendar_status || {};
+    const selectedCalendarSources = String(config.trading_calendar_sources || 'baostock,tushare,akshare')
+        .split(',')
+        .map(item => item.trim().toLowerCase())
+        .filter(Boolean);
+    const calendarSourceOptions = [
+        ['baostock', 'BaoStock'],
+        ['tushare', 'Tushare'],
+        ['akshare', 'AkShare'],
+    ];
+    const refreshCycleDays = Number(config.trading_calendar_cache_days || 7) >= 30 ? 30 : 7;
     const probing = Boolean(data.probing);
     const targets = (Array.isArray(data.targets) && data.targets.length ? data.targets : INVESTMENT_CACHE_UPDATE_DEFAULT_TARGETS)
         .map(target => ({...target, probing}));
@@ -7350,13 +7361,49 @@ function renderInvestmentCacheUpdateContent(data = {}) {
             ${data.error ? `<div class="investment-alert error">${escapeHtml(data.error)}</div>` : ''}
             <section class="investment-panel investment-cache-update-settings">
                 <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>探测设置</span></div>
-                <div class="investment-grid cols-3">
-                    <label class="investment-field"><span>开始时间</span><input id="invest-cache-update-probe-start" type="time" value="${escapeHtml(config.probe_start || '15:30')}"></label>
-                    <label class="investment-field"><span>结束时间</span><input id="invest-cache-update-probe-end" type="time" value="${escapeHtml(config.probe_end || '18:00')}"></label>
-                    <label class="investment-field"><span>时间间隔（分钟）</span><input id="invest-cache-update-probe-interval" type="number" min="1" max="240" step="1" value="${escapeHtml(config.probe_interval_minutes ?? 15)}"></label>
+                <div class="investment-cache-update-settings-grid">
+                    <div>
+                        <div class="investment-cache-setting-group">
+                            <div class="investment-cache-setting-title"><i class="fas fa-vial"></i><span>数据源探测</span></div>
+                            <div class="investment-grid cols-3">
+                                <label class="investment-field"><span>开始时间</span><input id="invest-cache-update-probe-start" type="time" value="${escapeHtml(config.probe_start || '15:30')}"></label>
+                                <label class="investment-field"><span>结束时间</span><input id="invest-cache-update-probe-end" type="time" value="${escapeHtml(config.probe_end || '18:00')}"></label>
+                                <label class="investment-field"><span>时间间隔（分钟）</span><input id="invest-cache-update-probe-interval" type="number" min="1" max="240" step="1" value="${escapeHtml(config.probe_interval_minutes ?? 15)}"></label>
+                            </div>
+                        </div>
+                        <div class="investment-cache-setting-group">
+                            <div class="investment-cache-setting-title investment-cache-setting-title-row">
+                                <span><i class="fas fa-calendar-days"></i><span>交易日历</span></span>
+                                ${investmentSwitch('启用', 'invest-trading-calendar-enabled', config.trading_calendar_enabled !== false)}
+                            </div>
+                            <div class="investment-grid cols-3">
+                                <div class="investment-field investment-source-options-field">
+                                    <span>交易日历数据源</span>
+                                    <div class="investment-source-options">
+                                        ${calendarSourceOptions.map(([value, label]) => `
+                                            <label class="investment-source-option">
+                                                <input id="invest-trading-calendar-source-${escapeHtml(value)}" type="checkbox" value="${escapeHtml(value)}" ${selectedCalendarSources.includes(value) ? 'checked' : ''}>
+                                                <span>${escapeHtml(label)}</span>
+                                            </label>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                                <label class="investment-field"><span>刷新周期</span><select id="invest-trading-calendar-cache-days">
+                                    <option value="7" ${refreshCycleDays === 7 ? 'selected' : ''}>每周</option>
+                                    <option value="30" ${refreshCycleDays === 30 ? 'selected' : ''}>每月</option>
+                                </select></label>
+                                <label class="investment-field"><span>行情确认时间</span><input id="invest-trading-calendar-market-data-ready-time" type="time" value="${escapeHtml(config.trading_calendar_market_data_ready_time || '15:30')}"></label>
+                                <label class="investment-field"><span>最大允许滞后交易日</span><input id="invest-trading-calendar-max-lag" type="number" min="0" max="10" step="1" value="${escapeHtml(config.trading_calendar_max_lag_trade_days ?? 0)}"></label>
+                                <label class="investment-field"><span>最大允许旧行情自然日</span><input id="invest-trading-calendar-max-stale" type="number" min="0" max="60" step="1" value="${escapeHtml(config.trading_calendar_max_stale_market_days ?? 15)}"></label>
+                                <label class="investment-field"><span>生成最大尝试次数</span><input id="invest-ta-generation-max-attempts" type="number" min="1" max="10" step="1" value="${escapeHtml(config.generation_max_attempts ?? 3)}"></label>
+                            </div>
+                        </div>
+                    </div>
+                    ${renderTradingCalendarStatusPanel(calendarStatus)}
                 </div>
                 <div class="investment-actions">
                     <button class="investment-btn primary" type="button" onclick="saveInvestmentCacheUpdateConfig()"><i class="fas fa-floppy-disk"></i><span>保存设置</span></button>
+                    <button class="investment-btn" type="button" onclick="refreshInvestmentTradingCalendar()"><i class="fas fa-calendar-check"></i><span>刷新交易日历</span></button>
                     <span id="investment-cache-update-config-status" class="investment-config-status"></span>
                 </div>
             </section>
@@ -7371,6 +7418,37 @@ function renderInvestmentCacheUpdateContent(data = {}) {
                 </table>`, true, '缓存更新探测标的列表')}
             </section>
         </div>`;
+}
+
+function renderTradingCalendarStatusPanel(status = {}) {
+    const state = status.state || 'unknown';
+    const badgeClass = state === 'ok' ? 'success' : (state === 'disabled' ? 'warning' : 'danger');
+    const sourceText = Array.isArray(status.source_order) ? status.source_order.join(',') : '-';
+    return `
+        <div class="investment-calendar-status">
+            <div class="investment-panel-heading compact">
+                <div class="investment-panel-title"><i class="fas fa-calendar-check"></i><span>交易日历状态</span></div>
+                <span class="investment-badge ${badgeClass}">${escapeHtml(status.message || '未知')}</span>
+            </div>
+            <div class="investment-calendar-status-grid">
+                <div><span>系统日期</span><strong>${escapeHtml(status.system_date || '-')}</strong></div>
+                <div><span>预期最新交易日</span><strong>${escapeHtml(status.expected_market_date || '-')}</strong></div>
+                <div><span>最大允许滞后</span><strong>${escapeHtml(String(status.max_lag_trade_days ?? '-'))}</strong></div>
+                <div><span>本地日历缓存</span><strong>${status.cache_exists ? '已构建' : '未构建'}</strong></div>
+                <div><span>交易日数量</span><strong>${escapeHtml(String(status.trade_dates_count ?? '-'))}</strong></div>
+                <div><span>最近刷新</span><strong>${escapeHtml(status.refreshed_at || '-')}</strong></div>
+                <div><span>行情确认时间</span><strong>${escapeHtml(status.market_data_ready_time || '-')}</strong></div>
+                <div><span>刷新周期</span><strong>${Number(status.cache_days || 0) >= 30 ? '每月' : '每周'}</strong></div>
+                <div><span>数据源</span><strong>${escapeHtml(sourceText || '-')}</strong></div>
+            </div>
+        </div>`;
+}
+
+function selectedInvestmentTradingCalendarSources() {
+    const selected = Array.from(document.querySelectorAll('[id^="invest-trading-calendar-source-"]:checked'))
+        .map(input => input.value)
+        .filter(Boolean);
+    return selected.length ? selected.join(',') : 'baostock,tushare,akshare';
 }
 
 async function loadInvestmentCacheUpdate() {
@@ -7427,6 +7505,14 @@ async function saveInvestmentCacheUpdateConfig() {
                 probe_start: document.getElementById('invest-cache-update-probe-start')?.value || '15:30',
                 probe_end: document.getElementById('invest-cache-update-probe-end')?.value || '18:00',
                 probe_interval_minutes: Number(document.getElementById('invest-cache-update-probe-interval')?.value || 15),
+                trading_calendar_enabled: Boolean(document.getElementById('invest-trading-calendar-enabled')?.checked),
+                trading_calendar_sources: selectedInvestmentTradingCalendarSources(),
+                trading_calendar_refresh_time: '06:00',
+                trading_calendar_market_data_ready_time: document.getElementById('invest-trading-calendar-market-data-ready-time')?.value || '15:30',
+                trading_calendar_cache_days: Number(document.getElementById('invest-trading-calendar-cache-days')?.value || 7),
+                trading_calendar_max_lag_trade_days: Number(document.getElementById('invest-trading-calendar-max-lag')?.value || 0),
+                trading_calendar_max_stale_market_days: Number(document.getElementById('invest-trading-calendar-max-stale')?.value || 15),
+                generation_max_attempts: Number(document.getElementById('invest-ta-generation-max-attempts')?.value || 3),
             }),
         });
         if (status) status.textContent = '已保存';
@@ -7435,6 +7521,25 @@ async function saveInvestmentCacheUpdateConfig() {
     } catch (error) {
         if (status) status.textContent = String(error.message || error);
         showInvestmentToast('缓存更新设置保存失败', 'error');
+    }
+}
+
+async function refreshInvestmentTradingCalendar() {
+    const status = document.getElementById('investment-cache-update-config-status');
+    if (status) status.textContent = '刷新交易日历中...';
+    try {
+        const data = await investmentFetchJson('/api/investment/cache-update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'refresh_trading_calendar'}),
+        });
+        const count = Number(data.trading_calendar?.trade_dates?.length || 0);
+        if (status) status.textContent = `交易日历已刷新：${count} 个交易日`;
+        showInvestmentToast(`交易日历已刷新：${count} 个交易日`);
+        await loadInvestmentCacheUpdate();
+    } catch (error) {
+        if (status) status.textContent = String(error.message || error);
+        showInvestmentToast('交易日历刷新失败', 'error');
     }
 }
 
@@ -7735,6 +7840,7 @@ window.queryInvestmentStocks = queryInvestmentStocks;
 window.loadInvestmentCacheUpdate = loadInvestmentCacheUpdate;
 window.runInvestmentCacheUpdateProbe = runInvestmentCacheUpdateProbe;
 window.saveInvestmentCacheUpdateConfig = saveInvestmentCacheUpdateConfig;
+window.refreshInvestmentTradingCalendar = refreshInvestmentTradingCalendar;
 window.clearInvestmentAllTechnicalAnalysisCache = clearInvestmentAllTechnicalAnalysisCache;
 
 document.querySelectorAll('.menu-group > button').forEach(btn => {

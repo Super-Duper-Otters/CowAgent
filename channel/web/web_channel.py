@@ -4537,6 +4537,14 @@ class InvestmentCacheUpdateHandler:
         "probe_start": "investment.technical_analysis.cache_update_probe_start",
         "probe_end": "investment.technical_analysis.cache_update_probe_end",
         "probe_interval_minutes": "investment.technical_analysis.cache_update_probe_interval_minutes",
+        "trading_calendar_enabled": "investment.trading_calendar.enabled",
+        "trading_calendar_sources": "investment.trading_calendar.sources",
+        "trading_calendar_refresh_time": "investment.trading_calendar.refresh_time",
+        "trading_calendar_market_data_ready_time": "investment.trading_calendar.market_data_ready_time",
+        "trading_calendar_cache_days": "investment.trading_calendar.cache_days",
+        "trading_calendar_max_lag_trade_days": "investment.trading_calendar.max_lag_trade_days",
+        "trading_calendar_max_stale_market_days": "investment.trading_calendar.max_stale_market_days",
+        "generation_max_attempts": "technical_analysis.generation_max_attempts",
     }
 
     def GET(self):
@@ -4592,6 +4600,14 @@ class InvestmentCacheUpdateHandler:
                     self.CONFIG_KEYS["probe_start"]: str(body.get("probe_start") or "").strip(),
                     self.CONFIG_KEYS["probe_end"]: str(body.get("probe_end") or "").strip(),
                     self.CONFIG_KEYS["probe_interval_minutes"]: int(body.get("probe_interval_minutes") or 15),
+                    self.CONFIG_KEYS["trading_calendar_enabled"]: bool(body.get("trading_calendar_enabled", True)),
+                    self.CONFIG_KEYS["trading_calendar_sources"]: str(body.get("trading_calendar_sources") or "baostock,tushare,akshare").strip(),
+                    self.CONFIG_KEYS["trading_calendar_refresh_time"]: str(body.get("trading_calendar_refresh_time") or "06:00").strip(),
+                    self.CONFIG_KEYS["trading_calendar_market_data_ready_time"]: str(body.get("trading_calendar_market_data_ready_time") or "15:30").strip(),
+                    self.CONFIG_KEYS["trading_calendar_cache_days"]: int(body.get("trading_calendar_cache_days") or 7),
+                    self.CONFIG_KEYS["trading_calendar_max_lag_trade_days"]: int(body.get("trading_calendar_max_lag_trade_days") or 0),
+                    self.CONFIG_KEYS["trading_calendar_max_stale_market_days"]: int(body.get("trading_calendar_max_stale_market_days") or 15),
+                    self.CONFIG_KEYS["generation_max_attempts"]: int(body.get("generation_max_attempts") or 3),
                 }
                 before_state = get_configs(list(configs.keys()), masked=True)
                 save_configs(configs, operator_role=admin.role, operator=admin.username, actor=admin)
@@ -4606,6 +4622,20 @@ class InvestmentCacheUpdateHandler:
                     after_state=after_state,
                 )
                 return _investment_json_response({"status": "success", "config": after_state})
+            if action == "refresh_trading_calendar":
+                from business.market.trading_calendar import refresh_trading_calendar_from_config
+
+                payload = refresh_trading_calendar_from_config()
+                _record_investment_operation(
+                    "cache_update.refresh_trading_calendar",
+                    "technical_analysis_cache_update",
+                    admin=admin,
+                    detail={
+                        "trade_dates": len(payload.get("trade_dates") or []),
+                        "source_order": payload.get("source_order") or [],
+                    },
+                )
+                return _investment_json_response({"status": "success", "trading_calendar": payload})
             if action == "clear_technical_analysis":
                 products_invalidated = invalidate_products_by_scope(
                     business_type=str(ServiceType.TECHNICAL_ANALYSIS),
