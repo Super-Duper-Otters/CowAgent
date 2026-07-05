@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -108,6 +109,34 @@ def _sample_csi_index_targets(limit: int, seed: str) -> list[dict]:
     return rows[:limit]
 
 
+def _sample_non_csi_index_targets(limit: int, seed: str) -> list[dict]:
+    table = investment_stock_symbols
+    stmt = (
+        select(table.c.code, table.c.name, table.c.market, table.c.ts_code, table.c.asset_type)
+        .where(table.c.asset_type == "index", table.c.market != "CSI", ~table.c.code.ilike("%.CSI"), ~table.c.ts_code.ilike("%.CSI"))
+        .order_by(table.c.code)
+    )
+    with connect() as conn:
+        rows = [row_to_dict(row) for row in conn.execute(stmt).fetchall()]
+    rng = random.Random(seed)
+    rng.shuffle(rows)
+    return rows[:limit]
+
+
+def _append_sample_targets(targets: list[dict], asset_type: str, limit: int, seed: str) -> None:
+    for row in _sample_asset_targets(asset_type, limit, seed):
+        targets.append(
+            _target(
+                str(row.get("code") or ""),
+                name=str(row.get("name") or ""),
+                asset_type=str(row.get("asset_type") or ""),
+                market=str(row.get("market") or ""),
+                ts_code=str(row.get("ts_code") or ""),
+                source=f"sample_{asset_type}",
+            )
+        )
+
+
 def _target(symbol: str, *, name: str = "", asset_type: str = "manual", market: str = "", ts_code: str = "", source: str = "manual") -> dict:
     return {
         "symbol": symbol,
@@ -195,17 +224,22 @@ def _build_category_plan(plan_mode: str, sample_limit: int) -> list[dict]:
             )
     elif plan_mode == "all_asset_types":
         for asset_type in ("a_share", "hk_stock", "us_stock", "index", "etf", "convertible_bond", "futures"):
-            for row in _sample_asset_targets(asset_type, sample_limit, f"ta-concurrent-{asset_type}-{sample_limit}-20260704"):
-                targets.append(
-                    _target(
-                        str(row.get("code") or ""),
-                        name=str(row.get("name") or ""),
-                        asset_type=str(row.get("asset_type") or ""),
-                        market=str(row.get("market") or ""),
-                        ts_code=str(row.get("ts_code") or ""),
-                        source=f"sample_{asset_type}",
-                    )
+            _append_sample_targets(targets, asset_type, sample_limit, f"ta-concurrent-{asset_type}-{sample_limit}-20260704")
+    elif plan_mode == "mixed_500":
+        per_type = max(1, int(os.environ.get("TA_CONCURRENT_PER_TYPE_LIMIT", "100")))
+        for asset_type in ("a_share", "hk_stock", "etf", "convertible_bond"):
+            _append_sample_targets(targets, asset_type, per_type, f"ta-concurrent-mixed500-{asset_type}-20260704")
+        for row in _sample_non_csi_index_targets(per_type, f"ta-concurrent-mixed500-non-csi-index-20260704"):
+            targets.append(
+                _target(
+                    str(row.get("code") or ""),
+                    name=str(row.get("name") or ""),
+                    asset_type=str(row.get("asset_type") or ""),
+                    market=str(row.get("market") or ""),
+                    ts_code=str(row.get("ts_code") or ""),
+                    source="sample_non_csi_index",
                 )
+            )
     else:
         return _build_default_plan()
 
@@ -268,6 +302,37 @@ def _run_worker(args: argparse.Namespace) -> int:
         }
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0
+
+
+def _classify_failure(row: dict) -> tuple[str, str, bool]:
+    if row.get("status") == "ok":
+        return "", "", False
+    detail = str(row.get("detail") or "")
+    user_prompt = str(row.get("user_prompt") or "")
+    if row.get("status") == "timeout":
+        return "timeout", "单个请求超过超时时间", False
+    if "technical analysis model returned refusal text" in detail:
+        return "ai_refusal", "AI最终文本返回refusal", False
+    if "You didn't provide an API key" in detail:
+        return "api_key_missing", "AI接口缺少API key", False
+    if "超过最大允许滞后" in detail:
+        dates = re.findall(r"最新日期 (\d{4}-\d{2}-\d{2})", detail)
+        latest = max(dates) if dates else ""
+        suffix = f"，最新{latest}" if latest else ""
+        return "sample_stale_over_limit", f"样本行情过旧，超过允许滞后{suffix}", True
+    if "数据量不足" in detail:
+        counts = [int(value) for value in re.findall(r"数据量不足 \((\d+) < 60\)", detail)]
+        suffix = f"，最多{max(counts)}根" if counts else ""
+        return "sample_history_too_short", f"样本历史K线不足60根{suffix}", True
+    if "未配置该源适配代码" in detail:
+        return "unsupported_provider_mapping", "该样本缺少可用数据源适配映射", True
+    if "AKShare: 'date'" in detail:
+        return "provider_schema_mismatch", "数据源返回结构缺date字段", True
+    if "未匹配到该标的" in user_prompt:
+        return "input_not_found", "输入未匹配到本地标的", True
+    if row.get("error_code") == "market_data_unavailable":
+        return "market_data_unavailable", "行情数据不可用", True
+    return "other_failure", "其他失败", False
 
 
 def _run_one(repo: Path, run_dir: Path, target: dict, timeout_seconds: int) -> dict:
@@ -349,11 +414,16 @@ def _run_one(repo: Path, run_dir: Path, target: dict, timeout_seconds: int) -> d
         base["elapsed_seconds"] = round(time.time() - started, 2)
         base["status"] = "error"
         base["detail"] = _truncate(str(exc))
+    category, reason, sample_layer = _classify_failure(base)
+    base["failure_category"] = category
+    base["failure_reason"] = reason
+    base["sample_layer_failure"] = sample_layer
     return base
 
 
 def _summary(rows: list[dict], total: int, run_dir: Path, concurrency: int, timeout_seconds: int, running: list[dict] | None = None) -> dict:
     by_type = {}
+    by_failure_category = {}
     for row in rows:
         asset_type = str(row.get("asset_type") or "unknown")
         item = by_type.setdefault(asset_type, {"done": 0, "ok": 0, "failed": 0})
@@ -362,6 +432,8 @@ def _summary(rows: list[dict], total: int, run_dir: Path, concurrency: int, time
             item["ok"] += 1
         else:
             item["failed"] += 1
+            category = str(row.get("failure_category") or "uncategorized")
+            by_failure_category[category] = by_failure_category.get(category, 0) + 1
     return {
         "run_dir": str(run_dir),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -371,8 +443,10 @@ def _summary(rows: list[dict], total: int, run_dir: Path, concurrency: int, time
         "total_done": len(rows),
         "ok": sum(1 for row in rows if row.get("status") == "ok"),
         "failed": sum(1 for row in rows if row.get("status") != "ok"),
+        "sample_layer_failed": sum(1 for row in rows if row.get("sample_layer_failure")),
         "running": running or [],
         "by_type": by_type,
+        "by_failure_category": by_failure_category,
     }
 
 
@@ -395,6 +469,9 @@ def _write_csv(csv_path: Path, rows: list[dict]) -> None:
         "main_chart_path",
         "report_path",
         "error_code",
+        "failure_category",
+        "failure_reason",
+        "sample_layer_failure",
         "user_prompt",
         "detail",
     ]
