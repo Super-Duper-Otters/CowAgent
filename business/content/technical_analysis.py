@@ -12,7 +12,11 @@ from sqlalchemy import and_, desc, select
 
 from business.cache import cache_service as cache_service
 from business.audit.ai_generation import generate_technical_analysis_text
-from business.cache.cache_policy import technical_analysis_cache_expired_after_close, technical_analysis_cache_update_config
+from business.cache.cache_policy import (
+    technical_analysis_cache_expired_after_close,
+    technical_analysis_cache_update_config,
+    technical_analysis_cache_update_probe_allowed_for_symbol,
+)
 from business.cache.cache_service import (
     build_cache_key,
     find_cache_entry,
@@ -226,6 +230,30 @@ def _technical_analysis_target(target: str) -> TechnicalAnalysisTarget:
     return TechnicalAnalysisTarget(normalized_target=normalized, skill_symbol=normalized)
 
 
+def _target_from_symbol_row(row: dict, fallback_value: str = "") -> TechnicalAnalysisTarget:
+    code = str(row.get("code") or fallback_value).strip()
+    target_info = _technical_analysis_target(code)
+    resolved_ts_code = str(row.get("ts_code") or target_info.ts_code)
+    if target_info.asset_type == "index" and target_info.market == "CSI":
+        resolved_ts_code = _normalize_csi_symbol(resolved_ts_code) or resolved_ts_code
+    return TechnicalAnalysisTarget(
+        normalized_target=target_info.normalized_target,
+        skill_symbol=target_info.skill_symbol,
+        is_a_share=target_info.is_a_share,
+        stock_name=str(row.get("name") or "").strip(),
+        asset_type=str(row.get("asset_type") or target_info.asset_type),
+        market=str(row.get("market") or target_info.market),
+        ts_code=resolved_ts_code,
+    )
+
+
+def _a_share_symbol_match(matches: list[dict[str, str]]) -> dict[str, str]:
+    for match in matches:
+        if str(match.get("asset_type") or "").strip().lower() == "a_share":
+            return match
+    return {}
+
+
 def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysisTarget, ErrorCode | None, str]:
     value = str(target or "").strip()
     if _MALFORMED_INDEX_PREFIX_RE.fullmatch(value) and not _INDEX_PREFIX_RE.fullmatch(value):
@@ -247,22 +275,20 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
                     ErrorCode.STOCK_AMBIGUOUS,
                     _bare_code_ambiguous_detail(value, symbol_matches),
                 )
+            a_share_match = _a_share_symbol_match(symbol_matches)
+            if a_share_match:
+                return _target_from_symbol_row(a_share_match, value), None, ""
+            if symbol_matches and str(symbol_matches[0].get("asset_type") or "").strip().lower() != "index":
+                return (
+                    TechnicalAnalysisTarget(),
+                    ErrorCode.STOCK_AMBIGUOUS,
+                    _bare_code_candidates_detail(value, symbol_matches),
+                )
         if target_info.normalized_target:
             stock = get_stock_symbol_by_code(target_info.normalized_target)
             stock_name = str(stock.get("name") or "").strip()
             if stock_name:
-                resolved_ts_code = str(stock.get("ts_code") or target_info.ts_code)
-                if target_info.asset_type == "index" and target_info.market == "CSI":
-                    resolved_ts_code = _normalize_csi_symbol(resolved_ts_code) or resolved_ts_code
-                target_info = TechnicalAnalysisTarget(
-                    normalized_target=target_info.normalized_target,
-                    skill_symbol=target_info.skill_symbol,
-                    is_a_share=target_info.is_a_share,
-                    stock_name=stock_name,
-                    asset_type=str(stock.get("asset_type") or target_info.asset_type),
-                    market=str(stock.get("market") or target_info.market),
-                    ts_code=resolved_ts_code,
-                )
+                target_info = _target_from_symbol_row({**stock, "code": target_info.normalized_target}, value)
             elif _A_SHARE_BARE_RE.fullmatch(value):
                 index_matches = list_index_symbol_matches_for_bare_code(value)
                 if index_matches:
@@ -270,12 +296,6 @@ def _technical_analysis_target_from_input(target: str) -> tuple[TechnicalAnalysi
                         TechnicalAnalysisTarget(),
                         ErrorCode.STOCK_NOT_FOUND,
                         _bare_code_index_suggestion_detail(value, index_matches),
-                    )
-                if not allow_unresolved_bare_code_analysis():
-                    return (
-                        TechnicalAnalysisTarget(),
-                        ErrorCode.STOCK_NOT_FOUND,
-                        _unknown_bare_code_detail(value),
                     )
         return target_info, None, ""
 
@@ -367,6 +387,15 @@ def _bare_code_ambiguous_detail(value: str, matches: list[dict[str, str]]) -> st
     )
 
 
+def _bare_code_candidates_detail(value: str, matches: list[dict[str, str]]) -> str:
+    bare_code = str(value or "").strip()
+    return format_reply_text(
+        "reply.technical_analysis.bare_code_candidates",
+        target=bare_code,
+        candidate_list=_candidate_list(matches, _asset_candidate_label),
+    )
+
+
 def _asset_candidate_label(row: dict[str, str]) -> str:
     code = str(row.get("code") or "").strip()
     name = str(row.get("name") or "").strip()
@@ -404,6 +433,7 @@ def _is_user_facing_resolution_detail(detail: str) -> bool:
     return (
         (text.startswith("未找到 ") and ("请发送" in text or "请点击" in text or "重新发送" in text or "请检查代码" in text))
         or (text.startswith("代码 ") and "匹配到多个标的" in text and ("重新发送" in text or "请点击" in text))
+        or (text.startswith("代码 ") and "未匹配到 A 股" in text and "请点击" in text)
         or (text.startswith("股票名称") and "匹配到多个标的" in text and ("重新发送" in text or "请点击" in text))
     )
 
@@ -550,16 +580,20 @@ def _run_skill_for_target(target_info: TechnicalAnalysisTarget, output_dir: Path
 
 def _classify_technical_analysis_failure(detail: str) -> ErrorCode:
     text = str(detail or "")
+    lowered = text.lower()
+    if "超过最大允许滞后" in text or "不在交易日历允许范围" in text:
+        return ErrorCode.MARKET_DATA_STALE
+    if "数据量不足" in text:
+        return ErrorCode.MARKET_HISTORY_INSUFFICIENT
     data_failure_markers = (
         "所有数据源失败",
         "所有数据源均失败",
-        "数据量不足",
         "无 symbol_code",
         "未配置 TUSHARE_TOKEN",
         "no data",
         "empty data",
     )
-    if any(marker.lower() in text.lower() for marker in data_failure_markers):
+    if any(marker.lower() in lowered for marker in data_failure_markers):
         return ErrorCode.MARKET_DATA_UNAVAILABLE
     return ErrorCode.TECHNICAL_ANALYSIS_FAILED
 
@@ -988,23 +1022,24 @@ def prepare_technical_analysis_cache_context(
         return TechnicalAnalysisCacheContext()
     program_version, ta_version, renderer_version, template_version = _versions()
     combined_version = _cache_version_fingerprint(ta_version, renderer_version, template_version)
-    cached = _find_latest_current_cache_entry(
-        symbol=symbol,
-        version_fingerprint=combined_version,
-    )
-    if cached is not None:
-        return TechnicalAnalysisCacheContext(
-            normalized_target=symbol,
-            market_date=cached.market_date,
-            program_version=program_version,
-            ta_version=ta_version,
-            renderer_version=renderer_version,
-            template_version=template_version,
+    if not technical_analysis_cache_update_probe_allowed_for_symbol(symbol):
+        cached = _find_latest_current_cache_entry(
+            symbol=symbol,
             version_fingerprint=combined_version,
-            cache_lookup_version_fingerprint=cached.version_fingerprint,
-            cache_key=cached.cache_key,
-            resolved_market_date=MarketDateResolution(),
         )
+        if cached is not None:
+            return TechnicalAnalysisCacheContext(
+                normalized_target=symbol,
+                market_date=cached.market_date,
+                program_version=program_version,
+                ta_version=ta_version,
+                renderer_version=renderer_version,
+                template_version=template_version,
+                version_fingerprint=combined_version,
+                cache_lookup_version_fingerprint=cached.version_fingerprint,
+                cache_key=cached.cache_key,
+                resolved_market_date=MarketDateResolution(),
+            )
     resolved_market_date = _resolve_market_date(target_info, "")
     if resolved_market_date.known and resolved_market_date.market_date:
         cached = find_cache_entry(

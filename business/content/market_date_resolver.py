@@ -15,6 +15,7 @@ from business.market.provider_adapter import (
     to_baostock_symbol,
     to_tushare_symbol,
 )
+from business.market.akshare_process_pool import call_akshare
 from business.market.trading_calendar import trading_calendar_from_config
 
 
@@ -57,7 +58,7 @@ class MarketDateResolver:
                     stale_candidates.append(resolution)
             if candidates:
                 return max(candidates, key=lambda candidate: candidate.market_date)
-            stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar)
+            stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar, asset_type=target.asset_type)
             return max(stale_candidates, key=lambda candidate: candidate.market_date) if stale_candidates else MarketDateResolution()
         stale_candidates = []
         for source_name, market_date in source_results:
@@ -66,7 +67,7 @@ class MarketDateResolver:
             if calendar.accept_market_date(market_date, asset_type=target.asset_type):
                 return MarketDateResolution(market_date=market_date, known=True, source=source_name)
             stale_candidates.append(MarketDateResolution(market_date=market_date, known=True, source=source_name))
-        stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar)
+        stale_candidates = _filter_stale_candidates_with_calendar(stale_candidates, calendar, asset_type=target.asset_type)
         return max(stale_candidates, key=lambda candidate: candidate.market_date) if stale_candidates else MarketDateResolution()
 
     def _latest_from_tushare(self, symbol: str) -> str:
@@ -120,23 +121,23 @@ class MarketDateResolver:
                 pass
 
     def _latest_from_akshare(self, symbol: str) -> str:
-        akshare = importlib.import_module("akshare")
         target = classify_asset_target(symbol)
         akshare_symbol = to_akshare_symbol(target)
+        timeout = _probe_timeout_seconds()
         if target.asset_type == "index":
-            frame = akshare.stock_zh_index_daily(symbol=akshare_symbol)
+            frame = call_akshare("stock_zh_index_daily", symbol=akshare_symbol, timeout=timeout)
         elif target.asset_type == "etf":
-            frame = akshare.fund_etf_hist_sina(symbol=akshare_symbol)
+            frame = call_akshare("fund_etf_hist_sina", symbol=akshare_symbol, timeout=timeout)
         elif target.asset_type == "convertible_bond":
-            frame = akshare.bond_zh_hs_cov_daily(symbol=akshare_symbol)
+            frame = call_akshare("bond_zh_hs_cov_daily", symbol=akshare_symbol, timeout=timeout)
         elif target.asset_type == "futures":
-            frame = akshare.futures_zh_daily_sina(symbol=akshare_symbol)
+            frame = call_akshare("futures_zh_daily_sina", symbol=akshare_symbol, timeout=timeout)
         elif target.asset_type == "hk_stock":
-            frame = akshare.stock_hk_daily(symbol=akshare_symbol)
+            frame = call_akshare("stock_hk_daily", symbol=akshare_symbol, timeout=timeout)
         elif target.asset_type == "us_stock":
-            frame = akshare.stock_us_daily(symbol=akshare_symbol)
+            frame = call_akshare("stock_us_daily", symbol=akshare_symbol, timeout=timeout)
         else:
-            frame = akshare.stock_zh_a_hist(symbol=akshare_symbol, period="daily", adjust="")
+            frame = call_akshare("stock_zh_a_hist", symbol=akshare_symbol, period="daily", adjust="", timeout=timeout)
         return _latest_date_from_records(_records_from_frame(frame), ("日期", "date", "trade_date"))
 
 
@@ -276,11 +277,24 @@ def normalize_market_date(value: Any) -> str:
     return normalized
 
 
-def _filter_stale_candidates_with_calendar(candidates: list[MarketDateResolution], calendar: Any) -> list[MarketDateResolution]:
+def _filter_stale_candidates_with_calendar(
+    candidates: list[MarketDateResolution],
+    calendar: Any,
+    *,
+    asset_type: str = "",
+) -> list[MarketDateResolution]:
     accept_stale = getattr(calendar, "accept_stale_market_date", None)
     if not callable(accept_stale):
         return candidates
-    return [candidate for candidate in candidates if accept_stale(candidate.market_date)]
+    accepted = []
+    for candidate in candidates:
+        try:
+            keep = accept_stale(candidate.market_date, asset_type=asset_type)
+        except TypeError:
+            keep = accept_stale(candidate.market_date)
+        if keep:
+            accepted.append(candidate)
+    return accepted
 
 
 _normalize_date = normalize_market_date

@@ -884,3 +884,67 @@ def test_v02_provider_symbol_plan_normalizes_prefixed_index_for_tushare():
 
     assert plan["tushare_api"] == "index_daily"
     assert plan["tushare_symbol"] == "000300.SH"
+
+
+def test_v02_akshare_fetch_uses_fast_timeout_when_fallback_source_available(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def fake_call_akshare(function_name, **kwargs):
+        calls.append((function_name, kwargs))
+        return pd.DataFrame(
+            {
+                "date": ["2026-07-02"],
+                "open": [1],
+                "high": [1],
+                "low": [1],
+                "close": [1],
+                "volume": [1],
+            }
+        )
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    monkeypatch.setattr(module, "call_akshare", fake_call_akshare)
+
+    config = module._config_with_akshare_timeout(
+        module._dynamic_config("600519", asset_type="a_share", market="SH", ts_code="600519.SH"),
+        symbol_code="600519",
+    )
+    module._fetch_akshare_main(config)
+
+    assert calls == [
+        (
+            "stock_zh_a_hist",
+            {"symbol": "600519", "period": "daily", "adjust": "qfq", "timeout": 5},
+        )
+    ]
+
+
+def test_v02_akshare_fetch_keeps_default_timeout_without_fallback_source(monkeypatch):
+    module = _load_v02_skill_module()
+    calls = []
+
+    def fake_call_akshare(function_name, **kwargs):
+        calls.append((function_name, kwargs))
+        return pd.DataFrame(
+            {
+                "date": ["2026-07-02"],
+                "open": [1],
+                "high": [1],
+                "low": [1],
+                "close": [1],
+                "volume": [1],
+            }
+        )
+
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setattr(module.os.path, "exists", lambda _path: False)
+    monkeypatch.setattr(module, "call_akshare", fake_call_akshare)
+
+    config = module._config_with_akshare_timeout(
+        module._dynamic_config("T0", asset_type="futures", market="CFFEX", ts_code="T0"),
+        symbol_code="T0",
+    )
+    module._fetch_akshare_main(config)
+
+    assert calls == [("futures_zh_daily_sina", {"symbol": "T0"})]

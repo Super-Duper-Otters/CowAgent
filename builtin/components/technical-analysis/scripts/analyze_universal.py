@@ -49,6 +49,7 @@ sys.path.insert(0, SCRIPT_DIR)
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', '..', '..'))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+from business.market.akshare_process_pool import call_akshare
 
 # ==================== 预设标的配置 ====================
 
@@ -162,6 +163,7 @@ PRESET_CONFIGS = {
 
 # 默认配置
 DEFAULT_CONFIG = 'T0'
+AKSHARE_FAST_FALLBACK_TIMEOUT_SECONDS = 5
 
 
 # ==================== 数据获取（多源自动切换） ====================
@@ -197,13 +199,13 @@ def _normalize_columns(df):
 
 def _fetch_akshare_main(config):
     """数据源 1: AKShare 主接口"""
-    import akshare as ak
     func_name = config['data_func']
     args = config['data_args'].copy()
-    if not hasattr(ak, func_name):
-        raise ValueError(f"AKShare 无此接口: {func_name}")
-    func = getattr(ak, func_name)
-    df = func(**args)
+    timeout = config.get('akshare_timeout_seconds')
+    if timeout is None:
+        df = call_akshare(func_name, **args)
+    else:
+        df = call_akshare(func_name, timeout=timeout, **args)
     normalized_columns = [str(c).lower().strip() for c in df.columns]
     if 'open' in normalized_columns:
         col_map = {c: str(c).lower().strip() for c in df.columns}
@@ -388,6 +390,24 @@ def _load_tushare_token():
     return tushare_token
 
 
+def _akshare_timeout_for_fallback_context(config, symbol_code=None):
+    plan = _provider_symbol_plan(config, symbol_code=symbol_code)
+    tushare_available = bool(_load_tushare_token() and plan.get('tushare_symbol'))
+    baostock_available = bool(plan.get('baostock_symbol'))
+    if tushare_available or baostock_available:
+        return AKSHARE_FAST_FALLBACK_TIMEOUT_SECONDS
+    return None
+
+
+def _config_with_akshare_timeout(config, symbol_code=None):
+    timeout = _akshare_timeout_for_fallback_context(config, symbol_code=symbol_code)
+    if timeout is None:
+        return config
+    patched = dict(config or {})
+    patched['akshare_timeout_seconds'] = timeout
+    return patched
+
+
 def _prepare_source_frame(df):
     df = _normalize_columns(df)
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -484,9 +504,8 @@ def _fetch_data_ranked_by_latest_date(config, symbol_code=None):
         print(f"  数据量不足: {len(df)} < 60")
 
     try:
-        import akshare as ak
         print(f"[数据源1/3] AKShare: {config['data_func']} ...")
-        add_candidate("AKShare", _fetch_akshare_main(config))
+        add_candidate("AKShare", _fetch_akshare_main(_config_with_akshare_timeout(config, symbol_code=symbol_code)))
     except Exception as e:
         errors.append(f"AKShare: {e}")
         print(f"  失败: {e}")
@@ -601,9 +620,8 @@ def fetch_data(config, symbol_code=None):
 
     # --- 源 1: AKShare 主接口 ---
     try:
-        import akshare as ak
         print(f"[数据源1/3] AKShare: {config['data_func']} ...")
-        df = _fetch_akshare_main(config)
+        df = _fetch_akshare_main(_config_with_akshare_timeout(config, symbol_code=symbol_code))
         accepted = accept_or_continue("AKShare", df)
         if accepted is not None:
             return accepted

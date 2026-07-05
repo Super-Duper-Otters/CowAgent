@@ -9,6 +9,7 @@ from business.market.provider_adapter import classify_asset_target
 
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+MAINLAND_PROBE_MARKETS = {"a_share", "index", "etf", "convertible_bond", "futures"}
 TECHNICAL_ANALYSIS_PROBE_START = time(15, 30)
 TECHNICAL_ANALYSIS_PROBE_END = time(18, 0)
 TECHNICAL_ANALYSIS_AFTER_CLOSE_CUTOFF = time(17, 30)
@@ -144,9 +145,32 @@ def _probe_allowed(now: datetime) -> bool:
     return _configured_probe_start_time() <= now.time() <= _configured_probe_end_time()
 
 
+def _probe_allowed_for_market(asset_type: str, now: datetime) -> bool:
+    if not _probe_allowed(now):
+        return False
+    market = str(asset_type or "").strip().lower()
+    if market not in MAINLAND_PROBE_MARKETS:
+        return True
+    try:
+        from business.market.trading_calendar import trading_calendar_from_config
+
+        calendar = trading_calendar_from_config()
+        return calendar.is_trading_day(now=now, asset_type=market)
+    except Exception:
+        return True
+
+
 def technical_analysis_cache_update_probe_allowed(now: datetime | str | None = None) -> bool:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
     return _probe_allowed(current)
+
+
+def technical_analysis_cache_update_probe_allowed_for_symbol(
+    symbol: str,
+    now: datetime | str | None = None,
+) -> bool:
+    current = _as_beijing_datetime(now) if now is not None else beijing_now()
+    return _probe_allowed_for_market(market_from_symbol(symbol), current)
 
 
 def probe_symbols() -> list[dict]:
@@ -208,9 +232,9 @@ def _probe_market_date(asset_type: str, symbol: str, current: datetime, *, force
 
 def latest_market_date_for_symbol(symbol: str, now: datetime | str | None = None) -> str:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
-    if not _probe_allowed(current):
-        return ""
     market = market_from_symbol(symbol)
+    if not _probe_allowed_for_market(market, current):
+        return ""
     probe_symbol = MARKET_PROBE_SYMBOLS.get(market)
     if not probe_symbol:
         return ""
@@ -221,6 +245,37 @@ def cached_latest_market_date_for_symbol(symbol: str) -> str:
     market = market_from_symbol(symbol)
     cached = _MARKET_UPDATE_PROBE_CACHE.get(market) if market else None
     return str((cached or {}).get("market_date") or "")
+
+
+def _probe_missing_latest_market_date_for_symbol(symbol: str, current: datetime) -> str:
+    market = market_from_symbol(symbol)
+    if not market or not _probe_allowed_for_market(market, current):
+        return ""
+    probe_symbol = MARKET_PROBE_SYMBOLS.get(market)
+    if not probe_symbol:
+        return ""
+    return str(_probe_market_date(market, probe_symbol, current).get("market_date") or "")
+
+
+def _asset_source_lags_expected_market_date(
+    asset_type: str,
+    observed_market_date: str,
+    current: datetime,
+) -> bool:
+    market = str(asset_type or "").strip().lower()
+    observed = str(observed_market_date or "").strip()
+    if not observed or market not in MAINLAND_PROBE_MARKETS:
+        return False
+    try:
+        from business.market.trading_calendar import trading_calendar_from_config
+
+        calendar = trading_calendar_from_config()
+        if not calendar.is_trading_day(now=current, asset_type=market):
+            return False
+        expected = str(calendar.expected_market_date(now=current) or "")
+    except Exception:
+        return False
+    return bool(expected and observed < expected)
 
 
 def probe_market_update_dates(now: datetime | str | None = None, *, force: bool = False) -> dict:
@@ -242,7 +297,19 @@ def probe_market_update_dates(now: datetime | str | None = None, *, force: bool 
         ]
     else:
         targets = [
-            {**target, **_probe_market_date(target["asset_type"], target["symbol"], current, force=force)}
+            (
+                {**target, **_probe_market_date(target["asset_type"], target["symbol"], current, force=force)}
+                if force or _probe_allowed_for_market(target["asset_type"], current)
+                else {
+                    **target,
+                    "market_date": "",
+                    "known": False,
+                    "source": "",
+                    "checked_at": "",
+                    "cached": False,
+                    "error": "non-trading day",
+                }
+            )
             for target in probe_symbols()
         ]
     latest = max((target.get("market_date") or "" for target in targets), default="")
@@ -297,12 +364,24 @@ def technical_analysis_cache_expired_after_close(
     normalized_target: str = "",
 ) -> bool:
     current = _as_beijing_datetime(now) if now is not None else beijing_now()
+    market = market_from_symbol(normalized_target) if normalized_target else ""
     latest_market_date = cached_latest_market_date_for_symbol(normalized_target) if normalized_target else ""
     if latest_market_date and str(market_date or "") < latest_market_date:
         return True
     cutoff = datetime.combine(current.date(), _configured_close_invalidate_time(), tzinfo=BEIJING_TZ)
     if current < cutoff:
         return False
+    if not latest_market_date and normalized_target:
+        latest_market_date = _probe_missing_latest_market_date_for_symbol(normalized_target, current)
+        if latest_market_date and str(market_date or "") < latest_market_date:
+            return True
+    if (
+        latest_market_date
+        and str(market_date or "") <= latest_market_date
+        and _as_beijing_datetime(updated_at) < cutoff
+        and _asset_source_lags_expected_market_date(market, latest_market_date, current)
+    ):
+        return True
     if str(market_date or "") != current.date().isoformat():
         return False
     return _as_beijing_datetime(updated_at) < cutoff

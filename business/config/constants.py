@@ -81,6 +81,8 @@ class ErrorCode(StrEnum):
     STOCK_NOT_FOUND = "stock_not_found"
     STOCK_AMBIGUOUS = "stock_ambiguous"
     MARKET_DATA_UNAVAILABLE = "market_data_unavailable"
+    MARKET_HISTORY_INSUFFICIENT = "market_history_insufficient"
+    MARKET_DATA_STALE = "market_data_stale"
     TECHNICAL_ANALYSIS_FAILED = "technical_analysis_failed"
     IMAGE_GENERATION_FAILED = "image_generation_failed"
     NO_CONTENT = "no_content"
@@ -100,7 +102,9 @@ USER_MESSAGES = {
     ErrorCode.RUNNING: "正在运行，请稍候。",
     ErrorCode.STOCK_NOT_FOUND: "未匹配到该标的，请使用完整代码重试，例如 #300502.SZ。",
     ErrorCode.STOCK_AMBIGUOUS: "匹配到多个标的，请点击候选项或改用完整代码。",
-    ErrorCode.MARKET_DATA_UNAVAILABLE: "暂未获取到该标的行情数据，请检查代码或稍后重试。",
+    ErrorCode.MARKET_DATA_UNAVAILABLE: "行情数据暂时不可用，请稍后重试。",
+    ErrorCode.MARKET_HISTORY_INSUFFICIENT: "该标的近期行情数据暂不完整，暂无法生成技术分析，请更换标的或稍后重试。",
+    ErrorCode.MARKET_DATA_STALE: "该标的行情数据近期未更新，暂无法生成技术分析，请更换标的或稍后重试。",
     ErrorCode.TECHNICAL_ANALYSIS_FAILED: "分析生成失败，请稍后重试或联系服务人员。",
     ErrorCode.IMAGE_GENERATION_FAILED: "图片生成失败，请稍后重试或联系服务人员。",
     ErrorCode.NO_CONTENT: "今日内容尚未更新，请稍后再试。",
@@ -116,6 +120,8 @@ USER_MESSAGE_CONFIG_KEYS = {
     ErrorCode.STOCK_NOT_FOUND: "reply.investment.stock_not_found",
     ErrorCode.STOCK_AMBIGUOUS: "reply.investment.stock_ambiguous",
     ErrorCode.MARKET_DATA_UNAVAILABLE: "reply.investment.market_data_unavailable",
+    ErrorCode.MARKET_HISTORY_INSUFFICIENT: "reply.investment.market_history_insufficient",
+    ErrorCode.MARKET_DATA_STALE: "reply.investment.market_data_stale",
     ErrorCode.TECHNICAL_ANALYSIS_FAILED: "reply.investment.technical_analysis_failed",
     ErrorCode.IMAGE_GENERATION_FAILED: "reply.investment.image_generation_failed",
     ErrorCode.NO_CONTENT: "reply.investment.no_content",

@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select, text
 
 from business.config.constants import ErrorCode
 from business.config.config_service import get_config, mask_sensitive_value
+from business.market.akshare_process_pool import call_akshare
 from business.schema.db import connect, row_to_dict, upsert_stock_symbols
 from business.schema.tables import investment_stock_symbols
 
@@ -155,8 +156,16 @@ def _tushare_client():
     return tushare.pro_api(token)
 
 
+class _AkShareProcessClient:
+    def __getattr__(self, function_name: str):
+        def _call(*args: Any, **kwargs: Any) -> Any:
+            return call_akshare(function_name, *args, **kwargs)
+
+        return _call
+
+
 def _akshare_client():
-    return importlib.import_module("akshare")
+    return _AkShareProcessClient()
 
 
 def _records_from_frame(frame: Any) -> list[dict[str, Any]]:

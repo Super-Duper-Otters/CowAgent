@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from business.config.config_service import get_config
+from business.market.akshare_process_pool import call_akshare
 
 
 TRADING_CALENDAR_ENABLED_KEY = "investment.trading_calendar.enabled"
@@ -16,6 +17,7 @@ TRADING_CALENDAR_MARKET_DATA_READY_TIME_KEY = "investment.trading_calendar.marke
 TRADING_CALENDAR_CACHE_DAYS_KEY = "investment.trading_calendar.cache_days"
 TRADING_CALENDAR_MAX_LAG_KEY = "investment.trading_calendar.max_lag_trade_days"
 TRADING_CALENDAR_MAX_STALE_DAYS_KEY = "investment.trading_calendar.max_stale_market_days"
+MAINLAND_TRADING_CALENDAR_ASSET_TYPES = {"a_share", "index", "etf", "convertible_bond", "futures"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,8 @@ class TradingCalendar:
     ) -> bool:
         if not self.enabled:
             return True
+        if not self.applies_to_asset_type(asset_type):
+            return True
         normalized = _normalize_date(market_date)
         if not normalized:
             return False
@@ -63,7 +67,16 @@ class TradingCalendar:
             return True
         return normalized in set(accepted_dates)
 
-    def accept_stale_market_date(self, market_date: str, *, today: date | None = None, now: datetime | None = None) -> bool:
+    def accept_stale_market_date(
+        self,
+        market_date: str,
+        *,
+        today: date | None = None,
+        now: datetime | None = None,
+        asset_type: str = "",
+    ) -> bool:
+        if not self.applies_to_asset_type(asset_type):
+            return True
         normalized = _normalize_date(market_date)
         if not normalized:
             return False
@@ -90,8 +103,30 @@ class TradingCalendar:
         accepted_from = max(0, expected_index - max(0, int(self.max_lag_trade_days)))
         return trade_dates[accepted_from : expected_index + 1]
 
-    def refresh(self, *, today: date | None = None) -> dict[str, Any]:
-        current = today or date.today()
+    def applies_to_asset_type(self, asset_type: str) -> bool:
+        if not str(asset_type or "").strip():
+            return True
+        return str(asset_type or "").strip().lower() in MAINLAND_TRADING_CALENDAR_ASSET_TYPES
+
+    def is_trading_day(
+        self,
+        *,
+        today: date | None = None,
+        now: datetime | None = None,
+        asset_type: str = "",
+    ) -> bool:
+        if not self.enabled:
+            return True
+        if not self.applies_to_asset_type(asset_type):
+            return True
+        current = today or (now.date() if now is not None else date.today())
+        trade_dates = self._trade_dates(today=today, now=now)
+        if not trade_dates:
+            return True
+        return current.isoformat() in set(trade_dates)
+
+    def refresh(self, *, today: date | None = None, now: datetime | None = None) -> dict[str, Any]:
+        current = today or (now.date() if now is not None else date.today())
         start = date(current.year, 1, 1)
         # Include the previous year tail so early-January runs can still find
         # the previous trading day without a second provider call.
@@ -153,7 +188,7 @@ class TradingCalendar:
         payload = self._read_cache()
         if self._should_refresh(payload, now=now):
             try:
-                payload = self.refresh(today=today)
+                payload = self.refresh(today=today, now=now)
             except Exception:
                 if not payload:
                     return []
@@ -163,10 +198,11 @@ class TradingCalendar:
     def _should_refresh(self, payload: dict[str, Any], *, now: datetime | None = None) -> bool:
         if not payload.get("trade_dates"):
             return True
-        current = now or datetime.now()
+        current = _naive_datetime(now or datetime.now())
         refreshed = _parse_datetime(payload.get("refreshed_at"))
         if refreshed is None:
             return True
+        refreshed = _naive_datetime(refreshed)
         if current - refreshed > timedelta(days=max(1, int(self.cache_days))):
             return True
         refresh_at = _parse_time(self.refresh_time)
@@ -291,8 +327,7 @@ def _load_tushare_calendar(start: date, end: date) -> list[str]:
 
 
 def _load_akshare_calendar(start: date, end: date) -> list[str]:
-    akshare = importlib.import_module("akshare")
-    frame = akshare.tool_trade_date_hist_sina()
+    frame = call_akshare("tool_trade_date_hist_sina")
     dates = _dates_from_frame(frame, ("trade_date", "date", "日期"))
     return [item for item in dates if start.isoformat() <= item <= end.isoformat()]
 
@@ -332,6 +367,12 @@ def _parse_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(str(value or ""))
     except ValueError:
         return None
+
+
+def _naive_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.replace(tzinfo=None)
 
 
 def _parse_time(value: Any) -> time:

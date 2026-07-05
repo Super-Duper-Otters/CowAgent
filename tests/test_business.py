@@ -10358,7 +10358,7 @@ def test_technical_analysis_subprocess_failure_is_recorded_but_not_sent_to_custo
     assert "analyze_universal.py" in record.error_message
 
 
-def test_technical_analysis_data_source_failure_uses_market_data_prompt(business_env, tmp_path, monkeypatch):
+def test_technical_analysis_history_insufficient_uses_cannot_generate_prompt(business_env, tmp_path, monkeypatch):
     import subprocess
 
     from business.config.constants import ErrorCode, user_message
@@ -10386,9 +10386,75 @@ def test_technical_analysis_data_source_failure_uses_market_data_prompt(business
     result = technical_analysis.run_technical_analysis("ok", "FOO 技术分析")
 
     assert result.success is False
+    assert result.error_code == ErrorCode.MARKET_HISTORY_INSUFFICIENT
+    assert result.user_prompt == user_message(ErrorCode.MARKET_HISTORY_INSUFFICIENT)
+    assert "所有数据源失败" in result.detail
+
+
+def test_technical_analysis_stale_market_data_uses_cannot_generate_prompt(business_env, tmp_path, monkeypatch):
+    import subprocess
+
+    from business.config.constants import ErrorCode, user_message
+    from business.content import technical_analysis as technical_analysis
+
+    command = ["python", "analyze_universal.py", "--symbol", "OLD"]
+
+    def fake_run(_command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="所有数据源均失败，错误详情：\nTushare: 最新日期 2024-01-08 超过最大允许滞后 15 天",
+            stderr="RuntimeError: 所有数据源失败",
+        )
+
+    monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: SimpleNamespace(known=False, market_date="", source=""),
+    )
+    monkeypatch.setattr(technical_analysis, "get_config", lambda _key: str(tmp_path) if _key == "technical_analysis.output_dir" else "")
+
+    result = technical_analysis.run_technical_analysis("ok", "OLD 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.MARKET_DATA_STALE
+    assert result.user_prompt == user_message(ErrorCode.MARKET_DATA_STALE)
+    assert "超过最大允许滞后" in result.detail
+
+
+def test_technical_analysis_data_source_failure_uses_market_data_error_prompt(business_env, tmp_path, monkeypatch):
+    import subprocess
+
+    from business.config.constants import ErrorCode, user_message
+    from business.content import technical_analysis as technical_analysis
+
+    command = ["python", "analyze_universal.py", "--symbol", "FOO"]
+
+    def fake_run(_command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="所有数据源均失败，错误详情：\nAKShare: connection timeout",
+            stderr="RuntimeError: 所有数据源失败",
+        )
+
+    monkeypatch.setattr(technical_analysis.subprocess, "run", fake_run)
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: SimpleNamespace(known=False, market_date="", source=""),
+    )
+    monkeypatch.setattr(technical_analysis, "get_config", lambda _key: str(tmp_path) if _key == "technical_analysis.output_dir" else "")
+
+    result = technical_analysis.run_technical_analysis("ok", "FOO 技术分析")
+
+    assert result.success is False
     assert result.error_code == ErrorCode.MARKET_DATA_UNAVAILABLE
     assert result.user_prompt == user_message(ErrorCode.MARKET_DATA_UNAVAILABLE)
-    assert "所有数据源失败" in result.detail
+    assert "connection timeout" in result.detail
 
 
 def test_command_script_component_failure_hides_backend_detail_from_customer_reply(business_env, monkeypatch):
@@ -10952,7 +11018,7 @@ def test_stock_resolver_lists_bare_code_symbol_conflicts(business_env):
     ]
 
 
-def test_technical_analysis_bare_code_with_stock_and_index_conflict_requires_full_code(
+def test_technical_analysis_bare_code_with_stock_and_index_conflict_requires_confirmation(
     business_env, monkeypatch
 ):
     from business.config.constants import ErrorCode
@@ -10986,7 +11052,7 @@ def test_technical_analysis_bare_code_with_stock_and_index_conflict_requires_ful
     assert result.detail == result.user_prompt
 
 
-def test_technical_analysis_bare_code_conflict_lists_all_candidates_as_wechat_links(
+def test_technical_analysis_bare_code_without_a_share_lists_all_candidates_as_wechat_links(
     business_env, monkeypatch
 ):
     from business.config.constants import ErrorCode
@@ -10999,10 +11065,10 @@ def test_technical_analysis_bare_code_conflict_lists_all_candidates_as_wechat_li
     save_config("skill.technical-analysis.match_type", "prefix", operator_role="admin", operator="pytest")
     refresh_stock_symbols(
         [
-            {"code": "000001.SZ", "name": "平安银行", "market": "SZ", "asset_type": "a_share", "source": "tushare_a"},
             {"code": "sh000001", "name": "上证指数", "market": "SH", "asset_type": "index", "source": "tushare_index"},
+            {"code": "000001.CSI", "name": "中证样例", "market": "CSI", "asset_type": "index", "source": "tushare_index"},
         ],
-        source="tushare_a",
+        source="tushare_index",
     )
     monkeypatch.setattr(
         technical_analysis,
@@ -11014,9 +11080,45 @@ def test_technical_analysis_bare_code_conflict_lists_all_candidates_as_wechat_li
 
     assert result.success is False
     assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
-    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23000001.SZ&msgmenuid=ta_000001_SZ"' in result.user_prompt
     assert 'href="weixin://bizmsgmenu?msgmenucontent=%23sh000001&msgmenuid=ta_sh000001"' in result.user_prompt
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=%23000001.CSI&msgmenuid=ta_000001_CSI"' in result.user_prompt
     assert "例如：" not in result.user_prompt
+
+
+def test_technical_analysis_bare_code_single_non_a_share_dictionary_match_returns_candidate(
+    business_env, monkeypatch
+):
+    from business.config.constants import ErrorCode
+    from business.content import technical_analysis as technical_analysis
+    from business.content.stock_resolver import refresh_stock_symbols
+    from business.content.technical_analysis import run_technical_analysis
+
+    refresh_stock_symbols(
+        [
+            {
+                "code": "510300.SH",
+                "name": "沪深300ETF",
+                "market": "SH",
+                "asset_type": "etf",
+                "source": "akshare_etf",
+                "ts_code": "510300.SH",
+            }
+        ],
+        source="akshare_etf",
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_run_skill",
+        lambda *_args, **_kwargs: pytest.fail("bare code with a dictionary ETF candidate must not enter skill as A-share"),
+    )
+
+    result = run_technical_analysis("ok", "510300 技术分析")
+
+    assert result.success is False
+    assert result.error_code == ErrorCode.STOCK_AMBIGUOUS
+    assert "代码 510300 未匹配到 A 股。若您要分析以下标的，请点击候选项：" in result.user_prompt
+    assert 'href="weixin://bizmsgmenu?msgmenucontent=510300.SH%20%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90&msgmenuid=ta_510300_SH"' in result.user_prompt
+    assert "510300.SH 沪深300ETF（ETF）</a>" in result.user_prompt
 
 
 def test_technical_analysis_validation_returns_bare_code_index_suggestion(
@@ -11119,12 +11221,11 @@ def test_technical_analysis_ambiguous_name_lists_candidate_codes_as_wechat_links
     assert "例如：" not in result.user_prompt
 
 
-def test_technical_analysis_router_respects_unknown_bare_code_guard_switch(
+def test_technical_analysis_router_allows_unknown_bare_code_dynamic_matching(
     business_env, tmp_path, monkeypatch
 ):
     from business.accounts.user_service import create_user
-    from business.config.config_service import save_config
-    from business.config.constants import ErrorCode, ServiceType
+    from business.config.constants import ServiceType
     from business.routing.router import handle_text_message
 
     create_user("ok", enabled=True, allowed_services=[ServiceType.ALL])
@@ -11150,40 +11251,44 @@ def test_technical_analysis_router_respects_unknown_bare_code_guard_switch(
 
     monkeypatch.setattr("business.content.technical_analysis.render_technical_analysis_card", fake_render)
 
-    blocked = handle_text_message("ok", "123456 技术分析")
-
-    assert blocked.success is False
-    assert blocked.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert blocked.reply_text == "未找到 123456 对应的个股或指数，请检查代码。"
-    assert calls == []
-
-    save_config("technical_analysis.allow_unresolved_bare_code_analysis", True, operator_role="admin")
     allowed = handle_text_message("ok", "123456 技术分析")
 
     assert allowed.success is True
     assert calls == [("123456", {"name": "", "asset_type": "a_share", "market": "SZ", "ts_code": "123456.SZ"})]
 
 
-def test_technical_analysis_unknown_bare_code_fails_before_skill_by_default(
+def test_technical_analysis_unknown_bare_code_enters_skill_dynamic_matching_by_default(
     business_env, monkeypatch
 ):
-    from business.config.constants import ErrorCode
     from business.content import technical_analysis as technical_analysis
     from business.content.technical_analysis import run_technical_analysis
 
+    report = business_env / "123456_技术分析报告_2026-05-25.md"
+    chart = business_env / "123456_TA_2026-05-25.png"
+    report.write_text("行情日期：2026-05-25", encoding="utf-8")
+    chart.write_bytes(b"chart")
+    calls = []
+
+    def fake_skill(symbol, _output_dir, **kwargs):
+        calls.append((symbol, kwargs))
+        return report, chart
+
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
     monkeypatch.setattr(
         technical_analysis,
-        "_run_skill",
-        lambda *_args, **_kwargs: pytest.fail("unknown bare code must not enter skill when guard is enabled"),
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="行情日期：2026-05-25\nstandard"),
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "render_technical_analysis_card",
+        lambda _standard_text, output_path: (Path(output_path).write_bytes(b"card"), SimpleNamespace(success=True, image_path=str(output_path), detail=""))[1],
     )
 
     result = run_technical_analysis("ok", "123456 技术分析")
 
-    assert result.success is False
-    assert result.error_code == ErrorCode.STOCK_NOT_FOUND
-    assert "未找到 123456 对应的个股或指数，请检查代码" in result.user_prompt
-    assert "weixin://bizmsgmenu" in result.user_prompt
-    assert result.detail == result.user_prompt
+    assert result.success is True, (result.error_code, result.detail, result.user_prompt)
+    assert calls == [("123456", {"name": "", "asset_type": "a_share", "market": "SZ", "ts_code": "123456.SZ"})]
 
 
 def test_technical_analysis_unknown_bare_code_can_enter_skill_when_enabled(
@@ -11668,6 +11773,33 @@ def test_prepare_technical_analysis_context_keeps_empty_cache_key_when_market_da
     assert context.cache_key == ""
     assert context.resolved_market_date.known is False
     assert len(calls) == 1
+
+
+def test_prepare_technical_analysis_context_resolves_market_date_before_latest_cache_in_probe_window(
+    business_env, monkeypatch
+):
+    from business.content import technical_analysis
+    from business.content.technical_analysis import MarketDateResolution, prepare_technical_analysis_cache_context
+
+    monkeypatch.setattr(technical_analysis, "_versions", lambda: ("program", "ta", "renderer", "template"))
+    monkeypatch.setattr(technical_analysis, "technical_analysis_cache_update_probe_allowed_for_symbol", lambda _symbol: True)
+    monkeypatch.setattr(
+        technical_analysis,
+        "_find_latest_current_cache_entry",
+        lambda **_kwargs: pytest.fail("probe window must not return latest cache before resolving market date"),
+    )
+    monkeypatch.setattr(
+        technical_analysis,
+        "_resolve_market_date",
+        lambda *_args, **_kwargs: MarketDateResolution("2026-06-15", True, "probe"),
+    )
+
+    context = prepare_technical_analysis_cache_context("#300502.SZ", "300502.SZ")
+
+    assert context.normalized_target == "300502.SZ"
+    assert context.market_date == "2026-06-15"
+    assert "2026-06-15" in context.cache_key
+    assert context.resolved_market_date.source == "probe"
 
 
 def test_technical_analysis_reuses_today_cache_before_close_cutoff(
@@ -13417,26 +13549,42 @@ def test_technical_analysis_cache_policy_keeps_non_today_market_date_after_close
     )
 
 
-def test_technical_analysis_cache_policy_keeps_market_cache_after_cutoff_without_probe_update(monkeypatch):
+def test_technical_analysis_cache_policy_probes_missing_market_state_after_cutoff(monkeypatch):
     import business.cache.cache_policy as cache_policy
 
     cache_policy.reset_market_update_probe_cache()
+    calls = []
 
-    class UnknownResolver:
-        def resolve(self, _symbol, requested_market_date=""):
-            return SimpleNamespace(market_date="", known=False)
+    class FakeCalendar:
+        enabled = True
 
-    monkeypatch.setattr(cache_policy, "MarketDateResolver", UnknownResolver)
+        def is_trading_day(self, *, now=None, asset_type=""):
+            return True
+
+        def expected_market_date(self, *, today=None, now=None):
+            return "2026-06-15"
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-14", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+    monkeypatch.setattr(
+        "business.market.trading_calendar.trading_calendar_from_config",
+        lambda: FakeCalendar(),
+    )
 
     assert (
         cache_policy.technical_analysis_cache_expired_after_close(
             "2026-06-14",
-            "2026-06-14T18:00:00+08:00",
+            "2026-06-15T16:00:00+08:00",
             now="2026-06-15T17:30:00+08:00",
-            normalized_target="600519.SH",
+            normalized_target="510300.SH",
         )
-        is False
+        is True
     )
+    assert calls == ["510300.SH"]
 
 
 def test_technical_analysis_cache_policy_keeps_market_cache_when_probe_date_not_updated(monkeypatch):
@@ -13834,6 +13982,30 @@ def test_market_date_resolver_parallel_probe_uses_fast_valid_sources_before_slow
     assert resolved.source == "tushare"
 
 
+def test_market_date_resolver_passes_probe_timeout_to_akshare_pool(monkeypatch):
+    import business.content.market_date_resolver as market_date_resolver
+    from business.content.market_date_resolver import MarketDateResolver
+
+    calls = []
+
+    def fake_call_akshare(function_name, **kwargs):
+        calls.append((function_name, kwargs))
+        return _FakeDataFrame([{"日期": "2026-07-02"}])
+
+    monkeypatch.setattr(market_date_resolver, "_probe_timeout_seconds", lambda: 0.5)
+    monkeypatch.setattr(market_date_resolver, "call_akshare", fake_call_akshare)
+    monkeypatch.setattr(
+        market_date_resolver,
+        "trading_calendar_from_config",
+        lambda: SimpleNamespace(accept_market_date=lambda *_args, **_kwargs: True),
+    )
+
+    resolved = MarketDateResolver().resolve("AAPL.US")
+
+    assert resolved.market_date == "2026-07-02"
+    assert calls == [("stock_us_daily", {"symbol": "AAPL", "timeout": 0.5})]
+
+
 def test_market_date_resolver_ranks_etf_baostock_over_akshare_during_probe_window(monkeypatch):
     import business.cache.cache_policy as cache_policy
     import business.content.market_date_resolver as market_date_resolver
@@ -13932,6 +14104,69 @@ def test_trading_calendar_accepts_only_recent_expected_market_dates(monkeypatch,
 
     assert intraday_calendar.expected_market_date(now=datetime.fromisoformat("2026-07-03T14:59:00")) == "2026-07-02"
     assert intraday_calendar.expected_market_date(now=datetime.fromisoformat("2026-07-03T15:31:00")) == "2026-07-03"
+
+
+def test_trading_calendar_applies_only_to_mainland_assets(monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from business.market import trading_calendar
+
+    monkeypatch.setattr(trading_calendar, "_load_calendar_from_sources", lambda *_args, **_kwargs: ["2026-07-02"])
+
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        cache_path=tmp_path / "trading-calendar-market-scope.json",
+        max_lag_trade_days=0,
+    )
+
+    assert calendar.is_trading_day(now=datetime(2026, 7, 3, 16, 0), asset_type="a_share") is False
+    assert calendar.is_trading_day(now=datetime(2026, 7, 3, 16, 0), asset_type="us_stock") is True
+    assert calendar.accept_market_date("2026-06-20", now=datetime(2026, 7, 3, 16, 0), asset_type="us_stock") is True
+    assert calendar.accept_market_date("2026-06-20", now=datetime(2026, 7, 3, 16, 0), asset_type="a_share") is False
+
+
+def test_trading_calendar_handles_timezone_aware_probe_datetimes(monkeypatch, tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from business.market import trading_calendar
+
+    monkeypatch.setattr(trading_calendar, "_load_calendar_from_sources", lambda *_args, **_kwargs: ["2026-07-03"])
+
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        cache_path=tmp_path / "trading-calendar-aware.json",
+        refresh_time="06:00",
+        cache_days=7,
+    )
+
+    assert calendar.expected_market_date(now=datetime(2026, 7, 5, 15, 30, tzinfo=ZoneInfo("Asia/Shanghai"))) == "2026-07-03"
+    assert calendar.is_trading_day(now=datetime(2026, 7, 5, 15, 30, tzinfo=ZoneInfo("Asia/Shanghai")), asset_type="a_share") is False
+
+
+def test_trading_calendar_refreshes_for_supplied_future_now(monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from business.market import trading_calendar
+
+    captured = []
+
+    def fake_load(start, end, _sources):
+        captured.append((start.isoformat(), end.isoformat()))
+        return ["2026-07-03", "2026-07-06"]
+
+    monkeypatch.setattr(trading_calendar, "_load_calendar_from_sources", fake_load)
+
+    calendar = trading_calendar.TradingCalendar(
+        enabled=True,
+        cache_path=tmp_path / "trading-calendar-future-now.json",
+        refresh_time="06:00",
+        cache_days=7,
+    )
+
+    assert calendar.is_trading_day(now=datetime(2026, 7, 6, 15, 30), asset_type="a_share") is True
+    assert calendar.expected_market_date(now=datetime(2026, 7, 6, 15, 30)) == "2026-07-06"
+    assert captured[-1][1] == "2026-07-06"
 
 
 def test_trading_calendar_status_reports_expected_market_date(monkeypatch, tmp_path):
@@ -14182,6 +14417,144 @@ def test_technical_analysis_cache_policy_stops_probe_after_non_trading_refresh_w
 
     assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T18:01:00+08:00") == ""
     assert calls == []
+
+
+def test_technical_analysis_cache_policy_skips_mainland_probe_on_non_trading_day(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeCalendar:
+        enabled = True
+
+        def is_trading_day(self, *, now=None, asset_type=""):
+            return False
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+    monkeypatch.setattr(
+        "business.market.trading_calendar.trading_calendar_from_config",
+        lambda: FakeCalendar(),
+    )
+
+    assert cache_policy.latest_market_date_for_symbol("600519.SH", now="2026-06-15T15:31:00+08:00") == ""
+    assert calls == []
+
+
+def test_technical_analysis_cache_policy_keeps_overseas_probe_independent_from_mainland_calendar(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+    calls = []
+
+    class FakeCalendar:
+        enabled = True
+
+        def is_trading_day(self, *, now=None, asset_type=""):
+            return False
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            calls.append(symbol)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+    monkeypatch.setattr(
+        "business.market.trading_calendar.trading_calendar_from_config",
+        lambda: FakeCalendar(),
+    )
+
+    assert cache_policy.latest_market_date_for_symbol("00700.HK", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert cache_policy.latest_market_date_for_symbol("AAPL.US", now="2026-06-15T15:31:00+08:00") == "2026-06-15"
+    assert calls == ["00700.HK", "AAPL.US"]
+
+
+def test_technical_analysis_cache_policy_expires_pre_cutoff_cache_when_asset_source_lags_expected_date(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FakeCalendar:
+        enabled = True
+
+        def is_trading_day(self, *, now=None, asset_type=""):
+            return True
+
+        def expected_market_date(self, *, today=None, now=None):
+            return "2026-06-15"
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            if symbol == "510300.SH":
+                return SimpleNamespace(market_date="2026-06-14", known=True)
+            return SimpleNamespace(market_date="2026-06-15", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+    monkeypatch.setattr(
+        "business.market.trading_calendar.trading_calendar_from_config",
+        lambda: FakeCalendar(),
+    )
+
+    assert cache_policy.latest_market_date_for_symbol("510300.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-14"
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-15T16:00:00+08:00",
+            now="2026-06-15T17:30:00+08:00",
+            normalized_target="510300.SH",
+        )
+        is True
+    )
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-15",
+            "2026-06-15T17:30:01+08:00",
+            now="2026-06-15T17:30:00+08:00",
+            normalized_target="600519.SH",
+        )
+        is False
+    )
+
+
+def test_technical_analysis_cache_policy_keeps_post_cutoff_regenerated_old_date_when_asset_source_lags(monkeypatch):
+    import business.cache.cache_policy as cache_policy
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FakeCalendar:
+        enabled = True
+
+        def is_trading_day(self, *, now=None, asset_type=""):
+            return True
+
+        def expected_market_date(self, *, today=None, now=None):
+            return "2026-06-15"
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            return SimpleNamespace(market_date="2026-06-14", known=True)
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+    monkeypatch.setattr(
+        "business.market.trading_calendar.trading_calendar_from_config",
+        lambda: FakeCalendar(),
+    )
+
+    assert cache_policy.latest_market_date_for_symbol("510300.SH", now="2026-06-15T15:31:00+08:00") == "2026-06-14"
+    assert (
+        cache_policy.technical_analysis_cache_expired_after_close(
+            "2026-06-14",
+            "2026-06-15T17:30:01+08:00",
+            now="2026-06-15T17:31:00+08:00",
+            normalized_target="510300.SH",
+        )
+        is False
+    )
 
 
 def test_technical_analysis_cache_policy_expires_only_matching_asset_type_when_probe_date_updates(monkeypatch):
