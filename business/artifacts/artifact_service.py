@@ -56,7 +56,7 @@ def _owner_date(owner_id: str, owner_type: str) -> str:
                     ).where(investment_daily_contents.c.content_id == owner_id)
                 ).fetchone()
                 item = row_to_dict(row)
-                return _date_from_text(item.get("effective_date")) or _date_from_text(item.get("created_at"))
+                return _date_from_text(item.get("created_at")) or _date_from_text(item.get("effective_date"))
             row = conn.execute(
                 select(
                     investment_request_records.c.market_date,
@@ -64,7 +64,7 @@ def _owner_date(owner_id: str, owner_type: str) -> str:
                 ).where(investment_request_records.c.request_id == owner_id)
             ).fetchone()
             item = row_to_dict(row)
-            return _date_from_text(item.get("market_date")) or _date_from_text(item.get("created_at"))
+            return _date_from_text(item.get("created_at")) or _date_from_text(item.get("market_date"))
     except Exception:
         return ""
     return ""

@@ -196,7 +196,7 @@ def save_source_file(
     files_root = Path(str(get_config("storage.files_dir") or get_storage_dirs()["files"]))
     if not files_root.is_absolute():
         files_root = Path.cwd() / files_root
-    storage_date = _safe_output_segment(effective_date or _today(), "unknown-date")
+    storage_date = _safe_output_segment(_today(), "unknown-date")
     target_dir = (
         files_root
         / _safe_output_segment(str(service_type), "service")

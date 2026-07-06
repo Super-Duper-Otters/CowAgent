@@ -4835,13 +4835,14 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
         const entries = entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType);
         const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
         const contentCount = entries.length;
+        const activeCount = investmentGeneratedActiveEntryCount(entries);
         const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
             <button class="investment-generated-content-entry" onclick='selectInvestmentCacheCategory(${investmentJsString(serviceType)})'>
                 <div class="investment-generated-entry-icon"><i class="fas ${investmentGeneratedServiceIcon(serviceType)}"></i></div>
                 <div class="investment-generated-entry-main">
                     <strong>${escapeHtml(investmentGeneratedCategoryLabel(category))}</strong>
-                    <span>${contentCount ? `${contentCount} 条内容` : '暂无内容'}</span>
+                    <span>${contentCount ? `${contentCount} 条内容 / ${activeCount} 条有效` : '0 条内容 / 0 条有效'}</span>
                 </div>
                 <div class="investment-generated-entry-meta">
                     <span>${hitCount} 次命中</span>
@@ -4850,6 +4851,13 @@ function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
                 </div>
             </button>`;
     }).join('');
+}
+
+function investmentGeneratedActiveEntryCount(entries = []) {
+    return (Array.isArray(entries) ? entries : []).filter(entry => {
+        const status = entry.display_status || entry.status || '';
+        return status === 'active';
+    }).length;
 }
 
 function investmentGeneratedEntryValidityMeta(entries = []) {

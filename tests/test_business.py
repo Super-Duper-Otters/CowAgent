@@ -133,6 +133,7 @@ def test_business_schema_declares_all_tables():
         "updated_at",
     }.issubset({column.name for column in metadata.tables["products"].columns})
     assert {
+        "idx_products_business_type_created_status",
         "idx_products_source_cache_key",
         "idx_products_source_content_id",
     }.issubset({index.name for index in metadata.tables["products"].indexes})
@@ -4755,7 +4756,7 @@ def test_set_content_effective_archives_external_output_image(business_env, tmp_
     files_index = output_parts.index("files")
     assert output_parts[files_index + 1 : files_index + 5] == (
         str(ServiceType.RATE),
-        "2026-06-04",
+        _beijing_today(),
         "content",
         content_id,
     )
@@ -6401,6 +6402,8 @@ def test_artifact_history_includes_unused_daily_content_without_product_backfill
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, set_content_effective, update_generation_success
     from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents, investment_output_files
 
     active_image = tmp_path / "rate-active.png"
     unused_image = tmp_path / "rate-unused.png"
@@ -6411,6 +6414,18 @@ def test_artifact_history_includes_unused_daily_content_without_product_backfill
     unused_id = create_content_draft(ServiceType.RATE, source_text="rate unused", effective_date="2026-06-26")
     set_content_effective(active_id, str(active_image), effective_date="2026-06-26", operator="ops")
     update_generation_success(unused_id, "unused generated text", str(unused_image))
+    with connect() as conn:
+        for content_id in (active_id, unused_id):
+            conn.execute(
+                investment_daily_contents.update()
+                .where(investment_daily_contents.c.content_id == content_id)
+                .values(created_at="2026-06-26T01:00:00+00:00", updated_at="2026-06-26T01:00:00+00:00")
+            )
+            conn.execute(
+                investment_output_files.update()
+                .where(investment_output_files.c.owner_id == content_id)
+                .values(created_at="2026-06-26T01:00:00+00:00")
+            )
 
     packages, total = list_artifact_packages_page(
         page=1,
@@ -6428,20 +6443,24 @@ def test_artifact_history_includes_unused_daily_content_without_product_backfill
     )
 
     assert total == 2
-    assert any(item.get("source_content_id") == active_id for item in packages)
+    assert any(item.get("display_status") == "active" for item in packages)
     assert any(item.get("package_id") == unused_id for item in packages)
     assert {item["display_status"] for item in packages} == {"active", "unused"}
     assert {item["display_status_label"] for item in packages} == {"有效", "未使用"}
     assert node_total == 2
-    assert any(item.get("source_content_id") == active_id for item in nodes)
+    assert any(item.get("display_status") == "active" for item in nodes)
     assert any(item.get("package_id") == unused_id for item in nodes)
 
 
 def test_artifact_history_status_category_filters_all_sources(business_env, tmp_path):
+    from sqlalchemy import text
+
     from business.config.constants import ServiceType
     from business.content.daily_content import create_content_draft, invalidate_content, update_generation_success
     from business.products.product_service import PRODUCT_STATUS_ACTIVE, PRODUCT_STATUS_INVALIDATED, create_product
     from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents, investment_output_files
 
     product_file = tmp_path / "ta-active.png"
     unused_file = tmp_path / "rate-unused.png"
@@ -6473,6 +6492,23 @@ def test_artifact_history_status_category_filters_all_sources(business_env, tmp_
     update_generation_success(unused_id, "unused generated text", str(unused_file))
     update_generation_success(invalidated_id, "invalidated generated text", str(invalidated_file))
     invalidate_content(invalidated_id, operator="ops")
+    with connect() as conn:
+        for product_id in (active_product["product_id"], invalidated_product["product_id"]):
+            conn.execute(
+                text("update products set created_at = :created_at, updated_at = :created_at where product_id = :product_id"),
+                {"created_at": "2026-06-26T01:00:00+00:00", "product_id": product_id},
+            )
+        for content_id in (unused_id, invalidated_id):
+            conn.execute(
+                investment_daily_contents.update()
+                .where(investment_daily_contents.c.content_id == content_id)
+                .values(created_at="2026-06-26T01:00:00+00:00", updated_at="2026-06-26T01:00:00+00:00")
+            )
+            conn.execute(
+                investment_output_files.update()
+                .where(investment_output_files.c.owner_id == content_id)
+                .values(created_at="2026-06-26T01:00:00+00:00")
+            )
 
     active_packages, active_total = list_artifact_packages_page(
         page=1,
@@ -6516,10 +6552,12 @@ def test_artifact_history_marks_technical_analysis_product_invalid_after_market_
     monkeypatch,
 ):
     import business.cache.cache_policy as cache_policy
+    from sqlalchemy import text
 
     from business.config.constants import ServiceType
     from business.products.product_service import create_product
     from business.records.business_records import list_artifact_folder_nodes, list_artifact_packages_page
+    from business.schema.db import connect
 
     output = tmp_path / "ta-old.png"
     output.write_bytes(b"old-ta")
@@ -6533,6 +6571,11 @@ def test_artifact_history_marks_technical_analysis_product_invalid_after_market_
         source_cache_key="technical_analysis:600519.SH:2026-06-25:v1",
         output_files=[str(output)],
     )
+    with connect() as conn:
+        conn.execute(
+            text("update products set created_at = :created_at, updated_at = :created_at where product_id = :product_id"),
+            {"created_at": "2026-06-25T01:00:00+00:00", "product_id": product["product_id"]},
+        )
     monkeypatch.setattr(cache_policy, "technical_analysis_cache_expired_after_close", lambda *_args, **_kwargs: True)
 
     packages, total = list_artifact_packages_page(
@@ -8776,13 +8819,21 @@ def test_success_request_records_output_files_table(business_env):
 def test_success_request_archives_generated_images_and_documents(business_env, tmp_path):
     from business.config.constants import ServiceType
     from business.records.records import create_request_record, get_request_record, list_output_files, succeed_request_record
+    from business.schema.db import connect
     from business.schema.storage import get_storage_dirs
+    from business.schema.tables import investment_request_records
 
     image = tmp_path / "rate_card.png"
     report = tmp_path / "rate_report.md"
     image.write_bytes(b"image-v1")
     report.write_text("report-v1", encoding="utf-8")
-    request_id = create_request_record("openid", "利率", ServiceType.RATE)
+    request_id = create_request_record("openid", "利率", ServiceType.RATE, market_date="2026-06-07")
+    with connect() as conn:
+        conn.execute(
+            investment_request_records.update()
+            .where(investment_request_records.c.request_id == request_id)
+            .values(created_at="2026-06-08T09:00:00+00:00", updated_at="2026-06-08T09:00:00+00:00")
+        )
 
     succeed_request_record(
         request_id,
@@ -8802,7 +8853,7 @@ def test_success_request_archives_generated_images_and_documents(business_env, t
         parts = Path(path).parts
         files_index = parts.index("files")
         assert parts[files_index + 1] == str(ServiceType.RATE)
-        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[files_index + 2])
+        assert parts[files_index + 2] == "2026-06-08"
         assert parts[files_index + 3] == "request"
         assert parts[files_index + 4] == request_id
     assert record.output_files != [str(image), str(report)]
@@ -15430,6 +15481,56 @@ def test_investment_products_api_lists_and_invalidates_products(business_env, mo
     assert invalidate_payload["invalidated"] is True
 
 
+def test_investment_products_api_filters_history_by_generated_date_not_business_date(business_env, monkeypatch):
+    from sqlalchemy import text
+
+    from business.products import product_service
+    from business.schema.db import connect
+    from channel.web.web_channel import InvestmentProductsHandler
+
+    generated_today = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-07-03",
+        version_fingerprint="today",
+        source_request_id="request-generated-today",
+        source_type="request",
+        output_files=["/tmp/today.png"],
+    )
+    market_today = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="600000.SH",
+        target_label="浦发银行",
+        business_date="2026-07-06",
+        version_fingerprint="market-today",
+        source_request_id="request-market-today",
+        source_type="request",
+        output_files=["/tmp/market-today.png"],
+    )
+    with connect() as conn:
+        conn.execute(
+            text("update products set created_at = :created_at, updated_at = :created_at where product_id = :product_id"),
+            {"created_at": "2026-07-06T01:00:00+00:00", "product_id": generated_today["product_id"]},
+        )
+        conn.execute(
+            text("update products set created_at = :created_at, updated_at = :created_at where product_id = :product_id"),
+            {"created_at": "2026-07-05T01:00:00+00:00", "product_id": market_today["product_id"]},
+        )
+
+    payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"start_date": "2026-07-06", "end_date": "2026-07-06", "include_invalidated": "1"},
+    )
+
+    assert payload["status"] == "success"
+    assert payload["pagination"]["total"] == 1
+    assert payload["entries"][0]["product_id"] == generated_today["product_id"]
+    assert payload["entries"][0]["business_date"] == "2026-07-03"
+    assert payload["business_dates"] == ["2026-07-06", "2026-07-05"]
+
+
 def test_generated_history_api_reads_backfilled_products_not_legacy_sources(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType
@@ -17787,7 +17888,7 @@ def test_daily_content_upload_saves_files_under_business_files_dir(business_env)
     files_index = path_parts.index("files")
     assert path_parts[files_index + 1 : files_index + 5] == (
         str(ServiceType.RATE),
-        "2026-06-07",
+        _beijing_today(),
         "content",
         "content-123",
     )
@@ -17796,6 +17897,53 @@ def test_daily_content_upload_saves_files_under_business_files_dir(business_env)
 
     with pytest.raises(ValueError):
         save_source_file(ServiceType.RATE, "../escape.txt", b"bad")
+
+
+def test_artifact_archive_defaults_to_owner_created_date_not_business_date(business_env, tmp_path):
+    from business.artifacts.artifact_service import archive_artifact_file
+    from business.config.constants import ServiceType
+    from business.content.daily_content import create_content_draft
+    from business.records.records import create_request_record
+    from business.schema.db import connect
+    from business.schema.tables import investment_daily_contents, investment_request_records
+
+    content_id = create_content_draft(ServiceType.RATE, source_text="rate", effective_date="2026-06-07")
+    request_id = create_request_record("openid", "技术分析", ServiceType.TECHNICAL_ANALYSIS, market_date="2026-06-07")
+    with connect() as conn:
+        conn.execute(
+            investment_daily_contents.update()
+            .where(investment_daily_contents.c.content_id == content_id)
+            .values(created_at="2026-06-08T08:00:00+00:00", updated_at="2026-06-08T08:00:00+00:00")
+        )
+        conn.execute(
+            investment_request_records.update()
+            .where(investment_request_records.c.request_id == request_id)
+            .values(created_at="2026-06-09T08:00:00+00:00", updated_at="2026-06-09T08:00:00+00:00")
+        )
+    content_file = tmp_path / "content.png"
+    request_file = tmp_path / "request.png"
+    content_file.write_bytes(b"content")
+    request_file.write_bytes(b"request")
+
+    archived_content = archive_artifact_file(content_id, str(content_file), "output_image", ServiceType.RATE, owner_type="content")
+    archived_request = archive_artifact_file(request_id, str(request_file), "signal_card", ServiceType.TECHNICAL_ANALYSIS, owner_type="request")
+
+    content_parts = Path(archived_content).parts
+    request_parts = Path(archived_request).parts
+    content_files_index = content_parts.index("files")
+    request_files_index = request_parts.index("files")
+    assert content_parts[content_files_index + 1 : content_files_index + 5] == (
+        str(ServiceType.RATE),
+        "2026-06-08",
+        "content",
+        content_id,
+    )
+    assert request_parts[request_files_index + 1 : request_files_index + 5] == (
+        str(ServiceType.TECHNICAL_ANALYSIS),
+        "2026-06-09",
+        "request",
+        request_id,
+    )
 
 
 def test_daily_content_api_accepts_module_key_for_content_modules(business_env, tmp_path, monkeypatch):

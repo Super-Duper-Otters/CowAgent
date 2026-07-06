@@ -594,11 +594,15 @@ def succeed_request_record(
             .values(**values)
         )
         row = conn.execute(
-            select(investment_request_records.c.service_type).where(investment_request_records.c.request_id == request_id)
+            select(
+                investment_request_records.c.service_type,
+                investment_request_records.c.created_at,
+            ).where(investment_request_records.c.request_id == request_id)
         ).fetchone()
         item = row_to_dict(row)
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
+        storage_date = str(item.get("created_at") or "")[:10]
     if service_type is not None:
         from business.artifacts.artifact_service import archive_output_files
 
@@ -609,7 +613,7 @@ def succeed_request_record(
             artifact_roles=stored_artifact_roles,
             artifact_versions=stored_artifact_versions,
             owner_type="request",
-            storage_date=market_date,
+            storage_date=storage_date,
             storage_namespace=storage_namespace,
         )
         with connect() as conn:

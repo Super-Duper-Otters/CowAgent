@@ -4348,7 +4348,7 @@ def _investment_product_to_cache_entry(product: dict) -> dict:
 
 def _investment_products_payload(params, *, cache_history_shape: bool = False) -> dict:
     from business.config.constants import ServiceType, normalize_service
-    from business.products.product_service import list_product_business_dates, list_products_cache_history_page, list_products_page
+    from business.products.product_service import list_product_generated_dates, list_products_cache_history_page, list_products_page
 
     page, page_size = _investment_safe_pagination(params, 120)
     if cache_history_shape:
@@ -4391,7 +4391,7 @@ def _investment_products_payload(params, *, cache_history_shape: bool = False) -
     )
     entries = [_investment_product_to_cache_entry(product) for product in products] if cache_history_shape else products
     include_invalidated_dates = include_invalidated or status_category in {"all", "invalid"}
-    business_dates = list_product_business_dates(
+    business_dates = list_product_generated_dates(
         business_type=business_type,
         include_invalidated=include_invalidated_dates,
     )

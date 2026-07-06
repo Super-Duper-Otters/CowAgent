@@ -2,7 +2,7 @@
 import hashlib
 import itertools
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -82,6 +82,38 @@ def _keyword_like_pattern(keyword: str) -> str:
     text = _text(keyword).lower()
     text = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{text}%"
+
+
+def _product_generated_date_expr():
+    return func.substr(
+        func.coalesce(
+            func.nullif(investment_products.c.created_at, ""),
+            func.nullif(investment_products.c.effective_at, ""),
+            func.nullif(investment_products.c.updated_at, ""),
+            investment_products.c.business_date,
+        ),
+        1,
+        10,
+    )
+
+
+def _date_end_exclusive(value: str) -> str:
+    text = _text(value)
+    if not text:
+        return ""
+    try:
+        return (date.fromisoformat(text[:10]) + timedelta(days=1)).isoformat()
+    except ValueError:
+        return f"{text}\uffff"
+
+
+def _append_product_generated_date_conditions(conditions: list, *, start_date: str = "", end_date: str = "") -> None:
+    start = _text(start_date)
+    end = _date_end_exclusive(end_date)
+    if start:
+        conditions.append(investment_products.c.created_at >= start)
+    if end:
+        conditions.append(investment_products.c.created_at < end)
 
 
 def product_logical_key(
@@ -1179,10 +1211,7 @@ def list_products_page(
     if business_date:
         conditions.append(investment_products.c.business_date == _text(business_date))
     else:
-        if start_date:
-            conditions.append(investment_products.c.business_date >= _text(start_date))
-        if end_date:
-            conditions.append(investment_products.c.business_date <= _text(end_date))
+        _append_product_generated_date_conditions(conditions, start_date=start_date, end_date=end_date)
     normalized_keyword = _text(keyword).lower()
     if normalized_keyword:
         pattern = _keyword_like_pattern(normalized_keyword)
@@ -1250,10 +1279,7 @@ def list_products_cache_history_page(
     if business_date:
         conditions.append(investment_products.c.business_date == _text(business_date))
     else:
-        if start_date:
-            conditions.append(investment_products.c.business_date >= _text(start_date))
-        if end_date:
-            conditions.append(investment_products.c.business_date <= _text(end_date))
+        _append_product_generated_date_conditions(conditions, start_date=start_date, end_date=end_date)
     normalized_keyword = _text(keyword).lower()
     if normalized_keyword:
         pattern = _keyword_like_pattern(normalized_keyword)
@@ -1316,6 +1342,24 @@ def list_product_business_dates(business_type: str = "", include_invalidated: bo
         .where(and_(*conditions))
         .distinct()
         .order_by(desc(investment_products.c.business_date))
+    )
+    with connect() as conn:
+        return [str(row[0]) for row in conn.execute(stmt).fetchall() if row[0]]
+
+
+def list_product_generated_dates(business_type: str = "", include_invalidated: bool = False) -> list[str]:
+    generated_date = _product_generated_date_expr()
+    conditions = [generated_date != ""]
+    if business_type:
+        conditions.append(investment_products.c.business_type == _text(business_type))
+    if not include_invalidated:
+        conditions.append(investment_products.c.status == PRODUCT_STATUS_ACTIVE)
+        conditions.append(_expires_at_condition(_now()))
+    stmt = (
+        select(generated_date.label("generated_date"))
+        .where(and_(*conditions))
+        .distinct()
+        .order_by(desc(generated_date))
     )
     with connect() as conn:
         return [str(row[0]) for row in conn.execute(stmt).fetchall() if row[0]]

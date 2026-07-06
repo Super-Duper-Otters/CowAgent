@@ -446,6 +446,9 @@ def test_generated_history_toolbar_controls_status_category_and_shows_validity_m
     assert "investmentRecordsState.filters.products.status_category = value || 'all';" in status_body
     assert "await loadInvestmentProducts();" in status_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in cards_body
+    assert "investmentGeneratedActiveEntryCount(entries)" in cards_body
+    assert "`${contentCount} 条内容 / ${activeCount} 条有效`" in cards_body
+    assert "'0 条内容 / 0 条有效'" in cards_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in detail_body
     assert "entry.display_status || entry.status || ''" in meta_body
     assert "entry.display_status_label || investmentProductStatusLabel(status)" in meta_body
@@ -2541,8 +2544,8 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "investment-generated-limit" not in cards_body
     assert "investmentGeneratedCategoryLimit(serviceType)" not in cards_body
     assert "分类上限" not in cards_body
-    assert "条有效" not in cards_body
-    assert "investmentGeneratedEntryIsActive(entry)).length" not in cards_body
+    assert "条有效" in cards_body
+    assert "investmentGeneratedActiveEntryCount(entries)" in cards_body
     assert "invalidated: '已失效'" in js
     assert "status === 'invalidated'" in _js_function_body(js, "investmentStatusClass")
     assert "<th>产物</th>" in products_body
