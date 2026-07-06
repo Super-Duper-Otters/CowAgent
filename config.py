@@ -226,7 +226,7 @@ available_setting = {
     "investment_trading_calendar_cache_days": 7,  # 本地交易日历缓存天数
     "investment_trading_calendar_max_lag_trade_days": 0,  # 行情日期最大允许滞后交易日
     "investment_trading_calendar_max_stale_market_days": 15,  # 所有数据源均不满足交易日历时，允许兜底的最大自然日滞后
-    "investment_ta_generation_max_attempts": 3,  # 技术分析 AI 标准化/图片渲染最大尝试次数
+    "investment_ta_generation_max_attempts": 5,  # 技术分析 AI 标准化/图片渲染最大尝试次数
     "investment_ta_allow_unresolved_bare_code_analysis": False,  # 技术分析：裸6位代码未命中字典时是否仍允许进入耗时行情查询
     "investment_web_wechatmp_chain_verification": False,  # Web对话是否允许接入公众号链路验证
     "agent": True,  # 是否开启Agent模式

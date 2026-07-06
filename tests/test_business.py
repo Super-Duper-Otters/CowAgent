@@ -9656,7 +9656,6 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "严格 JSON",
         "【固收 | 智能投研辅助系统】",
         "📈 标的：<target>",
-        "[庆祝] 信号方向：<signal_direction>",
         '"target"',
         '"signal_direction"',
         '"latest_close"',
@@ -9686,6 +9685,13 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "超买风险化解=健康的回调整理",
         "均线多头维持+MACD金叉不破",
         "不得改变 signal_direction",
+        "signal_direction 是内部归纳字段",
+        "不在图片头部展示",
+        "signal_direction 必须从报告中的当前判断、多空倾向、五维状态、趋势判断、操作提示、情景推演归纳",
+        "优先使用三类",
+        "看涨观察：趋势偏多/中性偏强/多头排列",
+        "区间观望：震荡整理、方向未明、多空分歧",
+        "看跌防守：趋势偏空/中性偏弱，动量转弱或死叉",
         "必须至少引用报告原文中的一个具体指标",
         "每个 conclusion 必须写成“指标事实嵌入判断句”",
         "不要把 evidence 原样复述成单独的尾句",
@@ -9710,6 +9716,7 @@ def test_technical_analysis_default_prompt_matches_signal_card_renderer_contract
         "刘静怡13681991121",
         "AKShare / Tushare / BaoStock",
         "本内容仅供研究参考，不构成任何投资建议",
+        "[庆祝] 信号方向：<signal_direction>",
     ):
         assert forbidden not in request.prompt
     assert "禁止输出解释" in request.prompt

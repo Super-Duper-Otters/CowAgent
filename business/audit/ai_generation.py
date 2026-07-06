@@ -52,7 +52,11 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
             "你是技术分析报告结构化抽取助手。请把用户提供的技术分析 Markdown 报告整理成严格 JSON，"
             "供业务代码生成 signal-card-renderer 技术分析卡片文本。\n"
             "必须只输出一个 JSON object，禁止输出解释、Markdown 代码块、表格、模板说明或补充问题。\n"
-            "字段缺失时填“——”；不要编造报告中没有的数据；数值、日期、支撑阻力优先使用报告原文。\n\n"
+            "字段缺失时可以填“——”，但 signal_direction 除非报告完全没有任何趋势、动量、多空倾向、操作提示、"
+            "情景推演、关键位判断，否则不得填“——”。\n"
+            "不要编造报告中没有的数据；数值、日期、支撑阻力优先使用报告原文。对于 signal_direction，应基于报告中的"
+            "“当前判断 / 多空倾向 / 五维状态 / 趋势判断 / 操作提示 / 情景推演”进行归纳，"
+            "而不是要求报告必须出现“信号方向”这个字段。\n\n"
         ),
     },
     "target_constraints": {
@@ -71,7 +75,6 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
             "【固收 | 智能投研辅助系统】\n\n"
             "——————————————\n"
             "📈 标的：<target>\n"
-            "[庆祝] 信号方向：<signal_direction>\n"
             "💰 最新收盘：<latest_close> 元\n"
             "📅 行情日期：<market_date>  日内涨幅：<daily_change> 或 日内跌幅：<daily_change>\n"
             "🔧 分析模型：技术分析体系\n\n"
@@ -84,6 +87,13 @@ TECHNICAL_ANALYSIS_PROMPT_BLOCKS = {
             '  "daily_change": "<+x.xx% 或 -x.xx%；无法识别填空字符串>",\n'
             '  "analysis_model": "技术分析体系"\n'
             "}\n\n"
+            "signal_direction 是内部归纳字段，用于保持结构化审计和兼容，不在图片头部展示。\n"
+            "signal_direction 必须从报告中的当前判断、多空倾向、五维状态、趋势判断、操作提示、情景推演归纳；"
+            "除非报告完全没有方向依据，否则不得填“——”。\n\n"
+            "优先使用三类：\n"
+            "- 看涨观察：趋势偏多/中性偏强/多头排列，动量修复或金叉，突破后偏强。\n"
+            "- 区间观望：震荡整理、方向未明、多空分歧、等待突破或支撑确认。\n"
+            "- 看跌防守：趋势偏空/中性偏弱，动量转弱或死叉，强调防守、破位风险或规避。\n\n"
         ),
     },
     "trend_section": {
