@@ -4348,7 +4348,12 @@ def _investment_product_to_cache_entry(product: dict) -> dict:
 
 def _investment_products_payload(params, *, cache_history_shape: bool = False) -> dict:
     from business.config.constants import ServiceType, normalize_service
-    from business.products.product_service import list_product_generated_dates, list_products_cache_history_page, list_products_page
+    from business.products.product_service import (
+        list_product_category_stats,
+        list_product_generated_dates,
+        list_products_cache_history_page,
+        list_products_page,
+    )
 
     page, page_size = _investment_safe_pagination(params, 120)
     if cache_history_shape:
@@ -4395,9 +4400,17 @@ def _investment_products_payload(params, *, cache_history_shape: bool = False) -
         business_type=business_type,
         include_invalidated=include_invalidated_dates,
     )
+    keyword = getattr(params, "keyword", "") or ""
+    category_stats = list_product_category_stats(
+        business_type=business_type,
+        start_date=getattr(params, "start_date", "") or "",
+        end_date=getattr(params, "end_date", "") or "",
+        keyword=keyword,
+    )
     return {
         "status": "success",
         "entries": entries,
+        "category_stats": category_stats,
         "business_dates": business_dates,
         "market_dates": business_dates,
         "pagination": _investment_pagination_payload(page, page_size, total),

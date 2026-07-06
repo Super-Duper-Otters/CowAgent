@@ -4184,7 +4184,8 @@ async function loadInvestmentProducts() {
         query.delete('start_date');
         query.delete('end_date');
         if (range.marketDate) {
-            query.set('business_date', range.marketDate);
+            query.set('start_date', range.marketDate);
+            query.set('end_date', range.marketDate);
         }
         if (range.startDate) query.set('start_date', range.startDate);
         if (range.endDate) query.set('end_date', range.endDate);
@@ -4192,6 +4193,7 @@ async function loadInvestmentProducts() {
         const entries = data.entries || [];
         investmentRecordsState.data.products = {
             entries,
+            category_stats: data.category_stats || {},
             business_dates: data.business_dates || investmentGeneratedDateValues([], entries),
         };
         investmentRecordsApplyPagination('products', data.pagination);
@@ -4740,6 +4742,7 @@ function renderInvestmentProductsTable(entries) {
 
 function renderInvestmentDailyGeneratedContent(cacheData = {}) {
     const values = Array.isArray(cacheData.entries) ? cacheData.entries : [];
+    const categoryStats = cacheData.category_stats || {};
     const marketDates = cacheData.business_dates || cacheData.market_dates || [];
     const dateRange = investmentNormalizeCacheDateFilters();
     const selectedDate = dateRange.marketDate;
@@ -4751,7 +4754,7 @@ function renderInvestmentDailyGeneratedContent(cacheData = {}) {
             investmentRecordsState.cacheCategory,
             visibleEntries.filter(entry => investmentProductBusinessType(entry) === investmentRecordsState.cacheCategory),
         )
-        : renderInvestmentGeneratedContentHome(investmentGeneratedCategories(visibleEntries), visibleEntries);
+        : renderInvestmentGeneratedContentHome(investmentGeneratedCategories(visibleEntries), visibleEntries, categoryStats);
     return `
         <div class="investment-generated-content">
             <div class="investment-generated-content-toolbar">
@@ -4816,27 +4819,33 @@ function investmentGeneratedServiceIcon(serviceType) {
     return 'fa-box-archive';
 }
 
-function renderInvestmentGeneratedContentHome(categories, entries) {
+function renderInvestmentGeneratedContentHome(categories, entries, categoryStats = {}) {
+    const statsValues = Object.values(categoryStats || {});
+    const contentCount = statsValues.length
+        ? statsValues.reduce((sum, item) => sum + Number(item.content_count || 0), 0)
+        : entries.length;
     return `
         <div class="investment-generated-library">
             <section class="investment-generated-category-strip">
                 <div class="investment-generated-date-heading">
                     <strong>内容分类</strong>
-                    <span>${entries.length} 条内容</span>
+                    <span>${contentCount} 条内容</span>
                 </div>
-                <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entries)}</div>
+                <div class="investment-generated-content-home">${renderInvestmentGeneratedCategoryCards(categories, entries, categoryStats)}</div>
             </section>
         </div>`;
 }
 
-function renderInvestmentGeneratedCategoryCards(categories, entriesForScope) {
+function renderInvestmentGeneratedCategoryCards(categories, entriesForScope, categoryStats = {}) {
     return categories.map(category => {
         const serviceType = category.service_type || category;
         const entries = entriesForScope.filter(entry => investmentProductBusinessType(entry) === serviceType);
-        const hitCount = entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
-        const contentCount = entries.length;
-        const activeCount = investmentGeneratedActiveEntryCount(entries);
-        const latest = entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
+        const stats = categoryStats[serviceType] || {};
+        const hasStats = Object.prototype.hasOwnProperty.call(categoryStats, serviceType);
+        const hitCount = hasStats ? Number(stats.hit_count || 0) : entries.reduce((sum, entry) => sum + Number(entry.request_count || entry.hit_count || 0), 0);
+        const contentCount = hasStats ? Number(stats.content_count || 0) : entries.length;
+        const activeCount = hasStats ? Number(stats.active_count || 0) : investmentGeneratedActiveEntryCount(entries);
+        const latest = hasStats ? stats.latest_updated_at : entries.map(entry => entry.updated_at).filter(Boolean).sort().pop();
         return `
             <button class="investment-generated-content-entry" onclick='selectInvestmentCacheCategory(${investmentJsString(serviceType)})'>
                 <div class="investment-generated-entry-icon"><i class="fas ${investmentGeneratedServiceIcon(serviceType)}"></i></div>

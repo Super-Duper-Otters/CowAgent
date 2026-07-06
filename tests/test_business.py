@@ -15538,6 +15538,77 @@ def test_investment_products_api_filters_history_by_generated_date_not_business_
     assert payload["business_dates"] == ["2026-07-06", "2026-07-05"]
 
 
+def test_investment_products_api_returns_history_category_stats_for_generated_date_filter(business_env, monkeypatch):
+    from sqlalchemy import text
+
+    from business.products import product_service
+    from business.schema.db import connect
+    from channel.web.web_channel import InvestmentProductsHandler
+
+    active_product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="300502.SZ",
+        target_label="新易盛",
+        business_date="2026-07-03",
+        version_fingerprint="active",
+        source_request_id="request-active",
+        source_type="request",
+        output_files=["/tmp/active.png"],
+    )
+    invalidated_product = product_service.create_product(
+        business_type="technical_analysis",
+        target_key="600000.SH",
+        target_label="浦发银行",
+        business_date="2026-07-03",
+        version_fingerprint="invalid",
+        source_request_id="request-invalid",
+        source_type="request",
+        output_files=["/tmp/invalid.png"],
+    )
+    rate_product = product_service.create_product(
+        business_type="rate",
+        target_key="rate",
+        target_label="利率",
+        business_date="2026-07-03",
+        version_fingerprint="rate",
+        source_request_id="request-rate",
+        source_type="request",
+        output_files=["/tmp/rate.png"],
+    )
+    with connect() as conn:
+        for product in (active_product, invalidated_product, rate_product):
+            conn.execute(
+                text("update products set created_at = :created_at, updated_at = :created_at where product_id = :product_id"),
+                {"created_at": "2026-07-05T01:00:00+00:00", "product_id": product["product_id"]},
+            )
+        conn.execute(
+            text("update products set status = 'invalidated', invalidated_at = :created_at where product_id = :product_id"),
+            {"created_at": "2026-07-05T02:00:00+00:00", "product_id": invalidated_product["product_id"]},
+        )
+
+    included_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"start_date": "2026-07-05", "end_date": "2026-07-05", "status_category": "all", "include_invalidated": "1"},
+    )
+
+    assert included_payload["status"] == "success"
+    assert included_payload["pagination"]["total"] == 3
+    assert included_payload["category_stats"]["technical_analysis"]["content_count"] == 2
+    assert included_payload["category_stats"]["technical_analysis"]["active_count"] == 1
+    assert included_payload["category_stats"]["rate"]["content_count"] == 1
+    assert included_payload["category_stats"]["rate"]["active_count"] == 1
+
+    excluded_payload = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentProductsHandler().GET,
+        params={"start_date": "2026-07-06", "end_date": "2026-07-06", "status_category": "all", "include_invalidated": "1"},
+    )
+
+    assert excluded_payload["entries"] == []
+    assert excluded_payload["pagination"]["total"] == 0
+    assert excluded_payload["category_stats"] == {}
+
 def test_generated_history_api_reads_backfilled_products_not_legacy_sources(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry
     from business.config.constants import ServiceType

@@ -446,7 +446,7 @@ def test_generated_history_toolbar_controls_status_category_and_shows_validity_m
     assert "investmentRecordsState.filters.products.status_category = value || 'all';" in status_body
     assert "await loadInvestmentProducts();" in status_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in cards_body
-    assert "investmentGeneratedActiveEntryCount(entries)" in cards_body
+    assert "categoryStats[serviceType]" in cards_body
     assert "`${contentCount} 条内容 / ${activeCount} 条有效`" in cards_body
     assert "'0 条内容 / 0 条有效'" in cards_body
     assert "investmentGeneratedEntryValidityMeta(entries)" in detail_body
@@ -2545,7 +2545,8 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "investmentGeneratedCategoryLimit(serviceType)" not in cards_body
     assert "分类上限" not in cards_body
     assert "条有效" in cards_body
-    assert "investmentGeneratedActiveEntryCount(entries)" in cards_body
+    assert "category_stats: data.category_stats || {}" in load_body
+    assert "categoryStats[serviceType]" in cards_body
     assert "invalidated: '已失效'" in js
     assert "status === 'invalidated'" in _js_function_body(js, "investmentStatusClass")
     assert "<th>产物</th>" in products_body
@@ -2556,6 +2557,9 @@ def test_business_generated_content_page_uses_file_explorer_layout_and_range_que
     assert "openInvestmentRecordDrawer('${drawerType}'" in products_body
     assert "invalidateInvestmentProduct" in products_body
     assert "query.delete('business_date')" in load_body
+    assert "query.set('business_date', range.marketDate)" not in load_body
+    assert "query.set('start_date', range.marketDate)" in load_body
+    assert "query.set('end_date', range.marketDate)" in load_body
     assert "/api/investment/products" in load_body
     assert "/api/investment/cache" not in load_body
     assert "query.set('start_date', range.startDate)" in load_body

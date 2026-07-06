@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import and_, desc, func, or_, select, update
+from sqlalchemy import and_, case, desc, func, or_, select, update
 
 from business.schema.db import connect, row_to_dict
 from business.schema.tables import investment_products, investment_request_records
@@ -114,6 +114,26 @@ def _append_product_generated_date_conditions(conditions: list, *, start_date: s
         conditions.append(investment_products.c.created_at >= start)
     if end:
         conditions.append(investment_products.c.created_at < end)
+
+
+def _product_keyword_condition(keyword: str):
+    normalized_keyword = _text(keyword).lower()
+    if not normalized_keyword:
+        return None
+    pattern = _keyword_like_pattern(normalized_keyword)
+    return or_(
+        func.lower(investment_products.c.product_id).like(pattern, escape="\\"),
+        func.lower(investment_products.c.business_type).like(pattern, escape="\\"),
+        func.lower(investment_products.c.target_key).like(pattern, escape="\\"),
+        func.lower(investment_products.c.target_label).like(pattern, escape="\\"),
+        func.lower(investment_products.c.business_date).like(pattern, escape="\\"),
+        func.lower(investment_products.c.version_fingerprint).like(pattern, escape="\\"),
+        func.lower(investment_products.c.source_request_id).like(pattern, escape="\\"),
+        func.lower(investment_products.c.source_content_id).like(pattern, escape="\\"),
+        func.lower(investment_products.c.source_cache_key).like(pattern, escape="\\"),
+        func.lower(investment_products.c.source_type).like(pattern, escape="\\"),
+        func.lower(investment_products.c.text_content).like(pattern, escape="\\"),
+    )
 
 
 def product_logical_key(
@@ -1363,3 +1383,45 @@ def list_product_generated_dates(business_type: str = "", include_invalidated: b
     )
     with connect() as conn:
         return [str(row[0]) for row in conn.execute(stmt).fetchall() if row[0]]
+
+
+def list_product_category_stats(
+    *,
+    business_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+) -> dict[str, dict]:
+    conditions = []
+    if business_type:
+        conditions.append(investment_products.c.business_type == _text(business_type))
+    _append_product_generated_date_conditions(conditions, start_date=start_date, end_date=end_date)
+    keyword_condition = _product_keyword_condition(keyword)
+    if keyword_condition is not None:
+        conditions.append(keyword_condition)
+    active_condition = and_(investment_products.c.status == PRODUCT_STATUS_ACTIVE, _expires_at_condition(_now()))
+    stmt = (
+        select(
+            investment_products.c.business_type,
+            func.count().label("content_count"),
+            func.coalesce(func.sum(case((active_condition, 1), else_=0)), 0).label("active_count"),
+            func.coalesce(func.sum(investment_products.c.hit_count), 0).label("hit_count"),
+            func.max(investment_products.c.updated_at).label("latest_updated_at"),
+        )
+        .group_by(investment_products.c.business_type)
+        .order_by(investment_products.c.business_type)
+    )
+    if conditions:
+        stmt = stmt.where(and_(*conditions))
+    with connect() as conn:
+        rows = conn.execute(stmt).fetchall()
+    return {
+        str(row.business_type): {
+            "content_count": int(row.content_count or 0),
+            "active_count": int(row.active_count or 0),
+            "hit_count": int(row.hit_count or 0),
+            "latest_updated_at": row.latest_updated_at or "",
+        }
+        for row in rows
+        if row.business_type
+    }
