@@ -184,20 +184,23 @@ def handle_technical_analysis(
             result.main_chart_path: result.ta_version,
             result.report_path: result.ta_version,
         }
-        analysis_date = str(getattr(job.record, "created_at", "") or "")[:10]
-        record_output_files, artifact_roles, artifact_versions, archived_path_map = archive_business_output_files(
-            request_id,
-            record_output_files,
-            route.service_type,
-            artifact_roles=artifact_roles,
-            artifact_versions=artifact_versions,
-            owner_type="request",
-            storage_date=analysis_date,
-        )
-        user_output_files = [
-            archived_path_map.get(result.signal_card_path, result.signal_card_path),
-            archived_path_map.get(result.main_chart_path, result.main_chart_path),
-        ]
+        if result.cache_hit:
+            archived_path_map = {}
+        else:
+            analysis_date = str(getattr(job.record, "created_at", "") or "")[:10]
+            record_output_files, artifact_roles, artifact_versions, archived_path_map = archive_business_output_files(
+                request_id,
+                record_output_files,
+                route.service_type,
+                artifact_roles=artifact_roles,
+                artifact_versions=artifact_versions,
+                owner_type="request",
+                storage_date=analysis_date,
+            )
+            user_output_files = [
+                archived_path_map.get(result.signal_card_path, result.signal_card_path),
+                archived_path_map.get(result.main_chart_path, result.main_chart_path),
+            ]
         if result.cache_key and not result.cache_hit:
             write_business_cache(
                 cache_key=result.cache_key,
@@ -225,6 +228,7 @@ def handle_technical_analysis(
             renderer_version=result.renderer_version,
             template_version=result.template_version,
             warning=result.detail,
+            record_artifacts=not result.cache_hit,
             **customer_metadata,
         )
         product_id = ""

@@ -438,6 +438,15 @@ def _queue_ready_technical_result(channel, wechatmp_msg, route) -> bool:
         return False
 
 
+def _technical_analysis_reply_image_files(output_files):
+    image_suffixes = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+    return [
+        path
+        for path in list(output_files or [])
+        if str(path or "").lower().endswith(image_suffixes)
+    ][:2]
+
+
 def _queue_fast_ready_technical_result(channel, wechatmp_msg, route) -> bool:
     if not _route_is_technical_analysis(route):
         return False
@@ -465,7 +474,7 @@ def _queue_fast_ready_technical_result(channel, wechatmp_msg, route) -> bool:
             return False
         openid = str(getattr(wechatmp_msg, "from_user_id", "") or "")
         title = getattr(route, "raw_input", "") or str(getattr(wechatmp_msg, "content", "") or "")
-        for path in entry.output_files:
+        for path in _technical_analysis_reply_image_files(entry.output_files):
             if not path:
                 continue
             media_id = _upload_image_file_for_passive_reply(

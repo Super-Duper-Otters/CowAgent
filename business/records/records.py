@@ -556,6 +556,7 @@ def succeed_request_record(
     template_version: str = "",
     warning: str = "",
     storage_namespace: str = "",
+    record_artifacts: bool = True,
 ) -> dict[str, str]:
     service_type: ServiceType | None = None
     path_map: dict[str, str] = {}
@@ -603,7 +604,7 @@ def succeed_request_record(
         if item.get("service_type"):
             service_type = ServiceType(item["service_type"])
         storage_date = str(item.get("created_at") or "")[:10]
-    if service_type is not None:
+    if service_type is not None and record_artifacts:
         from business.artifacts.artifact_service import archive_output_files
 
         stored_output_files, stored_artifact_roles, stored_artifact_versions, path_map = archive_output_files(

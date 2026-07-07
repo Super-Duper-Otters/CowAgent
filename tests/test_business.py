@@ -13386,7 +13386,7 @@ def test_technical_analysis_explicit_market_date_does_not_fallback_to_latest_cac
 def test_technical_analysis_stock_name_reuses_same_standard_code_cache(business_env, tmp_path, monkeypatch):
     from business.content import technical_analysis as technical_analysis
     from business.config.constants import ServiceType
-    from business.records.records import list_request_records
+    from business.records.records import list_output_files, list_request_records
     from business.routing.router import handle_text_message
     from business.content.stock_resolver import refresh_stock_symbols
     from business.accounts.user_service import create_user
@@ -13415,6 +13415,8 @@ def test_technical_analysis_stock_name_reuses_same_standard_code_cache(business_
     assert records[1].cache_hit is False
     assert records[0].normalized_target == "300502.SZ"
     assert records[1].normalized_target == "300502.SZ"
+    assert list_output_files(records[0].request_id) == []
+    assert len(list_output_files(records[1].request_id)) == 3
 
 
 def test_technical_analysis_different_market_date_misses_cache(business_env, tmp_path, monkeypatch):
@@ -15807,6 +15809,7 @@ def test_investment_products_api_returns_history_category_stats_for_generated_da
     assert excluded_payload["entries"] == []
     assert excluded_payload["pagination"]["total"] == 0
     assert excluded_payload["category_stats"] == {}
+
 
 def test_generated_history_api_reads_backfilled_products_not_legacy_sources(business_env, monkeypatch, tmp_path):
     from business.cache.cache_service import build_cache_key, write_cache_entry

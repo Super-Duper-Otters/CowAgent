@@ -2311,6 +2311,40 @@ def test_wechatmp_passive_pending_result_new_technical_ready_hit_does_not_start_
     assert channel_state.cache_dict.pop_result_by_title("openid", "农业银行") == ("image", "media-ny")
 
 
+def test_wechatmp_passive_fast_ready_technical_result_skips_markdown_report(monkeypatch):
+    import channel.wechatmp.passive_reply as passive_reply
+    from channel.wechatmp.passive_reply_cache import PassiveReplyCache
+
+    uploaded_paths = []
+    channel = SimpleNamespace(cache_dict=PassiveReplyCache())
+    msg = SimpleNamespace(from_user_id="openid", content="#000001.SZ", msg_id="msg-fast-ready-skip-md")
+    route = SimpleNamespace(service_type=ServiceType.TECHNICAL_ANALYSIS, raw_input="#000001.SZ", target_text="000001.SZ")
+    entry = SimpleNamespace(
+        output_files=["signal-card.png", "main-chart.png", "report.md"],
+        market_date="2026-07-03",
+        updated_at="2026-07-04T10:00:00+00:00",
+        normalized_target="000001.SZ",
+        artifact_owner_id="request-v2",
+        cache_key="technical_analysis:000001.SZ:2026-07-03:v2",
+    )
+
+    monkeypatch.setattr("business.cache.cache_service.find_latest_cache_entry_for_target", lambda **_kwargs: entry)
+    monkeypatch.setattr("business.cache.cache_service.technical_analysis_cache_expired_after_close", lambda *_args, **_kwargs: False)
+
+    def fake_upload(_channel, _openid, _message_id, path):
+        uploaded_paths.append(path)
+        if str(path).endswith(".md"):
+            raise AssertionError("markdown report must not be uploaded as image")
+        return f"media-{len(uploaded_paths)}"
+
+    monkeypatch.setattr(passive_reply, "_upload_image_file_for_passive_reply", fake_upload)
+
+    assert passive_reply._queue_fast_ready_technical_result(channel, msg, route) is True
+    assert uploaded_paths == ["signal-card.png", "main-chart.png"]
+    cached = channel.cache_dict.peek_result("openid")
+    assert cached.replies == [("image", "media-1"), ("image", "media-2")]
+
+
 def test_wechatmp_passive_ready_technical_result_uploads_files_before_claim(monkeypatch, tmp_path):
     import channel.wechatmp.passive_reply as passive_reply
     from channel.wechatmp.passive_reply_cache import PassiveReplyCache
