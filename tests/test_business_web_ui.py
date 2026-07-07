@@ -222,7 +222,12 @@ def test_cache_update_management_is_system_config_subpage():
     assert "function clearInvestmentAllTechnicalAnalysisCache(" in js
     assert "标的类型" in cache_content_body
     assert "当前数据日期" in cache_content_body
-    assert "手动探测" in cache_panel_body
+    assert "investment-cache-update-probe-section" in cache_content_body
+    assert "investment-cache-update-calendar-section" in cache_content_body
+    assert cache_content_body.index("investment-cache-update-probe-section") < cache_content_body.index("标的类型列表")
+    assert cache_content_body.index("investment-cache-update-calendar-section") < cache_content_body.index("renderTradingCalendarStatusPanel")
+    assert "手动探测" not in cache_panel_body
+    assert "手动探测" in cache_content_body
     assert "全部技术分析缓存失效" in cache_panel_body
     assert "管理技术分析缓存更新探测标的" not in cache_panel_body
     assert "probe_start" in cache_content_body

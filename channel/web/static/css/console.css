@@ -3622,10 +3622,49 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     align-items: start;
 }
 
-.investment-cache-update-settings .investment-grid.cols-3 {
+.investment-cache-update-probe-section .investment-grid.cols-3,
+.investment-cache-update-calendar-section .investment-grid.cols-3 {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
+}
+
+.investment-cache-update-probe-section,
+.investment-cache-update-calendar-section {
+    display: grid;
+    gap: 14px;
+}
+
+.investment-cache-update-probe-section > .investment-panel-heading,
+.investment-cache-update-calendar-section > .investment-panel-heading {
+    margin-bottom: 0;
+}
+
+.investment-cache-update-subheading {
+    margin-top: 2px;
+    margin-bottom: -2px;
+}
+
+.investment-cache-update-calendar-section > .investment-panel-heading .investment-switch {
+    min-height: 24px;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.investment-cache-update-calendar-section > .investment-panel-heading .investment-switch-track {
+    width: 36px;
+    height: 20px;
+    flex-basis: 36px;
+}
+
+.investment-cache-update-calendar-section > .investment-panel-heading .investment-switch-thumb {
+    width: 14px;
+    height: 14px;
+}
+
+.investment-cache-update-calendar-section > .investment-panel-heading .investment-switch input[type="checkbox"]:checked + .investment-switch-track .investment-switch-thumb {
+    transform: translateX(16px);
 }
 
 .investment-cache-setting-group {
@@ -3723,6 +3762,12 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     display: none;
 }
 
+.investment-cache-update-calendar-section .investment-source-options {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    scrollbar-width: auto;
+}
+
 .investment-source-option {
     display: inline-flex;
     align-items: center;
@@ -3781,6 +3826,10 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 .investment-calendar-status-grid div {
     min-width: 0;
+}
+
+.investment-calendar-status-grid div:last-child {
+    grid-column: 1 / -1;
 }
 
 .investment-calendar-status-grid span {
@@ -5849,7 +5898,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 }
 
 @media (max-width: 640px) {
-    .investment-cache-update-settings .investment-grid.cols-3 {
+    .investment-cache-update-probe-section .investment-grid.cols-3,
+    .investment-cache-update-calendar-section .investment-grid.cols-3 {
         grid-template-columns: 1fr;
     }
 

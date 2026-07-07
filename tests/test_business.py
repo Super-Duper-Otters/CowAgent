@@ -4256,7 +4256,7 @@ def test_web_stock_refresh_dispatches_sources_and_reports_failures(business_env,
 
 def test_web_cache_update_status_and_manual_probe_returns_probe_rows(business_env, monkeypatch):
     import business.cache.cache_policy as cache_policy
-    from channel.web.web_channel import InvestmentCacheHandler, InvestmentCacheUpdateHandler
+    from channel.web.web_channel import InvestmentCacheUpdateHandler
 
     cache_policy.reset_market_update_probe_cache()
     calls = []
@@ -4297,7 +4297,7 @@ def test_web_cache_update_status_and_manual_probe_returns_probe_rows(business_en
 
     assert manual["status"] == "success"
     assert manual["latest_market_date"] == "2026-06-17"
-    assert calls == ["600519.SH"]
+    assert calls == ["600519.SH", "00700.HK", "AAPL.US", "sh000300", "510300.SH", "111009.SH", "T0"]
 
 
 def test_web_cache_update_config_save_and_clear_technical_cache(business_env, monkeypatch, tmp_path):
@@ -4415,6 +4415,94 @@ def test_web_cache_update_manual_probe_invalidates_technical_cache_when_latest_d
         params={"service_type": "technical_analysis", "include_invalidated": ""},
     )
     assert active["pagination"]["total"] == 0
+
+
+def test_cache_update_probe_invalidates_stale_technical_cache_on_first_probe(
+    business_env, monkeypatch, tmp_path
+):
+    import business.cache.cache_policy as cache_policy
+    from business.cache.cache_service import build_cache_key, write_cache_entry
+    from business.cache.cache_update_scheduler import run_technical_analysis_cache_update_probe
+    from business.config.constants import ServiceType
+    from channel.web.web_channel import InvestmentCacheHandler
+
+    cache_policy.reset_market_update_probe_cache()
+
+    class FakeResolver:
+        def resolve(self, symbol, requested_market_date=""):
+            return SimpleNamespace(market_date="2026-06-15", known=True, source="pytest")
+
+    monkeypatch.setattr(cache_policy, "MarketDateResolver", FakeResolver)
+
+    stale_card = tmp_path / "stale-ta-card.png"
+    stale_card.write_bytes(b"stale")
+    fresh_card = tmp_path / "fresh-ta-card.png"
+    fresh_card.write_bytes(b"fresh")
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "300502.SZ", "2026-06-14", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="300502.SZ",
+        market_date="2026-06-14",
+        version_fingerprint="v1",
+        output_files=[str(stale_card)],
+    )
+    write_cache_entry(
+        cache_key=build_cache_key(ServiceType.TECHNICAL_ANALYSIS, "600519.SH", "2026-06-15", "v1"),
+        service_type=ServiceType.TECHNICAL_ANALYSIS,
+        normalized_target="600519.SH",
+        market_date="2026-06-15",
+        version_fingerprint="v1",
+        output_files=[str(fresh_card)],
+    )
+
+    result = run_technical_analysis_cache_update_probe(force=True)
+
+    assert result["previous_latest_market_date"] == ""
+    assert result["latest_market_date"] == "2026-06-15"
+    assert result["products_invalidated"] == 1
+    active = _call_investment_json_handler(
+        monkeypatch,
+        InvestmentCacheHandler().GET,
+        params={"service_type": "technical_analysis", "include_invalidated": ""},
+    )
+    assert active["pagination"]["total"] == 1
+    assert active["entries"][0]["target_key"] == "600519.SH"
+
+
+def test_web_channel_startup_starts_cache_update_scheduler(monkeypatch):
+    from channel.web.web_channel import WebChannel
+
+    calls = []
+
+    class FakeServer:
+        daemon_threads = False
+        request_queue_size = 0
+        timeout = 0
+
+        def __init__(self, *_args, **_kwargs):
+            self.requests = SimpleNamespace(min=0, max=0)
+
+        def start(self):
+            raise KeyboardInterrupt()
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("channel.web.web_channel.conf", lambda: {"web_host": "127.0.0.1", "web_port": 9899})
+    monkeypatch.setattr("channel.web.web_channel._is_password_enabled", lambda: False)
+    monkeypatch.setattr("web.application", lambda *_args, **_kwargs: SimpleNamespace(wsgifunc=lambda: object()))
+    monkeypatch.setattr("web.httpserver.StaticMiddleware", lambda func: func)
+    monkeypatch.setattr("web.httpserver.LogMiddleware", lambda func: func)
+    monkeypatch.setattr("web.httpserver.WSGIServer", FakeServer)
+    monkeypatch.setattr("webbrowser.open", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "business.cache.cache_update_scheduler.start_technical_analysis_cache_update_scheduler",
+        lambda: calls.append("started") or True,
+    )
+
+    WebChannel().startup()
+
+    assert calls == ["started"]
 
 
 def test_business_record_cleanup_dry_run_and_execute_remove_useless_records(business_env):

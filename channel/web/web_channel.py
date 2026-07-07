@@ -1091,6 +1091,13 @@ class WebChannel(ChatChannel):
             logger.info(f"[WebChannel] 🔒 当前仅监听 {host}，仅本机可访问。如需公网访问，请将 web_host 改为 0.0.0.0 并配置 web_password 密码")
 
         try:
+            from business.cache.cache_update_scheduler import start_technical_analysis_cache_update_scheduler
+
+            start_technical_analysis_cache_update_scheduler()
+        except Exception as e:
+            logger.warning(f"[WebChannel] Failed to start investment cache update scheduler: {e}")
+
+        try:
             import webbrowser
             webbrowser.open(f"http://localhost:{port}")
             logger.debug(f"[WebChannel] Opened browser at http://localhost:{port}")
@@ -1175,6 +1182,12 @@ class WebChannel(ChatChannel):
             raise
 
     def stop(self):
+        try:
+            from business.cache.cache_update_scheduler import stop_technical_analysis_cache_update_scheduler
+
+            stop_technical_analysis_cache_update_scheduler()
+        except Exception as e:
+            logger.warning(f"[WebChannel] Error stopping investment cache update scheduler: {e}")
         if self._http_server:
             try:
                 self._http_server.stop()
@@ -4574,7 +4587,8 @@ class InvestmentCacheUpdateHandler:
     def POST(self):
         admin = _require_investment_permission("cache.write")
         try:
-            from business.cache.cache_policy import cached_market_update_dates, probe_market_update_dates, reset_market_update_probe_cache
+            from business.cache.cache_policy import reset_market_update_probe_cache
+            from business.cache.cache_update_scheduler import run_technical_analysis_cache_update_probe
             from business.config.config_service import get_configs, save_configs
             from business.config.constants import ServiceType
             from business.products.product_service import invalidate_products_by_scope
@@ -4582,16 +4596,10 @@ class InvestmentCacheUpdateHandler:
             body = _investment_json_body()
             action = str(body.get("action") or "probe").strip()
             if action == "probe":
-                previous = cached_market_update_dates()
-                previous_latest = str(previous.get("latest_market_date") or "")
-                payload = probe_market_update_dates(force=True)
+                payload = run_technical_analysis_cache_update_probe(force=True)
+                previous_latest = str(payload.get("previous_latest_market_date") or "")
                 latest = str(payload.get("latest_market_date") or "")
-                products_invalidated = 0
-                if previous_latest and latest and latest > previous_latest:
-                    products_invalidated = invalidate_products_by_scope(
-                        business_type=str(ServiceType.TECHNICAL_ANALYSIS),
-                        business_date="",
-                    )
+                products_invalidated = int(payload.get("products_invalidated") or 0)
                 _record_investment_operation(
                     "cache_update.probe",
                     "technical_analysis_cache_update",
@@ -4605,8 +4613,6 @@ class InvestmentCacheUpdateHandler:
                 return _investment_json_response({
                     "status": "success",
                     **payload,
-                    "previous_latest_market_date": previous_latest,
-                    "products_invalidated": products_invalidated,
                 })
             if action == "save_config":
                 configs = {

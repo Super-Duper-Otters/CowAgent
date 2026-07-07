@@ -7316,7 +7316,6 @@ function renderInvestmentConfigCacheUpdatePanel() {
                 <div class="investment-panel-heading">
                     <div class="investment-panel-title"><i class="fas fa-clock-rotate-left"></i><span>缓存更新</span></div>
                     <div class="investment-panel-actions">
-                        <button class="investment-btn" type="button" onclick="runInvestmentCacheUpdateProbe()"><i class="fas fa-vial"></i><span>手动探测</span></button>
                         <button class="investment-btn danger" type="button" onclick="clearInvestmentAllTechnicalAnalysisCache()"><i class="fas fa-ban"></i><span>全部技术分析缓存失效</span></button>
                     </div>
                 </div>
@@ -7376,44 +7375,54 @@ function renderInvestmentCacheUpdateContent(data = {}) {
     return `
         <div class="investment-cache-update-layout">
             ${data.error ? `<div class="investment-alert error">${escapeHtml(data.error)}</div>` : ''}
-            <section class="investment-panel investment-cache-update-settings">
-                <div class="investment-panel-title"><i class="fas fa-sliders"></i><span>探测设置</span></div>
+            <section class="investment-panel investment-workbench-full investment-cache-update-probe-section">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-vial"></i><span>数据源探测</span></div>
+                    <button class="investment-btn" type="button" onclick="runInvestmentCacheUpdateProbe()"><i class="fas fa-vial"></i><span>手动探测</span></button>
+                </div>
+                <div class="investment-cache-setting-group">
+                    <div class="investment-grid cols-3">
+                        <label class="investment-field"><span>开始时间</span><input id="invest-cache-update-probe-start" type="time" value="${escapeHtml(config.probe_start || '15:30')}"></label>
+                        <label class="investment-field"><span>结束时间</span><input id="invest-cache-update-probe-end" type="time" value="${escapeHtml(config.probe_end || '18:00')}"></label>
+                        <label class="investment-field"><span>时间间隔（分钟）</span><input id="invest-cache-update-probe-interval" type="number" min="1" max="240" step="1" value="${escapeHtml(config.probe_interval_minutes ?? 15)}"></label>
+                    </div>
+                </div>
+                <div class="investment-panel-heading investment-cache-update-subheading">
+                    <div class="investment-panel-title"><i class="fas fa-list-check"></i><span>标的类型列表</span></div>
+                    <div class="investment-subtitle">最新数据日期：${escapeHtml(data.latest_market_date || '-')}</div>
+                </div>
+                ${investmentTableWrap(`<table class="investment-table investment-cache-update-table">
+                    <thead><tr><th>标的类型</th><th>探测标的</th><th>当前数据日期</th><th>状态</th><th>数据源</th><th>说明</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>`, true, '缓存更新探测标的列表')}
+            </section>
+            <section class="investment-panel investment-workbench-full investment-cache-update-calendar-section">
+                <div class="investment-panel-heading">
+                    <div class="investment-panel-title"><i class="fas fa-calendar-days"></i><span>交易日历</span></div>
+                    ${investmentSwitch('启用', 'invest-trading-calendar-enabled', config.trading_calendar_enabled !== false)}
+                </div>
                 <div class="investment-cache-update-settings-grid">
-                    <div>
-                        <div class="investment-cache-setting-group">
-                            <div class="investment-cache-setting-title"><i class="fas fa-vial"></i><span>数据源探测</span></div>
-                            <div class="investment-grid cols-3">
-                                <label class="investment-field"><span>开始时间</span><input id="invest-cache-update-probe-start" type="time" value="${escapeHtml(config.probe_start || '15:30')}"></label>
-                                <label class="investment-field"><span>结束时间</span><input id="invest-cache-update-probe-end" type="time" value="${escapeHtml(config.probe_end || '18:00')}"></label>
-                                <label class="investment-field"><span>时间间隔（分钟）</span><input id="invest-cache-update-probe-interval" type="number" min="1" max="240" step="1" value="${escapeHtml(config.probe_interval_minutes ?? 15)}"></label>
-                            </div>
-                        </div>
-                        <div class="investment-cache-setting-group">
-                            <div class="investment-cache-setting-title investment-cache-setting-title-row">
-                                <span><i class="fas fa-calendar-days"></i><span>交易日历</span></span>
-                                ${investmentSwitch('启用', 'invest-trading-calendar-enabled', config.trading_calendar_enabled !== false)}
-                            </div>
-                            <div class="investment-grid cols-3">
-                                <div class="investment-field investment-source-options-field">
-                                    <span>交易日历数据源</span>
-                                    <div class="investment-source-options">
-                                        ${calendarSourceOptions.map(([value, label]) => `
-                                            <label class="investment-source-option">
-                                                <input id="invest-trading-calendar-source-${escapeHtml(value)}" type="checkbox" value="${escapeHtml(value)}" ${selectedCalendarSources.includes(value) ? 'checked' : ''}>
-                                                <span>${escapeHtml(label)}</span>
-                                            </label>
-                                        `).join('')}
-                                    </div>
+                    <div class="investment-cache-setting-group">
+                        <div class="investment-grid cols-3">
+                            <div class="investment-field investment-source-options-field">
+                                <span>交易日历数据源</span>
+                                <div class="investment-source-options">
+                                    ${calendarSourceOptions.map(([value, label]) => `
+                                        <label class="investment-source-option">
+                                            <input id="invest-trading-calendar-source-${escapeHtml(value)}" type="checkbox" value="${escapeHtml(value)}" ${selectedCalendarSources.includes(value) ? 'checked' : ''}>
+                                            <span>${escapeHtml(label)}</span>
+                                        </label>
+                                    `).join('')}
                                 </div>
-                                <label class="investment-field"><span>刷新周期</span><select id="invest-trading-calendar-cache-days">
-                                    <option value="7" ${refreshCycleDays === 7 ? 'selected' : ''}>每周</option>
-                                    <option value="30" ${refreshCycleDays === 30 ? 'selected' : ''}>每月</option>
-                                </select></label>
-                                <label class="investment-field"><span>行情确认时间</span><input id="invest-trading-calendar-market-data-ready-time" type="time" value="${escapeHtml(config.trading_calendar_market_data_ready_time || '15:30')}"></label>
-                                <label class="investment-field"><span>最大允许滞后交易日</span><input id="invest-trading-calendar-max-lag" type="number" min="0" max="10" step="1" value="${escapeHtml(config.trading_calendar_max_lag_trade_days ?? 0)}"></label>
-                                <label class="investment-field"><span>最大允许旧行情自然日</span><input id="invest-trading-calendar-max-stale" type="number" min="0" max="60" step="1" value="${escapeHtml(config.trading_calendar_max_stale_market_days ?? 15)}"></label>
-                                <label class="investment-field"><span>生成最大尝试次数</span><input id="invest-ta-generation-max-attempts" type="number" min="1" max="10" step="1" value="${escapeHtml(config.generation_max_attempts ?? 3)}"></label>
                             </div>
+                            <label class="investment-field"><span>刷新周期</span><select id="invest-trading-calendar-cache-days">
+                                <option value="7" ${refreshCycleDays === 7 ? 'selected' : ''}>每周</option>
+                                <option value="30" ${refreshCycleDays === 30 ? 'selected' : ''}>每月</option>
+                            </select></label>
+                            <label class="investment-field"><span>行情确认时间</span><input id="invest-trading-calendar-market-data-ready-time" type="time" value="${escapeHtml(config.trading_calendar_market_data_ready_time || '15:30')}"></label>
+                            <label class="investment-field"><span>最大允许滞后交易日</span><input id="invest-trading-calendar-max-lag" type="number" min="0" max="10" step="1" value="${escapeHtml(config.trading_calendar_max_lag_trade_days ?? 0)}"></label>
+                            <label class="investment-field"><span>最大允许旧行情自然日</span><input id="invest-trading-calendar-max-stale" type="number" min="0" max="60" step="1" value="${escapeHtml(config.trading_calendar_max_stale_market_days ?? 15)}"></label>
+                            <label class="investment-field"><span>生成最大尝试次数</span><input id="invest-ta-generation-max-attempts" type="number" min="1" max="10" step="1" value="${escapeHtml(config.generation_max_attempts ?? 3)}"></label>
                         </div>
                     </div>
                     ${renderTradingCalendarStatusPanel(calendarStatus)}
@@ -7423,16 +7432,6 @@ function renderInvestmentCacheUpdateContent(data = {}) {
                     <button class="investment-btn" type="button" onclick="refreshInvestmentTradingCalendar()"><i class="fas fa-calendar-check"></i><span>刷新交易日历</span></button>
                     <span id="investment-cache-update-config-status" class="investment-config-status"></span>
                 </div>
-            </section>
-            <section class="investment-panel investment-workbench-full">
-                <div class="investment-panel-heading">
-                    <div class="investment-panel-title"><i class="fas fa-list-check"></i><span>标的类型列表</span></div>
-                    <div class="investment-subtitle">最新数据日期：${escapeHtml(data.latest_market_date || '-')}</div>
-                </div>
-                ${investmentTableWrap(`<table class="investment-table investment-cache-update-table">
-                    <thead><tr><th>标的类型</th><th>探测标的</th><th>当前数据日期</th><th>状态</th><th>数据源</th><th>说明</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>`, true, '缓存更新探测标的列表')}
             </section>
         </div>`;
 }
