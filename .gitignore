@@ -57,3 +57,7 @@ build/
 *.egg-info/
 .cow.pid
 
+/docs
+/test_artifacts
+/skill-p
+/tests
