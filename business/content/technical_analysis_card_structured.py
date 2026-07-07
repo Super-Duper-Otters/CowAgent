@@ -185,9 +185,32 @@ def _confirm_line(label: str, item: dict[str, Any]) -> str:
     return f"▪️ {label}：{value}"
 
 
+def _normalize_pattern_verify_market_date(item: dict[str, Any], market_date: str) -> dict[str, Any]:
+    normalized_market_date = _as_text(market_date, "")
+    conclusion = _as_text(item.get("conclusion"))
+    if not normalized_market_date or normalized_market_date == DEFAULT_TEXT:
+        return item
+
+    def relabel(match: re.Match[str]) -> str:
+        pattern_date = match.group("date")
+        if pattern_date == normalized_market_date:
+            return match.group(0)
+        return f"最近有形态信号的交易日（{pattern_date}）"
+
+    normalized = re.sub(
+        r"最新交易日[（(](?P<date>\d{4}-\d{2}-\d{2})[）)]",
+        relabel,
+        conclusion,
+    )
+    if normalized == conclusion:
+        return item
+    return {**item, "conclusion": normalized}
+
+
 def render_technical_analysis_standard_text(payload: dict[str, Any]) -> str:
     data = normalize_technical_analysis_card_payload(payload)
     trend = data["trend"]
+    pattern_verify = _normalize_pattern_verify_market_date(trend["pattern_verify"], data["market_date"])
     levels = data["key_levels"]
     operation = data["operation_guide"]
     resistance = levels["strong_resistance"]
@@ -208,7 +231,7 @@ def render_technical_analysis_standard_text(payload: dict[str, Any]) -> str:
             _confirm_line("方向确认（趋势 x 动量）", trend["direction_confirm"]),
             _confirm_line("质量确认（趋势 x 量价）", trend["quality_confirm"]),
             _confirm_line("风险确认（动量 x 波动 x 位置风险）", trend["risk_confirm"]),
-            _confirm_line("形态验证", trend["pattern_verify"]),
+            _confirm_line("形态验证", pattern_verify),
             "",
             "🎯 核心关键位",
             f"▪️ 强压力：{resistance['value']}（{resistance['source']}）",

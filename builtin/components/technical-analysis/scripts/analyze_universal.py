@@ -2016,8 +2016,10 @@ def run_analysis(symbol_code, config_name=None, chart_days=120, percentile_lookb
 
         latest_shape = recent_by_day[0] if recent_by_day else None
         if latest_shape:
+            shape_date = latest_shape['date'].strftime('%Y-%m-%d') if hasattr(latest_shape['date'], 'strftime') else str(latest_shape['date'])[:10]
+            shape_subject = '最新交易日' if latest_shape.get('days_ago') == 0 else f"最近有形态信号的交易日（{shape_date}）"
             shape_confirm = (
-                f"最新交易日形态为{latest_shape['names']}，方向{latest_shape['direction']}；"
+                f"{shape_subject}形态为{latest_shape['names']}，方向{latest_shape['direction']}；"
                 f"{latest_shape['explain']}"
             )
         else:

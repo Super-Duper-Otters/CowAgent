@@ -10027,6 +10027,68 @@ def test_ai_generation_normalizes_technical_analysis_intraday_change_from_report
     assert "📅 行情日期：2026-06-30  日内跌幅：-0.11%" in result.text
 
 
+def test_ai_generation_relabels_pattern_date_when_it_is_not_market_date(business_env):
+    from business.audit.ai_generation import AIGenerationRequest, generate_technical_analysis_text
+
+    class FakeAdapter:
+        def generate(self, request: AIGenerationRequest) -> str:
+            return json.dumps(
+                {
+                    "target": "比亚迪（002594.SZ）",
+                    "signal_direction": "区间观望",
+                    "latest_close": "87.68",
+                    "market_date": "2026-07-06",
+                    "daily_change": "-0.89%",
+                    "analysis_model": "技术分析体系",
+                    "trend": {
+                        "summary": "短期均线多头排列但价格反复，方向未明。",
+                        "direction_confirm": {
+                            "conclusion": "价格处于3/3条短期均线上方，MACD形成金叉。",
+                            "evidence": ["价格处于3/3条短期均线上方"],
+                        },
+                        "quality_confirm": {
+                            "conclusion": "量比仅0.63x，成交活跃度不足。",
+                            "evidence": ["量比0.63x"],
+                        },
+                        "risk_confirm": {
+                            "conclusion": "ATR(14)处于77%分位，波动放大。",
+                            "evidence": ["ATR(14) 77%分位"],
+                        },
+                        "pattern_verify": {
+                            "conclusion": "最新交易日（2026-07-03）识别出捉腰带线与长蜡烛线形态，方向偏多。",
+                            "evidence": ["2026-07-03 捉腰带线/长蜡烛线"],
+                        },
+                    },
+                    "key_levels": {
+                        "strong_resistance": {"value": "94.73", "source": "MA60附近"},
+                        "strong_support": {"value": "86.34", "source": "MA20/BOLL中轨附近"},
+                    },
+                    "operation_guide": {
+                        "summary": "震荡整理，适合区间思路",
+                        "breakout": "收盘站上94.73并接近95.02，可适度提高多头暴露",
+                        "range": "价格在86.34到94.73区间反复拉锯",
+                        "breakdown": "跌破86.34并接近84.02，需防范回撤风险",
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+    report_text = (
+        "# 比亚迪 (002594) 技术形态分析报告\n\n"
+        "**分析日期:** 2026-07-06\n"
+        "**数据范围:** 2026-01-05 ~ 2026-07-06（120 交易日）\n\n"
+        "### 6.1 最新形态信号（最近 3 个交易日）\n\n"
+        "| 2026-07-03 | 捉腰带线/长蜡烛线 | 偏多 |\n"
+    )
+
+    result = generate_technical_analysis_text(report_text, adapter=FakeAdapter())
+
+    assert result.success is True
+    assert "📅 行情日期：2026-07-06  日内跌幅：-0.89%" in result.text
+    assert "最新交易日（2026-07-03）" not in result.text
+    assert "最近有形态信号的交易日（2026-07-03）" in result.text
+
+
 @pytest.mark.parametrize(
     ("global_config", "expected"),
     [
@@ -10788,6 +10850,55 @@ def test_technical_analysis_non_a_share_targets_are_delegated_to_skill(
     assert result.normalized_target == normalized_target
     assert result.stock_code == normalized_target
     assert result.stock_name == ""
+
+
+def test_technical_analysis_market_date_uses_generated_report_date_over_probe(
+    business_env, tmp_path, monkeypatch
+):
+    from business.content import technical_analysis as technical_analysis
+    from business.content.technical_analysis import run_technical_analysis
+
+    report = tmp_path / "300502_技术分析报告_2026-07-02.md"
+    chart = tmp_path / "300502_TA_2026-07-02.png"
+    report.write_text(
+        "# 技术分析报告\n\n"
+        "**数据范围:** 2026-01-02 ~ 2026-07-02（120 交易日）\n"
+        "核心观点",
+        encoding="utf-8",
+    )
+    chart.write_bytes(b"chart")
+    rendered = {}
+
+    def fake_skill(_symbol, _output_dir, **_kwargs):
+        return report, chart
+
+    def fake_render(standard_text, output_path):
+        rendered["standard_text"] = standard_text
+        rendered["output_name"] = Path(output_path).name
+        Path(output_path).write_bytes(b"card")
+        return SimpleNamespace(success=True, image_path=str(output_path), detail="")
+
+    class NewerProbeResolver:
+        def resolve(self, _symbol, requested_market_date=""):
+            assert requested_market_date == ""
+            return SimpleNamespace(market_date="2026-07-03", known=True, source="probe")
+
+    monkeypatch.setattr(technical_analysis, "MarketDateResolver", NewerProbeResolver, raising=False)
+    monkeypatch.setattr(technical_analysis, "_run_skill", fake_skill)
+    monkeypatch.setattr(
+        technical_analysis,
+        "generate_technical_analysis_text",
+        lambda _report_text: SimpleNamespace(success=True, text="📅 行情日期：2026-07-03\n信号卡标准文本"),
+    )
+    monkeypatch.setattr(technical_analysis, "render_technical_analysis_card", fake_render)
+
+    result = run_technical_analysis("ok", "300502.SZ 技术分析")
+
+    assert result.success is True
+    assert result.market_date == "2026-07-02"
+    assert "2026-07-02" in result.cache_key
+    assert "📅 行情日期：2026-07-02" in rendered["standard_text"]
+    assert rendered["output_name"].startswith("300502_SZ_signal_card_2026-07-02_")
 
 
 def test_technical_analysis_short_csi_code_requires_confirmation_prompt(

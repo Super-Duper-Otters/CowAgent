@@ -1013,7 +1013,7 @@ def prepare_technical_analysis_cache_context(
     raw_input: str,
     target_text: str | None = None,
 ) -> TechnicalAnalysisCacheContext:
-    target, _ignored_user_market_date = _target_and_requested_market_date(target_text or parse_target(raw_input))
+    target, requested_market_date = _target_and_requested_market_date(target_text or parse_target(raw_input))
     target_info, error, _detail = _technical_analysis_target_from_input(target)
     if error:
         return TechnicalAnalysisCacheContext()
@@ -1022,7 +1022,7 @@ def prepare_technical_analysis_cache_context(
         return TechnicalAnalysisCacheContext()
     program_version, ta_version, renderer_version, template_version = _versions()
     combined_version = _cache_version_fingerprint(ta_version, renderer_version, template_version)
-    if not technical_analysis_cache_update_probe_allowed_for_symbol(symbol):
+    if not requested_market_date and not technical_analysis_cache_update_probe_allowed_for_symbol(symbol):
         cached = _find_latest_current_cache_entry(
             symbol=symbol,
             version_fingerprint=combined_version,
@@ -1040,7 +1040,7 @@ def prepare_technical_analysis_cache_context(
                 cache_key=cached.cache_key,
                 resolved_market_date=MarketDateResolution(),
             )
-    resolved_market_date = _resolve_market_date(target_info, "")
+    resolved_market_date = _resolve_market_date(target_info, requested_market_date)
     if resolved_market_date.known and resolved_market_date.market_date:
         cached = find_cache_entry(
             service_type=ServiceType.TECHNICAL_ANALYSIS,
@@ -1103,7 +1103,7 @@ def run_technical_analysis(
     cache_context: TechnicalAnalysisCacheContext | None = None,
 ) -> TechnicalAnalysisResult:
     request = TechnicalAnalysisRequest(openid=openid, raw_input=raw_input, target_text=target_text or parse_target(raw_input))
-    target, _ignored_user_market_date = _target_and_requested_market_date(request.target_text)
+    target, requested_market_date = _target_and_requested_market_date(request.target_text)
     target_info, error, error_detail = _technical_analysis_target_from_input(target)
     if error:
         return TechnicalAnalysisResult(
@@ -1137,7 +1137,7 @@ def run_technical_analysis(
     if use_cache_context and cache_context.resolved_market_date is not None:
         resolved_market_date = cache_context.resolved_market_date
     else:
-        resolved_market_date = _resolve_market_date(target_info, "")
+        resolved_market_date = _resolve_market_date(target_info, requested_market_date)
     if resolved_market_date.known and resolved_market_date.market_date:
         product = find_active_product(
             business_type=str(ServiceType.TECHNICAL_ANALYSIS),
@@ -1305,14 +1305,18 @@ def run_technical_analysis(
             text_market_date, _text_market_date_warning = _market_date(standard_text)
             generated_market_date = report_market_date or text_market_date
             market_date_warning = report_market_date_warning
-            if resolved_market_date.known and resolved_market_date.market_date:
-                market_date = resolved_market_date.market_date
-                if generated_market_date and generated_market_date != market_date:
+            if generated_market_date:
+                market_date = generated_market_date
+                if (
+                    resolved_market_date.known
+                    and resolved_market_date.market_date
+                    and resolved_market_date.market_date != generated_market_date
+                ):
                     market_date_warning = f"market_date resolved from generated report; source {resolved_market_date.source} differed"
                 else:
                     market_date_warning = ""
-            elif generated_market_date:
-                market_date = generated_market_date
+            elif resolved_market_date.known and resolved_market_date.market_date:
+                market_date = resolved_market_date.market_date
             else:
                 market_date = ""
             if use_cache_context and cache_context.cache_key and market_date == cache_context.market_date:

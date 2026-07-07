@@ -264,6 +264,21 @@ def test_v02_report_header_uses_latest_data_date_not_system_date():
     assert "**分析日期:** {latest_data_date}" in source
 
 
+def test_v02_pattern_summary_does_not_call_stale_pattern_date_latest_trading_day():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "builtin"
+        / "components"
+        / "technical-analysis"
+        / "scripts"
+        / "analyze_universal.py"
+    )
+    source = script.read_text(encoding="utf-8")
+
+    assert "最新交易日形态为{latest_shape['names']}" not in source
+    assert "最近有形态信号的交易日" in source
+
+
 def test_v02_probe_window_ranks_data_sources_by_latest_date(monkeypatch):
     module = _load_v02_skill_module()
     calls = []
